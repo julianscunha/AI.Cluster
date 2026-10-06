@@ -76,13 +76,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let capability = node.capability.unwrap_or_default();
 
                 println!(
-                    "{}	state={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	storage={}	worker={}",
+                    "{}	state={}	active={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	rtt={:.0}us	storage={}	worker={}",
                     node.node_id,
                     node.state,
+                    node.active_work_units,
                     node.architecture,
                     capability.cpu_logical_cores,
                     capability.memory_total_bytes / 1024 / 1024,
                     capability.cpu_ops_per_sec,
+                    capability.network_rtt_us,
                     capability.storage.len(),
                     node.worker_endpoint,
                 );
