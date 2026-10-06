@@ -162,14 +162,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 validate_dimensions(rows, inner, cols)?;
 
-                let result = run_distributed_matmul(
-                    &cli.controller,
-                    rows,
-                    inner,
-                    cols,
-                    max_workers,
-                )
-                .await?;
+                let result =
+                    run_distributed_matmul(&cli.controller, rows, inner, cols, max_workers).await?;
 
                 print_matmul_result(&result);
             }
@@ -195,14 +189,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut baseline_checksum = None;
 
                 for max_workers in worker_counts {
-                    let result = run_distributed_matmul(
-                        &cli.controller,
-                        rows,
-                        inner,
-                        cols,
-                        max_workers,
-                    )
-                    .await?;
+                    let result =
+                        run_distributed_matmul(&cli.controller, rows, inner, cols, max_workers).await?;
 
                     let checksum = checksum_f32_bytes(&result.matrix_c);
 
@@ -293,10 +281,7 @@ async fn run_distributed_matmul(
     inner: usize,
     cols: usize,
     max_workers: u32,
-) -> Result<
-    real_ai_cluster_protocol::v1::DistributedMatMulResponse,
-    Box<dyn std::error::Error>,
-> {
+) -> Result<real_ai_cluster_protocol::v1::DistributedMatMulResponse, Box<dyn std::error::Error>> {
     let mut client = ClusterControlClient::connect(controller).await?;
 
     let matrix_a: Vec<f32> = (0..rows * inner)
@@ -323,9 +308,7 @@ async fn run_distributed_matmul(
     Ok(result)
 }
 
-fn print_matmul_result(
-    result: &real_ai_cluster_protocol::v1::DistributedMatMulResponse,
-) {
+fn print_matmul_result(result: &real_ai_cluster_protocol::v1::DistributedMatMulResponse) {
     let overhead_us = result
         .duration_us
         .saturating_sub(result.compute_duration_us);
