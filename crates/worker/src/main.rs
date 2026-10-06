@@ -5,7 +5,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use real_ai_cluster_benchmark::{matmul_block, run as run_benchmark};
+use real_ai_cluster_benchmark::{matmul_row_shard, run as run_benchmark};
 use real_ai_cluster_common::hardware::{discover, StorageKind};
 use real_ai_cluster_protocol::v1::{
     cluster_control_client::ClusterControlClient,
@@ -109,28 +109,28 @@ impl WorkerRuntime for WorkerService {
             ));
         }
 
-        let a = bytes_to_f32(&req.matrix_a)
+        let a_shard = bytes_to_f32(&req.matrix_a)
             .ok_or_else(|| Status::invalid_argument("matrix_a inválida"))?;
         let b = bytes_to_f32(&req.matrix_b)
             .ok_or_else(|| Status::invalid_argument("matrix_b inválida"))?;
 
-        let expected_a = rows
+        let expected_a = row_count
             .checked_mul(inner)
-            .ok_or_else(|| Status::invalid_argument("dimensão de A excede limite"))?;
+            .ok_or_else(|| Status::invalid_argument("dimensão do shard de A excede limite"))?;
 
         let expected_b = inner
             .checked_mul(cols)
             .ok_or_else(|| Status::invalid_argument("dimensão de B excede limite"))?;
 
-        if a.len() != expected_a || b.len() != expected_b {
+        if a_shard.len() != expected_a || b.len() != expected_b {
             return Err(Status::invalid_argument(
-                "tamanho das matrizes incompatível com dimensões",
+                "tamanho dos shards incompatível com dimensões",
             ));
         }
 
         let started = Instant::now();
 
-        let output = matmul_block(rows, inner, cols, row_start, row_count, &a, &b);
+        let output = matmul_row_shard(inner, cols, row_count, &a_shard, &b);
 
         let duration_us = started.elapsed().as_micros() as u64;
 
