@@ -5,6 +5,10 @@ on:
     branches: ["**"]
   pull_request:
 
+concurrency:
+  group: rust-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
