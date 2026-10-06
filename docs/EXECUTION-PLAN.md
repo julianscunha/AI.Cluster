@@ -70,7 +70,7 @@ Entregáveis:
 - [ ] affinity;
 - [ ] deadlines.
 
-Estado atual: o grafo possui Work Units, dependências, validação de ciclos e níveis topológicos. O Placement Planner gera uma atribuição inicial usando o ranking do Scheduler global. A execução concorrente de múltiplas Work Units ainda será acoplada ao plano em uma etapa seguinte.
+Estado atual: o grafo possui Work Units, dependências, validação de ciclos e níveis topológicos. O Placement Planner gera uma atribuição inicial usando o ranking do Scheduler global. O Controller já executa múltiplas Work Units por nível, com concorrência dentro do nível e bloqueio do avanço após falha.
 
 ## Fase E — State Manager
 
