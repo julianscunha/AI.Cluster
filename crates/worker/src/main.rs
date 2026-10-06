@@ -224,6 +224,7 @@ fn initial_node_info(worker_endpoint: &str) -> NodeInfo {
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         last_heartbeat_unix_ms: now_ms(),
         worker_endpoint: worker_endpoint.into(),
+        active_work_units: 0,
     }
 }
 
