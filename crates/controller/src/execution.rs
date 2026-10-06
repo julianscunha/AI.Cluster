@@ -403,11 +403,11 @@ mod tests {
 
         assert_eq!(
             plan.node_for("w1").unwrap().node_id,
-            "node-a".to_string()
+            "node-a"
         );
         assert_eq!(
             plan.node_for("w2").unwrap().node_id,
-            "node-b".to_string()
+            "node-b"
         );
     }
 
