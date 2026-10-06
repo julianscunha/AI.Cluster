@@ -276,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client
         .network_ping(Request::new(NetworkPingRequest {
             node_id: node.node_id.clone(),
+            payload: Vec::new(),
         }))
         .await?;
 
@@ -285,6 +286,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client
             .network_ping(Request::new(NetworkPingRequest {
                 node_id: node.node_id.clone(),
+                payload: Vec::new(),
             }))
             .await?;
 
@@ -297,8 +299,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .copied()
         .unwrap_or_default() as f64;
 
+    const NETWORK_PAYLOAD_BYTES: usize = 512 * 1024;
+    const NETWORK_THROUGHPUT_SAMPLES: usize = 3;
+    let network_payload = vec![0xA5u8; NETWORK_PAYLOAD_BYTES];
+    let mut network_throughput_samples = Vec::with_capacity(NETWORK_THROUGHPUT_SAMPLES);
+
+    for _ in 0..NETWORK_THROUGHPUT_SAMPLES {
+        let started = Instant::now();
+
+        let response = client
+            .network_ping(Request::new(NetworkPingRequest {
+                node_id: node.node_id.clone(),
+                payload: network_payload.clone(),
+            }))
+            .await?
+            .into_inner();
+
+        if !response.accepted || response.payload.len() != NETWORK_PAYLOAD_BYTES {
+            return Err("probe de throughput retornou payload inválido".into());
+        }
+
+        let elapsed_seconds = started.elapsed().as_secs_f64().max(f64::MIN_POSITIVE);
+        let megabytes = NETWORK_PAYLOAD_BYTES as f64 / (1024.0 * 1024.0);
+        network_throughput_samples.push(megabytes / elapsed_seconds);
+    }
+
+    network_throughput_samples.sort_by(f64::total_cmp);
+    let network_mb_per_sec = network_throughput_samples
+        .get(network_throughput_samples.len() / 2)
+        .copied()
+        .unwrap_or_default();
+
     if let Some(capability) = node.capability.as_mut() {
         capability.network_rtt_us = network_rtt_us;
+        capability.network_mb_per_sec = network_mb_per_sec;
     }
 
     client
@@ -314,6 +348,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         memory_mb_per_sec = node.capability.as_ref().map(|c| c.memory_mb_per_sec).unwrap_or_default(),
         storage_write_mb_per_sec = node.capability.as_ref().map(|c| c.storage_write_mb_per_sec).unwrap_or_default(),
         network_rtt_us,
+        network_mb_per_sec,
         "benchmark concluído"
     );
 
