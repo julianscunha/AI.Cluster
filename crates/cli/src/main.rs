@@ -103,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let capability = node.capability.unwrap_or_default();
 
                 println!(
-                    "{}	state={}	active={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	rtt={:.0}us	storage={}	worker={}",
+                    "{}	state={}	active={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	rtt={:.0}us	net={:.1} MB/s	storage={}	worker={}",
                     node.node_id,
                     node.state,
                     node.active_work_units,
@@ -112,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     capability.memory_total_bytes / 1024 / 1024,
                     capability.cpu_ops_per_sec,
                     capability.network_rtt_us,
+                    capability.network_mb_per_sec,
                     capability.storage.len(),
                     node.worker_endpoint,
                 );
