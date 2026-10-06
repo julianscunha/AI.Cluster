@@ -51,9 +51,7 @@ impl ExecutionGraph {
     pub fn single(work: WorkUnit) -> Self {
         let execution_id = work.work_id.clone();
         let mut graph = Self::new(execution_id);
-        graph
-            .units
-            .push(WorkUnitSpec::new(work));
+        graph.units.push(WorkUnitSpec::new(work));
         graph
     }
 
@@ -87,12 +85,12 @@ impl ExecutionGraph {
 
         for (position, unit) in self.units.iter().enumerate() {
             for dependency in &unit.depends_on {
-                let dependency_position = index
-                    .get(dependency.as_str())
-                    .copied()
-                    .ok_or_else(|| PlanError::MissingDependency {
-                        work_unit_id: unit.work.work_id.clone(),
-                        dependency: dependency.clone(),
+                let dependency_position =
+                    index.get(dependency.as_str()).copied().ok_or_else(|| {
+                        PlanError::MissingDependency {
+                            work_unit_id: unit.work.work_id.clone(),
+                            dependency: dependency.clone(),
+                        }
                     })?;
 
                 indegree[position] += 1;
@@ -268,7 +266,9 @@ pub enum PlanError {
     UnknownWorkUnit(String),
     Cycle,
     NoSchedulableNodes,
-    NoCompatibleNode { work_unit_id: String },
+    NoCompatibleNode {
+        work_unit_id: String,
+    },
 }
 
 impl Display for PlanError {
@@ -301,9 +301,7 @@ impl std::error::Error for PlanError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ExecutionGraph, PlacementPlanner, PlanError, WorkUnitSpec,
-    };
+    use super::{ExecutionGraph, PlacementPlanner, PlanError, WorkUnitSpec};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
     fn work(work_id: &str, operation: &str) -> WorkUnit {
@@ -336,10 +334,7 @@ mod tests {
     fn execution_graph_detecta_dependencia_inexistente() {
         let mut graph = ExecutionGraph::new("exec-1");
         graph
-            .add_unit(
-                WorkUnitSpec::new(work("w2", "echo"))
-                    .with_dependencies(vec!["w1".into()]),
-            )
+            .add_unit(WorkUnitSpec::new(work("w2", "echo")).with_dependencies(vec!["w1".into()]))
             .unwrap();
 
         assert!(matches!(
@@ -352,16 +347,10 @@ mod tests {
     fn execution_graph_detecta_ciclo() {
         let mut graph = ExecutionGraph::new("exec-1");
         graph
-            .add_unit(
-                WorkUnitSpec::new(work("w1", "echo"))
-                    .with_dependencies(vec!["w2".into()]),
-            )
+            .add_unit(WorkUnitSpec::new(work("w1", "echo")).with_dependencies(vec!["w2".into()]))
             .unwrap();
         graph
-            .add_unit(
-                WorkUnitSpec::new(work("w2", "echo"))
-                    .with_dependencies(vec!["w1".into()]),
-            )
+            .add_unit(WorkUnitSpec::new(work("w2", "echo")).with_dependencies(vec!["w1".into()]))
             .unwrap();
 
         assert_eq!(graph.levels(), Err(PlanError::Cycle));
@@ -373,10 +362,8 @@ mod tests {
         graph.add_unit(WorkUnitSpec::new(work("w1", "echo"))).unwrap();
         graph.add_unit(WorkUnitSpec::new(work("w2", "echo"))).unwrap();
         graph
-            .add_unit(
-                WorkUnitSpec::new(work("w3", "echo"))
-                    .with_dependencies(vec!["w1".into(), "w2".into()]),
-            )
+            .add_unit(WorkUnitSpec::new(work("w3", "echo"))
+                .with_dependencies(vec!["w1".into(), "w2".into()]))
             .unwrap();
 
         assert_eq!(
@@ -394,31 +381,19 @@ mod tests {
         graph.add_unit(WorkUnitSpec::new(work("w1", "echo"))).unwrap();
         graph.add_unit(WorkUnitSpec::new(work("w2", "echo"))).unwrap();
 
-        let nodes = vec![
-            node("node-a", &["cpu"], 0),
-            node("node-b", &["cpu"], 0),
-        ];
+        let nodes = vec![node("node-a", &["cpu"], 0), node("node-b", &["cpu"], 0)];
 
         let plan = PlacementPlanner::default().plan(&graph, &nodes).unwrap();
 
-        assert_eq!(
-            plan.node_for("w1").unwrap().node_id,
-            "node-a"
-        );
-        assert_eq!(
-            plan.node_for("w2").unwrap().node_id,
-            "node-b"
-        );
+        assert_eq!(plan.node_for("w1").unwrap().node_id, "node-a");
+        assert_eq!(plan.node_for("w2").unwrap().node_id, "node-b");
     }
 
     #[test]
     fn placement_filtra_backend_incompativel() {
         let mut graph = ExecutionGraph::new("exec-1");
         graph
-            .add_unit(
-                WorkUnitSpec::new(work("w1", "echo"))
-                    .with_required_backends(vec!["cuda".into()]),
-            )
+            .add_unit(WorkUnitSpec::new(work("w1", "echo")).with_required_backends(vec!["cuda".into()]))
             .unwrap();
 
         let nodes = vec![
