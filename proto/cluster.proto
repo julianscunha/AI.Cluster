@@ -25,14 +25,14 @@ message StorageInfo {
 }
 
 message Capability {
-  double general_compute = 1;
-  double memory_bandwidth = 2;
-  double storage_score = 3;
-  double network_score = 4;
-  repeated string execution_backends = 5;
-  uint32 cpu_logical_cores = 6;
-  uint64 memory_total_bytes = 7;
-  repeated StorageInfo storage = 8;
+  repeated string execution_backends = 1;
+  uint32 cpu_logical_cores = 2;
+  uint64 memory_total_bytes = 3;
+  repeated StorageInfo storage = 4;
+  double cpu_ops_per_sec = 5;
+  double memory_mb_per_sec = 6;
+  double storage_write_mb_per_sec = 7;
+  double network_rtt_us = 8;
 }
 
 message Health {
@@ -85,6 +85,15 @@ message ReportHealthResponse {
   NodeState state = 2;
 }
 
+message ReportCapabilityRequest {
+  string node_id = 1;
+  Capability capability = 2;
+}
+
+message ReportCapabilityResponse {
+  bool accepted = 1;
+}
+
 message ListNodesRequest {}
 
 message ListNodesResponse {
@@ -95,5 +104,6 @@ service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(ReportHealthRequest) returns (ReportHealthResponse);
+  rpc ReportCapability(ReportCapabilityRequest) returns (ReportCapabilityResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 }
