@@ -169,7 +169,7 @@ message ExecuteMatrixBlockRequest {
   uint32 cols = 4;
   uint32 row_start = 5;
   uint32 row_count = 6;
-  bytes matrix_a = 7;
+  bytes matrix_a_shard = 7;
   bytes matrix_b = 8;
 }
 
