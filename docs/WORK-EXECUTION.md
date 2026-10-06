@@ -1,4 +1,4 @@
-# Execução Inicial de Work Unit
+# Execução de Work Unit
 
 ## Objetivo
 
@@ -13,46 +13,58 @@ Cliente
 → resultado
 ```
 
-## Contrato
+## Work Unit básica
 
-A Work Unit possui, na primeira implementação:
+A primeira implementação possui identificador, operação, payload e prioridade.
 
-- identificador;
-- operação;
-- payload;
-- prioridade.
+Operações iniciais:
 
-## Operações iniciais
+- `echo`: retorna o payload;
+- `cpu_spin`: executa iterações de CPU.
 
-### echo
+## Multiplicação matricial distribuída
 
-Retorna o payload sem transformação. Serve para validar transporte e integridade básica.
+A primeira operação realmente distribuída divide as linhas da matriz de saída entre Workers elegíveis.
 
-### cpu_spin
+```
+Matriz A × Matriz B
+       │
+       ▼
+Controller
+       │
+ ┌─────┼─────┐
+ ▼     ▼     ▼
+W1    W2    W3
+linhas 0..  ...
+       │
+       ▼
+recomposição da matriz C
+```
 
-Executa uma quantidade definida de iterações de CPU.
+Cada Worker recebe as matrizes e calcula somente seu bloco de linhas. O Controller executa os blocos em paralelo e recompõe o resultado na ordem correta.
 
-O número de iterações é enviado como inteiro sem sinal de 64 bits em little-endian.
+## Objetivo do benchmark
 
-## Seleção inicial
+Comparar:
 
-Nesta etapa o Controller escolhe um Worker elegível sem ainda aplicar o Scheduler completo.
+- execução local;
+- execução com dois Workers;
+- execução com mais Workers;
+- tempo de computação;
+- custo de comunicação;
+- speedup;
+- eficiência paralela.
 
-O objetivo é validar a chamada remota e criar a base para o Scheduler.
+## Limitação atual
 
-## Limitações
+O particionamento ainda é simples: as matrizes completas são enviadas a cada Worker. Isso é proposital para o primeiro experimento.
 
-Esta implementação ainda não divide uma operação entre múltiplos Workers.
+A otimização de distribuição de tensores, cache, compressão, locality e transferência incremental será implementada depois que o comportamento básico for medido.
 
-O próximo incremento deverá adicionar particionamento de uma operação matricial, permitindo comparar execução local com execução distribuída.
+## CLI
 
-## Métricas
+```
+ai-cluster benchmark distributed-matmul --rows 128 --inner 128 --cols 128
+```
 
-A execução retorna:
-
-- node responsável;
-- operação;
-- duração em microssegundos;
-- tamanho do resultado.
-
-Essas métricas serão posteriormente incorporadas ao sistema de telemetria.
+O comando retorna Workers utilizados, duração, tamanho do resultado e checksum.
