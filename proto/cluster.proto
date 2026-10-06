@@ -129,6 +129,44 @@ message ExecuteWorkResponse {
   bytes output = 5;
 }
 
+message DistributedMatMulRequest {
+  string work_id = 1;
+  uint32 rows = 2;
+  uint32 inner = 3;
+  uint32 cols = 4;
+  bytes matrix_a = 5;
+  bytes matrix_b = 6;
+}
+
+message DistributedMatMulResponse {
+  bool accepted = 1;
+  string message = 2;
+  uint32 workers_used = 3;
+  uint64 duration_us = 4;
+  bytes matrix_c = 5;
+}
+
+message ExecuteMatrixBlockRequest {
+  string work_id = 1;
+  uint32 rows = 2;
+  uint32 inner = 3;
+  uint32 cols = 4;
+  uint32 row_start = 5;
+  uint32 row_count = 6;
+  bytes matrix_a = 7;
+  bytes matrix_b = 8;
+}
+
+message ExecuteMatrixBlockResponse {
+  bool accepted = 1;
+  string message = 2;
+  string node_id = 3;
+  uint32 row_start = 4;
+  uint32 row_count = 5;
+  uint64 duration_us = 6;
+  bytes matrix_c = 7;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -136,8 +174,10 @@ service ClusterControl {
   rpc ReportCapability(ReportCapabilityRequest) returns (ReportCapabilityResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc SubmitWork(SubmitWorkRequest) returns (SubmitWorkResponse);
+  rpc DistributedMatMul(DistributedMatMulRequest) returns (DistributedMatMulResponse);
 }
 
 service WorkerRuntime {
   rpc ExecuteWork(ExecuteWorkRequest) returns (ExecuteWorkResponse);
+  rpc ExecuteMatrixBlock(ExecuteMatrixBlockRequest) returns (ExecuteMatrixBlockResponse);
 }
