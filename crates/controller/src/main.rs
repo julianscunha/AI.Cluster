@@ -550,3 +550,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::worker_score;
+    use real_ai_cluster_protocol::v1::{Capability, Health, NodeInfo};
+
+    fn node(cpu_ops_per_sec: f64, active_work_units: u32, network_rtt_us: f64) -> NodeInfo {
+        NodeInfo {
+            node_id: "test".into(),
+            capability: Some(Capability {
+                execution_backends: vec!["cpu".into()],
+                cpu_logical_cores: 4,
+                cpu_ops_per_sec,
+                network_rtt_us,
+                ..Default::default()
+            }),
+            health: Some(Health {
+                overall: 1.0,
+                ..Default::default()
+            }),
+            active_work_units,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn score_prioriza_capacidade_quando_as_demais_variaveis_sao_iguais() {
+        let faster = node(200.0, 0, 100.0);
+        let slower = node(100.0, 0, 100.0);
+
+        let faster_score = worker_score(&faster, 200.0, 4, 100.0);
+        let slower_score = worker_score(&slower, 200.0, 4, 100.0);
+
+        assert!(faster_score > slower_score);
+    }
+
+    #[test]
+    fn score_penaliza_carga_ativa() {
+        let idle = node(100.0, 0, 100.0);
+        let busy = node(100.0, 3, 100.0);
+
+        let idle_score = worker_score(&idle, 100.0, 4, 100.0);
+        let busy_score = worker_score(&busy, 100.0, 4, 100.0);
+
+        assert!(idle_score > busy_score);
+    }
+
+    #[test]
+    fn score_prefere_menor_rtt_quando_capacidade_e_carga_sao_iguais() {
+        let near = node(100.0, 0, 100.0);
+        let far = node(100.0, 0, 500.0);
+
+        let near_score = worker_score(&near, 100.0, 4, 100.0);
+        let far_score = worker_score(&far, 100.0, 4, 100.0);
+
+        assert!(near_score > far_score);
+    }
+}
