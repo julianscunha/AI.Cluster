@@ -72,10 +72,7 @@ impl ExecutionGraph {
         let mut index = HashMap::with_capacity(self.units.len());
 
         for (position, unit) in self.units.iter().enumerate() {
-            if index
-                .insert(unit.work.work_id.as_str(), position)
-                .is_some()
-            {
+            if index.insert(unit.work.work_id.as_str(), position).is_some() {
                 return Err(PlanError::DuplicateWorkUnit(unit.work.work_id.clone()));
             }
         }
@@ -362,8 +359,10 @@ mod tests {
         graph.add_unit(WorkUnitSpec::new(work("w1", "echo"))).unwrap();
         graph.add_unit(WorkUnitSpec::new(work("w2", "echo"))).unwrap();
         graph
-            .add_unit(WorkUnitSpec::new(work("w3", "echo"))
-                .with_dependencies(vec!["w1".into(), "w2".into()]))
+            .add_unit(
+                WorkUnitSpec::new(work("w3", "echo"))
+                    .with_dependencies(vec!["w1".into(), "w2".into()]),
+            )
             .unwrap();
 
         assert_eq!(
@@ -393,7 +392,9 @@ mod tests {
     fn placement_filtra_backend_incompativel() {
         let mut graph = ExecutionGraph::new("exec-1");
         graph
-            .add_unit(WorkUnitSpec::new(work("w1", "echo")).with_required_backends(vec!["cuda".into()]))
+            .add_unit(
+                WorkUnitSpec::new(work("w1", "echo")).with_required_backends(vec!["cuda".into()]),
+            )
             .unwrap();
 
         let nodes = vec![
@@ -411,8 +412,7 @@ mod tests {
         let mut graph = ExecutionGraph::new("exec-1");
         graph
             .add_unit(
-                WorkUnitSpec::new(work("w1", "echo"))
-                    .with_required_backends(vec!["cuda".into()]),
+                WorkUnitSpec::new(work("w1", "echo")).with_required_backends(vec!["cuda".into()]),
             )
             .unwrap();
 
