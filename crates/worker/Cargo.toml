@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+real-ai-cluster-benchmark = { path = "../benchmark" }
 real-ai-cluster-common = { path = "../common" }
 real-ai-cluster-protocol = { path = "../protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
