@@ -4,6 +4,7 @@
 
 Validar o primeiro caminho completo de trabalho:
 
+
 ```text
 Cliente
 → Controller
@@ -12,6 +13,14 @@ Cliente
 → execução
 → resultado
 ```
+
+## Execução de DAG
+
+Além da Work Unit individual, o Controller agora aceita um Execution Graph por meio do RPC SubmitGraph.
+
+Cada vértice pode declarar depends_on e required_backends. O Controller valida o grafo, cria o Placement Plan e executa os níveis topológicos em sequência. Dentro de cada nível, as Work Units são disparadas em paralelo e as reservas de capacidade são contabilizadas individualmente.
+
+Nesta etapa, a dependência entre Work Units é de controle: o output de uma unidade não é injetado automaticamente no payload de outra.
 
 ## Work Unit básica
 
