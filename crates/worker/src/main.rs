@@ -104,7 +104,9 @@ impl WorkerRuntime for WorkerService {
         }
 
         if row_start.checked_add(row_count).unwrap_or(usize::MAX) > rows {
-            return Err(Status::invalid_argument("bloco ultrapassa número de linhas"));
+            return Err(Status::invalid_argument(
+                "bloco ultrapassa número de linhas",
+            ));
         }
 
         let a = bytes_to_f32(&req.matrix_a)
@@ -128,15 +130,7 @@ impl WorkerRuntime for WorkerService {
 
         let started = Instant::now();
 
-        let output = matmul_block(
-            rows,
-            inner,
-            cols,
-            row_start,
-            row_count,
-            &a,
-            &b,
-        );
+        let output = matmul_block(rows, inner, cols, row_start, row_count, &a, &b);
 
         let duration_us = started.elapsed().as_micros() as u64;
 
@@ -185,8 +179,7 @@ fn hostname() -> String {
 
 fn initial_node_info(worker_endpoint: &str) -> NodeInfo {
     let node_id = env::var("RAC_NODE_ID").unwrap_or_else(|_| hostname());
-    let device_id = env::var("RAC_DEVICE_ID")
-        .unwrap_or_else(|_| format!("device-{node_id}"));
+    let device_id = env::var("RAC_DEVICE_ID").unwrap_or_else(|_| format!("device-{node_id}"));
     let hardware = discover();
 
     let storage = hardware
@@ -227,8 +220,7 @@ fn initial_node_info(worker_endpoint: &str) -> NodeInfo {
             network: 1.0,
             thermal: 1.0,
         }),
-        os_version: env::var("RAC_OS_VERSION")
-            .unwrap_or_else(|_| "bootstrap".into()),
+        os_version: env::var("RAC_OS_VERSION").unwrap_or_else(|_| "bootstrap".into()),
         runtime_version: env!("CARGO_PKG_VERSION").into(),
         last_heartbeat_unix_ms: now_ms(),
         worker_endpoint: worker_endpoint.into(),
@@ -237,12 +229,10 @@ fn initial_node_info(worker_endpoint: &str) -> NodeInfo {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let controller_endpoint = env::var("RAC_CONTROLLER_ENDPOINT")
-        .unwrap_or_else(|_| "http://127.0.0.1:50051".into());
+    let controller_endpoint =
+        env::var("RAC_CONTROLLER_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:50051".into());
 
     let worker_bind: SocketAddr = env::var("RAC_WORKER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:50052".into())
