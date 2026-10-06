@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use real_ai_cluster_protocol::v1::{
-    cluster_control_client::ClusterControlClient, ListNodesRequest, SubmitWorkRequest, WorkUnit,
+    cluster_control_client::ClusterControlClient, DistributedMatMulRequest, ListNodesRequest,
+    SubmitWorkRequest, WorkUnit,
 };
 use tonic::Request;
 
@@ -22,6 +23,10 @@ enum Command {
         #[command(subcommand)]
         command: WorkCommand,
     },
+    Benchmark {
+        #[command(subcommand)]
+        command: BenchmarkCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -35,6 +40,20 @@ enum WorkCommand {
 
         #[arg(long, default_value_t = 0)]
         priority: i32,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BenchmarkCommand {
+    DistributedMatmul {
+        #[arg(long, default_value_t = 128)]
+        rows: usize,
+
+        #[arg(long, default_value_t = 128)]
+        inner: usize,
+
+        #[arg(long, default_value_t = 128)]
+        cols: usize,
     },
 }
 
@@ -55,8 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for node in response.nodes {
                 let capability = node.capability.unwrap_or_default();
+
                 println!(
-                    "{}	state={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	storage={}",
+                    "{}	state={}	arch={}	cores={}	ram={} MB	cpu={:.0} ops/s	storage={}	worker={}",
                     node.node_id,
                     node.state,
                     node.architecture,
@@ -64,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     capability.memory_total_bytes / 1024 / 1024,
                     capability.cpu_ops_per_sec,
                     capability.storage.len(),
+                    node.worker_endpoint,
                 );
             }
         }
@@ -103,9 +124,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         },
+        Command::Benchmark { command } => match command {
+            BenchmarkCommand::DistributedMatmul { rows, inner, cols } => {
+                if rows == 0 || inner == 0 || cols == 0 {
+                    return Err("dimensões devem ser maiores que zero".into());
+                }
+
+                let mut client = ClusterControlClient::connect(cli.controller).await?;
+
+                let matrix_a: Vec<f32> = (0..rows * inner)
+                    .map(|index| ((index % 7) as f32) - 3.0)
+                    .collect();
+
+                let matrix_b: Vec<f32> = (0..inner * cols)
+                    .map(|index| ((index % 5) as f32) - 2.0)
+                    .collect();
+
+                let result = client
+                    .distributed_mat_mul(Request::new(DistributedMatMulRequest {
+                        work_id: format!("matmul-{}", unix_ms()),
+                        rows: rows as u32,
+                        inner: inner as u32,
+                        cols: cols as u32,
+                        matrix_a: f32_to_bytes(&matrix_a),
+                        matrix_b: f32_to_bytes(&matrix_b),
+                    }))
+                    .await?
+                    .into_inner();
+
+                println!(
+                    "accepted={} workers={} duration={}us output_bytes={} checksum={:.6}",
+                    result.accepted,
+                    result.workers_used,
+                    result.duration_us,
+                    result.matrix_c.len(),
+                    checksum_f32_bytes(&result.matrix_c),
+                );
+            }
+        },
     }
 
     Ok(())
+}
+
+fn f32_to_bytes(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn checksum_f32_bytes(bytes: &[u8]) -> f64 {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("chunk com 4 bytes")) as f64)
+        .sum()
 }
 
 fn unix_ms() -> u128 {
