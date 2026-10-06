@@ -4,7 +4,7 @@
 
 Validar o primeiro caminho completo de trabalho:
 
-```
+```text
 Cliente
 → Controller
 → seleção de Worker
@@ -22,11 +22,19 @@ Operações iniciais:
 - `echo`: retorna o payload;
 - `cpu_spin`: executa iterações de CPU.
 
+## Seleção de Worker
+
+O Controller mantém a carga ativa de cada Worker e calcula um score para selecionar candidatos.
+
+A seleção não usa mais o timestamp do heartbeat como critério de capacidade. O score inicial considera capacidade de compute, saúde, carga ativa e RTT de rede.
+
+A reserva de capacidade é criada antes da execução e liberada ao final, inclusive em caso de falha.
+
 ## Multiplicação matricial distribuída
 
 A primeira operação realmente distribuída divide as linhas da matriz de saída entre Workers elegíveis.
 
-```
+```text
 Matriz A × Matriz B
        │
        ▼
@@ -63,7 +71,7 @@ A otimização de distribuição de tensores, cache, compressão, locality e tra
 
 ## CLI
 
-```
+```text
 ai-cluster benchmark distributed-matmul --rows 128 --inner 128 --cols 128
 ```
 
