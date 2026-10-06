@@ -33,6 +33,7 @@ message Capability {
   double memory_mb_per_sec = 6;
   double storage_write_mb_per_sec = 7;
   double network_rtt_us = 8;
+  double network_mb_per_sec = 9;
 }
 
 message Health {
@@ -98,11 +99,13 @@ message ReportCapabilityResponse {
 
 message NetworkPingRequest {
   string node_id = 1;
+  bytes payload = 2;
 }
 
 message NetworkPingResponse {
   bool accepted = 1;
   string message = 2;
+  bytes payload = 3;
 }
 
 message ListNodesRequest {}
