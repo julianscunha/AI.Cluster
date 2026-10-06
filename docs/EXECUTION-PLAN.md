@@ -61,14 +61,16 @@ Objetivo: planejar e executar DAGs distribuídos.
 
 Entregáveis:
 
-- Execution Graph;
-- dependências;
-- placement;
-- scheduler global;
-- scheduler local;
-- rebalancing;
-- affinity;
-- deadlines.
+- [x] Execution Graph;
+- [x] dependências;
+- [x] placement;
+- [x] scheduler global inicial;
+- [ ] scheduler local;
+- [ ] rebalancing;
+- [ ] affinity;
+- [ ] deadlines.
+
+Estado atual: o grafo possui Work Units, dependências, validação de ciclos e níveis topológicos. O Placement Planner gera uma atribuição inicial usando o ranking do Scheduler global. A execução concorrente de múltiplas Work Units ainda será acoplada ao plano em uma etapa seguinte.
 
 ## Fase E — State Manager
 
