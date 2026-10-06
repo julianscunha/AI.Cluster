@@ -30,7 +30,9 @@ Arquitetura: v0.1
 - RTT gRPC do Worker para o Controller;
 - seleção inicial de Worker por score;
 - controle de carga ativa e reserva/liberação de Work Units;
-- execução distribuída inicial de multiplicação matricial.
+- execução distribuída inicial de multiplicação matricial;
+- benchmark de escalabilidade com comparação de 1 a N Workers;
+- validação de integridade dos blocos retornados.
 
 ## Experimental
 
