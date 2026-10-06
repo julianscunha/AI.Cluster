@@ -17,12 +17,22 @@ enum NodeState {
   QUARANTINED = 8;
 }
 
+message StorageInfo {
+  string name = 1;
+  string kind = 2;
+  uint64 size_bytes = 3;
+  bool rotational = 4;
+}
+
 message Capability {
   double general_compute = 1;
   double memory_bandwidth = 2;
   double storage_score = 3;
   double network_score = 4;
   repeated string execution_backends = 5;
+  uint32 cpu_logical_cores = 6;
+  uint64 memory_total_bytes = 7;
+  repeated StorageInfo storage = 8;
 }
 
 message Health {
@@ -47,9 +57,7 @@ message NodeInfo {
   int64 last_heartbeat_unix_ms = 10;
 }
 
-message RegisterNodeRequest {
-  NodeInfo node = 1;
-}
+message RegisterNodeRequest { NodeInfo node = 1; }
 
 message RegisterNodeResponse {
   bool accepted = 1;
