@@ -464,6 +464,23 @@ impl ClusterControl for Controller {
         }))
     }
 
+    async fn network_ping(
+        &self,
+        request: Request<NetworkPingRequest>,
+    ) -> Result<Response<NetworkPingResponse>, Status> {
+        let req = request.into_inner();
+
+        let nodes = self.nodes.read().await;
+        if !nodes.contains_key(&req.node_id) {
+            return Err(Status::not_found("node não registrado"));
+        }
+
+        Ok(Response::new(NetworkPingResponse {
+            accepted: true,
+            message: "probe recebido".into(),
+        }))
+    }
+
     async fn list_nodes(
         &self,
         _request: Request<ListNodesRequest>,
