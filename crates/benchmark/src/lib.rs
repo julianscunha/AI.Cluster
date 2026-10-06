@@ -26,9 +26,7 @@ fn benchmark_cpu() -> f64 {
     let mut value = 0u64;
 
     for i in 0..ITERATIONS {
-        value = value
-            .wrapping_mul(1_664_525)
-            .wrapping_add(i ^ 0x9e37_79b9);
+        value = value.wrapping_mul(1_664_525).wrapping_add(i ^ 0x9e37_79b9);
     }
 
     black_box(value);
@@ -44,37 +42,36 @@ fn benchmark_memory() -> f64 {
         *byte = (index as u8).wrapping_mul(31);
     }
 
-    let checksum = buffer.iter().fold(0u64, |acc, value| acc + u64::from(*value));
+    let checksum = buffer
+        .iter()
+        .fold(0u64, |acc, value| acc + u64::from(*value));
     black_box(checksum);
 
-    (SIZE as f64 / (1024.0 * 1024.0))
-        / start.elapsed().as_secs_f64().max(f64::MIN_POSITIVE)
+    (SIZE as f64 / (1024.0 * 1024.0)) / start.elapsed().as_secs_f64().max(f64::MIN_POSITIVE)
 }
 
 fn benchmark_storage() -> f64 {
     const SIZE: usize = 16 * 1024 * 1024;
-    let path = std::env::temp_dir().join(format!(
-        "real-ai-cluster-bench-{}",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("real-ai-cluster-bench-{}", std::process::id()));
     let data = vec![0xA5u8; 1024 * 1024];
 
     let start = Instant::now();
-    let result = (|| -> std::io::Result<f64> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&path)?;
+    let result =
+        (|| -> std::io::Result<f64> {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&path)?;
 
-        for _ in 0..(SIZE / data.len()) {
-            file.write_all(&data)?;
-        }
+            for _ in 0..(SIZE / data.len()) {
+                file.write_all(&data)?;
+            }
 
-        file.sync_all()?;
-        Ok((SIZE as f64 / (1024.0 * 1024.0))
-            / start.elapsed().as_secs_f64().max(f64::MIN_POSITIVE))
-    })();
+            file.sync_all()?;
+            Ok((SIZE as f64 / (1024.0 * 1024.0))
+                / start.elapsed().as_secs_f64().max(f64::MIN_POSITIVE))
+        })();
 
     let _ = fs::remove_file(&path);
     result.unwrap_or_default()
