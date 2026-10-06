@@ -284,7 +284,7 @@ async fn run_distributed_matmul(
     cols: usize,
     max_workers: u32,
 ) -> Result<real_ai_cluster_protocol::v1::DistributedMatMulResponse, Box<dyn std::error::Error>> {
-    let mut client = ClusterControlClient::connect(controller).await?;
+    let mut client = ClusterControlClient::connect(controller.to_owned()).await?;
 
     let matrix_a: Vec<f32> = (0..rows * inner)
         .map(|index| ((index % 7) as f32) - 3.0)
