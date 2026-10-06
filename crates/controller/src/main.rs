@@ -339,7 +339,7 @@ impl ClusterControl for Controller {
                         cols: cols as u32,
                         row_start: row_start as u32,
                         row_count: row_count as u32,
-                        matrix_a,
+                        matrix_a_shard: matrix_a,
                         matrix_b,
                     }))
                     .await
