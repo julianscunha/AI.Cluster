@@ -364,7 +364,13 @@ impl ClusterControl for Controller {
             return Err(Status::invalid_argument("dimensões devem ser maiores que zero"));
         }
 
-        let workers = self.select_workers(rows).await;
+        let requested_workers = if req.max_workers == 0 {
+            rows
+        } else {
+            req.max_workers as usize
+        };
+
+        let workers = self.select_workers(requested_workers.min(rows)).await;
         if workers.is_empty() {
             return Err(Status::unavailable("nenhum worker disponível"));
         }
@@ -449,6 +455,17 @@ impl ClusterControl for Controller {
 
         blocks.sort_by_key(|block| block.row_start);
 
+        let compute_duration_us = blocks
+            .iter()
+            .map(|block| block.duration_us)
+            .max()
+            .unwrap_or_default();
+
+        let per_worker_input_bytes = (req.matrix_a.len() as u64)
+            .saturating_add(req.matrix_b.len() as u64);
+        let input_bytes_sent =
+            per_worker_input_bytes.saturating_mul(blocks.len() as u64);
+
         let mut matrix_c = Vec::with_capacity(rows * cols * std::mem::size_of::<f32>());
 
         for block in &blocks {
@@ -461,6 +478,8 @@ impl ClusterControl for Controller {
             workers_used: blocks.len() as u32,
             duration_us: started.elapsed().as_micros() as u64,
             matrix_c,
+            compute_duration_us,
+            input_bytes_sent,
         }))
     }
 
