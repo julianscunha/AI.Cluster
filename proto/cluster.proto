@@ -183,6 +183,33 @@ message ExecuteMatrixBlockResponse {
   bytes matrix_c = 7;
 }
 
+message GraphWorkUnit {
+  WorkUnit work = 1;
+  repeated string depends_on = 2;
+  repeated string required_backends = 3;
+}
+
+message SubmitGraphRequest {
+  string execution_id = 1;
+  repeated GraphWorkUnit units = 2;
+}
+
+message GraphWorkResult {
+  string work_id = 1;
+  bool accepted = 2;
+  string message = 3;
+  string node_id = 4;
+  uint64 duration_us = 5;
+  bytes output = 6;
+}
+
+message SubmitGraphResponse {
+  bool accepted = 1;
+  string message = 2;
+  string execution_id = 3;
+  repeated GraphWorkResult results = 4;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -191,6 +218,7 @@ service ClusterControl {
   rpc NetworkPing(NetworkPingRequest) returns (NetworkPingResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc SubmitWork(SubmitWorkRequest) returns (SubmitWorkResponse);
+  rpc SubmitGraph(SubmitGraphRequest) returns (SubmitGraphResponse);
   rpc DistributedMatMul(DistributedMatMulRequest) returns (DistributedMatMulResponse);
 }
 
