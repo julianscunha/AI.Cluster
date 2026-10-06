@@ -146,6 +146,7 @@ message DistributedMatMulRequest {
   uint32 cols = 4;
   bytes matrix_a = 5;
   bytes matrix_b = 6;
+  uint32 max_workers = 7;
 }
 
 message DistributedMatMulResponse {
@@ -154,6 +155,8 @@ message DistributedMatMulResponse {
   uint32 workers_used = 3;
   uint64 duration_us = 4;
   bytes matrix_c = 5;
+  uint64 compute_duration_us = 6;
+  uint64 input_bytes_sent = 7;
 }
 
 message ExecuteMatrixBlockRequest {
