@@ -34,7 +34,12 @@ Arquitetura: v0.1
 - execução distribuída inicial de multiplicação matricial;
 - shard de linhas de A enviado individualmente a cada Worker;
 - benchmark de escalabilidade com comparação de 1 a N Workers;
-- validação de integridade dos blocos retornados.
+- validação de integridade dos blocos retornados;
+- Execution Graph com dependências e detecção de ciclos;
+- cálculo de níveis topológicos para paralelismo;
+- Placement Plan separado do Execution Graph;
+- filtro de placement por backend requerido;
+- placement integrado ao caminho de SubmitWork.
 
 ## Experimental
 
@@ -50,4 +55,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Executar Fase A com múltiplos Linux reais e medir baseline local versus execução distribuída, registrando tempo de comunicação, tempo de compute, speedup e eficiência paralela.
+Completar a execução de DAGs: múltiplas Work Units, dependências de dados, concorrência por nível, propagação de erro e replanejamento do Placement Plan.
