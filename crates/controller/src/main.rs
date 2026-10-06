@@ -71,10 +71,7 @@ fn worker_score(
         .map(|rtt| (min_rtt_us / rtt).clamp(0.0, 1.0))
         .unwrap_or(0.5);
 
-    (capacity_score * 0.50)
-        + (health_score * 0.25)
-        + (load_score * 0.15)
-        + (network_score * 0.10)
+    (capacity_score * 0.50) + (health_score * 0.25) + (load_score * 0.15) + (network_score * 0.10)
 }
 
 impl Controller {
@@ -330,7 +327,8 @@ impl ClusterControl for Controller {
         }
         .await;
 
-        self.release_workers(std::slice::from_ref(&node.node_id)).await;
+        self.release_workers(std::slice::from_ref(&node.node_id))
+            .await;
 
         let result = execution_result?;
 
@@ -361,7 +359,9 @@ impl ClusterControl for Controller {
         validate_matrix_payload(rows, inner, cols, &req.matrix_a, &req.matrix_b)?;
 
         if rows == 0 || inner == 0 || cols == 0 {
-            return Err(Status::invalid_argument("dimensões devem ser maiores que zero"));
+            return Err(Status::invalid_argument(
+                "dimensões devem ser maiores que zero",
+            ));
         }
 
         let requested_workers = if req.max_workers == 0 {
@@ -393,10 +393,7 @@ impl ClusterControl for Controller {
         let started = Instant::now();
         let mut jobs = JoinSet::new();
 
-        for (node, (row_start, row_count)) in workers
-            .into_iter()
-            .zip(ranges.into_iter())
-        {
+        for (node, (row_start, row_count)) in workers.into_iter().zip(ranges.into_iter()) {
             let endpoint = node.worker_endpoint.clone();
             let work_id = req.work_id.clone();
             let matrix_a = req.matrix_a.clone();
@@ -440,9 +437,8 @@ impl ClusterControl for Controller {
                     execution_error = Some(Status::unavailable(error));
                 }
                 Err(error) => {
-                    execution_error = Some(Status::internal(format!(
-                        "task do worker falhou: {error}"
-                    )));
+                    execution_error =
+                        Some(Status::internal(format!("task do worker falhou: {error}")));
                 }
             }
         }
@@ -549,9 +545,7 @@ fn now_ms() -> i64 {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let addr: SocketAddr = std::env::var("RAC_CONTROLLER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:50051".into())
@@ -569,7 +563,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
