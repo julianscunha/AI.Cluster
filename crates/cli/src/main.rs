@@ -55,7 +55,11 @@ enum BenchmarkCommand {
         #[arg(long, default_value_t = 128)]
         cols: usize,
 
-        #[arg(long, default_value_t = 0, help = "máximo de Workers; 0 = todos os elegíveis")]
+        #[arg(
+            long,
+            default_value_t = 0,
+            help = "máximo de Workers; 0 = todos os elegíveis",
+        )]
         max_workers: u32,
     },
 }
