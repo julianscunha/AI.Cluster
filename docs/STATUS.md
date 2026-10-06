@@ -27,7 +27,7 @@ Arquitetura: v0.1
 - Inference Engine;
 - descoberta real de CPU, memória e armazenamento;
 - benchmark inicial de capability no ingresso do Worker;
-- RTT gRPC do Worker para o Controller;
+- RTT e throughput gRPC do Worker para o Controller;
 - seleção inicial de Worker por score;
 - controle de carga ativa e reserva/liberação de Work Units;
 - execução distribuída inicial de multiplicação matricial;
