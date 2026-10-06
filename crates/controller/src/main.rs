@@ -2,6 +2,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{Duration, Sys
 
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
+    worker_runtime_client::WorkerRuntimeClient,
     *,
 };
 use tokio::sync::RwLock;
@@ -26,6 +27,22 @@ impl Controller {
             nodes: Arc::new(RwLock::new(HashMap::new())),
             offline_after: Duration::from_secs(10),
         }
+    }
+
+    async fn select_worker(&self) -> Result<NodeInfo, Status> {
+        let nodes = self.nodes.read().await;
+
+        nodes
+            .values()
+            .filter(|node| {
+                matches!(
+                    NodeState::try_from(node.state),
+                    Ok(NodeState::Ready | NodeState::Active)
+                ) && !node.worker_endpoint.is_empty()
+            })
+            .min_by_key(|node| node.last_heartbeat_unix_ms)
+            .cloned()
+            .ok_or_else(|| Status::unavailable("nenhum worker disponível"))
     }
 
     async fn reconcile_loop(self) {
@@ -65,7 +82,12 @@ impl ClusterControl for Controller {
         let mut nodes = self.nodes.write().await;
         nodes.insert(node.node_id.clone(), node.clone());
 
-        info!(node_id = %node.node_id, hostname = %node.hostname, "node registrado");
+        info!(
+            node_id = %node.node_id,
+            hostname = %node.hostname,
+            endpoint = %node.worker_endpoint,
+            "node registrado"
+        );
 
         Ok(Response::new(RegisterNodeResponse {
             accepted: true,
@@ -142,6 +164,43 @@ impl ClusterControl for Controller {
         }
 
         Ok(Response::new(ReportCapabilityResponse { accepted: true }))
+    }
+
+    async fn submit_work(
+        &self,
+        request: Request<SubmitWorkRequest>,
+    ) -> Result<Response<SubmitWorkResponse>, Status> {
+        let work = request
+            .into_inner()
+            .work
+            .ok_or_else(|| Status::invalid_argument("work é obrigatório"))?;
+
+        let node = self.select_worker().await?;
+
+        let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
+            .await
+            .map_err(|error| Status::unavailable(format!("worker indisponível: {error}")))?;
+
+        let result = client
+            .execute_work(Request::new(ExecuteWorkRequest {
+                work: Some(work.clone()),
+            }))
+            .await
+            .map_err(|error| Status::unavailable(format!("execução falhou: {error}")))?
+            .into_inner();
+
+        if !result.accepted {
+            return Err(Status::aborted(result.message));
+        }
+
+        Ok(Response::new(SubmitWorkResponse {
+            accepted: true,
+            message: result.message,
+            assigned_node_id: node.node_id,
+            operation: work.operation,
+            duration_us: result.duration_us,
+            output: result.output,
+        }))
     }
 
     async fn list_nodes(
