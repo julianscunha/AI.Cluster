@@ -31,6 +31,18 @@ Arestas representam:
 - sincronização;
 - produção/consumo de tensor.
 
+## Implementação atual
+
+O primeiro núcleo do Execution Graph está implementado no Controller.
+
+Uma \`WorkUnitSpec\` representa uma Work Unit mais suas dependências e requisitos de backend. O \`ExecutionGraph\` valida IDs, dependências inexistentes e ciclos, e calcula níveis topológicos. Work Units no mesmo nível podem ser tratadas como independentes.
+
+O \`PlacementPlanner\` transforma o grafo lógico em um \`PlacementPlan\`. Para cada nível, os candidatos elegíveis são filtrados por estado, endpoint e backend requerido; depois o Scheduler global os ranqueia. Work Units independentes são distribuídas entre nodes distintos quando houver nodes disponíveis. Em níveis sequenciais, um mesmo node pode ser reutilizado.
+
+O plano contém, para cada Work Unit, o \`node_id\`, a posição no ranking e o score utilizado pelo Scheduler. O hardware permanece fora do Execution Graph.
+
+O \`SubmitWork\` já passa por esse fluxo antes da reserva de capacidade e da chamada ao Worker.
+
 ## Paralelismo
 
 Operações independentes podem executar em paralelo:
@@ -70,3 +82,8 @@ O mesmo mecanismo deve suportar processamento de documentos, áudio, visão, emb
 ## Critério de projeto
 
 O Execution Graph deve ser independente do hardware físico e o Placement Plan deve ser independente do histórico bruto de telemetria.
+
+
+## Próxima evolução
+
+O próximo passo é transformar o Placement Plan em unidade de execução para grafos com múltiplas Work Units, incluindo dependências de dados, sincronização, execução concorrente, propagação de erro e replanejamento durante a execução.
