@@ -35,13 +35,6 @@ pub fn rank_workers(candidates: Vec<NodeInfo>) -> Vec<NodeInfo> {
 pub fn rank_workers_with_scores(candidates: Vec<NodeInfo>) -> Vec<RankedWorker> {
     let weights = SchedulerWeights::default();
 
-    if candidates.len() <= 1 {
-        return candidates
-            .into_iter()
-            .map(|node| RankedWorker { node, score: 0.0 })
-            .collect();
-    }
-
     let max_compute = candidates
         .iter()
         .map(compute_capacity)
