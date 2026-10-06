@@ -280,6 +280,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capability.storage_write_mb_per_sec = benchmark.storage_write_mb_per_sec;
     }
 
+    let mut network_samples_us = Vec::with_capacity(5);
+
+    client
+        .network_ping(Request::new(NetworkPingRequest {
+            node_id: node.node_id.clone(),
+        }))
+        .await?;
+
+    for _ in 0..5 {
+        let started = Instant::now();
+
+        client
+            .network_ping(Request::new(NetworkPingRequest {
+                node_id: node.node_id.clone(),
+            }))
+            .await?;
+
+        network_samples_us.push(started.elapsed().as_micros() as u64);
+    }
+
+    network_samples_us.sort_unstable();
+    let network_rtt_us = network_samples_us
+        .get(network_samples_us.len() / 2)
+        .copied()
+        .unwrap_or_default() as f64;
+
+    if let Some(capability) = node.capability.as_mut() {
+        capability.network_rtt_us = network_rtt_us;
+    }
+
     client
         .report_capability(Request::new(ReportCapabilityRequest {
             node_id: node.node_id.clone(),
@@ -292,6 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_ops_per_sec = node.capability.as_ref().map(|c| c.cpu_ops_per_sec).unwrap_or_default(),
         memory_mb_per_sec = node.capability.as_ref().map(|c| c.memory_mb_per_sec).unwrap_or_default(),
         storage_write_mb_per_sec = node.capability.as_ref().map(|c| c.storage_write_mb_per_sec).unwrap_or_default(),
+        network_rtt_us,
         "benchmark concluído"
     );
 
