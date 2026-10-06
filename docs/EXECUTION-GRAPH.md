@@ -84,6 +84,33 @@ O mesmo mecanismo deve suportar processamento de documentos, áudio, visão, emb
 O Execution Graph deve ser independente do hardware físico e o Placement Plan deve ser independente do histórico bruto de telemetria.
 
 
+## Execução de DAG
+
+O Controller já executa um Execution Graph com múltiplas Work Units por níveis topológicos.
+
+O fluxo é:
+
+```
+Graph
+  ↓
+Placement Plan
+  ↓
+Level 0 → execução concorrente
+  ↓
+Level 1 → execução concorrente
+  ↓
+...
+```
+
+Cada nível só é iniciado após a conclusão bem-sucedida do nível anterior. Falhas impedem o avanço para os níveis seguintes. As reservas de capacidade são criadas por nível e liberadas após a conclusão das Work Units.
+
+Nesta etapa, depends_on representa uma dependência de controle e ordenação. O payload da Work Unit dependente ainda não recebe automaticamente o output da predecessora. O transporte explícito de tensores e buffers entre vértices será tratado junto ao modelo de dados de execução.
+
+## RPC
+
+O protocolo expõe SubmitGraph, que recebe um execution_id e uma coleção de Work Units com dependências e backends requeridos. O Controller constrói o grafo, calcula o placement e executa o DAG.
+
 ## Próxima evolução
+
 
 O próximo passo é transformar o Placement Plan em unidade de execução para grafos com múltiplas Work Units, incluindo dependências de dados, sincronização, execução concorrente, propagação de erro e replanejamento durante a execução.
