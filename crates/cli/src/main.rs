@@ -54,6 +54,9 @@ enum BenchmarkCommand {
 
         #[arg(long, default_value_t = 128)]
         cols: usize,
+
+        #[arg(long, default_value_t = 0, help = "máximo de Workers; 0 = todos os elegíveis")]
+        max_workers: u32,
     },
 }
 
@@ -127,7 +130,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Command::Benchmark { command } => match command {
-            BenchmarkCommand::DistributedMatmul { rows, inner, cols } => {
+            BenchmarkCommand::DistributedMatmul {
+                rows,
+                inner,
+                cols,
+                max_workers,
+            } => {
                 if rows == 0 || inner == 0 || cols == 0 {
                     return Err("dimensões devem ser maiores que zero".into());
                 }
@@ -150,15 +158,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         cols: cols as u32,
                         matrix_a: f32_to_bytes(&matrix_a),
                         matrix_b: f32_to_bytes(&matrix_b),
+                        max_workers,
                     }))
                     .await?
                     .into_inner();
 
+                let overhead_us =
+                    result.duration_us.saturating_sub(result.compute_duration_us);
+
                 println!(
-                    "accepted={} workers={} duration={}us output_bytes={} checksum={:.6}",
+                    "accepted={} workers={} duration={}us compute={}us overhead~={}us input_bytes_sent={} output_bytes={} checksum={:.6}",
                     result.accepted,
                     result.workers_used,
                     result.duration_us,
+                    result.compute_duration_us,
+                    overhead_us,
+                    result.input_bytes_sent,
                     result.matrix_c.len(),
                     checksum_f32_bytes(&result.matrix_c),
                 );
