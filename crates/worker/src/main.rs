@@ -103,7 +103,7 @@ impl WorkerRuntime for WorkerService {
             return Err(Status::invalid_argument("dimensões inválidas"));
         }
 
-        if row_start.checked_add(row_count).unwrap_or(usize::MAX) > rows {
+        if row_start.saturating_add(row_count) > rows {
             return Err(Status::invalid_argument(
                 "bloco ultrapassa número de linhas",
             ));
@@ -147,14 +147,15 @@ impl WorkerRuntime for WorkerService {
 }
 
 fn bytes_to_f32(bytes: &[u8]) -> Option<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
+    let (chunks, remainder) = bytes.as_chunks::<4>();
+    if !remainder.is_empty() {
         return None;
     }
 
     Some(
-        bytes
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("chunk com 4 bytes")))
+        chunks
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect(),
     )
 }
