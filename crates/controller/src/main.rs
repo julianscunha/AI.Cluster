@@ -311,7 +311,7 @@ impl ClusterControl for Controller {
         let started = Instant::now();
         let mut jobs = JoinSet::new();
 
-        for (node, (row_start, row_count)) in workers.into_iter().zip(ranges.into_iter()) {
+        for (node, (row_start, row_count)) in workers.into_iter().zip(ranges) {
             let endpoint = node.worker_endpoint.clone();
             let work_id = req.work_id.clone();
             let a_start = row_start
@@ -464,7 +464,7 @@ fn validate_matrix_blocks(
             ));
         }
 
-        if row_count == 0 || row_start.checked_add(row_count).unwrap_or(usize::MAX) > rows {
+        if row_count == 0 || row_start.saturating_add(row_count) > rows {
             return Err(Status::internal(
                 "bloco retornado possui intervalo de linhas inválido",
             ));
