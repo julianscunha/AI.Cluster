@@ -12,18 +12,13 @@ pub struct MemoryInfo {
     pub total_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum StorageKind {
     Hdd,
     SataSsd,
     Nvme,
+    #[default]
     Unknown,
-}
-
-impl Default for StorageKind {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
