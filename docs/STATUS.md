@@ -28,9 +28,11 @@ Arquitetura: v0.1
 - descoberta real de CPU, memória e armazenamento;
 - benchmark inicial de capability no ingresso do Worker;
 - RTT e throughput gRPC do Worker para o Controller;
+- Scheduler implementado como componente separado;
 - seleção inicial de Worker por score;
 - controle de carga ativa e reserva/liberação de Work Units;
 - execução distribuída inicial de multiplicação matricial;
+- shard de linhas de A enviado individualmente a cada Worker;
 - benchmark de escalabilidade com comparação de 1 a N Workers;
 - validação de integridade dos blocos retornados.
 
