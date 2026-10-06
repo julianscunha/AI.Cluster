@@ -71,8 +71,20 @@ A otimização de distribuição de tensores, cache, compressão, locality e tra
 
 ## CLI
 
+Execução de um benchmark com um limite de Workers:
+
 ```text
-ai-cluster benchmark distributed-matmul --rows 128 --inner 128 --cols 128
+ai-cluster benchmark distributed-matmul --rows 128 --inner 128 --cols 128 --max-workers 2
 ```
 
-O comando retorna Workers utilizados, duração, tamanho do resultado e checksum.
+O comando retorna Workers utilizados, duração total, duração crítica de compute, overhead aproximado, bytes de entrada enviados, tamanho do resultado e checksum.
+
+Para medir escalabilidade automaticamente:
+
+```text
+ai-cluster benchmark scaling --rows 256 --inner 256 --cols 256 --worker-counts 1,2,3
+```
+
+O comando executa sequencialmente os pontos solicitados, garante a presença do baseline de 1 Worker, valida o checksum entre execuções e calcula speedup e eficiência paralela.
+
+A duração total inclui comunicação, serialização e demais overheads observados pelo Controller. `compute_duration_us` representa o maior tempo de compute retornado entre os Workers, portanto é a parcela crítica do trabalho paralelo.
