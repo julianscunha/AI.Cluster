@@ -197,6 +197,14 @@ mod tests {
     }
 
     #[test]
+    fn rank_calcula_score_com_um_unico_node() {
+        let ranked = rank_workers_with_scores(vec![node("single", 100.0, 0, 100.0, 100.0)]);
+
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].score > 0.0);
+    }
+
+    #[test]
     fn rank_prioriza_capacidade() {
         let ranked = rank_workers(vec![
             node("slow", 100.0, 0, 100.0, 100.0),
