@@ -153,10 +153,6 @@ impl Controller {
             }
         }
 
-        for node in &mut candidates {
-            node.active_work_units = node.active_work_units.saturating_add(1);
-        }
-
         candidates
     }
 
