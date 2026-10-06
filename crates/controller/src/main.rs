@@ -26,6 +26,57 @@ impl Default for Controller {
     }
 }
 
+fn compute_capacity(node: &NodeInfo) -> f64 {
+    node.capability
+        .as_ref()
+        .map(|capability| {
+            if capability.cpu_ops_per_sec > 0.0 {
+                capability.cpu_ops_per_sec
+            } else {
+                f64::from(capability.cpu_logical_cores)
+            }
+        })
+        .unwrap_or(0.0)
+}
+
+fn worker_score(
+    node: &NodeInfo,
+    max_compute: f64,
+    max_cores: u32,
+    min_rtt_us: f64,
+) -> f64 {
+    let capability = node.capability.as_ref();
+    let capacity = compute_capacity(node);
+    let compute_score = capacity / max_compute.max(1.0);
+    let core_score = capability
+        .map(|value| f64::from(value.cpu_logical_cores) / f64::from(max_cores))
+        .unwrap_or(0.0);
+    let capacity_score = if capacity > 0.0 {
+        compute_score
+    } else {
+        core_score
+    };
+
+    let health_score = node
+        .health
+        .as_ref()
+        .map(|health| health.overall.clamp(0.0, 1.0))
+        .unwrap_or(1.0);
+
+    let load_score = 1.0 / (1.0 + f64::from(node.active_work_units));
+
+    let network_score = capability
+        .map(|value| value.network_rtt_us)
+        .filter(|rtt| *rtt > 0.0 && min_rtt_us.is_finite())
+        .map(|rtt| (min_rtt_us / rtt).clamp(0.0, 1.0))
+        .unwrap_or(0.5);
+
+    (capacity_score * 0.50)
+        + (health_score * 0.25)
+        + (load_score * 0.15)
+        + (network_score * 0.10)
+}
+
 impl Controller {
     fn new() -> Self {
         Self {
@@ -35,23 +86,19 @@ impl Controller {
     }
 
     async fn select_worker(&self) -> Result<NodeInfo, Status> {
-        let nodes = self.nodes.read().await;
-
-        nodes
-            .values()
-            .filter(|node| {
-                matches!(
-                    NodeState::try_from(node.state),
-                    Ok(NodeState::Ready | NodeState::Active)
-                ) && !node.worker_endpoint.is_empty()
-            })
-            .min_by_key(|node| node.last_heartbeat_unix_ms)
-            .cloned()
+        self.select_workers(1)
+            .await
+            .into_iter()
+            .next()
             .ok_or_else(|| Status::unavailable("nenhum worker disponível"))
     }
 
     async fn select_workers(&self, requested: usize) -> Vec<NodeInfo> {
-        let nodes = self.nodes.read().await;
+        if requested == 0 {
+            return Vec::new();
+        }
+
+        let mut nodes = self.nodes.write().await;
 
         let mut candidates: Vec<NodeInfo> = nodes
             .values()
@@ -64,9 +111,75 @@ impl Controller {
             .cloned()
             .collect();
 
-        candidates.sort_by_key(|node| node.last_heartbeat_unix_ms);
-        candidates.truncate(requested);
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let max_compute = candidates
+            .iter()
+            .map(compute_capacity)
+            .fold(0.0_f64, f64::max)
+            .max(1.0);
+
+        let max_cores = candidates
+            .iter()
+            .map(|node| {
+                node.capability
+                    .as_ref()
+                    .map(|capability| capability.cpu_logical_cores)
+                    .unwrap_or_default()
+            })
+            .max()
+            .unwrap_or_default()
+            .max(1);
+
+        let min_rtt_us = candidates
+            .iter()
+            .filter_map(|node| {
+                node.capability
+                    .as_ref()
+                    .map(|capability| capability.network_rtt_us)
+                    .filter(|rtt| *rtt > 0.0)
+            })
+            .fold(f64::INFINITY, f64::min);
+
+        candidates.sort_by(|left, right| {
+            worker_score(right, max_compute, max_cores, min_rtt_us)
+                .partial_cmp(&worker_score(left, max_compute, max_cores, min_rtt_us))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let selected_count = requested.min(candidates.len());
+        candidates.truncate(selected_count);
+
+        let selected_ids: Vec<String> =
+            candidates.iter().map(|node| node.node_id.clone()).collect();
+
+        for node_id in &selected_ids {
+            if let Some(node) = nodes.get_mut(node_id) {
+                node.active_work_units = node.active_work_units.saturating_add(1);
+            }
+        }
+
+        for node in &mut candidates {
+            node.active_work_units = node.active_work_units.saturating_add(1);
+        }
+
         candidates
+    }
+
+    async fn release_workers(&self, node_ids: &[String]) {
+        if node_ids.is_empty() {
+            return;
+        }
+
+        let mut nodes = self.nodes.write().await;
+
+        for node_id in node_ids {
+            if let Some(node) = nodes.get_mut(node_id) {
+                node.active_work_units = node.active_work_units.saturating_sub(1);
+            }
+        }
     }
 
     async fn reconcile_loop(self) {
@@ -102,6 +215,7 @@ impl ClusterControl for Controller {
 
         node.last_heartbeat_unix_ms = now_ms();
         node.state = NodeState::Ready as i32;
+        node.active_work_units = 0;
 
         let mut nodes = self.nodes.write().await;
         nodes.insert(node.node_id.clone(), node.clone());
@@ -201,17 +315,24 @@ impl ClusterControl for Controller {
 
         let node = self.select_worker().await?;
 
-        let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
-            .await
-            .map_err(|error| Status::unavailable(format!("worker indisponível: {error}")))?;
+        let execution_result = async {
+            let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
+                .await
+                .map_err(|error| Status::unavailable(format!("worker indisponível: {error}")))?;
 
-        let result = client
-            .execute_work(Request::new(ExecuteWorkRequest {
-                work: Some(work.clone()),
-            }))
-            .await
-            .map_err(|error| Status::unavailable(format!("execução falhou: {error}")))?
-            .into_inner();
+            client
+                .execute_work(Request::new(ExecuteWorkRequest {
+                    work: Some(work.clone()),
+                }))
+                .await
+                .map_err(|error| Status::unavailable(format!("execução falhou: {error}")))
+                .map(|response| response.into_inner())
+        }
+        .await;
+
+        self.release_workers(std::slice::from_ref(&node.node_id)).await;
+
+        let result = execution_result?;
 
         if !result.accepted {
             return Err(Status::aborted(result.message));
@@ -247,6 +368,9 @@ impl ClusterControl for Controller {
         if workers.is_empty() {
             return Err(Status::unavailable("nenhum worker disponível"));
         }
+
+        let reserved_worker_ids: Vec<String> =
+            workers.iter().map(|node| node.node_id.clone()).collect();
 
         let worker_count = workers.len().min(rows);
         let mut ranges = Vec::with_capacity(worker_count);
@@ -301,13 +425,26 @@ impl ClusterControl for Controller {
         }
 
         let mut blocks = Vec::with_capacity(worker_count);
+        let mut execution_error = None;
 
         while let Some(joined) = jobs.join_next().await {
-            let block = joined
-                .map_err(|e| Status::internal(format!("task do worker falhou: {e}")))?
-                .map_err(Status::unavailable)?;
+            match joined {
+                Ok(Ok(block)) => blocks.push(block),
+                Ok(Err(error)) => {
+                    execution_error = Some(Status::unavailable(error));
+                }
+                Err(error) => {
+                    execution_error = Some(Status::internal(format!(
+                        "task do worker falhou: {error}"
+                    )));
+                }
+            }
+        }
 
-            blocks.push(block);
+        self.release_workers(&reserved_worker_ids).await;
+
+        if let Some(error) = execution_error {
+            return Err(error);
         }
 
         blocks.sort_by_key(|block| block.row_start);
