@@ -19,11 +19,27 @@ impl Default for SchedulerWeights {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RankedWorker {
+    pub node: NodeInfo,
+    pub score: f64,
+}
+
 pub fn rank_workers(candidates: Vec<NodeInfo>) -> Vec<NodeInfo> {
+    rank_workers_with_scores(candidates)
+        .into_iter()
+        .map(|worker| worker.node)
+        .collect()
+}
+
+pub fn rank_workers_with_scores(candidates: Vec<NodeInfo>) -> Vec<RankedWorker> {
     let weights = SchedulerWeights::default();
 
     if candidates.len() <= 1 {
-        return candidates;
+        return candidates
+            .into_iter()
+            .map(|node| RankedWorker { node, score: 0.0 })
+            .collect();
     }
 
     let max_compute = candidates
@@ -65,26 +81,27 @@ pub fn rank_workers(candidates: Vec<NodeInfo>) -> Vec<NodeInfo> {
         .fold(0.0_f64, f64::max)
         .max(1.0);
 
-    let mut ranked = candidates;
+    let mut ranked: Vec<RankedWorker> = candidates
+        .into_iter()
+        .map(|node| {
+            let score = score_worker(
+                &node,
+                max_compute,
+                max_cores,
+                min_rtt_us,
+                max_network_mb_per_sec,
+                weights,
+            );
+
+            RankedWorker { node, score }
+        })
+        .collect();
 
     ranked.sort_by(|left, right| {
-        score_worker(
-            right,
-            max_compute,
-            max_cores,
-            min_rtt_us,
-            max_network_mb_per_sec,
-            weights,
-        )
-        .partial_cmp(&score_worker(
-            left,
-            max_compute,
-            max_cores,
-            min_rtt_us,
-            max_network_mb_per_sec,
-            weights,
-        ))
-        .unwrap_or(std::cmp::Ordering::Equal)
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     ranked
