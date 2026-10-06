@@ -55,6 +55,7 @@ message NodeInfo {
   string os_version = 8;
   string runtime_version = 9;
   int64 last_heartbeat_unix_ms = 10;
+  string worker_endpoint = 11;
 }
 
 message RegisterNodeRequest { NodeInfo node = 1; }
@@ -100,10 +101,43 @@ message ListNodesResponse {
   repeated NodeInfo nodes = 1;
 }
 
+message WorkUnit {
+  string work_id = 1;
+  string operation = 2;
+  bytes payload = 3;
+  int32 priority = 4;
+}
+
+message SubmitWorkRequest { WorkUnit work = 1; }
+
+message SubmitWorkResponse {
+  bool accepted = 1;
+  string message = 2;
+  string assigned_node_id = 3;
+  string operation = 4;
+  uint64 duration_us = 5;
+  bytes output = 6;
+}
+
+message ExecuteWorkRequest { WorkUnit work = 1; }
+
+message ExecuteWorkResponse {
+  bool accepted = 1;
+  string message = 2;
+  string node_id = 3;
+  uint64 duration_us = 4;
+  bytes output = 5;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(ReportHealthRequest) returns (ReportHealthResponse);
   rpc ReportCapability(ReportCapabilityRequest) returns (ReportCapabilityResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc SubmitWork(SubmitWorkRequest) returns (SubmitWorkResponse);
+}
+
+service WorkerRuntime {
+  rpc ExecuteWork(ExecuteWorkRequest) returns (ExecuteWorkResponse);
 }
