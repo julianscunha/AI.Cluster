@@ -65,9 +65,9 @@ Comparar:
 
 ## Limitação atual
 
-O particionamento ainda é simples: as matrizes completas são enviadas a cada Worker. Isso é proposital para o primeiro experimento.
+A matriz A já é particionada por linhas: cada Worker recebe somente seu shard de A. A matriz B ainda é replicada integralmente para cada Worker.
 
-A otimização de distribuição de tensores, cache, compressão, locality e transferência incremental será implementada depois que o comportamento básico for medido.
+A próxima otimização será distribuir B por shards quando o benefício de reduzir tráfego superar o custo de sincronização, cache e acesso aos blocos compartilhados.
 
 ## CLI
 
