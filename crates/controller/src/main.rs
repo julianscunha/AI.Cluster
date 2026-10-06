@@ -485,6 +485,7 @@ impl ClusterControl for Controller {
         Ok(Response::new(NetworkPingResponse {
             accepted: true,
             message: "probe recebido".into(),
+            payload: req.payload,
         }))
     }
 
