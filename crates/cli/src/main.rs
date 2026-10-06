@@ -191,7 +191,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for max_workers in worker_counts {
                     let result =
-                        run_distributed_matmul(&cli.controller, rows, inner, cols, max_workers).await?;
+                        run_distributed_matmul(&cli.controller, rows, inner, cols, max_workers)
+                            .await?;
 
                     let checksum = checksum_f32_bytes(&result.matrix_c);
 
