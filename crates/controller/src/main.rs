@@ -110,6 +110,20 @@ impl Controller {
         candidates
     }
 
+    async fn reserve_workers(&self, node_ids: &[String]) {
+        if node_ids.is_empty() {
+            return;
+        }
+
+        let mut nodes = self.nodes.write().await;
+
+        for node_id in node_ids {
+            if let Some(node) = nodes.get_mut(node_id) {
+                node.active_work_units = node.active_work_units.saturating_add(1);
+            }
+        }
+    }
+
     async fn release_workers(&self, node_ids: &[String]) {
         if node_ids.is_empty() {
             return;
@@ -262,23 +276,9 @@ impl ClusterControl for Controller {
             ));
         }
 
-        let execution_result = async {
-            let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
-                .await
-                .map_err(|error| Status::unavailable(format!("worker indisponível: {error}")))?;
+        let execution_result = execute_work_on_node(node.clone(), work.clone()).await;
 
-            client
-                .execute_work(Request::new(ExecuteWorkRequest {
-                    work: Some(work.clone()),
-                }))
-                .await
-                .map_err(|error| Status::unavailable(format!("execução falhou: {error}")))
-                .map(|response| response.into_inner())
-        }
-        .await;
-
-        self.release_workers(std::slice::from_ref(&node.node_id))
-            .await;
+        self.release_workers(std::slice::from_ref(&node.node_id)).await;
 
         let result = execution_result?;
 
@@ -293,6 +293,64 @@ impl ClusterControl for Controller {
             operation: work.operation,
             duration_us: result.duration_us,
             output: result.output,
+        }))
+    }
+
+    async fn submit_graph(
+        &self,
+        request: Request<SubmitGraphRequest>,
+    ) -> Result<Response<SubmitGraphResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.execution_id.is_empty() {
+            return Err(Status::invalid_argument("execution_id é obrigatório"));
+        }
+
+        if req.units.is_empty() {
+            return Err(Status::invalid_argument(
+                "o grafo deve possuir ao menos uma work unit",
+            ));
+        }
+
+        let mut graph = execution::ExecutionGraph::new(req.execution_id.clone());
+
+        for graph_unit in req.units {
+            let work = graph_unit
+                .work
+                .ok_or_else(|| Status::invalid_argument("work é obrigatória"))?;
+
+            graph
+                .add_unit(
+                    execution::WorkUnitSpec::new(work)
+                        .with_dependencies(graph_unit.depends_on)
+                        .with_required_backends(graph_unit.required_backends),
+                )
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        }
+
+        let nodes = {
+            let nodes = self.nodes.read().await;
+            nodes.values().cloned().collect::<Vec<_>>()
+        };
+
+        let plan = execution::PlacementPlanner::default()
+            .plan(&graph, &nodes)
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+
+        info!(
+            execution_id = %plan.execution_id,
+            work_units = graph.units.len(),
+            assignments = plan.assignments.len(),
+            "execution graph planejado"
+        );
+
+        let results = self.execute_graph(&graph, &plan).await?;
+
+        Ok(Response::new(SubmitGraphResponse {
+            accepted: true,
+            message: "execution graph concluído".into(),
+            execution_id: plan.execution_id,
+            results,
         }))
     }
 
@@ -467,6 +525,117 @@ impl ClusterControl for Controller {
             nodes: nodes.values().cloned().collect(),
         }))
     }
+
+    async fn execute_graph(
+        &self,
+        graph: &execution::ExecutionGraph,
+        plan: &execution::PlacementPlan,
+    ) -> Result<Vec<GraphWorkResult>, Status> {
+        let levels = graph
+            .levels()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        let mut results = Vec::with_capacity(graph.units.len());
+
+        for level in levels {
+            let mut executions = Vec::with_capacity(level.len());
+            let mut reserved_node_ids = Vec::with_capacity(level.len());
+
+            {
+                let nodes = self.nodes.read().await;
+
+                for work_unit_id in &level {
+                    let assignment = plan
+                        .node_for(work_unit_id)
+                        .ok_or_else(|| Status::internal("placement plan não contém a work unit"))?;
+
+                    let node = nodes.get(&assignment.node_id).cloned().ok_or_else(|| {
+                        Status::unavailable("node selecionado não está disponível")
+                    })?;
+
+                    if node.worker_endpoint.is_empty() {
+                        return Err(Status::unavailable(
+                            "node selecionado não possui endpoint de worker",
+                        ));
+                    }
+
+                    let unit = graph
+                        .units
+                        .iter()
+                        .find(|unit| unit.work.work_id == *work_unit_id)
+                        .ok_or_else(|| {
+                            Status::internal("work unit não encontrada no grafo")
+                        })?;
+
+                    executions.push((unit.work.clone(), node));
+                    reserved_node_ids.push(assignment.node_id.clone());
+                }
+            }
+
+            self.reserve_workers(&reserved_node_ids).await;
+
+            let mut jobs = JoinSet::new();
+
+            for (work, node) in executions {
+                jobs.spawn(async move {
+                    let result = execute_work_on_node(node, work.clone()).await?;
+                    Ok::<GraphWorkResult, Status>(GraphWorkResult {
+                        work_id: work.work_id,
+                        accepted: result.accepted,
+                        message: result.message,
+                        node_id: result.node_id,
+                        duration_us: result.duration_us,
+                        output: result.output,
+                    })
+                });
+            }
+
+            let mut level_results = Vec::new();
+            let mut execution_error = None;
+
+            while let Some(joined) = jobs.join_next().await {
+                match joined {
+                    Ok(Ok(result)) if result.accepted => level_results.push(result),
+                    Ok(Ok(result)) => {
+                        execution_error = Some(Status::aborted(result.message));
+                    }
+                    Ok(Err(error)) => {
+                        execution_error = Some(error);
+                    }
+                    Err(error) => {
+                        execution_error =
+                            Some(Status::internal(format!("task da work unit falhou: {error}")));
+                    }
+                }
+            }
+
+            self.release_workers(&reserved_node_ids).await;
+
+            if let Some(error) = execution_error {
+                return Err(error);
+            }
+
+            level_results.sort_by(|left, right| left.work_id.cmp(&right.work_id));
+            results.extend(level_results);
+        }
+
+        Ok(results)
+    }
+}
+
+async fn execute_work_on_node(
+    node: NodeInfo,
+    work: WorkUnit,
+) -> Result<ExecuteWorkResponse, Status> {
+    let mut client = WorkerRuntimeClient::connect(node.worker_endpoint)
+        .await
+        .map_err(|error| Status::unavailable(format!("worker indisponível: {error}")))?;
+
+    client
+        .execute_work(Request::new(ExecuteWorkRequest { work: Some(work) }))
+        .await
+        .map_err(|error| Status::unavailable(format!("execução falhou: {error}")))
+        .map(|response| response.into_inner())
 }
 
 fn validate_matrix_blocks(
