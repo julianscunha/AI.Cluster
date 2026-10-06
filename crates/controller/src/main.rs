@@ -14,6 +14,8 @@ use tokio::{sync::RwLock, task::JoinSet};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+mod scheduler;
+
 #[derive(Clone)]
 struct Controller {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
@@ -24,67 +26,6 @@ impl Default for Controller {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn compute_capacity(node: &NodeInfo) -> f64 {
-    node.capability
-        .as_ref()
-        .map(|capability| {
-            if capability.cpu_ops_per_sec > 0.0 {
-                capability.cpu_ops_per_sec
-            } else {
-                f64::from(capability.cpu_logical_cores)
-            }
-        })
-        .unwrap_or(0.0)
-}
-
-fn worker_score(
-    node: &NodeInfo,
-    max_compute: f64,
-    max_cores: u32,
-    min_rtt_us: f64,
-    max_network_mb_per_sec: f64,
-) -> f64 {
-    let capability = node.capability.as_ref();
-    let capacity = compute_capacity(node);
-    let compute_score = capacity / max_compute.max(1.0);
-    let core_score = capability
-        .map(|value| f64::from(value.cpu_logical_cores) / f64::from(max_cores))
-        .unwrap_or(0.0);
-    let capacity_score = if capacity > 0.0 {
-        compute_score
-    } else {
-        core_score
-    };
-
-    let health_score = node
-        .health
-        .as_ref()
-        .map(|health| health.overall.clamp(0.0, 1.0))
-        .unwrap_or(1.0);
-
-    let load_score = 1.0 / (1.0 + f64::from(node.active_work_units));
-
-    let network_score = capability
-        .map(|value| {
-            let latency_score = if value.network_rtt_us > 0.0 && min_rtt_us.is_finite() {
-                (min_rtt_us / value.network_rtt_us).clamp(0.0, 1.0)
-            } else {
-                0.5
-            };
-
-            let throughput_score = if value.network_mb_per_sec > 0.0 {
-                (value.network_mb_per_sec / max_network_mb_per_sec.max(1.0)).clamp(0.0, 1.0)
-            } else {
-                0.5
-            };
-
-            (latency_score * 0.5) + (throughput_score * 0.5)
-        })
-        .unwrap_or(0.5);
-
-    (capacity_score * 0.50) + (health_score * 0.25) + (load_score * 0.15) + (network_score * 0.10)
 }
 
 impl Controller {
@@ -125,62 +66,7 @@ impl Controller {
             return Vec::new();
         }
 
-        let max_compute = candidates
-            .iter()
-            .map(compute_capacity)
-            .fold(0.0_f64, f64::max)
-            .max(1.0);
-
-        let max_cores = candidates
-            .iter()
-            .map(|node| {
-                node.capability
-                    .as_ref()
-                    .map(|capability| capability.cpu_logical_cores)
-                    .unwrap_or_default()
-            })
-            .max()
-            .unwrap_or_default()
-            .max(1);
-
-        let min_rtt_us = candidates
-            .iter()
-            .filter_map(|node| {
-                node.capability
-                    .as_ref()
-                    .map(|capability| capability.network_rtt_us)
-                    .filter(|rtt| *rtt > 0.0)
-            })
-            .fold(f64::INFINITY, f64::min);
-
-        let max_network_mb_per_sec = candidates
-            .iter()
-            .filter_map(|node| {
-                node.capability
-                    .as_ref()
-                    .map(|capability| capability.network_mb_per_sec)
-                    .filter(|throughput| *throughput > 0.0)
-            })
-            .fold(0.0_f64, f64::max)
-            .max(1.0);
-
-        candidates.sort_by(|left, right| {
-            worker_score(
-                right,
-                max_compute,
-                max_cores,
-                min_rtt_us,
-                max_network_mb_per_sec,
-            )
-            .partial_cmp(&worker_score(
-                left,
-                max_compute,
-                max_cores,
-                min_rtt_us,
-                max_network_mb_per_sec,
-            ))
-            .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        candidates = scheduler::rank_workers(candidates);
 
         let selected_count = requested.min(candidates.len());
         candidates.truncate(selected_count);
@@ -649,60 +535,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::worker_score;
-    use real_ai_cluster_protocol::v1::{Capability, Health, NodeInfo};
-
-    fn node(cpu_ops_per_sec: f64, active_work_units: u32, network_rtt_us: f64) -> NodeInfo {
-        NodeInfo {
-            node_id: "test".into(),
-            capability: Some(Capability {
-                execution_backends: vec!["cpu".into()],
-                cpu_logical_cores: 4,
-                cpu_ops_per_sec,
-                network_rtt_us,
-                ..Default::default()
-            }),
-            health: Some(Health {
-                overall: 1.0,
-                ..Default::default()
-            }),
-            active_work_units,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn score_prioriza_capacidade_quando_as_demais_variaveis_sao_iguais() {
-        let faster = node(200.0, 0, 100.0);
-        let slower = node(100.0, 0, 100.0);
-
-        let faster_score = worker_score(&faster, 200.0, 4, 100.0, 100.0);
-        let slower_score = worker_score(&slower, 200.0, 4, 100.0, 100.0);
-
-        assert!(faster_score > slower_score);
-    }
-
-    #[test]
-    fn score_penaliza_carga_ativa() {
-        let idle = node(100.0, 0, 100.0);
-        let busy = node(100.0, 3, 100.0);
-
-        let idle_score = worker_score(&idle, 100.0, 4, 100.0, 100.0);
-        let busy_score = worker_score(&busy, 100.0, 4, 100.0, 100.0);
-
-        assert!(idle_score > busy_score);
-    }
-
-    #[test]
-    fn score_prefere_menor_rtt_quando_capacidade_e_carga_sao_iguais() {
-        let near = node(100.0, 0, 100.0);
-        let far = node(100.0, 0, 500.0);
-
-        let near_score = worker_score(&near, 100.0, 4, 100.0, 100.0);
-        let far_score = worker_score(&far, 100.0, 4, 100.0, 100.0);
-
-        assert!(near_score > far_score);
-    }
-}
