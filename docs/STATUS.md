@@ -39,7 +39,11 @@ Arquitetura: v0.1
 - cálculo de níveis topológicos para paralelismo;
 - Placement Plan separado do Execution Graph;
 - filtro de placement por backend requerido;
-- placement integrado ao caminho de SubmitWork.
+- placement integrado ao caminho de SubmitWork;
+- execução de DAG por níveis topológicos;
+- execução concorrente de Work Units dentro do mesmo nível;
+- propagação de falha impedindo o avanço para o próximo nível;
+- RPC SubmitGraph para submissão de Execution Graph.
 
 ## Experimental
 
@@ -55,4 +59,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Completar a execução de DAGs: múltiplas Work Units, dependências de dados, concorrência por nível, propagação de erro e replanejamento do Placement Plan.
+Adicionar arestas de dados explícitas, sincronização de buffers/tensores, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
