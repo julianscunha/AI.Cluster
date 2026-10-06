@@ -39,12 +39,7 @@ fn compute_capacity(node: &NodeInfo) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn worker_score(
-    node: &NodeInfo,
-    max_compute: f64,
-    max_cores: u32,
-    min_rtt_us: f64,
-) -> f64 {
+fn worker_score(node: &NodeInfo, max_compute: f64, max_cores: u32, min_rtt_us: f64) -> f64 {
     let capability = node.capability.as_ref();
     let capacity = compute_capacity(node);
     let compute_score = capacity / max_compute.max(1.0);
@@ -457,10 +452,9 @@ impl ClusterControl for Controller {
             .max()
             .unwrap_or_default();
 
-        let per_worker_input_bytes = (req.matrix_a.len() as u64)
-            .saturating_add(req.matrix_b.len() as u64);
-        let input_bytes_sent =
-            per_worker_input_bytes.saturating_mul(blocks.len() as u64);
+        let per_worker_input_bytes =
+            (req.matrix_a.len() as u64).saturating_add(req.matrix_b.len() as u64);
+        let input_bytes_sent = per_worker_input_bytes.saturating_mul(blocks.len() as u64);
 
         let mut matrix_c = Vec::with_capacity(rows * cols * std::mem::size_of::<f32>());
 
