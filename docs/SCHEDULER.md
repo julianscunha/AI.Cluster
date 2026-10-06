@@ -22,7 +22,7 @@ A implementação inicial calcula um score por Worker elegível usando quatro fa
 | Capacidade de compute | 50% |
 | Saúde | 25% |
 | Carga ativa | 15% |
-| RTT de rede | 10% |
+| Rede (latência + throughput) | 10% |
 
 A capacidade de compute usa `cpu_ops_per_sec` quando disponível e `cpu_logical_cores` como fallback. A carga ativa é medida pelo número de Work Units atualmente reservadas pelo Controller.
 
@@ -38,7 +38,7 @@ score =
 
 Cada componente é normalizado entre os candidatos quando aplicável. Menor RTT e menor carga aumentam o score.
 
-Essa fórmula é deliberadamente inicial. Os pesos não são requisito definitivo e deverão ser recalibrados com dados de execução real.
+Essa fórmula é deliberadamente inicial. Os pesos não são requisito definitivo e deverão ser recalibrados com dados de execução real. O componente de rede combina latência e throughput antes de aplicar seu peso global.
 
 ## Fluxo de decisão
 
@@ -61,7 +61,7 @@ Work Unit
 
 O Worker mede o RTT de uma chamada gRPC de controle entre Worker e Controller. O valor armazenado em `Capability.network_rtt_us` representa RTT do plano de controle, incluindo o overhead do transporte gRPC; não é uma medição ICMP nem uma capacidade de throughput.
 
-A medição usa uma chamada de aquecimento e múltiplas amostras, reportando a mediana.
+A medição usa uma chamada de aquecimento e múltiplas amostras, reportando a mediana. Para workloads com transferência de dados, o Scheduler também considera `network_mb_per_sec`, medido como throughput efetivo round-trip do gRPC com payload de teste.
 
 ## Carga
 
