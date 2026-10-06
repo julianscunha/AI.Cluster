@@ -256,9 +256,11 @@ impl ClusterControl for Controller {
             .ok_or_else(|| Status::invalid_argument("work é obrigatório"))?;
 
         let (placement_plan, node) = self.plan_single_work(&work).await?;
-        let _assignment = placement_plan
-            .node_for(&work.work_id)
-            .ok_or_else(|| Status::internal("placement inválido para a work unit"))?;
+        if placement_plan.node_for(&work.work_id).is_none() {
+            return Err(Status::internal(
+                "placement inválido para a work unit",
+            ));
+        }
 
         let execution_result = async {
             let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
