@@ -97,14 +97,29 @@ pub fn matmul_block(
     assert_eq!(b.len(), inner * cols);
     assert!(row_start + row_count <= rows);
 
+    let start = row_start * inner;
+    let end = (row_start + row_count) * inner;
+
+    matmul_row_shard(inner, cols, row_count, &a[start..end], b)
+}
+
+pub fn matmul_row_shard(
+    inner: usize,
+    cols: usize,
+    row_count: usize,
+    a_shard: &[f32],
+    b: &[f32],
+) -> Vec<f32> {
+    assert_eq!(a_shard.len(), row_count * inner);
+    assert_eq!(b.len(), inner * cols);
+
     let mut output = vec![0.0f32; row_count * cols];
 
     for local_row in 0..row_count {
-        let row = row_start + local_row;
         for col in 0..cols {
             let mut sum = 0.0f32;
             for k in 0..inner {
-                sum += a[row * inner + k] * b[k * cols + col];
+                sum += a_shard[local_row * inner + k] * b[k * cols + col];
             }
             output[local_row * cols + col] = sum;
         }
@@ -115,7 +130,7 @@ pub fn matmul_block(
 
 #[cfg(test)]
 mod tests {
-    use super::{matmul_block, run};
+    use super::{matmul_block, matmul_row_shard, run};
 
     #[test]
     fn benchmark_produz_valores_nao_negativos() {
@@ -132,6 +147,15 @@ mod tests {
         let c = matmul_block(2, 2, 2, 0, 2, &a, &b);
 
         assert_eq!(c, vec![19.0, 22.0, 43.0, 50.0]);
+    }
+
+    #[test]
+    fn matmul_row_shard_e_correto() {
+        let a = vec![3.0, 4.0];
+        let b = vec![5.0, 6.0, 7.0, 8.0];
+        let c = matmul_row_shard(2, 2, 1, &a, &b);
+
+        assert_eq!(c, vec![43.0, 50.0]);
     }
 
     #[test]
