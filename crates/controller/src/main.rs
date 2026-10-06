@@ -442,6 +442,8 @@ impl ClusterControl for Controller {
 
         blocks.sort_by_key(|block| block.row_start);
 
+        validate_matrix_blocks(rows, cols, &blocks)?;
+
         let compute_duration_us = blocks
             .iter()
             .map(|block| block.duration_us)
@@ -496,6 +498,57 @@ impl ClusterControl for Controller {
             nodes: nodes.values().cloned().collect(),
         }))
     }
+}
+
+fn validate_matrix_blocks(
+    rows: usize,
+    cols: usize,
+    blocks: &[ExecuteMatrixBlockResponse],
+) -> Result<(), Status> {
+    if blocks.is_empty() {
+        return Err(Status::internal("nenhum bloco retornado pelos workers"));
+    }
+
+    let mut next_row = 0usize;
+    let expected_block_bytes = |row_count: usize| {
+        row_count
+            .checked_mul(cols)
+            .and_then(|values| values.checked_mul(4))
+            .unwrap_or(usize::MAX)
+    };
+
+    for block in blocks {
+        let row_start = block.row_start as usize;
+        let row_count = block.row_count as usize;
+
+        if row_start != next_row {
+            return Err(Status::internal(
+                "blocos retornados não cobrem as linhas de forma contínua",
+            ));
+        }
+
+        if row_count == 0 || row_start.checked_add(row_count).unwrap_or(usize::MAX) > rows {
+            return Err(Status::internal(
+                "bloco retornado possui intervalo de linhas inválido",
+            ));
+        }
+
+        if block.matrix_c.len() != expected_block_bytes(row_count) {
+            return Err(Status::internal(
+                "tamanho da matriz C do bloco é incompatível",
+            ));
+        }
+
+        next_row += row_count;
+    }
+
+    if next_row != rows {
+        return Err(Status::internal(
+            "blocos retornados não cobrem todas as linhas da matriz C",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_matrix_payload(
