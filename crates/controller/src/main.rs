@@ -49,9 +49,9 @@ impl Controller {
             .plan(&graph, &candidates)
             .map_err(|error| Status::unavailable(error.to_string()))?;
 
-        let assignment = plan.node_for(&work.work_id).ok_or_else(|| {
-            Status::internal("placement plan não contém a work unit solicitada")
-        })?;
+        let assignment = plan
+            .node_for(&work.work_id)
+            .ok_or_else(|| Status::internal("placement plan não contém a work unit solicitada"))?;
 
         let node = nodes
             .get_mut(&assignment.node_id)
@@ -271,14 +271,13 @@ impl ClusterControl for Controller {
 
         let (placement_plan, node) = self.plan_single_work(&work).await?;
         if placement_plan.node_for(&work.work_id).is_none() {
-            return Err(Status::internal(
-                "placement inválido para a work unit",
-            ));
+            return Err(Status::internal("placement inválido para a work unit"));
         }
 
         let execution_result = execute_work_on_node(node.clone(), work.clone()).await;
 
-        self.release_workers(std::slice::from_ref(&node.node_id)).await;
+        self.release_workers(std::slice::from_ref(&node.node_id))
+            .await;
 
         let result = execution_result?;
 
@@ -563,9 +562,7 @@ impl ClusterControl for Controller {
                         .units
                         .iter()
                         .find(|unit| unit.work.work_id == *work_unit_id)
-                        .ok_or_else(|| {
-                            Status::internal("work unit não encontrada no grafo")
-                        })?;
+                        .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
                     executions.push((unit.work.clone(), node));
                     reserved_node_ids.push(assignment.node_id.clone());
@@ -603,8 +600,9 @@ impl ClusterControl for Controller {
                         execution_error = Some(error);
                     }
                     Err(error) => {
-                        execution_error =
-                            Some(Status::internal(format!("task da work unit falhou: {error}")));
+                        execution_error = Some(Status::internal(format!(
+                            "task da work unit falhou: {error}"
+                        )));
                     }
                 }
             }
