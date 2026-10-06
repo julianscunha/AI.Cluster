@@ -14,6 +14,7 @@ use tokio::{sync::RwLock, task::JoinSet};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+mod execution;
 mod scheduler;
 
 #[derive(Clone)]
@@ -36,12 +37,38 @@ impl Controller {
         }
     }
 
-    async fn select_worker(&self) -> Result<NodeInfo, Status> {
-        self.select_workers(1)
-            .await
-            .into_iter()
-            .next()
-            .ok_or_else(|| Status::unavailable("nenhum worker disponível"))
+    async fn plan_single_work(
+        &self,
+        work: &WorkUnit,
+    ) -> Result<(execution::PlacementPlan, NodeInfo), Status> {
+        let graph = execution::ExecutionGraph::single(work.clone());
+        let mut nodes = self.nodes.write().await;
+        let candidates: Vec<NodeInfo> = nodes.values().cloned().collect();
+
+        let plan = execution::PlacementPlanner::default()
+            .plan(&graph, &candidates)
+            .map_err(|error| Status::unavailable(error.to_string()))?;
+
+        let assignment = plan.node_for(&work.work_id).ok_or_else(|| {
+            Status::internal("placement plan não contém a work unit solicitada")
+        })?;
+
+        let node = nodes
+            .get_mut(&assignment.node_id)
+            .ok_or_else(|| Status::unavailable("node selecionado deixou de existir"))?;
+
+        node.active_work_units = node.active_work_units.saturating_add(1);
+
+        info!(
+            execution_id = %plan.execution_id,
+            work_unit_id = %assignment.work_unit_id,
+            node_id = %assignment.node_id,
+            rank = assignment.rank,
+            score = assignment.score,
+            "placement criado"
+        );
+
+        Ok((plan, node.clone()))
     }
 
     async fn select_workers(&self, requested: usize) -> Vec<NodeInfo> {
@@ -228,7 +255,10 @@ impl ClusterControl for Controller {
             .work
             .ok_or_else(|| Status::invalid_argument("work é obrigatório"))?;
 
-        let node = self.select_worker().await?;
+        let (placement_plan, node) = self.plan_single_work(&work).await?;
+        let _assignment = placement_plan
+            .node_for(&work.work_id)
+            .ok_or_else(|| Status::internal("placement inválido para a work unit"))?;
 
         let execution_result = async {
             let mut client = WorkerRuntimeClient::connect(node.worker_endpoint.clone())
