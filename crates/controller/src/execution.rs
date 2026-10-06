@@ -356,8 +356,12 @@ mod tests {
     #[test]
     fn execution_graph_calcula_niveis_de_paralelismo() {
         let mut graph = ExecutionGraph::new("exec-1");
-        graph.add_unit(WorkUnitSpec::new(work("w1", "echo"))).unwrap();
-        graph.add_unit(WorkUnitSpec::new(work("w2", "echo"))).unwrap();
+        graph
+            .add_unit(WorkUnitSpec::new(work("w1", "echo")))
+            .unwrap();
+        graph
+            .add_unit(WorkUnitSpec::new(work("w2", "echo")))
+            .unwrap();
         graph
             .add_unit(
                 WorkUnitSpec::new(work("w3", "echo"))
