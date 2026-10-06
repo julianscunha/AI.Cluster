@@ -1,0 +1,12 @@
+[package]
+name = "real-ai-cluster-controller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+real-ai-cluster-common = { path = "../common" }
+real-ai-cluster-protocol = { path = "../protocol" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "sync"] }
+tonic = { version = "0.14", features = ["transport"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

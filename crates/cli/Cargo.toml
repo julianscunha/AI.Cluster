@@ -1,0 +1,10 @@
+[package]
+name = "real-ai-cluster-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+real-ai-cluster-protocol = { path = "../protocol" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14", features = ["transport"] }
