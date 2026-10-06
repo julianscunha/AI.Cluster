@@ -314,7 +314,16 @@ impl ClusterControl for Controller {
         for (node, (row_start, row_count)) in workers.into_iter().zip(ranges.into_iter()) {
             let endpoint = node.worker_endpoint.clone();
             let work_id = req.work_id.clone();
-            let matrix_a = req.matrix_a.clone();
+            let a_start = row_start
+                .checked_mul(inner)
+                .and_then(|value| value.checked_mul(4))
+                .ok_or_else(|| Status::internal("offset do shard de A excede limite"))?;
+            let a_end = row_start
+                .checked_add(row_count)
+                .and_then(|end| end.checked_mul(inner))
+                .and_then(|value| value.checked_mul(4))
+                .ok_or_else(|| Status::internal("fim do shard de A excede limite"))?;
+            let matrix_a = req.matrix_a[a_start..a_end].to_vec();
             let matrix_b = req.matrix_b.clone();
 
             jobs.spawn(async move {
