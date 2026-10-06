@@ -109,7 +109,7 @@ impl WorkerRuntime for WorkerService {
             ));
         }
 
-        let a_shard = bytes_to_f32(&req.matrix_a)
+        let a_shard = bytes_to_f32(&req.matrix_a_shard)
             .ok_or_else(|| Status::invalid_argument("matrix_a inválida"))?;
         let b = bytes_to_f32(&req.matrix_b)
             .ok_or_else(|| Status::invalid_argument("matrix_b inválida"))?;
