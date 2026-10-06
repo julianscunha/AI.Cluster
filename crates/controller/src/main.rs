@@ -8,10 +8,16 @@ use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Controller {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     offline_after: Duration,
+}
+
+impl Default for Controller {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Controller {
@@ -34,7 +40,7 @@ impl Controller {
                     && now.saturating_sub(node.last_heartbeat_unix_ms) > timeout_ms
                     && node.state != NodeState::Offline as i32
                 {
-                    warn!(node_id = %node.node_id, "node marked offline");
+                    warn!(node_id = %node.node_id, "node marcado como offline");
                     node.state = NodeState::Offline as i32;
                 }
             }
@@ -48,9 +54,10 @@ impl ClusterControl for Controller {
         &self,
         request: Request<RegisterNodeRequest>,
     ) -> Result<Response<RegisterNodeResponse>, Status> {
-        let mut node = request.into_inner().node.ok_or_else(|| {
-            Status::invalid_argument("node é obrigatório")
-        })?;
+        let mut node = request
+            .into_inner()
+            .node
+            .ok_or_else(|| Status::invalid_argument("node é obrigatório"))?;
 
         node.last_heartbeat_unix_ms = now_ms();
         node.state = NodeState::Ready as i32;
@@ -74,11 +81,12 @@ impl ClusterControl for Controller {
         let req = request.into_inner();
         let mut nodes = self.nodes.write().await;
 
-        let node = nodes.get_mut(&req.node_id).ok_or_else(|| {
-            Status::not_found("node não registrado")
-        })?;
+        let node = nodes
+            .get_mut(&req.node_id)
+            .ok_or_else(|| Status::not_found("node não registrado"))?;
 
         node.last_heartbeat_unix_ms = req.unix_ms.max(now_ms());
+
         if node.state == NodeState::Offline as i32 {
             node.state = NodeState::Ready as i32;
         }
@@ -96,15 +104,16 @@ impl ClusterControl for Controller {
         let req = request.into_inner();
         let mut nodes = self.nodes.write().await;
 
-        let node = nodes.get_mut(&req.node_id).ok_or_else(|| {
-            Status::not_found("node não registrado")
-        })?;
+        let node = nodes
+            .get_mut(&req.node_id)
+            .ok_or_else(|| Status::not_found("node não registrado"))?;
 
         if let Some(health) = req.health {
             node.health = Some(health);
         }
 
         let overall = node.health.as_ref().map(|h| h.overall).unwrap_or(1.0);
+
         if overall < 0.5 {
             node.state = NodeState::Degraded as i32;
         } else if node.state != NodeState::Draining as i32 {
@@ -117,11 +126,30 @@ impl ClusterControl for Controller {
         }))
     }
 
+    async fn report_capability(
+        &self,
+        request: Request<ReportCapabilityRequest>,
+    ) -> Result<Response<ReportCapabilityResponse>, Status> {
+        let req = request.into_inner();
+        let mut nodes = self.nodes.write().await;
+
+        let node = nodes
+            .get_mut(&req.node_id)
+            .ok_or_else(|| Status::not_found("node não registrado"))?;
+
+        if let Some(capability) = req.capability {
+            node.capability = Some(capability);
+        }
+
+        Ok(Response::new(ReportCapabilityResponse { accepted: true }))
+    }
+
     async fn list_nodes(
         &self,
         _request: Request<ListNodesRequest>,
     ) -> Result<Response<ListNodesResponse>, Status> {
         let nodes = self.nodes.read().await;
+
         Ok(Response::new(ListNodesResponse {
             nodes: nodes.values().cloned().collect(),
         }))
@@ -137,7 +165,9 @@ fn now_ms() -> i64 {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .init();
 
     let addr: SocketAddr = std::env::var("RAC_CONTROLLER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:50051".into())
@@ -148,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(%addr, "Real.AI.Cluster Controller iniciado");
 
-    Server::builder()
+    tonic::transport::Server::builder()
         .add_service(ClusterControlServer::new(controller))
         .serve(addr)
         .await?;
