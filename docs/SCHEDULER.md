@@ -11,24 +11,63 @@ Existem dois níveis:
 - Agendador global: decide node, dispositivo e placement.
 - Agendador local: distribui trabalho entre CPU, GPU, NPU e memória do node.
 
+A seleção global opera sobre o estado em memória do Controller. O Scheduler não consulta o banco de dados para cada Work Unit.
+
+## Seleção atual
+
+A implementação inicial calcula um score por Worker elegível usando quatro fatores:
+
+| Fator | Peso |
+|---|---:|
+| Capacidade de compute | 50% |
+| Saúde | 25% |
+| Carga ativa | 15% |
+| RTT de rede | 10% |
+
+A capacidade de compute usa `cpu_ops_per_sec` quando disponível e `cpu_logical_cores` como fallback. A carga ativa é medida pelo número de Work Units atualmente reservadas pelo Controller.
+
+A fórmula atual é:
+
+```text
+score =
+  0.50 × capacidade
++ 0.25 × saúde
++ 0.15 × carga
++ 0.10 × rede
+```
+
+Cada componente é normalizado entre os candidatos quando aplicável. Menor RTT e menor carga aumentam o score.
+
+Essa fórmula é deliberadamente inicial. Os pesos não são requisito definitivo e deverão ser recalibrados com dados de execução real.
+
 ## Fluxo de decisão
 
-```
+```text
 Work Unit
 → filtrar incompatíveis
 → avaliar capacidade
 → avaliar localidade
 → avaliar rede
-→ avaliar fila
+→ avaliar carga
 → avaliar saúde
 → avaliar risco térmico
-→ calcular custo
-→ escolher placement
+→ calcular score
+→ reservar capacidade
+→ executar
+→ liberar capacidade
 ```
 
-## Pontuação
+## Rede
 
-A função de custo deve ser configurável para priorizar latência, throughput, confiabilidade, eficiência ou equilíbrio.
+O Worker mede o RTT de uma chamada gRPC de controle entre Worker e Controller. O valor armazenado em `Capability.network_rtt_us` representa RTT do plano de controle, incluindo o overhead do transporte gRPC; não é uma medição ICMP nem uma capacidade de throughput.
+
+A medição usa uma chamada de aquecimento e múltiplas amostras, reportando a mediana.
+
+## Carga
+
+Ao selecionar um Worker, o Controller incrementa `active_work_units` antes de iniciar a execução. Após a conclusão ou falha, a reserva é liberada.
+
+Isso evita usar `last_heartbeat_unix_ms` como proxy de disponibilidade ou carga.
 
 ## Localidade
 
