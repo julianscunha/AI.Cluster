@@ -1,11 +1,16 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
     worker_runtime_client::WorkerRuntimeClient,
     *,
 };
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, task::JoinSet};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
@@ -43,6 +48,25 @@ impl Controller {
             .min_by_key(|node| node.last_heartbeat_unix_ms)
             .cloned()
             .ok_or_else(|| Status::unavailable("nenhum worker disponível"))
+    }
+
+    async fn select_workers(&self, requested: usize) -> Vec<NodeInfo> {
+        let nodes = self.nodes.read().await;
+
+        let mut candidates: Vec<NodeInfo> = nodes
+            .values()
+            .filter(|node| {
+                matches!(
+                    NodeState::try_from(node.state),
+                    Ok(NodeState::Ready | NodeState::Active)
+                ) && !node.worker_endpoint.is_empty()
+            })
+            .cloned()
+            .collect();
+
+        candidates.sort_by_key(|node| node.last_heartbeat_unix_ms);
+        candidates.truncate(requested);
+        candidates
     }
 
     async fn reconcile_loop(self) {
@@ -203,6 +227,106 @@ impl ClusterControl for Controller {
         }))
     }
 
+    async fn distributed_mat_mul(
+        &self,
+        request: Request<DistributedMatMulRequest>,
+    ) -> Result<Response<DistributedMatMulResponse>, Status> {
+        let req = request.into_inner();
+
+        let rows = req.rows as usize;
+        let inner = req.inner as usize;
+        let cols = req.cols as usize;
+
+        validate_matrix_payload(rows, inner, cols, &req.matrix_a, &req.matrix_b)?;
+
+        if rows == 0 || inner == 0 || cols == 0 {
+            return Err(Status::invalid_argument("dimensões devem ser maiores que zero"));
+        }
+
+        let workers = self.select_workers(rows).await;
+        if workers.is_empty() {
+            return Err(Status::unavailable("nenhum worker disponível"));
+        }
+
+        let worker_count = workers.len().min(rows);
+        let mut ranges = Vec::with_capacity(worker_count);
+        let base = rows / worker_count;
+        let remainder = rows % worker_count;
+        let mut start = 0usize;
+
+        for index in 0..worker_count {
+            let count = base + usize::from(index < remainder);
+            ranges.push((start, count));
+            start += count;
+        }
+
+        let started = Instant::now();
+        let mut jobs = JoinSet::new();
+
+        for (node, (row_start, row_count)) in workers
+            .into_iter()
+            .zip(ranges.into_iter())
+        {
+            let endpoint = node.worker_endpoint.clone();
+            let work_id = req.work_id.clone();
+            let matrix_a = req.matrix_a.clone();
+            let matrix_b = req.matrix_b.clone();
+
+            jobs.spawn(async move {
+                let mut client = WorkerRuntimeClient::connect(endpoint)
+                    .await
+                    .map_err(|e| format!("falha ao conectar ao worker: {e}"))?;
+
+                let result = client
+                    .execute_matrix_block(Request::new(ExecuteMatrixBlockRequest {
+                        work_id,
+                        rows: rows as u32,
+                        inner: inner as u32,
+                        cols: cols as u32,
+                        row_start: row_start as u32,
+                        row_count: row_count as u32,
+                        matrix_a,
+                        matrix_b,
+                    }))
+                    .await
+                    .map_err(|e| format!("falha na execução do bloco: {e}"))?
+                    .into_inner();
+
+                if !result.accepted {
+                    return Err(result.message);
+                }
+
+                Ok::<ExecuteMatrixBlockResponse, String>(result)
+            });
+        }
+
+        let mut blocks = Vec::with_capacity(worker_count);
+
+        while let Some(joined) = jobs.join_next().await {
+            let block = joined
+                .map_err(|e| Status::internal(format!("task do worker falhou: {e}")))?
+                .map_err(Status::unavailable)?;
+
+            blocks.push(block);
+        }
+
+        blocks.sort_by_key(|block| block.row_start);
+
+        let mut matrix_c = Vec::with_capacity(rows * cols * std::mem::size_of::<f32>());
+
+        for block in &blocks {
+            matrix_c.extend_from_slice(&block.matrix_c);
+        }
+
+        Ok(Response::new(DistributedMatMulResponse {
+            accepted: true,
+            message: "multiplicação distribuída concluída".into(),
+            workers_used: blocks.len() as u32,
+            duration_us: started.elapsed().as_micros() as u64,
+            matrix_c,
+        }))
+    }
+
     async fn list_nodes(
         &self,
         _request: Request<ListNodesRequest>,
@@ -213,6 +337,34 @@ impl ClusterControl for Controller {
             nodes: nodes.values().cloned().collect(),
         }))
     }
+}
+
+fn validate_matrix_payload(
+    rows: usize,
+    inner: usize,
+    cols: usize,
+    matrix_a: &[u8],
+    matrix_b: &[u8],
+) -> Result<(), Status> {
+    let expected_a = rows
+        .checked_mul(inner)
+        .and_then(|v| v.checked_mul(4))
+        .ok_or_else(|| Status::invalid_argument("dimensões de A excedem o limite"))?;
+
+    let expected_b = inner
+        .checked_mul(cols)
+        .and_then(|v| v.checked_mul(4))
+        .ok_or_else(|| Status::invalid_argument("dimensões de B excedem o limite"))?;
+
+    if matrix_a.len() != expected_a {
+        return Err(Status::invalid_argument("tamanho de matrix_a incompatível"));
+    }
+
+    if matrix_b.len() != expected_b {
+        return Err(Status::invalid_argument("tamanho de matrix_b incompatível"));
+    }
+
+    Ok(())
 }
 
 fn now_ms() -> i64 {
