@@ -58,7 +58,7 @@ enum BenchmarkCommand {
         #[arg(
             long,
             default_value_t = 0,
-            help = "máximo de Workers; 0 = todos os elegíveis",
+            help = "máximo de Workers; 0 = todos os elegíveis"
         )]
         max_workers: u32,
     },
@@ -167,8 +167,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await?
                     .into_inner();
 
-                let overhead_us =
-                    result.duration_us.saturating_sub(result.compute_duration_us);
+                let overhead_us = result
+                    .duration_us
+                    .saturating_sub(result.compute_duration_us);
 
                 println!(
                     "accepted={} workers={} duration={}us compute={}us overhead~={}us input_bytes_sent={} output_bytes={} checksum={:.6}",
