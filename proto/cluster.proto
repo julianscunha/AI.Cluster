@@ -56,6 +56,7 @@ message NodeInfo {
   string runtime_version = 9;
   int64 last_heartbeat_unix_ms = 10;
   string worker_endpoint = 11;
+  uint32 active_work_units = 12;
 }
 
 message RegisterNodeRequest { NodeInfo node = 1; }
@@ -93,6 +94,15 @@ message ReportCapabilityRequest {
 
 message ReportCapabilityResponse {
   bool accepted = 1;
+}
+
+message NetworkPingRequest {
+  string node_id = 1;
+}
+
+message NetworkPingResponse {
+  bool accepted = 1;
+  string message = 2;
 }
 
 message ListNodesRequest {}
@@ -172,6 +182,7 @@ service ClusterControl {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(ReportHealthRequest) returns (ReportHealthResponse);
   rpc ReportCapability(ReportCapabilityRequest) returns (ReportCapabilityResponse);
+  rpc NetworkPing(NetworkPingRequest) returns (NetworkPingResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc SubmitWork(SubmitWorkRequest) returns (SubmitWorkResponse);
   rpc DistributedMatMul(DistributedMatMulRequest) returns (DistributedMatMulResponse);
