@@ -24,7 +24,13 @@ Arquitetura: v0.1
 - Observability;
 - Inference API;
 - Request Manager;
-- Inference Engine.
+- Inference Engine;
+- descoberta real de CPU, memória e armazenamento;
+- benchmark inicial de capability no ingresso do Worker;
+- RTT gRPC do Worker para o Controller;
+- seleção inicial de Worker por score;
+- controle de carga ativa e reserva/liberação de Work Units;
+- execução distribuída inicial de multiplicação matricial.
 
 ## Experimental
 
@@ -34,8 +40,10 @@ Arquitetura: v0.1
 - contribuição de celulares;
 - política final de swap/cache;
 - backend de GPU/NPU;
-- armazenamento definitivo.
+- armazenamento definitivo;
+- modelo de performance calibrado com dados históricos;
+- pesos finais do Scheduler.
 
 ## Próxima etapa
 
-Executar Fase A e validar a Fase 0 com múltiplos Linux.
+Executar Fase A com múltiplos Linux reais e medir baseline local versus execução distribuída, registrando tempo de comunicação, tempo de compute, speedup e eficiência paralela.
