@@ -5,7 +5,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use real_ai_cluster_benchmark::run as run_benchmark;
+use real_ai_cluster_benchmark::{matmul_block, run as run_benchmark};
 use real_ai_cluster_common::hardware::{discover, StorageKind};
 use real_ai_cluster_protocol::v1::{
     cluster_control_client::ClusterControlClient,
@@ -51,6 +51,7 @@ impl WorkerRuntime for WorkerService {
                 );
 
                 let mut accumulator = 0u64;
+
                 for i in 0..iterations {
                     accumulator = accumulator
                         .wrapping_mul(1_664_525)
@@ -85,6 +86,90 @@ impl WorkerRuntime for WorkerService {
             output,
         }))
     }
+
+    async fn execute_matrix_block(
+        &self,
+        request: Request<ExecuteMatrixBlockRequest>,
+    ) -> Result<Response<ExecuteMatrixBlockResponse>, Status> {
+        let req = request.into_inner();
+
+        let rows = req.rows as usize;
+        let inner = req.inner as usize;
+        let cols = req.cols as usize;
+        let row_start = req.row_start as usize;
+        let row_count = req.row_count as usize;
+
+        if rows == 0 || inner == 0 || cols == 0 || row_count == 0 {
+            return Err(Status::invalid_argument("dimensões inválidas"));
+        }
+
+        if row_start.checked_add(row_count).unwrap_or(usize::MAX) > rows {
+            return Err(Status::invalid_argument("bloco ultrapassa número de linhas"));
+        }
+
+        let a = bytes_to_f32(&req.matrix_a)
+            .ok_or_else(|| Status::invalid_argument("matrix_a inválida"))?;
+        let b = bytes_to_f32(&req.matrix_b)
+            .ok_or_else(|| Status::invalid_argument("matrix_b inválida"))?;
+
+        let expected_a = rows
+            .checked_mul(inner)
+            .ok_or_else(|| Status::invalid_argument("dimensão de A excede limite"))?;
+
+        let expected_b = inner
+            .checked_mul(cols)
+            .ok_or_else(|| Status::invalid_argument("dimensão de B excede limite"))?;
+
+        if a.len() != expected_a || b.len() != expected_b {
+            return Err(Status::invalid_argument(
+                "tamanho das matrizes incompatível com dimensões",
+            ));
+        }
+
+        let started = Instant::now();
+
+        let output = matmul_block(
+            rows,
+            inner,
+            cols,
+            row_start,
+            row_count,
+            &a,
+            &b,
+        );
+
+        let duration_us = started.elapsed().as_micros() as u64;
+
+        Ok(Response::new(ExecuteMatrixBlockResponse {
+            accepted: true,
+            message: "bloco calculado".into(),
+            node_id: self.node_id.clone(),
+            row_start: req.row_start,
+            row_count: req.row_count,
+            duration_us,
+            matrix_c: f32_to_bytes(&output),
+        }))
+    }
+}
+
+fn bytes_to_f32(bytes: &[u8]) -> Option<Vec<f32>> {
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("chunk com 4 bytes")))
+            .collect(),
+    )
+}
+
+fn f32_to_bytes(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
 }
 
 fn now_ms() -> i64 {
@@ -213,6 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_service = WorkerService {
         node_id: node.node_id.clone(),
     };
+
     let server_addr = worker_bind;
 
     tokio::spawn(async move {
