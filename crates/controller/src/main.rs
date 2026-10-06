@@ -39,7 +39,13 @@ fn compute_capacity(node: &NodeInfo) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn worker_score(node: &NodeInfo, max_compute: f64, max_cores: u32, min_rtt_us: f64) -> f64 {
+fn worker_score(
+    node: &NodeInfo,
+    max_compute: f64,
+    max_cores: u32,
+    min_rtt_us: f64,
+    max_network_mb_per_sec: f64,
+) -> f64 {
     let capability = node.capability.as_ref();
     let capacity = compute_capacity(node);
     let compute_score = capacity / max_compute.max(1.0);
@@ -61,9 +67,21 @@ fn worker_score(node: &NodeInfo, max_compute: f64, max_cores: u32, min_rtt_us: f
     let load_score = 1.0 / (1.0 + f64::from(node.active_work_units));
 
     let network_score = capability
-        .map(|value| value.network_rtt_us)
-        .filter(|rtt| *rtt > 0.0 && min_rtt_us.is_finite())
-        .map(|rtt| (min_rtt_us / rtt).clamp(0.0, 1.0))
+        .map(|value| {
+            let latency_score = if value.network_rtt_us > 0.0 && min_rtt_us.is_finite() {
+                (min_rtt_us / value.network_rtt_us).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+
+            let throughput_score = if value.network_mb_per_sec > 0.0 {
+                (value.network_mb_per_sec / max_network_mb_per_sec.max(1.0)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+
+            (latency_score * 0.5) + (throughput_score * 0.5)
+        })
         .unwrap_or(0.5);
 
     (capacity_score * 0.50) + (health_score * 0.25) + (load_score * 0.15) + (network_score * 0.10)
@@ -135,10 +153,33 @@ impl Controller {
             })
             .fold(f64::INFINITY, f64::min);
 
+        let max_network_mb_per_sec = candidates
+            .iter()
+            .filter_map(|node| {
+                node.capability
+                    .as_ref()
+                    .map(|capability| capability.network_mb_per_sec)
+                    .filter(|throughput| *throughput > 0.0)
+            })
+            .fold(0.0_f64, f64::max)
+            .max(1.0);
+
         candidates.sort_by(|left, right| {
-            worker_score(right, max_compute, max_cores, min_rtt_us)
-                .partial_cmp(&worker_score(left, max_compute, max_cores, min_rtt_us))
-                .unwrap_or(std::cmp::Ordering::Equal)
+            worker_score(
+                right,
+                max_compute,
+                max_cores,
+                min_rtt_us,
+                max_network_mb_per_sec,
+            )
+            .partial_cmp(&worker_score(
+                left,
+                max_compute,
+                max_cores,
+                min_rtt_us,
+                max_network_mb_per_sec,
+            ))
+            .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let selected_count = requested.min(candidates.len());
@@ -637,8 +678,8 @@ mod tests {
         let faster = node(200.0, 0, 100.0);
         let slower = node(100.0, 0, 100.0);
 
-        let faster_score = worker_score(&faster, 200.0, 4, 100.0);
-        let slower_score = worker_score(&slower, 200.0, 4, 100.0);
+        let faster_score = worker_score(&faster, 200.0, 4, 100.0, 100.0);
+        let slower_score = worker_score(&slower, 200.0, 4, 100.0, 100.0);
 
         assert!(faster_score > slower_score);
     }
@@ -648,8 +689,8 @@ mod tests {
         let idle = node(100.0, 0, 100.0);
         let busy = node(100.0, 3, 100.0);
 
-        let idle_score = worker_score(&idle, 100.0, 4, 100.0);
-        let busy_score = worker_score(&busy, 100.0, 4, 100.0);
+        let idle_score = worker_score(&idle, 100.0, 4, 100.0, 100.0);
+        let busy_score = worker_score(&busy, 100.0, 4, 100.0, 100.0);
 
         assert!(idle_score > busy_score);
     }
@@ -659,8 +700,8 @@ mod tests {
         let near = node(100.0, 0, 100.0);
         let far = node(100.0, 0, 500.0);
 
-        let near_score = worker_score(&near, 100.0, 4, 100.0);
-        let far_score = worker_score(&far, 100.0, 4, 100.0);
+        let near_score = worker_score(&near, 100.0, 4, 100.0, 100.0);
+        let far_score = worker_score(&far, 100.0, 4, 100.0, 100.0);
 
         assert!(near_score > far_score);
     }
