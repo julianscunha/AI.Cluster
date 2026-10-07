@@ -533,7 +533,6 @@ impl ClusterControl for Controller {
             nodes: nodes.values().cloned().collect(),
         }))
     }
-
 }
 
 impl Controller {
