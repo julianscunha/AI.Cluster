@@ -693,9 +693,7 @@ async fn prepare_graph_work(
             store.get(&buffer_id)
         }
         .ok_or_else(|| {
-            Status::failed_precondition(format!(
-                "buffer de saída não está disponível: {buffer_id}"
-            ))
+            Status::failed_precondition(format!("buffer de saída não está disponível: {buffer_id}"))
         })?;
 
         let transfer =
@@ -897,13 +895,7 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (prepared, transfers) = runtime
-            .block_on(prepare_graph_work(
-                &unit,
-                "exec-1",
-                &buffers,
-                "node-b",
-                &nodes,
-            ))
+            .block_on(prepare_graph_work(&unit, "exec-1", &buffers, "node-b", &nodes))
             .unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
@@ -930,11 +922,7 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let result = runtime.block_on(prepare_graph_work(
-            &unit,
-            "exec-1",
-            &buffers,
-            "node-b",
-            &nodes,
+            &unit, "exec-1", &buffers, "node-b", &nodes,
         ));
 
         assert!(result.is_err());

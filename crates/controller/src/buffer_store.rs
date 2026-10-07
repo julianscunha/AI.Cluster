@@ -78,18 +78,8 @@ impl BufferStore {
         Some(buffer.clone())
     }
 
-    pub fn remove(&mut self, buffer_id: &str) -> Option<StoredBuffer> {
-        let buffer = self.buffers.remove(buffer_id)?;
-        self.bytes_used = self.bytes_used.saturating_sub(buffer.bytes.len() as u64);
-        Some(buffer)
-    }
-
     pub fn contains(&self, buffer_id: &str) -> bool {
         self.buffers.contains_key(buffer_id)
-    }
-
-    pub fn len(&self) -> usize {
-        self.buffers.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -98,10 +88,6 @@ impl BufferStore {
 
     pub fn bytes_used(&self) -> u64 {
         self.bytes_used
-    }
-
-    pub fn capacity_bytes(&self) -> u64 {
-        self.max_bytes
     }
 
     fn evict_until_within_capacity(&mut self) {
@@ -186,7 +172,9 @@ mod tests {
         assert_eq!(store.bytes_used(), 8);
         assert_eq!(store.get("a").unwrap().bytes, vec![1, 2, 3, 4]);
 
-        store.insert(descriptor("c", 4), vec![9, 10, 11, 12]).unwrap();
+        store
+            .insert(descriptor("c", 4), vec![9, 10, 11, 12])
+            .unwrap();
 
         assert!(store.contains("a"));
         assert!(!store.contains("b"));
