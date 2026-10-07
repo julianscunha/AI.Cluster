@@ -53,7 +53,7 @@ impl Controller {
         let mut nodes = self.nodes.write().await;
         let candidates: Vec<NodeInfo> = nodes.values().cloned().collect();
 
-        let plan = execution::PlacementPlanner::default()
+        let plan = execution::PlacementPlanner
             .plan(&graph, &candidates)
             .map_err(|error| Status::unavailable(error.to_string()))?;
 
@@ -341,7 +341,7 @@ impl ClusterControl for Controller {
             nodes.values().cloned().collect::<Vec<_>>()
         };
 
-        let plan = execution::PlacementPlanner::default()
+        let plan = execution::PlacementPlanner
             .plan(&graph, &nodes)
             .map_err(|error| Status::unavailable(error.to_string()))?;
 
