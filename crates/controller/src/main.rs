@@ -682,12 +682,8 @@ fn prepare_graph_work(
             ))
         })?;
 
-        let transfer = transfer::plan_output_transfer(
-            &output.buffer,
-            destination_node_id,
-            nodes,
-        )
-        .map_err(|error| Status::unavailable(error.to_string()))?;
+        let transfer = transfer::plan_output_transfer(&output.buffer, destination_node_id, nodes)
+            .map_err(|error| Status::unavailable(error.to_string()))?;
 
         work.payload.extend_from_slice(&output.bytes);
         transfer_plans.push(transfer);
