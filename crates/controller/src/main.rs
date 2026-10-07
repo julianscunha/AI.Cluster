@@ -322,6 +322,7 @@ impl ClusterControl for Controller {
                 .add_unit(
                     execution::WorkUnitSpec::new(work)
                         .with_dependencies(graph_unit.depends_on)
+                        .with_data_inputs(graph_unit.data_from)
                         .with_required_backends(graph_unit.required_backends),
                 )
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -535,6 +536,7 @@ impl ClusterControl for Controller {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let mut results = Vec::with_capacity(graph.units.len());
+        let mut outputs = HashMap::with_capacity(graph.units.len());
 
         for level in levels {
             let mut executions = Vec::with_capacity(level.len());
@@ -564,7 +566,8 @@ impl ClusterControl for Controller {
                         .find(|unit| unit.work.work_id == *work_unit_id)
                         .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
-                    executions.push((unit.work.clone(), node));
+                    let work = prepare_graph_work(unit, &outputs)?;
+                    executions.push((work, node));
                     reserved_node_ids.push(assignment.node_id.clone());
                 }
             }
@@ -614,11 +617,35 @@ impl ClusterControl for Controller {
             }
 
             level_results.sort_by(|left, right| left.work_id.cmp(&right.work_id));
+
+            for result in &level_results {
+                outputs.insert(result.work_id.clone(), result.output.clone());
+            }
+
             results.extend(level_results);
         }
 
         Ok(results)
     }
+}
+
+fn prepare_graph_work(
+    unit: &execution::WorkUnitSpec,
+    outputs: &HashMap<String, Vec<u8>>,
+) -> Result<WorkUnit, Status> {
+    let mut work = unit.work.clone();
+
+    for source_work_id in &unit.data_from {
+        let output = outputs.get(source_work_id).ok_or_else(|| {
+            Status::failed_precondition(format!(
+                "output da work unit de origem não está disponível: {source_work_id}"
+            ))
+        })?;
+
+        work.payload.extend_from_slice(output);
+    }
+
+    Ok(work)
 }
 
 async fn execute_work_on_node(
