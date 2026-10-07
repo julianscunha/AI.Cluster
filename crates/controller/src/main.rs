@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferPlan};
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
     worker_runtime_client::WorkerRuntimeClient,
@@ -16,6 +17,13 @@ use tracing::{info, warn};
 
 mod execution;
 mod scheduler;
+mod transfer;
+
+#[derive(Debug, Clone)]
+struct ProducedOutput {
+    bytes: Vec<u8>,
+    buffer: BufferDescriptor,
+}
 
 #[derive(Clone)]
 struct Controller {
@@ -544,6 +552,7 @@ impl ClusterControl for Controller {
 
             {
                 let nodes = self.nodes.read().await;
+                let node_list = nodes.values().cloned().collect::<Vec<_>>();
 
                 for work_unit_id in &level {
                     let assignment = plan
@@ -566,8 +575,25 @@ impl ClusterControl for Controller {
                         .find(|unit| unit.work.work_id == *work_unit_id)
                         .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
-                    let work = prepare_graph_work(unit, &outputs)?;
-                    executions.push((work, node));
+                    let prepared = prepare_graph_work(
+                        unit,
+                        &outputs,
+                        &assignment.node_id,
+                        &node_list,
+                    )?;
+
+                    for transfer in &prepared.1 {
+                        info!(
+                            work_unit_id = %work_unit_id,
+                            buffer_id = %transfer.buffer_id,
+                            bytes = transfer.byte_len,
+                            estimated_us = transfer.estimated_duration_us,
+                            strategy = ?transfer.strategy,
+                            "transfer plan criado"
+                        );
+                    }
+
+                    executions.push((prepared.0, node));
                     reserved_node_ids.push(assignment.node_id.clone());
                 }
             }
@@ -619,7 +645,22 @@ impl ClusterControl for Controller {
             level_results.sort_by(|left, right| left.work_id.cmp(&right.work_id));
 
             for result in &level_results {
-                outputs.insert(result.work_id.clone(), result.output.clone());
+                let buffer = BufferDescriptor {
+                    buffer_id: format!("{}:{}:output", graph.execution_id, result.work_id),
+                    byte_len: result.output.len() as u64,
+                    checksum: None,
+                    location: DataLocation::Node {
+                        node_id: result.node_id.clone(),
+                    },
+                };
+
+                outputs.insert(
+                    result.work_id.clone(),
+                    ProducedOutput {
+                        bytes: result.output.clone(),
+                        buffer,
+                    },
+                );
             }
 
             results.extend(level_results);
@@ -631,9 +672,12 @@ impl ClusterControl for Controller {
 
 fn prepare_graph_work(
     unit: &execution::WorkUnitSpec,
-    outputs: &HashMap<String, Vec<u8>>,
-) -> Result<WorkUnit, Status> {
+    outputs: &HashMap<String, ProducedOutput>,
+    destination_node_id: &str,
+    nodes: &[NodeInfo],
+) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
     let mut work = unit.work.clone();
+    let mut transfer_plans = Vec::with_capacity(unit.data_from.len());
 
     for source_work_id in &unit.data_from {
         let output = outputs.get(source_work_id).ok_or_else(|| {
@@ -642,10 +686,18 @@ fn prepare_graph_work(
             ))
         })?;
 
-        work.payload.extend_from_slice(output);
+        let transfer = transfer::plan_output_transfer(
+            &output.buffer,
+            destination_node_id,
+            nodes,
+        )
+        .map_err(|error| Status::unavailable(error.to_string()))?;
+
+        work.payload.extend_from_slice(&output.bytes);
+        transfer_plans.push(transfer);
     }
 
-    Ok(work)
+    Ok((work, transfer_plans))
 }
 
 async fn execute_work_on_node(
@@ -774,8 +826,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{execution::WorkUnitSpec, prepare_graph_work};
-    use real_ai_cluster_protocol::v1::WorkUnit;
+    use super::{
+        execution::WorkUnitSpec, prepare_graph_work, ProducedOutput,
+    };
+    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
+    use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
     #[test]
     fn prepare_graph_work_copia_payload_e_anexa_outputs() {
@@ -787,11 +842,51 @@ mod tests {
         })
         .with_data_inputs(vec!["producer".into()]);
 
-        let outputs = HashMap::from([("producer".into(), b"-output".to_vec())]);
+        let outputs = HashMap::from([(
+            "producer".into(),
+            ProducedOutput {
+                bytes: b"-output".to_vec(),
+                buffer: BufferDescriptor {
+                    buffer_id: "buffer-1".into(),
+                    byte_len: 7,
+                    checksum: None,
+                    location: DataLocation::Node {
+                        node_id: "node-a".into(),
+                    },
+                },
+            },
+        )]);
+        let nodes = vec![
+            NodeInfo {
+                node_id: "node-a".into(),
+                state: NodeState::Ready as i32,
+                capability: Some(Capability {
+                    network_rtt_us: 100.0,
+                    network_mb_per_sec: 100.0,
+                    ..Default::default()
+                }),
+                worker_endpoint: "http://node-a:50052".into(),
+                ..Default::default()
+            },
+            NodeInfo {
+                node_id: "node-b".into(),
+                state: NodeState::Ready as i32,
+                capability: Some(Capability {
+                    network_rtt_us: 200.0,
+                    network_mb_per_sec: 50.0,
+                    ..Default::default()
+                }),
+                worker_endpoint: "http://node-b:50052".into(),
+                ..Default::default()
+            },
+        ];
 
-        let prepared = prepare_graph_work(&unit, &outputs).unwrap();
+        let (prepared, transfers) =
+            prepare_graph_work(&unit, &outputs, "node-b", &nodes).unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].strategy, TransferStrategy::ControllerRelay);
     }
 
     #[test]
@@ -804,8 +899,14 @@ mod tests {
         .with_data_inputs(vec!["missing".into()]);
 
         let outputs = HashMap::new();
+        let nodes = vec![NodeInfo {
+            node_id: "node-b".into(),
+            state: NodeState::Ready as i32,
+            worker_endpoint: "http://node-b:50052".into(),
+            ..Default::default()
+        }];
 
-        let result = prepare_graph_work(&unit, &outputs);
+        let result = prepare_graph_work(&unit, &outputs, "node-b", &nodes);
 
         assert!(result.is_err());
     }
