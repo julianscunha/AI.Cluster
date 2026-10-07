@@ -42,7 +42,9 @@ pub fn plan_output_transfer(
     let destination = nodes
         .iter()
         .find(|node| node.node_id == destination_node_id)
-        .ok_or_else(|| TransferPlanError::DestinationNodeNotFound(destination_node_id.to_owned()))?;
+        .ok_or_else(|| {
+            TransferPlanError::DestinationNodeNotFound(destination_node_id.to_owned())
+        })?;
 
     let source_capability = source.capability.as_ref();
     let destination_capability = destination.capability.as_ref();
