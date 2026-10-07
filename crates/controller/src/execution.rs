@@ -93,15 +93,14 @@ impl ExecutionGraph {
             dependencies.extend(unit.data_from.iter().map(String::as_str));
 
             for dependency in dependencies {
-                let dependency_position = index
-                    .get(dependency)
-                    .copied()
-                    .ok_or_else(|| {
-                        PlanError::MissingDependency {
+                let dependency_position =
+                    index
+                        .get(dependency)
+                        .copied()
+                        .ok_or_else(|| PlanError::MissingDependency {
                             work_unit_id: unit.work.work_id.clone(),
                             dependency: dependency.to_owned(),
-                        }
-                    })?;
+                        })?;
 
                 indegree[position] += 1;
                 dependents[dependency_position].push(position);
