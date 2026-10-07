@@ -187,6 +187,7 @@ message GraphWorkUnit {
   WorkUnit work = 1;
   repeated string depends_on = 2;
   repeated string required_backends = 3;
+  repeated string data_from = 4;
 }
 
 message SubmitGraphRequest {
