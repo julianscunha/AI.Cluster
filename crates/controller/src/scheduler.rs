@@ -167,7 +167,7 @@ fn score_worker(
 
 #[cfg(test)]
 mod tests {
-    use super::rank_workers;
+    use super::{rank_workers, rank_workers_with_scores};
     use real_ai_cluster_protocol::v1::{Capability, Health, NodeInfo};
 
     fn node(
