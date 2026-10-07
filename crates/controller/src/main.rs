@@ -769,3 +769,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{execution::WorkUnitSpec, prepare_graph_work};
+    use real_ai_cluster_protocol::v1::WorkUnit;
+
+    #[test]
+    fn prepare_graph_work_copia_payload_e_anexa_outputs() {
+        let unit = WorkUnitSpec::new(WorkUnit {
+            work_id: "consumer".into(),
+            operation: "echo".into(),
+            payload: b"base".to_vec(),
+            ..Default::default()
+        })
+        .with_data_inputs(vec!["producer".into()]);
+
+        let outputs = HashMap::from([("producer".into(), b"-output".to_vec())]);
+
+        let prepared = prepare_graph_work(&unit, &outputs).unwrap();
+
+        assert_eq!(prepared.payload, b"base-output");
+    }
+
+    #[test]
+    fn prepare_graph_work_rejeita_output_inexistente() {
+        let unit = WorkUnitSpec::new(WorkUnit {
+            work_id: "consumer".into(),
+            operation: "echo".into(),
+            ..Default::default()
+        })
+        .with_data_inputs(vec!["missing".into()]);
+
+        let outputs = HashMap::new();
+
+        let result = prepare_graph_work(&unit, &outputs);
+
+        assert!(result.is_err());
+    }
+}
