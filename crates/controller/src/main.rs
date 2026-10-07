@@ -895,7 +895,9 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (prepared, transfers) = runtime
-            .block_on(prepare_graph_work(&unit, "exec-1", &buffers, "node-b", &nodes))
+            .block_on(prepare_graph_work(
+                &unit, "exec-1", &buffers, "node-b", &nodes,
+            ))
             .unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
