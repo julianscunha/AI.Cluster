@@ -43,7 +43,8 @@ Arquitetura: v0.1
 - execução de DAG por níveis topológicos;
 - execução concorrente de Work Units dentro do mesmo nível;
 - propagação de falha impedindo o avanço para o próximo nível;
-- RPC SubmitGraph para submissão de Execution Graph.
+- RPC SubmitGraph para submissão de Execution Graph;
+- data edges explícitos com transporte inicial de outputs entre Work Units.
 
 ## Experimental
 
@@ -59,4 +60,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Adicionar arestas de dados explícitas, sincronização de buffers/tensores, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
+Adicionar buffers tipados para tensores, localização de dados, checksum, transferência eficiente entre nodes, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
