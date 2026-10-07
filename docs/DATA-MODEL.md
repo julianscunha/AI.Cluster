@@ -15,7 +15,10 @@ ModelShard
 Request
 Execution
 ExecutionPlan
+ExecutionGraph
+PlacementPlan
 WorkUnit
+DataEdge
 Tensor
 StateObject
 Metric
@@ -88,7 +91,13 @@ Separam identidade do modelo, representação de precisão e fragmentação fís
 
 ## WorkUnit
 
-Unidade executável. Possui requisitos, dependências, prioridade, deadline e referências de dados.
+Unidade executável. Possui payload, operação, prioridade e requisitos de execução. Dependências de controle e referências de dados pertencem ao Execution Graph.
+
+## DataEdge
+
+Relação explícita de produção/consumo entre Work Units. Na implementação inicial, o DataEdge referencia a Work Unit de origem e o Controller transporta seu output como bytes para o payload da consumidora.
+
+A representação futura deverá incluir tipo de buffer, shape, dtype, tamanho, checksum, localização e estratégia de transporte.
 
 ## Tensor
 
