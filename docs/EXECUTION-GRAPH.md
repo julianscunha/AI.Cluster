@@ -104,13 +104,16 @@ Level 1 → execução concorrente
 
 Cada nível só é iniciado após a conclusão bem-sucedida do nível anterior. Falhas impedem o avanço para os níveis seguintes. As reservas de capacidade são criadas por nível e liberadas após a conclusão das Work Units.
 
-Nesta etapa, depends_on representa uma dependência de controle e ordenação. O payload da Work Unit dependente ainda não recebe automaticamente o output da predecessora. O transporte explícito de tensores e buffers entre vértices será tratado junto ao modelo de dados de execução.
+Nesta etapa, depends_on representa uma dependência de controle e ordenação. A propriedade data_from representa uma aresta de dados explícita e também cria a dependência de execução necessária.
+
+Para cada data_from, o Controller aguarda a conclusão da Work Unit de origem, recupera seu output e o anexa ao payload da Work Unit consumidora. Quando existem múltiplas fontes, os outputs são concatenados na ordem declarada.
+
+Essa é uma representação inicial de buffer genérico. Ainda não existe tipagem de tensor, shape, dtype ou transporte zero-copy.
 
 ## RPC
 
-O protocolo expõe SubmitGraph, que recebe um execution_id e uma coleção de Work Units com dependências e backends requeridos. O Controller constrói o grafo, calcula o placement e executa o DAG.
+O protocolo expõe SubmitGraph, que recebe um execution_id e uma coleção de Work Units com depends_on, data_from e required_backends. O Controller constrói o grafo, calcula o placement e executa o DAG.
 
 ## Próxima evolução
 
-
-O próximo passo é transformar o Placement Plan em unidade de execução para grafos com múltiplas Work Units, incluindo dependências de dados, sincronização, execução concorrente, propagação de erro e replanejamento durante a execução.
+Adicionar buffers tipados para tensores, localização de dados, checksum, transferência eficiente entre nodes, cancelamento cooperativo e replanejamento durante a execução.
