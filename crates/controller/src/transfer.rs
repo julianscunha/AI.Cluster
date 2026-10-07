@@ -72,9 +72,7 @@ pub fn plan_output_transfer(
 
 #[cfg(test)]
 mod tests {
-    use real_ai_cluster_common::tensor::{
-        BufferDescriptor, DataLocation, TransferStrategy,
-    };
+    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState};
 
     use super::plan_output_transfer;
