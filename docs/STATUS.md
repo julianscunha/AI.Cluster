@@ -44,7 +44,8 @@ Arquitetura: v0.1
 - execução concorrente de Work Units dentro do mesmo nível;
 - propagação de falha impedindo o avanço para o próximo nível;
 - RPC SubmitGraph para submissão de Execution Graph;
-- data edges explícitos com transporte inicial de outputs entre Work Units.
+- data edges explícitos com transporte inicial de outputs entre Work Units;
+- Buffer Store no Controller com cache LRU limitado, metadados de buffer e reutilização dos outputs por buffer_id.
 
 ## Experimental
 
@@ -60,4 +61,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Adicionar buffers tipados para tensores, localização de dados, checksum, transferência eficiente entre nodes, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
+Adicionar buffers tipados para tensores, checksum, armazenamento persistente por tier, transferência real entre nodes, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.

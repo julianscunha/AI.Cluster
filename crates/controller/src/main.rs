@@ -15,19 +15,17 @@ use tokio::{sync::RwLock, task::JoinSet};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+mod buffer_store;
 mod execution;
 mod scheduler;
 mod transfer;
 
-#[derive(Debug, Clone)]
-struct ProducedOutput {
-    bytes: Vec<u8>,
-    buffer: BufferDescriptor,
-}
+const DEFAULT_BUFFER_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone)]
 struct Controller {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
+    buffers: Arc<RwLock<buffer_store::BufferStore>>,
     offline_after: Duration,
 }
 
@@ -39,8 +37,15 @@ impl Default for Controller {
 
 impl Controller {
     fn new() -> Self {
+        Self::with_buffer_cache_capacity(DEFAULT_BUFFER_CACHE_BYTES)
+    }
+
+    fn with_buffer_cache_capacity(max_buffer_cache_bytes: u64) -> Self {
         Self {
             nodes: Arc::new(RwLock::new(HashMap::new())),
+            buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(
+                max_buffer_cache_bytes,
+            ))),
             offline_after: Duration::from_secs(10),
         }
     }
@@ -546,7 +551,6 @@ impl Controller {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let mut results = Vec::with_capacity(graph.units.len());
-        let mut outputs = HashMap::with_capacity(graph.units.len());
 
         for level in levels {
             let mut executions = Vec::with_capacity(level.len());
@@ -577,8 +581,14 @@ impl Controller {
                         .find(|unit| unit.work.work_id == *work_unit_id)
                         .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
-                    let prepared =
-                        prepare_graph_work(unit, &outputs, &assignment.node_id, &node_list)?;
+                    let prepared = prepare_graph_work(
+                        unit,
+                        &graph.execution_id,
+                        &self.buffers,
+                        &assignment.node_id,
+                        &node_list,
+                    )
+                    .await?;
 
                     for transfer in &prepared.1 {
                         info!(
@@ -644,7 +654,7 @@ impl Controller {
 
             for result in &level_results {
                 let buffer = BufferDescriptor {
-                    buffer_id: format!("{}:{}:output", graph.execution_id, result.work_id),
+                    buffer_id: output_buffer_id(&graph.execution_id, &result.work_id),
                     byte_len: result.output.len() as u64,
                     checksum: None,
                     location: DataLocation::Node {
@@ -652,13 +662,11 @@ impl Controller {
                     },
                 };
 
-                outputs.insert(
-                    result.work_id.clone(),
-                    ProducedOutput {
-                        bytes: result.output.clone(),
-                        buffer,
-                    },
-                );
+                self.buffers
+                    .write()
+                    .await
+                    .insert(buffer, result.output.clone())
+                    .map_err(|error| Status::resource_exhausted(error.to_string()))?;
             }
 
             results.extend(level_results);
@@ -668,9 +676,10 @@ impl Controller {
     }
 }
 
-fn prepare_graph_work(
+async fn prepare_graph_work(
     unit: &execution::WorkUnitSpec,
-    outputs: &HashMap<String, ProducedOutput>,
+    execution_id: &str,
+    buffers: &RwLock<buffer_store::BufferStore>,
     destination_node_id: &str,
     nodes: &[NodeInfo],
 ) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
@@ -678,20 +687,30 @@ fn prepare_graph_work(
     let mut transfer_plans = Vec::with_capacity(unit.data_from.len());
 
     for source_work_id in &unit.data_from {
-        let output = outputs.get(source_work_id).ok_or_else(|| {
+        let buffer_id = output_buffer_id(execution_id, source_work_id);
+        let output = {
+            let mut store = buffers.write().await;
+            store.get(&buffer_id)
+        }
+        .ok_or_else(|| {
             Status::failed_precondition(format!(
-                "output da work unit de origem não está disponível: {source_work_id}"
+                "buffer de saída não está disponível: {buffer_id}"
             ))
         })?;
 
-        let transfer = transfer::plan_output_transfer(&output.buffer, destination_node_id, nodes)
-            .map_err(|error| Status::unavailable(error.to_string()))?;
+        let transfer =
+            transfer::plan_output_transfer(&output.descriptor, destination_node_id, nodes)
+                .map_err(|error| Status::unavailable(error.to_string()))?;
 
         work.payload.extend_from_slice(&output.bytes);
         transfer_plans.push(transfer);
     }
 
     Ok((work, transfer_plans))
+}
+
+fn output_buffer_id(execution_id: &str, work_unit_id: &str) -> String {
+    format!("{execution_id}:{work_unit_id}:output")
 }
 
 async fn execute_work_on_node(
@@ -818,9 +837,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use super::{execution::WorkUnitSpec, prepare_graph_work, ProducedOutput};
+    use super::{
+        buffer_store::BufferStore, execution::WorkUnitSpec, output_buffer_id, prepare_graph_work,
+    };
     use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
@@ -834,20 +853,23 @@ mod tests {
         })
         .with_data_inputs(vec!["producer".into()]);
 
-        let outputs = HashMap::from([(
-            "producer".into(),
-            ProducedOutput {
-                bytes: b"-output".to_vec(),
-                buffer: BufferDescriptor {
-                    buffer_id: "buffer-1".into(),
-                    byte_len: 7,
-                    checksum: None,
-                    location: DataLocation::Node {
-                        node_id: "node-a".into(),
+        let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
+        {
+            let mut store = buffers.blocking_write();
+            store
+                .insert(
+                    BufferDescriptor {
+                        buffer_id: output_buffer_id("exec-1", "producer"),
+                        byte_len: 7,
+                        checksum: None,
+                        location: DataLocation::Node {
+                            node_id: "node-a".into(),
+                        },
                     },
-                },
-            },
-        )]);
+                    b"-output".to_vec(),
+                )
+                .unwrap();
+        }
         let nodes = vec![
             NodeInfo {
                 node_id: "node-a".into(),
@@ -873,7 +895,16 @@ mod tests {
             },
         ];
 
-        let (prepared, transfers) = prepare_graph_work(&unit, &outputs, "node-b", &nodes).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (prepared, transfers) = runtime
+            .block_on(prepare_graph_work(
+                &unit,
+                "exec-1",
+                &buffers,
+                "node-b",
+                &nodes,
+            ))
+            .unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
         assert_eq!(transfers.len(), 1);
@@ -889,7 +920,7 @@ mod tests {
         })
         .with_data_inputs(vec!["missing".into()]);
 
-        let outputs = HashMap::new();
+        let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
         let nodes = vec![NodeInfo {
             node_id: "node-b".into(),
             state: NodeState::Ready as i32,
@@ -897,7 +928,14 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = prepare_graph_work(&unit, &outputs, "node-b", &nodes);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let result = runtime.block_on(prepare_graph_work(
+            &unit,
+            "exec-1",
+            &buffers,
+            "node-b",
+            &nodes,
+        ));
 
         assert!(result.is_err());
     }
