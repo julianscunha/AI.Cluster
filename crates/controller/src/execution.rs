@@ -11,6 +11,7 @@ use crate::scheduler;
 pub struct WorkUnitSpec {
     pub work: WorkUnit,
     pub depends_on: Vec<String>,
+    pub data_from: Vec<String>,
     pub required_backends: Vec<String>,
 }
 
@@ -19,12 +20,18 @@ impl WorkUnitSpec {
         Self {
             work,
             depends_on: Vec::new(),
+            data_from: Vec::new(),
             required_backends: Vec::new(),
         }
     }
 
     pub fn with_dependencies(mut self, depends_on: Vec<String>) -> Self {
         self.depends_on = depends_on;
+        self
+    }
+
+    pub fn with_data_inputs(mut self, data_from: Vec<String>) -> Self {
+        self.data_from = data_from;
         self
     }
 
@@ -81,12 +88,16 @@ impl ExecutionGraph {
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); self.units.len()];
 
         for (position, unit) in self.units.iter().enumerate() {
-            for dependency in &unit.depends_on {
+            let mut dependencies = std::collections::HashSet::new();
+            dependencies.extend(unit.depends_on.iter().map(String::as_str));
+            dependencies.extend(unit.data_from.iter().map(String::as_str));
+
+            for dependency in dependencies {
                 let dependency_position =
-                    index.get(dependency.as_str()).copied().ok_or_else(|| {
+                    index.get(dependency).copied().ok_or_else(|| {
                         PlanError::MissingDependency {
                             work_unit_id: unit.work.work_id.clone(),
-                            dependency: dependency.clone(),
+                            dependency: dependency.to_owned(),
                         }
                     })?;
 
@@ -338,6 +349,22 @@ mod tests {
             graph.levels(),
             Err(PlanError::MissingDependency { .. })
         ));
+    }
+
+    #[test]
+    fn execution_graph_data_from_cria_dependencia_de_execucao() {
+        let mut graph = ExecutionGraph::new("exec-1");
+        graph
+            .add_unit(WorkUnitSpec::new(work("w1", "echo")))
+            .unwrap();
+        graph
+            .add_unit(WorkUnitSpec::new(work("w2", "echo")).with_data_inputs(vec!["w1".into()]))
+            .unwrap();
+
+        assert_eq!(
+            graph.levels().unwrap(),
+            vec![vec!["w1".to_string()], vec!["w2".to_string()]]
+        );
     }
 
     #[test]
