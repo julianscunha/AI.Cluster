@@ -575,12 +575,8 @@ impl ClusterControl for Controller {
                         .find(|unit| unit.work.work_id == *work_unit_id)
                         .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
-                    let prepared = prepare_graph_work(
-                        unit,
-                        &outputs,
-                        &assignment.node_id,
-                        &node_list,
-                    )?;
+                    let prepared =
+                        prepare_graph_work(unit, &outputs, &assignment.node_id, &node_list)?;
 
                     for transfer in &prepared.1 {
                         info!(
