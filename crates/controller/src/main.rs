@@ -871,8 +871,7 @@ mod tests {
             },
         ];
 
-        let (prepared, transfers) =
-            prepare_graph_work(&unit, &outputs, "node-b", &nodes).unwrap();
+        let (prepared, transfers) = prepare_graph_work(&unit, &outputs, "node-b", &nodes).unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
         assert_eq!(transfers.len(), 1);
