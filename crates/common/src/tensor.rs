@@ -123,7 +123,7 @@ pub fn plan_buffer_transfer(
 #[cfg(test)]
 mod tests {
     use super::{
-        BufferDescriptor, DataLocation, TensorDescriptor, TensorDType, TransferPlan,
+        BufferDescriptor, DataLocation, TensorDType, TensorDescriptor, TransferPlan,
         TransferStrategy,
     };
 
