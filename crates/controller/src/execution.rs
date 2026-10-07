@@ -96,9 +96,11 @@ impl ExecutionGraph {
                 let dependency_position = index
                     .get(dependency)
                     .copied()
-                    .ok_or_else(|| PlanError::MissingDependency {
-                        work_unit_id: unit.work.work_id.clone(),
-                        dependency: dependency.to_owned(),
+                    .ok_or_else(|| {
+                        PlanError::MissingDependency {
+                            work_unit_id: unit.work.work_id.clone(),
+                            dependency: dependency.to_owned(),
+                        }
                     })?;
 
                 indegree[position] += 1;
