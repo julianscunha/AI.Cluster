@@ -381,8 +381,12 @@ mod tests {
     #[test]
     fn placement_distribui_unidades_independentes() {
         let mut graph = ExecutionGraph::new("exec-1");
-        graph.add_unit(WorkUnitSpec::new(work("w1", "echo"))).unwrap();
-        graph.add_unit(WorkUnitSpec::new(work("w2", "echo"))).unwrap();
+        graph
+            .add_unit(WorkUnitSpec::new(work("w1", "echo")))
+            .unwrap();
+        graph
+            .add_unit(WorkUnitSpec::new(work("w2", "echo")))
+            .unwrap();
 
         let nodes = vec![node("node-a", &["cpu"], 0), node("node-b", &["cpu"], 0)];
 
