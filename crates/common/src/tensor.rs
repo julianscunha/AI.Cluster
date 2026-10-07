@@ -65,7 +65,7 @@ impl DataLocation {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransferStrategy {
     ReuseLocal,
-    Grpc,
+    ControllerRelay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,6 +81,42 @@ pub struct TransferPlan {
 impl TransferPlan {
     pub fn is_local(&self) -> bool {
         self.strategy == TransferStrategy::ReuseLocal
+    }
+}
+
+pub fn plan_buffer_transfer(
+    buffer: &BufferDescriptor,
+    destination: DataLocation,
+    source_rtt_us: f64,
+    destination_rtt_us: f64,
+    source_throughput_mb_per_sec: f64,
+    destination_throughput_mb_per_sec: f64,
+    local_copy_available: bool,
+) -> TransferPlan {
+    let strategy = if buffer.location == destination && local_copy_available {
+        TransferStrategy::ReuseLocal
+    } else {
+        TransferStrategy::ControllerRelay
+    };
+
+    let estimated_duration_us = match strategy {
+        TransferStrategy::ReuseLocal => 0,
+        TransferStrategy::ControllerRelay => {
+            let throughput = source_throughput_mb_per_sec
+                .min(destination_throughput_mb_per_sec)
+                .max(0.001);
+            let transfer_us = (buffer.byte_len as f64 / throughput) as u64;
+            (source_rtt_us.max(0.0) + destination_rtt_us.max(0.0)) as u64 + transfer_us
+        }
+    };
+
+    TransferPlan {
+        buffer_id: buffer.buffer_id.clone(),
+        source: buffer.location.clone(),
+        destination,
+        strategy,
+        byte_len: buffer.byte_len,
+        estimated_duration_us,
     }
 }
 
@@ -113,19 +149,46 @@ mod tests {
 
     #[test]
     fn transfer_plan_identifica_reuso_local() {
-        let plan = TransferPlan {
+        let buffer = BufferDescriptor {
             buffer_id: "buffer-1".into(),
-            source: DataLocation::Node {
-                node_id: "node-a".into(),
-            },
-            destination: DataLocation::Node {
-                node_id: "node-a".into(),
-            },
-            strategy: TransferStrategy::ReuseLocal,
             byte_len: 1024,
-            estimated_duration_us: 0,
+            checksum: None,
+            location: DataLocation::Node {
+                node_id: "node-a".into(),
+            },
         };
 
+        let plan = plan_buffer_transfer(
+            &buffer,
+            DataLocation::Node {
+                node_id: "node-a".into(),
+            },
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            true,
+        );
+
+        assert_eq!(plan.strategy, TransferStrategy::ReuseLocal);
+        assert_eq!(plan.byte_len, 1024);
+
+        assert_eq!(plan.estimated_duration_us, 0);
         assert!(plan.is_local());
+
+        let relay_plan = plan_buffer_transfer(
+            &buffer,
+            DataLocation::Node {
+                node_id: "node-b".into(),
+            },
+            100.0,
+            200.0,
+            100.0,
+            50.0,
+            false,
+        );
+
+        assert_eq!(relay_plan.strategy, TransferStrategy::ControllerRelay);
+        assert!(relay_plan.estimated_duration_us > 0);
     }
 }
