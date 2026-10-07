@@ -818,9 +818,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{
-        execution::WorkUnitSpec, prepare_graph_work, ProducedOutput,
-    };
+    use super::{execution::WorkUnitSpec, prepare_graph_work, ProducedOutput};
     use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
