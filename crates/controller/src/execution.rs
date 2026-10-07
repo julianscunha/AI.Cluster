@@ -178,7 +178,7 @@ impl PlacementPlan {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct PlacementPlanner;
 
 impl PlacementPlanner {
@@ -418,7 +418,7 @@ mod tests {
 
         let nodes = vec![node("node-a", &["cpu"], 0), node("node-b", &["cpu"], 0)];
 
-        let plan = PlacementPlanner::default().plan(&graph, &nodes).unwrap();
+        let plan = PlacementPlanner.plan(&graph, &nodes).unwrap();
 
         assert_eq!(plan.node_for("w1").unwrap().node_id, "node-a");
         assert_eq!(plan.node_for("w2").unwrap().node_id, "node-b");
@@ -438,7 +438,7 @@ mod tests {
             node("cuda-node", &["cpu", "cuda"], 0),
         ];
 
-        let plan = PlacementPlanner::default().plan(&graph, &nodes).unwrap();
+        let plan = PlacementPlanner.plan(&graph, &nodes).unwrap();
 
         assert_eq!(plan.node_for("w1").unwrap().node_id, "cuda-node");
     }
@@ -455,7 +455,7 @@ mod tests {
         let nodes = vec![node("cpu-node", &["cpu"], 0)];
 
         assert!(matches!(
-            PlacementPlanner::default().plan(&graph, &nodes),
+            PlacementPlanner.plan(&graph, &nodes),
             Err(PlanError::NoCompatibleNode { .. })
         ));
     }
