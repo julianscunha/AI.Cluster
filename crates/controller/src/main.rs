@@ -534,6 +534,9 @@ impl ClusterControl for Controller {
         }))
     }
 
+}
+
+impl Controller {
     async fn execute_graph(
         &self,
         graph: &execution::ExecutionGraph,
