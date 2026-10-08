@@ -108,7 +108,7 @@ Nesta etapa, depends_on representa uma dependência de controle e ordenação. A
 
 Para cada data_from, o Controller aguarda a conclusão da Work Unit de origem, recupera seu output e o anexa ao payload da Work Unit consumidora. Quando existem múltiplas fontes, os outputs são concatenados na ordem declarada.
 
-Essa é uma representação inicial de buffer genérico. O Controller agora mantém os outputs em um Buffer Store LRU limitado e os referencia por buffer_id. A localização no BufferDescriptor continua registrando o node produtor; a cópia residente no Controller é tratada como cache/relay local. A transferência física para o Worker ainda não é executada nesta etapa, e não existe zero-copy.
+Essa é uma representação inicial de buffer genérico. O Controller agora mantém os outputs em um Buffer Store LRU limitado e os referencia por buffer_id. A localização no BufferDescriptor continua registrando o node produtor; a cópia residente no Controller é tratada como cache/relay local. Buffers que ainda possuem consumidores recebem pins de lifetime, impedindo eviction antes de todos os consumidores recuperarem os dados. A transferência física para o Worker ainda não é executada nesta etapa, e não existe zero-copy.
 
 O Buffer Store é deliberadamente separado do Execution Graph: o grafo define dependências; o store administra a disponibilidade temporária dos dados produzidos.
 

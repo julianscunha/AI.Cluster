@@ -45,7 +45,7 @@ Arquitetura: v0.1
 - propagação de falha impedindo o avanço para o próximo nível;
 - RPC SubmitGraph para submissão de Execution Graph;
 - data edges explícitos com transporte inicial de outputs entre Work Units;
-- Buffer Store no Controller com cache LRU limitado, metadados de buffer e reutilização dos outputs por buffer_id.
+- Buffer Store no Controller com cache LRU limitado, metadados de buffer, pins de lifetime e reutilização dos outputs por buffer_id.
 
 ## Experimental
 

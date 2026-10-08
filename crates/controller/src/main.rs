@@ -551,6 +551,14 @@ impl Controller {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let mut results = Vec::with_capacity(graph.units.len());
+        let mut buffer_consumer_counts = HashMap::new();
+
+        for unit in &graph.units {
+            for source_work_id in &unit.data_from {
+                let buffer_id = output_buffer_id(&graph.execution_id, source_work_id);
+                *buffer_consumer_counts.entry(buffer_id).or_insert(0usize) += 1;
+            }
+        }
 
         for level in levels {
             let mut executions = Vec::with_capacity(level.len());
@@ -694,7 +702,7 @@ async fn prepare_graph_work(
         let buffer_id = output_buffer_id(execution_id, source_work_id);
         let output = {
             let mut store = buffers.write().await;
-            store.get(&buffer_id)
+            store.get_for_consumer(&buffer_id)
         }
         .ok_or_else(|| {
             Status::failed_precondition(format!("buffer de saída não está disponível: {buffer_id}"))
