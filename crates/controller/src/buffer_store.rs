@@ -152,7 +152,6 @@ impl BufferStore {
     pub fn bytes_used(&self) -> u64 {
         self.bytes_used
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,7 +275,9 @@ mod tests {
             .unwrap();
 
         assert!(store.get_for_consumer("a").is_some());
-        store.insert(descriptor("b", 8), vec![5, 6, 7, 8, 9, 10, 11, 12]).unwrap();
+        store
+            .insert(descriptor("b", 8), vec![5, 6, 7, 8, 9, 10, 11, 12])
+            .unwrap();
 
         assert!(store.get("a").is_none());
         assert!(store.get("b").is_some());
