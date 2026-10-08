@@ -1016,7 +1016,10 @@ mod tests {
             &nodes,
         ));
 
-        assert!(matches!(result, Err(status) if status.code() == tonic::Code::Unimplemented));
+        assert!(matches!(
+            result,
+            Err(status) if status.code() == tonic::Code::FailedPrecondition
+        ));
     }
 
     #[test]
