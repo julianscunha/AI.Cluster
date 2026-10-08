@@ -67,6 +67,14 @@ Ainda não existe Buffer Store no Worker para materialização local persistente
 
 Também não existe recomputação automática. O planner já representa Recompute como alternativa de decisão, desde que um custo estimado seja fornecido pela camada superior.
 
+## Integração atual
+
+O prepare_graph_work já consulta o Buffer Residency Planner antes de anexar um output ao payload da Work Unit. Na implementação atual, o único caminho executável é ControllerCache, porque o Controller é o único componente que possui uma cópia de bytes utilizável durante o DAG.
+
+Quando o cache está disponível, ele é selecionado com custo estimado zero no planner de residency. Quando o cache não está disponível, o Controller não inventa uma transferência da residência primária: como o Worker ainda não mantém uma cópia endereçável do buffer, esse caminho permanece não implementado. Quando nenhuma fonte conhecida está disponível, a execução falha com FailedPrecondition.
+
+O TransferPlan continua separado da decisão de residency. A integração física com o data plane ainda não foi feita.
+
 ## Próximos passos
 
-A evolução natural é ligar a decisão de residency ao Transport Layer e, posteriormente, ao Tensor/Buffer Engine do Worker. Nessa fase, a decisão poderá selecionar entre reutilização local real, leitura do cache, transferência da residência primária ou recomputação, com métricas observadas substituindo estimativas fixas.
+Implementar Buffer Store/Buffer Engine no Worker e manter metadados de residência primária além da vida do cache. Depois disso, o planner poderá selecionar Local ou Primary de forma executável, e o Transport Layer poderá materializar a decisão com transferência física, checksum e métricas observadas.

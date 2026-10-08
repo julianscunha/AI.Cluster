@@ -48,7 +48,8 @@ Arquitetura: v0.1
 - Buffer Store no Controller com cache LRU limitado, metadados de buffer, pins de lifetime e reutilização dos outputs por buffer_id;
 - modelo inicial de Buffer Residency separado do Transfer Layer;
 - classificação contextual em Local, Cached, Remote e Missing;
-- decisão de acesso entre Local, Controller Cache, Primary e Recompute por custo estimado.
+- decisão de acesso entre Local, Controller Cache, Primary e Recompute por custo estimado;
+- integração do Residency Planner ao preparo das data edges do DAG, com Controller Cache como único caminho executável nesta etapa.
 
 ## Experimental
 
@@ -66,4 +67,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Integrar Buffer Residency ao Transport Layer sem misturar os dois domínios: a decisão de acesso deverá escolher a fonte lógica do buffer, enquanto o Transport Layer calcula a rota física. Depois disso, implementar Buffer Store/Buffer Engine no Worker para permitir Local real, seguido de transferência física, checksum, persistência por tier, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
+Implementar Buffer Store/Buffer Engine no Worker e metadados de residência primária para tornar Local e Primary caminhos executáveis. Em seguida, integrar a decisão ao Transport Layer para transferência física, checksum, persistência por tier, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
