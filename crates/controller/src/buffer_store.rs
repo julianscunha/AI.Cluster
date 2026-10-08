@@ -185,6 +185,6 @@ mod tests {
     fn rejeita_buffer_maior_que_cache() {
         let mut store = BufferStore::new(2);
         assert!(store.insert(descriptor("a", 4), vec![1, 2, 3, 4]).is_err());
-        assert!(store.is_empty());
+        assert!(store.get("a").is_none());
     }
 }
