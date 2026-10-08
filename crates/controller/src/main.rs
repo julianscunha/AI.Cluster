@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferPlan};
+use real_ai_cluster_common::{
+    residency::{plan_buffer_access, BufferAccessOptions, BufferAccessSource},
+    tensor::{BufferDescriptor, DataLocation, TransferPlan},
+};
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
     worker_runtime_client::WorkerRuntimeClient,
@@ -700,20 +703,76 @@ async fn prepare_graph_work(
 
     for source_work_id in &unit.data_from {
         let buffer_id = output_buffer_id(execution_id, source_work_id);
-        let output = {
+        let cached_output = {
             let mut store = buffers.write().await;
-            store.get_for_consumer(&buffer_id)
+            store.get(&buffer_id)
+        };
+        let descriptor = cached_output
+            .as_ref()
+            .map(|output| output.descriptor.clone());
+
+        let primary_transfer = descriptor.as_ref().and_then(|buffer| {
+            transfer::plan_output_transfer(buffer, destination_node_id, nodes).ok()
+        });
+
+        let decision = plan_buffer_access(BufferAccessOptions {
+            local_copy_available: false,
+            controller_cache_available: cached_output.is_some(),
+            primary_available: primary_transfer.is_some(),
+            cache_transfer_duration_us: cached_output.as_ref().map(|_| 0),
+            primary_transfer_duration_us: primary_transfer
+                .as_ref()
+                .map(|plan| plan.estimated_duration_us),
+            recompute_duration_us: None,
+        });
+
+        info!(
+            buffer_id = %buffer_id,
+            destination_node_id = %destination_node_id,
+            residency_source = ?decision.source,
+            estimated_us = ?decision.estimated_duration_us,
+            "decisão de residency criada"
+        );
+
+        match decision.source {
+            Some(BufferAccessSource::ControllerCache) => {
+                let output = {
+                    let mut store = buffers.write().await;
+                    store.get_for_consumer(&buffer_id)
+                }
+                .ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "buffer de saída deixou de estar disponível: {buffer_id}"
+                    ))
+                })?;
+
+                work.payload.extend_from_slice(&output.bytes);
+            }
+            Some(BufferAccessSource::Local) => {
+                return Err(Status::unimplemented(
+                    "buffer local no Worker ainda não está implementado",
+                ));
+            }
+            Some(BufferAccessSource::Primary) => {
+                return Err(Status::unimplemented(
+                    "leitura remota da residência primária ainda não está implementada",
+                ));
+            }
+            Some(BufferAccessSource::Recompute) => {
+                return Err(Status::unimplemented(
+                    "recomputação de buffer ainda não está implementada",
+                ));
+            }
+            None => {
+                return Err(Status::failed_precondition(format!(
+                    "nenhuma fonte de buffer está disponível: {buffer_id}"
+                )));
+            }
         }
-        .ok_or_else(|| {
-            Status::failed_precondition(format!("buffer de saída não está disponível: {buffer_id}"))
-        })?;
 
-        let transfer =
-            transfer::plan_output_transfer(&output.descriptor, destination_node_id, nodes)
-                .map_err(|error| Status::unavailable(error.to_string()))?;
-
-        work.payload.extend_from_slice(&output.bytes);
-        transfer_plans.push(transfer);
+        if let Some(transfer) = primary_transfer {
+            transfer_plans.push(transfer);
+        }
     }
 
     Ok((work, transfer_plans))
