@@ -963,11 +963,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (prepared, transfers) = runtime
             .block_on(prepare_graph_work(
-                &unit,
-                "exec-1",
-                &buffers,
-                "node-b",
-                &nodes,
+                &unit, "exec-1", &buffers, "node-b", &nodes,
             ))
             .unwrap();
 
@@ -1012,11 +1008,7 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let result = runtime.block_on(prepare_graph_work(
-            &unit,
-            "exec-1",
-            &buffers,
-            "node-b",
-            &nodes,
+            &unit, "exec-1", &buffers, "node-b", &nodes,
         ));
 
         assert!(matches!(
