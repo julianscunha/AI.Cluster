@@ -20,6 +20,7 @@ PlacementPlan
 WorkUnit
 DataEdge
 Tensor
+BufferResidency
 StateObject
 Metric
 Event
@@ -102,6 +103,30 @@ A representação futura deverá incluir tipo de buffer, shape, dtype, tamanho, 
 ## Tensor
 
 Objeto de dados endereçável, com shape, dtype, tamanho, checksum e localização.
+
+## BufferResidency
+
+Representa a disponibilidade contextual de um buffer em relação ao destino.
+
+```
+Local    → cópia física no destino
+Cached   → cópia utilizável no Controller
+Remote   → residência primária disponível, mas remota ao destino
+Missing  → nenhuma fonte utilizável
+```
+
+A residência primária continua sendo registrada em BufferDescriptor.location. BufferResidency não substitui essa localização canônica; ela descreve a situação observada no contexto de uma decisão de acesso.
+
+A decisão de acesso pode selecionar:
+
+```
+Local
+ControllerCache
+Primary
+Recompute
+```
+
+O custo estimado é separado da estratégia física de transporte. Isso permite que a política de residency evolua sem acoplar o Execution Graph ao data plane.
 
 ## StateObject
 

@@ -35,13 +35,13 @@ Arestas representam:
 
 O primeiro núcleo do Execution Graph está implementado no Controller.
 
-Uma \`WorkUnitSpec\` representa uma Work Unit mais suas dependências e requisitos de backend. O \`ExecutionGraph\` valida IDs, dependências inexistentes e ciclos, e calcula níveis topológicos. Work Units no mesmo nível podem ser tratadas como independentes.
+Uma `WorkUnitSpec` representa uma Work Unit mais suas dependências e requisitos de backend. O `ExecutionGraph` valida IDs, dependências inexistentes e ciclos, e calcula níveis topológicos. Work Units no mesmo nível podem ser tratadas como independentes.
 
-O \`PlacementPlanner\` transforma o grafo lógico em um \`PlacementPlan\`. Para cada nível, os candidatos elegíveis são filtrados por estado, endpoint e backend requerido; depois o Scheduler global os ranqueia. Work Units independentes são distribuídas entre nodes distintos quando houver nodes disponíveis. Em níveis sequenciais, um mesmo node pode ser reutilizado.
+O `PlacementPlanner` transforma o grafo lógico em um `PlacementPlan`. Para cada nível, os candidatos elegíveis são filtrados por estado, endpoint e backend requerido; depois o Scheduler global os ranqueia. Work Units independentes são distribuídas entre nodes distintos quando houver nodes disponíveis. Em níveis sequenciais, um mesmo node pode ser reutilizado.
 
-O plano contém, para cada Work Unit, o \`node_id\`, a posição no ranking e o score utilizado pelo Scheduler. O hardware permanece fora do Execution Graph.
+O plano contém, para cada Work Unit, o `node_id`, a posição no ranking e o score utilizado pelo Scheduler. O hardware permanece fora do Execution Graph.
 
-O \`SubmitWork\` já passa por esse fluxo antes da reserva de capacidade e da chamada ao Worker.
+O `SubmitWork` já passa por esse fluxo antes da reserva de capacidade e da chamada ao Worker.
 
 ## Paralelismo
 
@@ -83,7 +83,6 @@ O mesmo mecanismo deve suportar processamento de documentos, áudio, visão, emb
 
 O Execution Graph deve ser independente do hardware físico e o Placement Plan deve ser independente do histórico bruto de telemetria.
 
-
 ## Execução de DAG
 
 O Controller já executa um Execution Graph com múltiplas Work Units por níveis topológicos.
@@ -110,7 +109,9 @@ Para cada data_from, o Controller aguarda a conclusão da Work Unit de origem, r
 
 Essa é uma representação inicial de buffer genérico. O Controller agora mantém os outputs em um Buffer Store LRU limitado e os referencia por buffer_id. A localização no BufferDescriptor continua registrando o node produtor; a cópia residente no Controller é tratada como cache/relay local. Buffers que ainda possuem consumidores recebem pins de lifetime, impedindo eviction antes de todos os consumidores recuperarem os dados. A transferência física para o Worker ainda não é executada nesta etapa, e não existe zero-copy.
 
-O Buffer Store é deliberadamente separado do Execution Graph: o grafo define dependências; o store administra a disponibilidade temporária dos dados produzidos.
+A camada de Buffer Residency agora separa disponibilidade contextual de rota de transporte. Para um destino, o buffer pode estar Local, Cached, Remote ou Missing. A política de acesso pode escolher Local, ControllerCache, Primary ou Recompute conforme custos estimados. Esse planner é puro e não altera o Transfer Layer.
+
+O Buffer Store é deliberadamente separado do Execution Graph: o grafo define dependências; o store administra a disponibilidade temporária dos dados; o Residency Planner decide a fonte lógica de acesso.
 
 ## RPC
 
@@ -118,4 +119,4 @@ O protocolo expõe SubmitGraph, que recebe um execution_id e uma coleção de Wo
 
 ## Próxima evolução
 
-Adicionar buffers tipados para tensores, checksum, persistência por tier, transferência física eficiente entre nodes, cancelamento cooperativo, métricas de transferência e replanejamento durante a execução.
+Integrar a decisão de residency ao Transport Layer, implementar Buffer Store/Buffer Engine no Worker para materialização local real, adicionar buffers tipados para tensores, checksum, persistência por tier, transferência física eficiente entre nodes, cancelamento cooperativo, métricas de transferência e replanejamento durante a execução.

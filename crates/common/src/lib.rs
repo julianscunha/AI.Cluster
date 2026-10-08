@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod hardware;
+pub mod residency;
 pub mod tensor;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

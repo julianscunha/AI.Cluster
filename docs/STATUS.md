@@ -45,7 +45,10 @@ Arquitetura: v0.1
 - propagação de falha impedindo o avanço para o próximo nível;
 - RPC SubmitGraph para submissão de Execution Graph;
 - data edges explícitos com transporte inicial de outputs entre Work Units;
-- Buffer Store no Controller com cache LRU limitado, metadados de buffer, pins de lifetime e reutilização dos outputs por buffer_id.
+- Buffer Store no Controller com cache LRU limitado, metadados de buffer, pins de lifetime e reutilização dos outputs por buffer_id;
+- modelo inicial de Buffer Residency separado do Transfer Layer;
+- classificação contextual em Local, Cached, Remote e Missing;
+- decisão de acesso entre Local, Controller Cache, Primary e Recompute por custo estimado.
 
 ## Experimental
 
@@ -57,8 +60,10 @@ Arquitetura: v0.1
 - backend de GPU/NPU;
 - armazenamento definitivo;
 - modelo de performance calibrado com dados históricos;
-- pesos finais do Scheduler.
+- pesos finais do Scheduler;
+- custo de recomputação calibrado;
+- seleção dinâmica entre cache e residência primária baseada em telemetria real.
 
 ## Próxima etapa
 
-Adicionar buffers tipados para tensores, checksum, armazenamento persistente por tier, transferência real entre nodes, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
+Integrar Buffer Residency ao Transport Layer sem misturar os dois domínios: a decisão de acesso deverá escolher a fonte lógica do buffer, enquanto o Transport Layer calcula a rota física. Depois disso, implementar Buffer Store/Buffer Engine no Worker para permitir Local real, seguido de transferência física, checksum, persistência por tier, cancelamento cooperativo, métricas por Work Unit e replanejamento do Placement Plan durante a execução.
