@@ -78,14 +78,6 @@ impl BufferStore {
         Some(buffer.clone())
     }
 
-    pub fn contains(&self, buffer_id: &str) -> bool {
-        self.buffers.contains_key(buffer_id)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buffers.is_empty()
-    }
-
     pub fn bytes_used(&self) -> u64 {
         self.bytes_used
     }
@@ -176,9 +168,9 @@ mod tests {
             .insert(descriptor("c", 4), vec![9, 10, 11, 12])
             .unwrap();
 
-        assert!(store.contains("a"));
-        assert!(!store.contains("b"));
-        assert!(store.contains("c"));
+        assert!(store.get("a").is_some());
+        assert!(store.get("b").is_none());
+        assert!(store.get("c").is_some());
         assert_eq!(store.bytes_used(), 8);
     }
 
@@ -186,7 +178,7 @@ mod tests {
     fn rejeita_tamanho_inconsistente() {
         let mut store = BufferStore::new(10);
         assert!(store.insert(descriptor("a", 4), vec![1, 2, 3]).is_err());
-        assert!(store.is_empty());
+        assert!(store.get("a").is_none());
     }
 
     #[test]

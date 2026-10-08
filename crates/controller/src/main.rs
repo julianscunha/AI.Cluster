@@ -662,11 +662,15 @@ impl Controller {
                     },
                 };
 
-                self.buffers
-                    .write()
-                    .await
+                let mut buffers = self.buffers.write().await;
+                buffers
                     .insert(buffer, result.output.clone())
                     .map_err(|error| Status::resource_exhausted(error.to_string()))?;
+                info!(
+                    work_unit_id = %result.work_id,
+                    buffer_bytes = buffers.bytes_used(),
+                    "output armazenado no buffer store"
+                );
             }
 
             results.extend(level_results);
