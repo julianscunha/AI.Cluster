@@ -906,7 +906,7 @@ mod tests {
     use super::{
         buffer_store::BufferStore, execution::WorkUnitSpec, output_buffer_id, prepare_graph_work,
     };
-    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
+    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
     #[test]
@@ -969,8 +969,54 @@ mod tests {
             .unwrap();
 
         assert_eq!(prepared.payload, b"base-output");
-        assert_eq!(transfers.len(), 1);
-        assert_eq!(transfers[0].strategy, TransferStrategy::ControllerRelay);
+        assert!(transfers.is_empty());
+    }
+
+    #[test]
+    fn prepare_graph_work_nao_le_primary_remota_sem_cache() {
+        let unit = WorkUnitSpec::new(WorkUnit {
+            work_id: "consumer".into(),
+            operation: "echo".into(),
+            ..Default::default()
+        })
+        .with_data_inputs(vec!["producer".into()]);
+
+        let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
+        let nodes = vec![
+            NodeInfo {
+                node_id: "node-a".into(),
+                state: NodeState::Ready as i32,
+                capability: Some(Capability {
+                    network_rtt_us: 100.0,
+                    network_mb_per_sec: 100.0,
+                    ..Default::default()
+                }),
+                worker_endpoint: "http://node-a:50052".into(),
+                ..Default::default()
+            },
+            NodeInfo {
+                node_id: "node-b".into(),
+                state: NodeState::Ready as i32,
+                capability: Some(Capability {
+                    network_rtt_us: 100.0,
+                    network_mb_per_sec: 100.0,
+                    ..Default::default()
+                }),
+                worker_endpoint: "http://node-b:50052".into(),
+                ..Default::default()
+            },
+        ];
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let result = runtime.block_on(prepare_graph_work(
+            &unit,
+            "exec-1",
+            &buffers,
+            "node-b",
+            &nodes,
+        ));
+
+        assert!(matches!(result, Err(status) if status.code() == tonic::Code::Unimplemented));
     }
 
     #[test]
