@@ -770,9 +770,6 @@ async fn prepare_graph_work(
             }
         }
 
-        if let Some(transfer) = primary_transfer {
-            transfer_plans.push(transfer);
-        }
     }
 
     Ok((work, transfer_plans))
