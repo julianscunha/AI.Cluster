@@ -113,12 +113,13 @@ pub fn plan_buffer_access(options: BufferAccessOptions) -> BufferAccessDecision 
         options.recompute_duration_us,
     );
 
-    best.map_or_else(BufferAccessDecision::unavailable, |(_, source, duration)| {
-        BufferAccessDecision {
+    best.map_or_else(
+        BufferAccessDecision::unavailable,
+        |(_, source, duration)| BufferAccessDecision {
             source: Some(source),
             estimated_duration_us: Some(duration),
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
