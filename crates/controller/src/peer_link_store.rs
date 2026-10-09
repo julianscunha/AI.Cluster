@@ -101,6 +101,7 @@ impl PeerLinkStore {
         }
     }
 
+    #[cfg(test)]
     pub fn in_memory() -> Self {
         Self {
             path: None,
