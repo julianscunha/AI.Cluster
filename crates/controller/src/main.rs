@@ -1474,7 +1474,12 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let result = runtime.block_on(prepare_graph_work(
-            &unit, "exec-1", &buffers, "node-b", &nodes,
+            &unit,
+            "exec-1",
+            &buffers,
+            &peer_links,
+            "node-b",
+            &nodes,
         ));
 
         assert!(matches!(
@@ -1503,7 +1508,12 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let result = runtime.block_on(prepare_graph_work(
-            &unit, "exec-1", &buffers, "node-b", &nodes,
+            &unit,
+            "exec-1",
+            &buffers,
+            &peer_links,
+            "node-b",
+            &nodes,
         ));
 
         assert!(result.is_err());

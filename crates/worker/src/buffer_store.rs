@@ -113,6 +113,7 @@ impl BufferStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn get(&mut self, buffer_id: &str) -> Option<Vec<u8>> {
         self.get_with_checksum(buffer_id).map(|(data, _)| data)
     }
