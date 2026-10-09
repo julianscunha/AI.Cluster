@@ -710,8 +710,12 @@ impl Controller {
                     .unwrap_or_default();
 
                 let mut buffers = self.buffers.write().await;
-                buffers
-                    .insert_with_pins(buffer, result.output.clone(), pins)
+                let insert_result = if pins == 0 {
+                    buffers.insert(buffer, result.output.clone())
+                } else {
+                    buffers.insert_with_pins(buffer, result.output.clone(), pins)
+                };
+                insert_result
                     .map_err(|error| Status::resource_exhausted(error.to_string()))?;
                 info!(
                     work_unit_id = %result.work_id,
@@ -781,6 +785,12 @@ async fn prepare_graph_work(
         let cache_transfer_duration_us = cached_descriptor
             .as_ref()
             .map(|descriptor| estimate_controller_relay_us(descriptor.byte_len, destination));
+        let remote_route_estimate_us = cached_descriptor
+            .as_ref()
+            .and_then(|descriptor| {
+                transfer::plan_output_transfer(descriptor, destination_node_id, nodes).ok()
+            })
+            .map(|transfer| transfer.estimated_duration_us);
 
         let decision = plan_buffer_access(BufferAccessOptions {
             local_copy_available,
@@ -796,6 +806,7 @@ async fn prepare_graph_work(
             destination_node_id = %destination_node_id,
             residency_source = ?decision.source,
             estimated_us = ?decision.estimated_duration_us,
+            remote_route_estimate_us = ?remote_route_estimate_us,
             "decisão de residency criada"
         );
 

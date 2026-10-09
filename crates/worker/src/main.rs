@@ -109,6 +109,14 @@ impl WorkerRuntime for WorkerService {
                     %error,
                     "output não pôde ser mantido no Buffer Store local; Controller Cache será fallback"
                 );
+            } else {
+                let bytes_used = self.buffers.read().await.bytes_used();
+                info!(
+                    node_id = %self.node_id,
+                    buffer_id = %work.output_buffer_id,
+                    bytes_used,
+                    "output armazenado no Buffer Store local"
+                );
             }
         }
 
