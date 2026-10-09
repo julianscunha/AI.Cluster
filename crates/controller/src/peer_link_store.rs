@@ -749,7 +749,12 @@ mod tests {
     async fn uma_transferencia_nao_e_confundida_com_cache_de_sonda() {
         let store = PeerLinkStore::in_memory();
         store
-            .record_transfer_success("worker-a", "worker-b", 1024 * 1024, Duration::from_millis(100))
+            .record_transfer_success(
+                "worker-a",
+                "worker-b",
+                1024 * 1024,
+                Duration::from_millis(100),
+            )
             .await;
 
         assert!(store
