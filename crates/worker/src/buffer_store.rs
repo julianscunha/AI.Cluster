@@ -307,13 +307,12 @@ impl BufferStore {
             .get_mut(transfer_id)
             .ok_or_else(|| BufferStoreError::TransferNotFound(transfer_id.to_owned()))?;
         let received = transfer.data.len() as u64;
-        let chunk_end = offset
-            .checked_add(data.len() as u64)
-            .ok_or_else(|| BufferStoreError::TransferExceedsDeclaredLength(transfer_id.to_owned()))?;
+        let chunk_end = offset.checked_add(data.len() as u64).ok_or_else(|| {
+            BufferStoreError::TransferExceedsDeclaredLength(transfer_id.to_owned())
+        })?;
 
         if offset < received {
-            if chunk_end <= received
-                && transfer.data[offset as usize..chunk_end as usize] == *data
+            if chunk_end <= received && transfer.data[offset as usize..chunk_end as usize] == *data
             {
                 return Ok(received);
             }
@@ -574,7 +573,10 @@ mod tests {
         );
         assert!(matches!(
             store.append_transfer_chunk("tx-1", 4, b"d", &sha256_checksum(b"d")),
-            Err(BufferStoreError::TransferOffsetMismatch { expected_offset: 2, .. })
+            Err(BufferStoreError::TransferOffsetMismatch {
+                expected_offset: 2,
+                ..
+            })
         ));
 
         let last = b"cd";
@@ -616,7 +618,13 @@ mod tests {
     fn rejeita_checksum_final_incorreto_e_libera_reserva() {
         let mut store = BufferStore::new(8);
         store
-            .begin_transfer("tx-1".into(), "buffer-1".into(), 3, sha256_checksum(b"xyz"), 1)
+            .begin_transfer(
+                "tx-1".into(),
+                "buffer-1".into(),
+                3,
+                sha256_checksum(b"xyz"),
+                1,
+            )
             .unwrap();
         store
             .append_transfer_chunk("tx-1", 0, b"abc", &sha256_checksum(b"abc"))

@@ -376,7 +376,11 @@ impl WorkerRuntime for WorkerService {
         )
         .await
         .map_err(|_| Status::deadline_exceeded("timeout inicializando transferência no destino"))?
-        .map_err(|error| Status::unavailable(format!("não foi possível iniciar/retomar transferência: {error}")))?
+        .map_err(|error| {
+            Status::unavailable(format!(
+                "não foi possível iniciar/retomar transferência: {error}"
+            ))
+        })?
         .into_inner();
 
         if !begin.accepted {
@@ -391,14 +395,19 @@ impl WorkerRuntime for WorkerService {
             }));
         }
 
-        let mut offset = usize::try_from(begin.next_offset)
-            .map_err(|_| Status::out_of_range("offset de retomada excede o espaço de endereçamento"))?;
+        let mut offset = usize::try_from(begin.next_offset).map_err(|_| {
+            Status::out_of_range("offset de retomada excede o espaço de endereçamento")
+        })?;
         if offset > data.len() {
-            return Err(Status::data_loss("offset de retomada maior que o buffer de origem"));
+            return Err(Status::data_loss(
+                "offset de retomada maior que o buffer de origem",
+            ));
         }
 
         while offset < data.len() {
-            let end = offset.saturating_add(MAX_BUFFER_CHUNK_BYTES).min(data.len());
+            let end = offset
+                .saturating_add(MAX_BUFFER_CHUNK_BYTES)
+                .min(data.len());
             let chunk = data[offset..end].to_vec();
             let chunk_checksum_sha256 = sha256_checksum(&chunk);
             let mut advanced = false;
@@ -465,10 +474,14 @@ impl WorkerRuntime for WorkerService {
         .into_inner();
 
         if !committed.accepted || committed.total_bytes != byte_len {
-            return Err(Status::data_loss("resposta de commit de transferência inconsistente"));
+            return Err(Status::data_loss(
+                "resposta de commit de transferência inconsistente",
+            ));
         }
         if committed.checksum_sha256 != checksum_sha256 {
-            return Err(Status::data_loss("checksum final do destino difere da origem"));
+            return Err(Status::data_loss(
+                "checksum final do destino difere da origem",
+            ));
         }
 
         info!(

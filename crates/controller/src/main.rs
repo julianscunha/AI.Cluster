@@ -1088,9 +1088,11 @@ async fn prepare_graph_work(
                     if let Some(client) = local_client.as_mut() {
                         let _ = tokio::time::timeout(
                             Duration::from_millis(500),
-                            client.abort_buffer_transfer(Request::new(AbortBufferTransferRequest {
-                                transfer_id: destination_buffer_id.clone(),
-                            })),
+                            client.abort_buffer_transfer(Request::new(
+                                AbortBufferTransferRequest {
+                                    transfer_id: destination_buffer_id.clone(),
+                                },
+                            )),
                         )
                         .await;
                     }
