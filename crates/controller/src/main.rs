@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use real_ai_cluster_common::{
@@ -1406,7 +1406,7 @@ mod tests {
         .with_data_inputs(vec!["producer".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
-        let peer_links = peer_link_store::PeerLinkStore::in_memory();
+        let peer_links = super::peer_link_store::PeerLinkStore::in_memory();
         {
             let mut store = buffers.blocking_write();
             store
@@ -1482,7 +1482,7 @@ mod tests {
         .with_data_inputs(vec!["producer".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
-        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
+        let peer_links = super::peer_link_store::PeerLinkStore::in_memory();
         let nodes = vec![
             NodeInfo {
                 node_id: "node-a".into(),
@@ -1534,7 +1534,7 @@ mod tests {
         .with_data_inputs(vec!["missing".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
-        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
+        let peer_links = super::peer_link_store::PeerLinkStore::in_memory();
         let nodes = vec![NodeInfo {
             node_id: "node-b".into(),
             state: NodeState::Ready as i32,
