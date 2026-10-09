@@ -11,19 +11,29 @@ use tracing::warn;
 
 const HISTORY_VERSION: u32 = 1;
 const MAX_OBSERVATIONS_PER_LINK: usize = 32;
+const MAX_METRIC_SAMPLES: usize = 8;
 const AGGREGATION_WINDOW: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_HISTORY_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+const MEBIBYTE: f64 = 1024.0 * 1024.0;
 
 #[derive(Debug, Clone)]
 pub struct PeerLinkMetrics {
     pub rtt_us: f64,
+    pub jitter_us: f64,
     pub round_trip_mb_per_sec: f64,
+    pub observed_transfer_mb_per_sec: f64,
     pub sample_count: u32,
     pub measured_at: Instant,
     pub observation_count: u32,
     pub failure_count: u32,
     pub timeout_count: u32,
     pub failure_rate: f64,
+    pub probe_failure_rate: f64,
+    pub transfer_attempt_count: u32,
+    pub transfer_success_count: u32,
+    pub transfer_failure_count: u32,
+    pub transfer_timeout_count: u32,
+    pub transfer_failure_rate: f64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,12 +44,31 @@ pub enum ProbeOutcome {
     Invalid,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ObservationKind {
+    #[default]
+    Probe,
+    Transfer,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LinkObservation {
     observed_at_unix_ms: i64,
     outcome: ObservationOutcome,
+    #[serde(default)]
+    kind: ObservationKind,
+    #[serde(default)]
     rtt_us: Option<f64>,
+    #[serde(default)]
+    rtt_jitter_us: Option<f64>,
+    #[serde(default)]
     round_trip_mb_per_sec: Option<f64>,
+    #[serde(default)]
+    transfer_bytes: u64,
+    #[serde(default)]
+    transfer_duration_us: u64,
+    #[serde(default)]
     sample_count: u32,
 }
 
@@ -121,7 +150,8 @@ impl PeerLinkStore {
             .get(&(source_node_id.to_owned(), destination_node_id.to_owned()))?;
         let last = history.back()?;
 
-        if last.outcome != ObservationOutcome::Success
+        if last.kind != ObservationKind::Probe
+            || last.outcome != ObservationOutcome::Success
             || observation_age_ms(last) > ttl.as_millis() as i64
         {
             return None;
@@ -148,6 +178,7 @@ impl PeerLinkStore {
         source_node_id: &str,
         destination_node_id: &str,
         rtt_us: f64,
+        rtt_jitter_us: f64,
         round_trip_mb_per_sec: f64,
         sample_count: u32,
     ) -> Option<PeerLinkMetrics> {
@@ -157,8 +188,12 @@ impl PeerLinkStore {
             LinkObservation {
                 observed_at_unix_ms: now_ms(),
                 outcome: ObservationOutcome::Success,
+                kind: ObservationKind::Probe,
                 rtt_us: Some(rtt_us),
+                rtt_jitter_us: Some(rtt_jitter_us),
                 round_trip_mb_per_sec: Some(round_trip_mb_per_sec),
+                transfer_bytes: 0,
+                transfer_duration_us: 0,
                 sample_count,
             },
         )
@@ -174,20 +209,83 @@ impl PeerLinkStore {
         destination_node_id: &str,
         outcome: ProbeOutcome,
     ) -> Option<PeerLinkMetrics> {
-        let outcome = match outcome {
-            ProbeOutcome::Failure => ObservationOutcome::Failure,
-            ProbeOutcome::Timeout => ObservationOutcome::Timeout,
-            ProbeOutcome::Invalid => ObservationOutcome::Invalid,
-        };
+        self.record_probe_outcome(source_node_id, destination_node_id, outcome)
+            .await
+    }
 
+    async fn record_probe_outcome(
+        &self,
+        source_node_id: &str,
+        destination_node_id: &str,
+        outcome: ProbeOutcome,
+    ) -> Option<PeerLinkMetrics> {
         self.record(
             source_node_id,
             destination_node_id,
             LinkObservation {
                 observed_at_unix_ms: now_ms(),
-                outcome,
+                outcome: observation_outcome(outcome),
+                kind: ObservationKind::Probe,
                 rtt_us: None,
+                rtt_jitter_us: None,
                 round_trip_mb_per_sec: None,
+                transfer_bytes: 0,
+                transfer_duration_us: 0,
+                sample_count: 0,
+            },
+        )
+        .await;
+
+        self.historical_metrics(source_node_id, destination_node_id, DEFAULT_HISTORY_WINDOW)
+            .await
+    }
+
+    pub async fn record_transfer_success(
+        &self,
+        source_node_id: &str,
+        destination_node_id: &str,
+        bytes: u64,
+        duration: Duration,
+    ) -> Option<PeerLinkMetrics> {
+        self.record(
+            source_node_id,
+            destination_node_id,
+            LinkObservation {
+                observed_at_unix_ms: now_ms(),
+                outcome: ObservationOutcome::Success,
+                kind: ObservationKind::Transfer,
+                rtt_us: None,
+                rtt_jitter_us: None,
+                round_trip_mb_per_sec: None,
+                transfer_bytes: bytes,
+                transfer_duration_us: duration.as_micros().min(u64::MAX as u128) as u64,
+                sample_count: 0,
+            },
+        )
+        .await;
+
+        self.historical_metrics(source_node_id, destination_node_id, AGGREGATION_WINDOW)
+            .await
+    }
+
+    pub async fn record_transfer_failure(
+        &self,
+        source_node_id: &str,
+        destination_node_id: &str,
+        outcome: ProbeOutcome,
+    ) -> Option<PeerLinkMetrics> {
+        self.record(
+            source_node_id,
+            destination_node_id,
+            LinkObservation {
+                observed_at_unix_ms: now_ms(),
+                outcome: observation_outcome(outcome),
+                kind: ObservationKind::Transfer,
+                rtt_us: None,
+                rtt_jitter_us: None,
+                round_trip_mb_per_sec: None,
+                transfer_bytes: 0,
+                transfer_duration_us: 0,
                 sample_count: 0,
             },
         )
@@ -228,6 +326,14 @@ impl PeerLinkStore {
     }
 }
 
+fn observation_outcome(outcome: ProbeOutcome) -> ObservationOutcome {
+    match outcome {
+        ProbeOutcome::Failure => ObservationOutcome::Failure,
+        ProbeOutcome::Timeout => ObservationOutcome::Timeout,
+        ProbeOutcome::Invalid => ObservationOutcome::Invalid,
+    }
+}
+
 fn metrics_from_history(
     history: &VecDeque<LinkObservation>,
     max_age: Duration,
@@ -239,10 +345,13 @@ fn metrics_from_history(
         .filter(|observation| now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms)
         .collect();
 
-    let successful: Vec<&LinkObservation> = recent
+    let successful_probes: Vec<&LinkObservation> = recent
         .iter()
         .copied()
-        .filter(|observation| observation.outcome == ObservationOutcome::Success)
+        .filter(|observation| {
+            observation.kind == ObservationKind::Probe
+                && observation.outcome == ObservationOutcome::Success
+        })
         .filter(|observation| {
             observation.rtt_us.is_some_and(f64::is_finite)
                 && observation.rtt_us.is_some_and(|value| value >= 0.0)
@@ -254,28 +363,51 @@ fn metrics_from_history(
                     .is_some_and(|value| value > 0.0)
         })
         .rev()
-        .take(8)
+        .take(MAX_METRIC_SAMPLES)
         .collect();
 
-    let latest_success = successful.first()?;
-    let rtt_us = successful
+    let successful_transfers: Vec<&LinkObservation> = recent
         .iter()
-        .filter_map(|observation| observation.rtt_us)
-        .sum::<f64>()
-        / successful.len() as f64;
-    let round_trip_mb_per_sec = successful
-        .iter()
-        .filter_map(|observation| observation.round_trip_mb_per_sec)
-        .sum::<f64>()
-        / successful.len() as f64;
+        .copied()
+        .filter(|observation| {
+            observation.kind == ObservationKind::Transfer
+                && observation.outcome == ObservationOutcome::Success
+                && observation.transfer_bytes > 0
+                && observation.transfer_duration_us > 0
+        })
+        .collect();
 
-    if !rtt_us.is_finite()
-        || rtt_us < 0.0
-        || !round_trip_mb_per_sec.is_finite()
-        || round_trip_mb_per_sec <= 0.0
-    {
+    if successful_probes.is_empty() && successful_transfers.is_empty() {
         return None;
     }
+
+    let rtt_us = mean(successful_probes.iter().filter_map(|observation| observation.rtt_us));
+    let jitter_us = mean(
+        successful_probes
+            .iter()
+            .filter_map(|observation| observation.rtt_jitter_us)
+            .filter(|value| value.is_finite() && *value >= 0.0),
+    );
+    let round_trip_mb_per_sec = mean(
+        successful_probes
+            .iter()
+            .filter_map(|observation| observation.round_trip_mb_per_sec),
+    );
+
+    let total_transfer_bytes: u128 = successful_transfers
+        .iter()
+        .map(|observation| observation.transfer_bytes as u128)
+        .sum();
+    let total_transfer_duration_us: u128 = successful_transfers
+        .iter()
+        .map(|observation| observation.transfer_duration_us as u128)
+        .sum();
+    let observed_transfer_mb_per_sec = if total_transfer_duration_us == 0 {
+        0.0
+    } else {
+        total_transfer_bytes as f64 / MEBIBYTE
+            / (total_transfer_duration_us as f64 / 1_000_000.0)
+    };
 
     let failure_count = recent
         .iter()
@@ -291,11 +423,64 @@ fn metrics_from_history(
         .filter(|observation| observation.outcome == ObservationOutcome::Timeout)
         .count() as u32;
     let observation_count = recent.len() as u32;
-    let failure_rate = if observation_count == 0 {
-        0.0
-    } else {
-        (failure_count + timeout_count) as f64 / observation_count as f64
-    };
+    let failure_rate = ratio(failure_count + timeout_count, observation_count);
+
+    let probe_attempt_count = recent
+        .iter()
+        .filter(|observation| observation.kind == ObservationKind::Probe)
+        .count() as u32;
+    let probe_failure_count = recent
+        .iter()
+        .filter(|observation| {
+            observation.kind == ObservationKind::Probe
+                && matches!(
+                    observation.outcome,
+                    ObservationOutcome::Failure
+                        | ObservationOutcome::Timeout
+                        | ObservationOutcome::Invalid
+                )
+        })
+        .count() as u32;
+    let probe_failure_rate = ratio(probe_failure_count, probe_attempt_count);
+
+    let transfer_attempt_count = recent
+        .iter()
+        .filter(|observation| observation.kind == ObservationKind::Transfer)
+        .count() as u32;
+    let transfer_success_count = recent
+        .iter()
+        .filter(|observation| {
+            observation.kind == ObservationKind::Transfer
+                && observation.outcome == ObservationOutcome::Success
+        })
+        .count() as u32;
+    let transfer_failure_count = recent
+        .iter()
+        .filter(|observation| {
+            observation.kind == ObservationKind::Transfer
+                && matches!(
+                    observation.outcome,
+                    ObservationOutcome::Failure | ObservationOutcome::Invalid
+                )
+        })
+        .count() as u32;
+    let transfer_timeout_count = recent
+        .iter()
+        .filter(|observation| {
+            observation.kind == ObservationKind::Transfer
+                && observation.outcome == ObservationOutcome::Timeout
+        })
+        .count() as u32;
+    let transfer_failure_rate = ratio(
+        transfer_failure_count + transfer_timeout_count,
+        transfer_attempt_count,
+    );
+
+    let latest_success = successful_probes
+        .first()
+        .copied()
+        .or_else(|| successful_transfers.last().copied())?;
+
     let age_ms = observation_age_ms(latest_success).max(0) as u64;
     let measured_at = Instant::now()
         .checked_sub(Duration::from_millis(age_ms))
@@ -303,14 +488,42 @@ fn metrics_from_history(
 
     Some(PeerLinkMetrics {
         rtt_us,
+        jitter_us,
         round_trip_mb_per_sec,
-        sample_count: latest_success.sample_count,
+        observed_transfer_mb_per_sec,
+        sample_count: successful_probes
+            .first()
+            .map(|observation| observation.sample_count)
+            .unwrap_or(0),
         measured_at,
         observation_count,
         failure_count,
         timeout_count,
         failure_rate,
+        probe_failure_rate,
+        transfer_attempt_count,
+        transfer_success_count,
+        transfer_failure_count,
+        transfer_timeout_count,
+        transfer_failure_rate,
     })
+}
+
+fn mean(values: impl Iterator<Item = f64>) -> f64 {
+    let values: Vec<f64> = values.filter(|value| value.is_finite()).collect();
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
+}
+
+fn ratio(numerator: u32, denominator: u32) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
 }
 
 fn observation_age_ms(observation: &LinkObservation) -> i64 {
@@ -356,7 +569,9 @@ fn load_state(path: &Path) -> io::Result<StoreState> {
         let mut observations: VecDeque<LinkObservation> = link
             .observations
             .into_iter()
-            .filter(|observation| now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms)
+            .filter(|observation| {
+                now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms
+            })
             .collect();
         while observations.len() > MAX_OBSERVATIONS_PER_LINK {
             observations.pop_front();
@@ -421,15 +636,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn historico_persiste_e_contabiliza_falhas_apos_reabrir() {
+    async fn historico_persiste_metricas_sondas_e_falhas_apos_reabrir() {
         let path = temporary_path("reopen");
         let store = PeerLinkStore::open(path.clone());
 
         store
-            .record_success("worker-a", "worker-b", 120.0, 25.0, 3)
+            .record_success("worker-a", "worker-b", 120.0, 10.0, 25.0, 3)
             .await;
         store
-            .record_success("worker-a", "worker-b", 100.0, 30.0, 3)
+            .record_success("worker-a", "worker-b", 100.0, 30.0, 30.0, 3)
             .await;
         store
             .record_failure("worker-a", "worker-b", ProbeOutcome::Timeout)
@@ -448,6 +663,7 @@ mod tests {
             .expect("a telemetria histórica deve sobreviver à reinicialização");
 
         assert!((metrics.rtt_us - 110.0).abs() < f64::EPSILON);
+        assert!((metrics.jitter_us - 20.0).abs() < f64::EPSILON);
         assert!((metrics.round_trip_mb_per_sec - 27.5).abs() < f64::EPSILON);
         assert_eq!(metrics.timeout_count, 1);
         assert_eq!(metrics.observation_count, 3);
@@ -462,7 +678,7 @@ mod tests {
         let store = PeerLinkStore::in_memory();
         for value in 0..(MAX_OBSERVATIONS_PER_LINK + 5) {
             store
-                .record_success("worker-a", "worker-b", 100.0 + value as f64, 10.0, 3)
+                .record_success("worker-a", "worker-b", 100.0 + value as f64, 5.0, 10.0, 3)
                 .await;
         }
 
@@ -475,10 +691,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn falha_recente_invalida_cache_quente_mas_preserva_estimativa_historica() {
+    async fn falha_de_sonda_preserva_estimativa_historica() {
         let store = PeerLinkStore::in_memory();
         store
-            .record_success("worker-a", "worker-b", 100.0, 10.0, 3)
+            .record_success("worker-a", "worker-b", 100.0, 15.0, 10.0, 3)
             .await;
 
         assert!(store
@@ -496,6 +712,43 @@ mod tests {
             .await
             .is_none());
         assert_eq!(fallback.failure_count, 1);
-        assert!((fallback.failure_rate - 0.5).abs() < 0.0001);
+        assert!((fallback.probe_failure_rate - 0.5).abs() < 0.0001);
+    }
+
+    #[tokio::test]
+    async fn throughput_e_falhas_de_transferencias_sao_agregados_separadamente() {
+        let store = PeerLinkStore::in_memory();
+        store
+            .record_transfer_success("worker-a", "worker-b", 1024 * 1024, Duration::from_millis(100))
+            .await;
+        store
+            .record_transfer_failure("worker-a", "worker-b", ProbeOutcome::Timeout)
+            .await;
+
+        let metrics = store
+            .historical_metrics("worker-a", "worker-b", DEFAULT_HISTORY_WINDOW)
+            .await
+            .expect("sucesso de transferência deve produzir métricas");
+
+        assert_eq!(metrics.transfer_attempt_count, 2);
+        assert_eq!(metrics.transfer_success_count, 1);
+        assert_eq!(metrics.transfer_timeout_count, 1);
+        assert!((metrics.transfer_failure_rate - 0.5).abs() < 0.0001);
+        assert!((metrics.observed_transfer_mb_per_sec - 10.0).abs() < 0.0001);
+        assert_eq!(metrics.rtt_us, 0.0);
+        assert_eq!(metrics.round_trip_mb_per_sec, 0.0);
+    }
+
+    #[tokio::test]
+    async fn uma_transferencia_nao_e_confundida_com_cache_de_sonda() {
+        let store = PeerLinkStore::in_memory();
+        store
+            .record_transfer_success("worker-a", "worker-b", 1024 * 1024, Duration::from_millis(100))
+            .await;
+
+        assert!(store
+            .fresh_metrics("worker-a", "worker-b", Duration::from_secs(30))
+            .await
+            .is_none());
     }
 }

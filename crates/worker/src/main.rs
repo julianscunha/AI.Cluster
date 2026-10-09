@@ -614,6 +614,16 @@ impl WorkerRuntime for WorkerService {
             throughput_samples.push(payload_mib / elapsed_seconds);
         }
 
+        let rtt_jitter_us = if rtt_samples.len() < 2 {
+            0.0
+        } else {
+            rtt_samples
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .sum::<f64>()
+                / (rtt_samples.len() - 1) as f64
+        };
+
         rtt_samples.sort_by(f64::total_cmp);
         throughput_samples.sort_by(f64::total_cmp);
         let rtt_us = rtt_samples[rtt_samples.len() / 2];
@@ -627,6 +637,7 @@ impl WorkerRuntime for WorkerService {
             rtt_us,
             round_trip_mb_per_sec,
             sample_count: request.samples,
+            rtt_jitter_us,
         }))
     }
 

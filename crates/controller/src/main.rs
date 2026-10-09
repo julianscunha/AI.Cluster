@@ -834,6 +834,8 @@ async fn prepare_graph_work(
                                 && response.destination_node_id == destination.node_id
                                 && response.rtt_us.is_finite()
                                 && response.rtt_us >= 0.0
+                                && response.rtt_jitter_us.is_finite()
+                                && response.rtt_jitter_us >= 0.0
                                 && response.round_trip_mb_per_sec.is_finite()
                                 && response.round_trip_mb_per_sec > 0.0
                             {
@@ -842,6 +844,7 @@ async fn prepare_graph_work(
                                         &source.node_id,
                                         &destination.node_id,
                                         response.rtt_us,
+                                        response.rtt_jitter_us,
                                         response.round_trip_mb_per_sec,
                                         response.sample_count,
                                     )
@@ -912,7 +915,11 @@ async fn prepare_graph_work(
                 source_node_id = source_node.map(|node| node.node_id.as_str()).unwrap_or_default(),
                 destination_node_id = %destination.node_id,
                 rtt_us = metrics.rtt_us,
+                rtt_jitter_us = metrics.jitter_us,
                 round_trip_mb_per_sec = metrics.round_trip_mb_per_sec,
+                observed_transfer_mb_per_sec = metrics.observed_transfer_mb_per_sec,
+                transfer_failure_rate = metrics.transfer_failure_rate,
+                probe_failure_rate = metrics.probe_failure_rate,
                 metric_age_ms = metrics.measured_at.elapsed().as_millis() as u64,
                 samples = metrics.sample_count,
                 observations = metrics.observation_count,

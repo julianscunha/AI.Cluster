@@ -60,7 +60,9 @@ Arquitetura: v0.1
 - escolha entre ControllerRelay e WorkerToWorker no Residency Planner;
 - sondagem peer-to-peer sob demanda para RTT de ida e volta e throughput gRPC de payload echo;
 - cache de métricas peer-to-peer por par direcionado com TTL de 30 segundos;
-- persistência de RTT, throughput, sucessos, falhas e timeouts por enlace direcionado;
+- persistência de RTT, jitter, throughput de sondagem e observações reais de transferência por enlace direcionado;
+- registro de sucesso/falha/timeout das transferências Worker-to-Worker e throughput efetivo agregado;
+- penalidade de rota baseada na taxa de falhas de transferências reais quando há amostras disponíveis;
 - histórico limitado a 32 observações por enlace, com retenção de até 24 horas ao carregar;
 - fallback para métricas históricas quando a sondagem atual falhar;
 - penalidade de custo do caminho Worker-to-Worker baseada na taxa observada de falhas/timeouts;
@@ -82,7 +84,7 @@ Arquitetura: v0.1
 - modelo de performance calibrado com dados históricos;
 - pesos finais do Scheduler;
 - custo de recomputação calibrado;
-- calibrar a penalidade de confiabilidade com transferências reais e métricas de perda/jitter.
+- calibrar pesos de confiabilidade com produção e implementar medição explícita de perda de pacotes; taxa de falhas gRPC não é perda de pacotes IP.
 
 ## Próxima etapa
 

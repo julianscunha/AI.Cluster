@@ -279,6 +279,7 @@ message ProbePeerLinkResponse {
   double rtt_us = 5;
   double round_trip_mb_per_sec = 6;
   uint32 sample_count = 7;
+  double rtt_jitter_us = 8;
 }
 
 message DistributedMatMulRequest {
