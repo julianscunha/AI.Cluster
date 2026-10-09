@@ -1021,6 +1021,7 @@ async fn prepare_graph_work(
                 let destination_buffer_id =
                     format!("{buffer_id}:to:{}:{}", unit.work.work_id, input_index);
 
+                let transfer_started = Instant::now();
                 let transfer_result = if let Some(client) = source_client.as_mut() {
                     tokio::time::timeout(
                         Duration::from_secs(6),
@@ -1050,6 +1051,49 @@ async fn prepare_graph_work(
                             && !expected_checksum.is_empty()
                             && response.get_ref().checksum_sha256.as_str() == expected_checksum
                 );
+                let transfer_duration = transfer_started.elapsed();
+                if let Some(source) =
+                    source_node.filter(|source| source.node_id != destination_node_id)
+                {
+                    if direct_transfer_succeeded {
+                        let transferred_bytes = cached_descriptor
+                            .as_ref()
+                            .map(|descriptor| descriptor.byte_len)
+                            .unwrap_or_default();
+                        peer_links
+                            .record_transfer_success(
+                                &source.node_id,
+                                &destination.node_id,
+                                transferred_bytes,
+                                transfer_duration,
+                            )
+                            .await;
+                    } else {
+                        let outcome = match &transfer_result {
+                            Err(_) => peer_link_store::ProbeOutcome::Timeout,
+                            Ok(Err(error))
+                                if error.code() == tonic::Code::DeadlineExceeded =>
+                            {
+                                peer_link_store::ProbeOutcome::Timeout
+                            }
+                            _ => peer_link_store::ProbeOutcome::Failure,
+                        };
+                        peer_links
+                            .record_transfer_failure(
+                                &source.node_id,
+                                &destination.node_id,
+                                outcome,
+                            )
+                            .await;
+                        warn!(
+                            source_node_id = %source.node_id,
+                            destination_node_id = %destination.node_id,
+                            elapsed_ms = transfer_duration.as_millis() as u64,
+                            ?outcome,
+                            "resultado de transferência direta registrado na telemetria"
+                        );
+                    }
+                }
 
                 if direct_transfer_succeeded {
                     if controller_cache_available {
@@ -1208,18 +1252,32 @@ fn estimate_worker_to_worker_us(
     if let Some(metrics) = measured.filter(|metrics| {
         metrics.rtt_us.is_finite()
             && metrics.rtt_us >= 0.0
-            && metrics.round_trip_mb_per_sec.is_finite()
-            && metrics.round_trip_mb_per_sec > 0.0
+            && ((metrics.round_trip_mb_per_sec.is_finite()
+                && metrics.round_trip_mb_per_sec > 0.0)
+                || (metrics.observed_transfer_mb_per_sec.is_finite()
+                    && metrics.observed_transfer_mb_per_sec > 0.0))
     }) {
-        let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / metrics.round_trip_mb_per_sec
+        // Priorize throughput observado em transferências reais; a taxa do probe é fallback.
+        let effective_mb_per_sec = if metrics.observed_transfer_mb_per_sec.is_finite()
+            && metrics.observed_transfer_mb_per_sec > 0.0
+        {
+            metrics.observed_transfer_mb_per_sec
+        } else {
+            metrics.round_trip_mb_per_sec
+        };
+        let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / effective_mb_per_sec
             * 1_000_000.0)
             .ceil() as u64;
-        // Falhas de sondagem são um indicador aproximado de confiabilidade do enlace.
-        // Limita-se a penalidade para evitar que poucas falhas tornem a rota inutilizável.
-        let success_rate = (1.0 - metrics.failure_rate).clamp(0.25, 1.0);
+        // Use falhas de transferências reais quando houver tentativas; senão, falhas das sondagens.
+        let failure_rate = if metrics.transfer_attempt_count > 0 {
+            metrics.transfer_failure_rate
+        } else {
+            metrics.probe_failure_rate
+        };
+        let success_rate = (1.0 - failure_rate).clamp(0.25, 1.0);
         let reliability_adjusted_transfer_us = ((transfer_us as f64) / success_rate).ceil() as u64;
-        return (metrics.rtt_us.ceil().max(0.0) as u64)
-            .saturating_add(reliability_adjusted_transfer_us);
+        let latency_penalty_us = (metrics.rtt_us + metrics.jitter_us).ceil().max(0.0) as u64;
+        return latency_penalty_us.saturating_add(reliability_adjusted_transfer_us);
     }
 
     let (Some(source_capability), Some(destination_capability)) =
