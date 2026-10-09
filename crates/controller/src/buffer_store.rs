@@ -149,6 +149,20 @@ impl BufferStore {
         Some(buffer)
     }
 
+    pub fn get_descriptor(&mut self, buffer_id: &str) -> Option<BufferDescriptor> {
+        self.next_access = self.next_access.saturating_add(1);
+        let next_access = self.next_access;
+        let buffer = self.buffers.get_mut(buffer_id)?;
+        buffer.last_access = next_access;
+        Some(buffer.descriptor.clone())
+    }
+
+    pub fn release_consumer(&mut self, buffer_id: &str) {
+        if let Some(buffer) = self.buffers.get_mut(buffer_id) {
+            buffer.pins = buffer.pins.saturating_sub(1);
+        }
+    }
+
     pub fn bytes_used(&self) -> u64 {
         self.bytes_used
     }

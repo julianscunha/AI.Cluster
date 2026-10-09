@@ -109,7 +109,11 @@ Para cada data_from, o Controller aguarda a conclusão da Work Unit de origem, r
 
 Essa é uma representação inicial de buffer genérico. O Controller agora mantém os outputs em um Buffer Store LRU limitado e os referencia por buffer_id. A localização no BufferDescriptor continua registrando o node produtor; a cópia residente no Controller é tratada como cache/relay local. Buffers que ainda possuem consumidores recebem pins de lifetime, impedindo eviction antes de todos os consumidores recuperarem os dados. A transferência física para o Worker ainda não é executada nesta etapa, e não existe zero-copy.
 
-A camada de Buffer Residency agora separa disponibilidade contextual de rota de transporte. Para um destino, o buffer pode estar Local, Cached, Remote ou Missing. A política de acesso pode escolher Local, ControllerCache, Primary ou Recompute conforme custos estimados. Esse planner é puro e não altera o Transfer Layer.
+A camada de Buffer Residency agora separa disponibilidade contextual de rota de transporte. Para um destino, o buffer pode estar Local, Cached, Remote ou Missing. A política de acesso pode escolher Local, ControllerCache, Primary ou Recompute conforme custos estimados.
+
+O Worker possui Buffer Store LRU limitado, com capacidade configurável por RAC_BUFFER_STORE_BYTES e pins para impedir eviction enquanto existirem consumidores locais agendados. O Controller informa ao Worker o buffer_id de saída e a contagem de consumidores locais; o Worker registra o output localmente antes de devolver a resposta de execução. Antes de executar a Work Unit consumidora, o Controller verifica HasBuffer e seleciona a referência local quando disponível.
+
+As data edges são enviadas como WorkInput em ordem. Cada entrada é local por buffer_id ou contém bytes inline do Controller Cache. O Worker resolve entradas locais durante ExecuteWork, sem transferi-las novamente pela rede. A materialização ainda concatena os bytes no payload da execução; não é zero-copy. A recuperação direta de buffers remotos de outro Worker ainda não está implementada.
 
 O Buffer Store é deliberadamente separado do Execution Graph: o grafo define dependências; o store administra a disponibilidade temporária dos dados; o Residency Planner decide a fonte lógica de acesso.
 
@@ -119,4 +123,4 @@ O protocolo expõe SubmitGraph, que recebe um execution_id e uma coleção de Wo
 
 ## Próxima evolução
 
-Integrar a decisão de residency ao Transport Layer, implementar Buffer Store/Buffer Engine no Worker para materialização local real, adicionar buffers tipados para tensores, checksum, persistência por tier, transferência física eficiente entre nodes, cancelamento cooperativo, métricas de transferência e replanejamento durante a execução.
+Implementar transferência direta entre Workers, checksum/integridade, chunking e retomada de transferência, métricas do data plane, persistência por tier, cancelamento cooperativo e replanejamento durante a execução.

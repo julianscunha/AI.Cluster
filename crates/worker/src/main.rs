@@ -2,6 +2,7 @@ use std::{
     env,
     hint::black_box,
     net::SocketAddr,
+    sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -12,12 +13,18 @@ use real_ai_cluster_protocol::v1::{
     worker_runtime_server::{WorkerRuntime, WorkerRuntimeServer},
     *,
 };
+use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
+
+mod buffer_store;
+
+const DEFAULT_WORKER_BUFFER_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone)]
 struct WorkerService {
     node_id: String,
+    buffers: Arc<RwLock<buffer_store::BufferStore>>,
 }
 
 #[tonic::async_trait]
@@ -32,19 +39,39 @@ impl WorkerRuntime for WorkerService {
             .ok_or_else(|| Status::invalid_argument("work é obrigatório"))?;
 
         let started = Instant::now();
+        let mut effective_payload = work.payload.clone();
+
+        for input in &work.inputs {
+            if input.local_buffer {
+                let bytes = {
+                    let mut store = self.buffers.write().await;
+                    store.get_for_consumer(&input.buffer_id)
+                }
+                .ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "buffer local não está disponível: {}",
+                        input.buffer_id
+                    ))
+                })?;
+
+                effective_payload.extend_from_slice(&bytes);
+            } else {
+                effective_payload.extend_from_slice(&input.data);
+            }
+        }
 
         let output = match work.operation.as_str() {
-            "echo" => work.payload.clone(),
+            "echo" => effective_payload.clone(),
 
             "cpu_spin" => {
-                if work.payload.len() != 8 {
+                if effective_payload.len() != 8 {
                     return Err(Status::invalid_argument(
                         "cpu_spin exige payload com 8 bytes little-endian",
                     ));
                 }
 
                 let iterations = u64::from_le_bytes(
-                    work.payload
+                    effective_payload
                         .as_slice()
                         .try_into()
                         .expect("payload validado"),
@@ -68,6 +95,27 @@ impl WorkerRuntime for WorkerService {
             }
         };
 
+        if !work.output_buffer_id.is_empty() && work.output_buffer_pins > 0 {
+            let store_result = self
+                .buffers
+                .write()
+                .await
+                .insert_with_pins(
+                    work.output_buffer_id.clone(),
+                    output.clone(),
+                    work.output_buffer_pins as usize,
+                );
+
+            if let Err(error) = store_result {
+                warn!(
+                    node_id = %self.node_id,
+                    buffer_id = %work.output_buffer_id,
+                    %error,
+                    "output não pôde ser mantido no Buffer Store local; Controller Cache será fallback"
+                );
+            }
+        }
+
         let duration_us = started.elapsed().as_micros() as u64;
 
         info!(
@@ -85,6 +133,64 @@ impl WorkerRuntime for WorkerService {
             duration_us,
             output,
         }))
+    }
+
+    async fn put_buffer(
+        &self,
+        request: Request<PutBufferRequest>,
+    ) -> Result<Response<PutBufferResponse>, Status> {
+        let request = request.into_inner();
+        if request.buffer_id.is_empty() {
+            return Err(Status::invalid_argument("buffer_id é obrigatório"));
+        }
+
+        self.buffers
+            .write()
+            .await
+            .insert_with_pins(request.buffer_id.clone(), request.data, request.pins as usize)
+            .map_err(|error| Status::resource_exhausted(error.to_string()))?;
+
+        Ok(Response::new(PutBufferResponse {
+            accepted: true,
+            message: "buffer armazenado localmente".into(),
+        }))
+    }
+
+    async fn get_buffer(
+        &self,
+        request: Request<GetBufferRequest>,
+    ) -> Result<Response<GetBufferResponse>, Status> {
+        let request = request.into_inner();
+        let data = {
+            let mut store = self.buffers.write().await;
+            if request.consume_pin {
+                store.get_for_consumer(&request.buffer_id)
+            } else {
+                store.get(&request.buffer_id)
+            }
+        };
+
+        Ok(Response::new(match data {
+            Some(data) => GetBufferResponse {
+                found: true,
+                message: "buffer encontrado".into(),
+                data,
+            },
+            None => GetBufferResponse {
+                found: false,
+                message: "buffer não encontrado".into(),
+                data: Vec::new(),
+            },
+        }))
+    }
+
+    async fn has_buffer(
+        &self,
+        request: Request<HasBufferRequest>,
+    ) -> Result<Response<HasBufferResponse>, Status> {
+        let request = request.into_inner();
+        let found = self.buffers.read().await.contains(&request.buffer_id);
+        Ok(Response::new(HasBufferResponse { found }))
     }
 
     async fn execute_matrix_block(
@@ -353,8 +459,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "benchmark concluído"
     );
 
+    let buffer_capacity = match env::var("RAC_BUFFER_STORE_BYTES") {
+        Ok(value) => value.parse::<u64>()?,
+        Err(_) => DEFAULT_WORKER_BUFFER_BYTES,
+    };
+
+    info!(
+        buffer_capacity_bytes = buffer_capacity,
+        "capacidade do buffer store local configurada"
+    );
+
     let worker_service = WorkerService {
         node_id: node.node_id.clone(),
+        buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(
+            buffer_capacity,
+        ))),
     };
 
     let server_addr = worker_bind;

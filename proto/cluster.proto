@@ -114,11 +114,20 @@ message ListNodesResponse {
   repeated NodeInfo nodes = 1;
 }
 
+message WorkInput {
+  string buffer_id = 1;
+  bytes data = 2;
+  bool local_buffer = 3;
+}
+
 message WorkUnit {
   string work_id = 1;
   string operation = 2;
   bytes payload = 3;
   int32 priority = 4;
+  repeated WorkInput inputs = 5;
+  string output_buffer_id = 6;
+  uint32 output_buffer_pins = 7;
 }
 
 message SubmitWorkRequest { WorkUnit work = 1; }
@@ -140,6 +149,36 @@ message ExecuteWorkResponse {
   string node_id = 3;
   uint64 duration_us = 4;
   bytes output = 5;
+}
+
+message PutBufferRequest {
+  string buffer_id = 1;
+  bytes data = 2;
+  uint32 pins = 3;
+}
+
+message PutBufferResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message GetBufferRequest {
+  string buffer_id = 1;
+  bool consume_pin = 2;
+}
+
+message GetBufferResponse {
+  bool found = 1;
+  string message = 2;
+  bytes data = 3;
+}
+
+message HasBufferRequest {
+  string buffer_id = 1;
+}
+
+message HasBufferResponse {
+  bool found = 1;
 }
 
 message DistributedMatMulRequest {
@@ -226,4 +265,7 @@ service ClusterControl {
 service WorkerRuntime {
   rpc ExecuteWork(ExecuteWorkRequest) returns (ExecuteWorkResponse);
   rpc ExecuteMatrixBlock(ExecuteMatrixBlockRequest) returns (ExecuteMatrixBlockResponse);
+  rpc PutBuffer(PutBufferRequest) returns (PutBufferResponse);
+  rpc GetBuffer(GetBufferRequest) returns (GetBufferResponse);
+  rpc HasBuffer(HasBufferRequest) returns (HasBufferResponse);
 }

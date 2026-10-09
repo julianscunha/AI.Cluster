@@ -7,7 +7,7 @@ use std::{
 
 use real_ai_cluster_common::{
     residency::{plan_buffer_access, BufferAccessOptions, BufferAccessSource},
-    tensor::{BufferDescriptor, DataLocation, TransferPlan},
+    tensor::{BufferDescriptor, DataLocation, TransferPlan, TransferStrategy},
 };
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
@@ -280,10 +280,13 @@ impl ClusterControl for Controller {
         &self,
         request: Request<SubmitWorkRequest>,
     ) -> Result<Response<SubmitWorkResponse>, Status> {
-        let work = request
+        let mut work = request
             .into_inner()
             .work
             .ok_or_else(|| Status::invalid_argument("work é obrigatório"))?;
+        work.inputs.clear();
+        work.output_buffer_id.clear();
+        work.output_buffer_pins = 0;
 
         let (placement_plan, node) = self.plan_single_work(&work).await?;
         if placement_plan.node_for(&work.work_id).is_none() {
@@ -330,9 +333,12 @@ impl ClusterControl for Controller {
         let mut graph = execution::ExecutionGraph::new(req.execution_id.clone());
 
         for graph_unit in req.units {
-            let work = graph_unit
+            let mut work = graph_unit
                 .work
                 .ok_or_else(|| Status::invalid_argument("work é obrigatória"))?;
+            work.inputs.clear();
+            work.output_buffer_id.clear();
+            work.output_buffer_pins = 0;
 
             graph
                 .add_unit(
@@ -567,18 +573,21 @@ impl Controller {
             let mut executions = Vec::with_capacity(level.len());
             let mut reserved_node_ids = Vec::with_capacity(level.len());
 
-            {
+            let node_list = {
                 let nodes = self.nodes.read().await;
-                let node_list = nodes.values().cloned().collect::<Vec<_>>();
+                nodes.values().cloned().collect::<Vec<_>>()
+            };
 
-                for work_unit_id in &level {
+            for work_unit_id in &level {
                     let assignment = plan
                         .node_for(work_unit_id)
                         .ok_or_else(|| Status::internal("placement plan não contém a work unit"))?;
 
-                    let node = nodes.get(&assignment.node_id).cloned().ok_or_else(|| {
-                        Status::unavailable("node selecionado não está disponível")
-                    })?;
+                    let node = node_list
+                        .iter()
+                        .find(|node| node.node_id == assignment.node_id)
+                        .cloned()
+                        .ok_or_else(|| Status::unavailable("node selecionado não está disponível"))?;
 
                     if node.worker_endpoint.is_empty() {
                         return Err(Status::unavailable(
@@ -612,9 +621,32 @@ impl Controller {
                         );
                     }
 
-                    executions.push((prepared.0, node));
+                    let local_output_pins = graph
+                        .units
+                        .iter()
+                        .filter(|consumer| {
+                            plan.node_for(&consumer.work.work_id)
+                                .is_some_and(|candidate| {
+                                    candidate.node_id.as_str() == assignment.node_id.as_str()
+                                })
+                        })
+                        .map(|consumer| {
+                            consumer
+                                .data_from
+                                .iter()
+                                .filter(|source_id| source_id.as_str() == work_unit_id.as_str())
+                                .count()
+                        })
+                        .sum::<usize>();
+
+                    let mut prepared_work = prepared.0;
+                    prepared_work.output_buffer_id =
+                        output_buffer_id(&graph.execution_id, work_unit_id);
+                    prepared_work.output_buffer_pins =
+                        u32::try_from(local_output_pins).unwrap_or(u32::MAX);
+
+                    executions.push((prepared_work, node));
                     reserved_node_ids.push(assignment.node_id.clone());
-                }
             }
 
             self.reserve_workers(&reserved_node_ids).await;
@@ -672,15 +704,20 @@ impl Controller {
                         node_id: result.node_id.clone(),
                     },
                 };
+                let pins = buffer_consumer_counts
+                    .get(&buffer.buffer_id)
+                    .copied()
+                    .unwrap_or_default();
 
                 let mut buffers = self.buffers.write().await;
                 buffers
-                    .insert(buffer, result.output.clone())
+                    .insert_with_pins(buffer, result.output.clone(), pins)
                     .map_err(|error| Status::resource_exhausted(error.to_string()))?;
                 info!(
                     work_unit_id = %result.work_id,
                     buffer_bytes = buffers.bytes_used(),
-                    "output armazenado no buffer store"
+                    consumers = pins,
+                    "output armazenado no buffer store do Controller"
                 );
             }
 
@@ -699,30 +736,58 @@ async fn prepare_graph_work(
     nodes: &[NodeInfo],
 ) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
     let mut work = unit.work.clone();
-    let transfer_plans = Vec::with_capacity(unit.data_from.len());
+    let mut transfer_plans = Vec::with_capacity(unit.data_from.len());
+    let destination = nodes
+        .iter()
+        .find(|node| node.node_id == destination_node_id)
+        .ok_or_else(|| Status::unavailable("node de destino não encontrado"))?;
+
+    let mut local_client = if unit.data_from.is_empty() || destination.worker_endpoint.is_empty() {
+        None
+    } else {
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            WorkerRuntimeClient::connect(destination.worker_endpoint.clone()),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+    };
 
     for source_work_id in &unit.data_from {
         let buffer_id = output_buffer_id(execution_id, source_work_id);
-        let cached_output = {
+        let cached_descriptor = {
             let mut store = buffers.write().await;
-            store.get(&buffer_id)
+            store.get_descriptor(&buffer_id)
         };
-        let descriptor = cached_output
-            .as_ref()
-            .map(|output| output.descriptor.clone());
 
-        let primary_transfer = descriptor.as_ref().and_then(|buffer| {
-            transfer::plan_output_transfer(buffer, destination_node_id, nodes).ok()
-        });
+        let local_copy_available = if let Some(client) = local_client.as_mut() {
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                client.has_buffer(Request::new(HasBufferRequest {
+                    buffer_id: buffer_id.clone(),
+                })),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|response| response.into_inner().found)
+            .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let controller_cache_available = cached_descriptor.is_some();
+        let cache_transfer_duration_us = cached_descriptor
+            .as_ref()
+            .map(|descriptor| estimate_controller_relay_us(descriptor.byte_len, destination));
 
         let decision = plan_buffer_access(BufferAccessOptions {
-            local_copy_available: false,
-            controller_cache_available: cached_output.is_some(),
-            primary_available: primary_transfer.is_some(),
-            cache_transfer_duration_us: cached_output.as_ref().map(|_| 0),
-            primary_transfer_duration_us: primary_transfer
-                .as_ref()
-                .map(|plan| plan.estimated_duration_us),
+            local_copy_available,
+            controller_cache_available,
+            primary_available: false,
+            cache_transfer_duration_us,
+            primary_transfer_duration_us: None,
             recompute_duration_us: None,
         });
 
@@ -735,6 +800,18 @@ async fn prepare_graph_work(
         );
 
         match decision.source {
+            Some(BufferAccessSource::Local) => {
+                if controller_cache_available {
+                    let mut store = buffers.write().await;
+                    store.release_consumer(&buffer_id);
+                }
+
+                work.inputs.push(WorkInput {
+                    buffer_id,
+                    data: Vec::new(),
+                    local_buffer: true,
+                });
+            }
             Some(BufferAccessSource::ControllerCache) => {
                 let output = {
                     let mut store = buffers.write().await;
@@ -746,12 +823,23 @@ async fn prepare_graph_work(
                     ))
                 })?;
 
-                work.payload.extend_from_slice(&output.bytes);
-            }
-            Some(BufferAccessSource::Local) => {
-                return Err(Status::unimplemented(
-                    "buffer local no Worker ainda não está implementado",
-                ));
+                let byte_len = output.bytes.len() as u64;
+                transfer_plans.push(TransferPlan {
+                    buffer_id: buffer_id.clone(),
+                    source: DataLocation::Controller,
+                    destination: DataLocation::Node {
+                        node_id: destination_node_id.to_owned(),
+                    },
+                    strategy: TransferStrategy::ControllerRelay,
+                    byte_len,
+                    estimated_duration_us: estimate_controller_relay_us(byte_len, destination),
+                });
+
+                work.inputs.push(WorkInput {
+                    buffer_id,
+                    data: output.bytes,
+                    local_buffer: false,
+                });
             }
             Some(BufferAccessSource::Primary) => {
                 return Err(Status::unimplemented(
@@ -772,6 +860,26 @@ async fn prepare_graph_work(
     }
 
     Ok((work, transfer_plans))
+}
+
+fn estimate_controller_relay_us(byte_len: u64, destination: &NodeInfo) -> u64 {
+    let Some(capability) = destination.capability.as_ref() else {
+        return u64::MAX / 2;
+    };
+
+    let throughput = capability.network_mb_per_sec;
+    if !throughput.is_finite() || throughput <= 0.0 {
+        return u64::MAX / 2;
+    }
+
+    let rtt = if capability.network_rtt_us.is_finite() && capability.network_rtt_us >= 0.0 {
+        capability.network_rtt_us.ceil() as u64
+    } else {
+        0
+    };
+    let transfer_us =
+        ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0).ceil() as u64;
+    rtt.saturating_add(transfer_us)
 }
 
 fn output_buffer_id(execution_id: &str, work_unit_id: &str) -> String {
@@ -905,7 +1013,9 @@ mod tests {
     use super::{
         buffer_store::BufferStore, execution::WorkUnitSpec, output_buffer_id, prepare_graph_work,
     };
-    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation};
+    use real_ai_cluster_common::tensor::{
+        BufferDescriptor, DataLocation, TransferStrategy,
+    };
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
     #[test]
@@ -967,8 +1077,13 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(prepared.payload, b"base-output");
-        assert!(transfers.is_empty());
+        assert_eq!(prepared.payload, b"base");
+        assert_eq!(prepared.inputs.len(), 1);
+        assert_eq!(prepared.inputs[0].buffer_id, output_buffer_id("exec-1", "producer"));
+        assert_eq!(prepared.inputs[0].data.as_slice(), b"-output");
+        assert!(!prepared.inputs[0].local_buffer);
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].strategy, TransferStrategy::ControllerRelay);
     }
 
     #[test]

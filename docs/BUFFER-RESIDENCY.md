@@ -61,11 +61,13 @@ O Buffer Residency Planner não executa transferência, não cria cópia física
 
 ## Estado atual
 
-O Controller possui um Buffer Store LRU que mantém uma cópia temporária dos outputs. Essa cópia pode ser considerada CACHED para uma decisão de acesso. A localização do descriptor continua apontando para o Worker produtor como residência primária.
+O Controller mantém um Buffer Store LRU para os outputs e o Worker mantém seu próprio Buffer Store LRU limitado. O limite padrão do Worker é 128 MiB e pode ser configurado por RAC_BUFFER_STORE_BYTES. Os outputs são armazenados no Worker produtor antes que ExecuteWork retorne, somente quando há consumidores locais agendados.
 
-Ainda não existe Buffer Store no Worker para materialização local persistente entre Work Units. Portanto, LOCAL está modelado no domínio, mas não é inferido automaticamente pelo Controller nesta etapa.
+Work Units podem referenciar buffers locais por buffer_id. Ao executar, o Worker resolve cada referência local e consome um pin; inputs sem cópia local são enviados como dados inline no RPC ExecuteWork. Isso preserva a ordem de concatenação de data_from mesmo quando uma Work Unit mistura inputs locais e inline.
 
-Também não existe recomputação automática. O planner já representa Recompute como alternativa de decisão, desde que um custo estimado seja fornecido pela camada superior.
+O Controller consulta HasBuffer antes de escolher Local. A disponibilidade local é protegida por pins de lifetime; se a cópia local não puder ser instalada, o Controller Cache permanece como caminho de fallback. A resolução local ainda materializa bytes dentro do payload da execução e não é zero-copy.
+
+Também não existe transferência direta Primary entre Workers nem recomputação automática. O planner ainda representa esses caminhos para evolução futura, mas só Local e ControllerCache são executáveis nesta etapa.
 
 ## Integração atual
 
@@ -77,4 +79,4 @@ O TransferPlan continua separado da decisão de residency. A integração físic
 
 ## Próximos passos
 
-Implementar Buffer Store/Buffer Engine no Worker e manter metadados de residência primária além da vida do cache. Depois disso, o planner poderá selecionar Local ou Primary de forma executável, e o Transport Layer poderá materializar a decisão com transferência física, checksum e métricas observadas.
+Integrar transferência direta entre Workers, checksums, verificação de integridade, chunking/retry para buffers grandes, telemetria da residência e métricas reais de transferência. Evoluir a recuperação local para eliminar cópias desnecessárias sem declarar zero-copy prematuramente.
