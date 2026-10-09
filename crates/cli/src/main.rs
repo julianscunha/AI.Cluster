@@ -137,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     operation,
                     payload,
                     priority,
+                    ..Default::default()
                 };
 
                 let result = client
