@@ -807,7 +807,12 @@ async fn prepare_graph_work(
             .map(|descriptor| estimate_controller_relay_us(descriptor.byte_len, destination));
         let primary_transfer_plan = if primary_available {
             cached_descriptor.as_ref().and_then(|descriptor| {
-                transfer::plan_output_transfer(descriptor, destination_node_id, nodes).ok()
+                let mut plan =
+                    transfer::plan_output_transfer(descriptor, destination_node_id, nodes).ok()?;
+                let source = source_node?;
+                plan.estimated_duration_us =
+                    estimate_worker_to_worker_us(descriptor.byte_len, source, destination);
+                Some(plan)
             })
         } else {
             None
@@ -870,13 +875,13 @@ async fn prepare_graph_work(
                 transfer_plans.push(transfer);
             }
             Some(BufferAccessSource::Primary) => {
-                let source = source_node.ok_or_else(|| {
-                    Status::unavailable("residência primária não está registrada no cluster")
-                })?;
-                let destination_buffer_id = format!(
-                    "{buffer_id}:to:{}:{}",
-                    unit.work.work_id, input_index
-                );
+                if source_node.is_none() {
+                    return Err(Status::unavailable(
+                        "residência primária não está registrada no cluster",
+                    ));
+                }
+                let destination_buffer_id =
+                    format!("{buffer_id}:to:{}:{}", unit.work.work_id, input_index);
 
                 let transfer_result = if let Some(client) = source_client.as_mut() {
                     tokio::time::timeout(
@@ -904,8 +909,9 @@ async fn prepare_graph_work(
                         store.release_consumer(&buffer_id);
                     }
 
-                    let mut transfer = primary_transfer_plan
-                        .ok_or_else(|| Status::internal("plano de transferência primária ausente"))?;
+                    let mut transfer = primary_transfer_plan.ok_or_else(|| {
+                        Status::internal("plano de transferência primária ausente")
+                    })?;
                     transfer.buffer_id = destination_buffer_id.clone();
                     transfer.strategy = TransferStrategy::WorkerToWorker;
                     transfer_plans.push(transfer);
@@ -1003,6 +1009,34 @@ async fn controller_cache_input(
         },
         transfer,
     ))
+}
+
+fn estimate_worker_to_worker_us(byte_len: u64, source: &NodeInfo, destination: &NodeInfo) -> u64 {
+    let (Some(source_capability), Some(destination_capability)) =
+        (source.capability.as_ref(), destination.capability.as_ref())
+    else {
+        return u64::MAX / 2;
+    };
+
+    let throughput = source_capability
+        .network_mb_per_sec
+        .min(destination_capability.network_mb_per_sec);
+    if !throughput.is_finite() || throughput <= 0.0 {
+        return u64::MAX / 2;
+    }
+
+    // Worker-to-Controller RTTs are only a proxy until peer-to-peer probes exist.
+    let source_rtt = source_capability.network_rtt_us;
+    let destination_rtt = destination_capability.network_rtt_us;
+    let rtt_us = source_rtt.max(destination_rtt);
+    let rtt_us = if rtt_us.is_finite() && rtt_us >= 0.0 {
+        rtt_us.ceil() as u64
+    } else {
+        0
+    };
+    let transfer_us =
+        ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0).ceil() as u64;
+    rtt_us.saturating_add(transfer_us)
 }
 
 fn estimate_controller_relay_us(byte_len: u64, destination: &NodeInfo) -> u64 {

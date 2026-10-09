@@ -106,9 +106,8 @@ pub fn plan_buffer_transfer(
             let throughput = source_throughput_mb_per_sec
                 .min(destination_throughput_mb_per_sec)
                 .max(0.001);
-            let transfer_us = ((buffer.byte_len as f64 / (1024.0 * 1024.0))
-                / throughput
-                * 1_000_000.0) as u64;
+            let transfer_us =
+                ((buffer.byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0) as u64;
             (source_rtt_us.max(0.0) + destination_rtt_us.max(0.0)) as u64 + transfer_us
         }
     };
@@ -148,6 +147,32 @@ mod tests {
 
         assert_eq!(tensor.element_count(), Some(24));
         assert_eq!(TensorDType::F32.element_size_bytes(), 4);
+    }
+
+    #[test]
+    fn estima_transferencia_em_unidades_de_megabytes_por_segundo() {
+        let buffer = BufferDescriptor {
+            buffer_id: "buffer-1".into(),
+            byte_len: 1024 * 1024,
+            checksum: None,
+            location: DataLocation::Node {
+                node_id: "node-a".into(),
+            },
+        };
+
+        let plan = plan_buffer_transfer(
+            &buffer,
+            DataLocation::Node {
+                node_id: "node-b".into(),
+            },
+            100.0,
+            100.0,
+            1.0,
+            1.0,
+            false,
+        );
+
+        assert_eq!(plan.estimated_duration_us, 1_000_200);
     }
 
     #[test]

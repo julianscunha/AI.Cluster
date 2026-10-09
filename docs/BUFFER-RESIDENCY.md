@@ -32,7 +32,7 @@ A escolha é feita por custo estimado:
 
 1. reutilização local tem custo zero;
 2. entre cache, residência primária e recomputação, vence o menor custo disponível;
-3. em empate, a preferência é Controller Cache, depois Primary e depois Recompute;
+3. em empate, a preferência é Primary (transferência WorkerToWorker), depois Controller Cache e depois Recompute;
 4. sem caminho disponível, o resultado é Unavailable.
 
 Essa política inicial é deliberadamente simples. O custo futuro deverá incorporar largura de banda, latência, compressão, prioridade, deadline, carga de CPU/GPU/NPU, confiabilidade e custo de ocupar memória.
@@ -73,7 +73,7 @@ A transferência Primary agora pode ser executada diretamente entre Workers. O W
 
 O prepare_graph_work consulta o Residency Planner e verifica a disponibilidade local no consumidor e no produtor. Quando a decisão é Primary, o Controller envia apenas o comando de transferência ao Worker produtor; o payload segue diretamente do Worker produtor ao Worker consumidor via RPC PutBuffer. Os bytes não passam pelo Controller nesse segundo caminho.
 
-Se o Worker produtor não possuir a cópia, se a rota direta falhar ou se o buffer local do consumidor não tiver sido materializado, o Controller usa seu Buffer Store como fallback. O TransferPlan distingue ControllerRelay de WorkerToWorker. As estimativas de custo ainda usam medições de rede worker-to-controller como aproximação e precisam ser calibradas com métricas peer-to-peer reais.
+Se o Worker produtor não possuir a cópia, se a rota direta falhar ou se o buffer local do consumidor não tiver sido materializado, o Controller usa seu Buffer Store como fallback. O TransferPlan distingue ControllerRelay de WorkerToWorker. As estimativas de custo ainda usam medições de rede worker-to-controller como aproximação e precisam ser calibradas com métricas peer-to-peer reais. O planner favorece WorkerToWorker em empate porque evita encaminhar a segunda cópia de dados pelo Controller.
 
 ## Próximos passos
 

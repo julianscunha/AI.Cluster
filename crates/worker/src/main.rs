@@ -246,7 +246,9 @@ impl WorkerRuntime for WorkerService {
         )
         .await
         .map_err(|_| Status::deadline_exceeded("timeout gravando buffer no Worker de destino"))?
-        .map_err(|error| Status::unavailable(format!("falha ao gravar no Worker de destino: {error}")))?
+        .map_err(|error| {
+            Status::unavailable(format!("falha ao gravar no Worker de destino: {error}"))
+        })?
         .into_inner();
 
         if !response.accepted {

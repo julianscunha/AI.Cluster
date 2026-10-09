@@ -91,19 +91,19 @@ pub fn plan_buffer_access(options: BufferAccessOptions) -> BufferAccessDecision 
         }
     };
 
-    if options.controller_cache_available {
+    if options.primary_available {
         consider(
             0,
-            BufferAccessSource::ControllerCache,
-            options.cache_transfer_duration_us,
+            BufferAccessSource::Primary,
+            options.primary_transfer_duration_us,
         );
     }
 
-    if options.primary_available {
+    if options.controller_cache_available {
         consider(
             1,
-            BufferAccessSource::Primary,
-            options.primary_transfer_duration_us,
+            BufferAccessSource::ControllerCache,
+            options.cache_transfer_duration_us,
         );
     }
 
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn empate_prefere_cache_depois_primary_depois_recomputacao() {
+    fn empate_prefere_primary_depois_cache_depois_recomputacao() {
         let decision = plan_buffer_access(BufferAccessOptions {
             local_copy_available: false,
             controller_cache_available: true,
@@ -240,7 +240,7 @@ mod tests {
             recompute_duration_us: Some(10),
         });
 
-        assert_eq!(decision.source, Some(BufferAccessSource::ControllerCache));
+        assert_eq!(decision.source, Some(BufferAccessSource::Primary));
         assert_eq!(decision.estimated_duration_us, Some(10));
     }
 
