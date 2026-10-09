@@ -130,10 +130,7 @@ impl BufferStore {
             .map(|(data, _)| data)
     }
 
-    pub fn get_for_consumer_with_checksum(
-        &mut self,
-        buffer_id: &str,
-    ) -> Option<(Vec<u8>, String)> {
+    pub fn get_for_consumer_with_checksum(&mut self, buffer_id: &str) -> Option<(Vec<u8>, String)> {
         let data = self.get_with_checksum(buffer_id)?;
         if let Some(buffer) = self.buffers.get_mut(buffer_id) {
             buffer.pins = buffer.pins.saturating_sub(1);

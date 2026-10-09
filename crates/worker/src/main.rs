@@ -50,20 +50,17 @@ impl WorkerRuntime for WorkerService {
         for input in &work.inputs {
             let bytes = if input.local_buffer {
                 let mut store = self.buffers.write().await;
-                store
-                    .get_for_consumer(&input.buffer_id)
-                    .ok_or_else(|| {
-                        Status::failed_precondition(format!(
-                            "buffer local não está disponível: {}",
-                            input.buffer_id
-                        ))
-                    })?
+                store.get_for_consumer(&input.buffer_id).ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "buffer local não está disponível: {}",
+                        input.buffer_id
+                    ))
+                })?
             } else {
                 input.data.clone()
             };
 
-            if !input.checksum_sha256.is_empty()
-                && sha256_checksum(&bytes) != input.checksum_sha256
+            if !input.checksum_sha256.is_empty() && sha256_checksum(&bytes) != input.checksum_sha256
             {
                 return Err(Status::data_loss(format!(
                     "checksum SHA-256 inválido para input {}",
@@ -341,7 +338,9 @@ impl WorkerRuntime for WorkerService {
     ) -> Result<Response<ProbePeerLinkResponse>, Status> {
         let request = request.into_inner();
         if request.destination_endpoint.is_empty() {
-            return Err(Status::invalid_argument("destination_endpoint é obrigatório"));
+            return Err(Status::invalid_argument(
+                "destination_endpoint é obrigatório",
+            ));
         }
         if request.payload_bytes == 0
             || request.payload_bytes as usize > MAX_PEER_PROBE_BYTES
@@ -368,7 +367,9 @@ impl WorkerRuntime for WorkerService {
             let started = Instant::now();
             let response = tokio::time::timeout(
                 Duration::from_secs(1),
-                client.peer_probe(Request::new(PeerProbeRequest { payload: Vec::new() })),
+                client.peer_probe(Request::new(PeerProbeRequest {
+                    payload: Vec::new(),
+                })),
             )
             .await
             .map_err(|_| Status::deadline_exceeded("timeout no probe de RTT peer-to-peer"))?
@@ -376,7 +377,9 @@ impl WorkerRuntime for WorkerService {
             .into_inner();
 
             if !response.accepted || !response.payload.is_empty() {
-                return Err(Status::data_loss("resposta inválida no probe de RTT peer-to-peer"));
+                return Err(Status::data_loss(
+                    "resposta inválida no probe de RTT peer-to-peer",
+                ));
             }
             destination_node_id = response.node_id;
             rtt_samples.push(started.elapsed().as_secs_f64() * 1_000_000.0);

@@ -815,8 +815,7 @@ async fn prepare_graph_work(
         };
 
         let peer_metrics = if primary_available {
-            if let Some(source) =
-                source_node.filter(|source| source.node_id != destination_node_id)
+            if let Some(source) = source_node.filter(|source| source.node_id != destination_node_id)
             {
                 let key = (source.node_id.clone(), destination.node_id.clone());
                 let cached = {
@@ -1174,8 +1173,7 @@ fn estimate_worker_to_worker_us(
             && metrics.round_trip_mb_per_sec.is_finite()
             && metrics.round_trip_mb_per_sec > 0.0
     }) {
-        let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0))
-            / metrics.round_trip_mb_per_sec
+        let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / metrics.round_trip_mb_per_sec
             * 1_000_000.0)
             .ceil() as u64;
         return metrics.rtt_us.ceil() as u64 + transfer_us;
@@ -1202,8 +1200,8 @@ fn estimate_worker_to_worker_us(
     } else {
         0
     };
-    let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0)
-        .ceil() as u64;
+    let transfer_us =
+        ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0).ceil() as u64;
     rtt_us.saturating_add(transfer_us)
 }
 
@@ -1417,7 +1415,12 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (prepared, transfers) = runtime
             .block_on(prepare_graph_work(
-                &unit, "exec-1", &buffers, &peer_links, "node-b", &nodes,
+                &unit,
+                "exec-1",
+                &buffers,
+                &peer_links,
+                "node-b",
+                &nodes,
             ))
             .unwrap();
 
