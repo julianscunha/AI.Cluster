@@ -396,6 +396,7 @@ impl BufferStore {
         self.bytes_used
     }
 
+    #[cfg(test)]
     pub fn reserved_transfer_bytes(&self) -> u64 {
         self.reserved_transfer_bytes
     }
