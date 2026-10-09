@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     env, fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -324,7 +324,7 @@ fn now_ms() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-fn load_state(path: &PathBuf) -> io::Result<StoreState> {
+fn load_state(path: &Path) -> io::Result<StoreState> {
     if !path.exists() {
         return Ok(StoreState::default());
     }
@@ -372,7 +372,7 @@ fn load_state(path: &PathBuf) -> io::Result<StoreState> {
     Ok(state)
 }
 
-fn persist_state(path: &PathBuf, state: &StoreState) -> io::Result<()> {
+fn persist_state(path: &Path, state: &StoreState) -> io::Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
