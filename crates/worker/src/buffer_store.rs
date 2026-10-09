@@ -477,6 +477,8 @@ impl std::error::Error for BufferStoreError {}
 
 #[cfg(test)]
 mod tests {
+    use real_ai_cluster_common::tensor::sha256_checksum;
+
     use super::{BufferStore, BufferStoreError};
 
     #[test]
