@@ -226,6 +226,109 @@ impl WorkerRuntime for WorkerService {
         Ok(Response::new(HasBufferResponse { found }))
     }
 
+    async fn begin_buffer_transfer(
+        &self,
+        request: Request<BeginBufferTransferRequest>,
+    ) -> Result<Response<BeginBufferTransferResponse>, Status> {
+        let request = request.into_inner();
+        let result = self
+            .buffers
+            .write()
+            .await
+            .begin_transfer(
+                request.transfer_id,
+                request.buffer_id,
+                request.total_bytes,
+                request.checksum_sha256,
+                request.pins as usize,
+            )
+            .map_err(|error| Status::resource_exhausted(error.to_string()))?;
+
+        Ok(Response::new(BeginBufferTransferResponse {
+            accepted: true,
+            already_complete: result.already_complete,
+            next_offset: result.next_offset,
+            message: if result.already_complete {
+                "buffer já estava completo".into()
+            } else {
+                "transferência inicializada ou retomada".into()
+            },
+        }))
+    }
+
+    async fn put_buffer_chunk(
+        &self,
+        request: Request<PutBufferChunkRequest>,
+    ) -> Result<Response<PutBufferChunkResponse>, Status> {
+        let request = request.into_inner();
+        let mut store = self.buffers.write().await;
+        match store.append_transfer_chunk(
+            &request.transfer_id,
+            request.offset,
+            &request.data,
+            &request.chunk_checksum_sha256,
+        ) {
+            Ok(next_offset) => Ok(Response::new(PutBufferChunkResponse {
+                accepted: true,
+                next_offset,
+                message: "chunk aceito".into(),
+            })),
+            Err(crate::buffer_store::BufferStoreError::TransferOffsetMismatch {
+                expected_offset,
+                ..
+            }) => Ok(Response::new(PutBufferChunkResponse {
+                accepted: false,
+                next_offset: expected_offset,
+                message: "offset divergente; retomar do offset informado".into(),
+            })),
+            Err(crate::buffer_store::BufferStoreError::TransferChunkChecksumMismatch(_)) => {
+                Err(Status::data_loss("checksum do chunk inválido"))
+            }
+            Err(error) => Err(Status::invalid_argument(error.to_string())),
+        }
+    }
+
+    async fn commit_buffer_transfer(
+        &self,
+        request: Request<CommitBufferTransferRequest>,
+    ) -> Result<Response<CommitBufferTransferResponse>, Status> {
+        let request = request.into_inner();
+        let (total_bytes, checksum_sha256) = self
+            .buffers
+            .write()
+            .await
+            .commit_transfer(&request.transfer_id)
+            .map_err(|error| match error {
+                crate::buffer_store::BufferStoreError::TransferIncomplete { .. } => {
+                    Status::failed_precondition(error.to_string())
+                }
+                crate::buffer_store::BufferStoreError::TransferChecksumMismatch(_) => {
+                    Status::data_loss(error.to_string())
+                }
+                _ => Status::failed_precondition(error.to_string()),
+            })?;
+
+        Ok(Response::new(CommitBufferTransferResponse {
+            accepted: true,
+            total_bytes,
+            checksum_sha256,
+            message: "transferência validada e publicada no Buffer Store".into(),
+        }))
+    }
+
+    async fn abort_buffer_transfer(
+        &self,
+        request: Request<AbortBufferTransferRequest>,
+    ) -> Result<Response<AbortBufferTransferResponse>, Status> {
+        let request = request.into_inner();
+        let aborted = self
+            .buffers
+            .write()
+            .await
+            .abort_transfer(&request.transfer_id);
+        Ok(Response::new(AbortBufferTransferResponse { aborted }))
+    }
+
     async fn transfer_buffer(
         &self,
         request: Request<TransferBufferRequest>,
@@ -234,9 +337,10 @@ impl WorkerRuntime for WorkerService {
         if request.source_buffer_id.is_empty()
             || request.destination_buffer_id.is_empty()
             || request.destination_endpoint.is_empty()
+            || request.transfer_id.is_empty()
         {
             return Err(Status::invalid_argument(
-                "source_buffer_id, destination_buffer_id e destination_endpoint são obrigatórios",
+                "source_buffer_id, destination_endpoint, destination_buffer_id e transfer_id são obrigatórios",
             ));
         }
 
@@ -260,36 +364,119 @@ impl WorkerRuntime for WorkerService {
         .map_err(|_| Status::deadline_exceeded("timeout conectando ao Worker de destino"))?
         .map_err(|error| Status::unavailable(format!("Worker de destino indisponível: {error}")))?;
 
-        let response = tokio::time::timeout(
+        let begin = tokio::time::timeout(
             Duration::from_secs(5),
-            destination.put_buffer(Request::new(PutBufferRequest {
-                buffer_id: request.destination_buffer_id,
-                data,
-                pins: request.destination_pins,
+            destination.begin_buffer_transfer(Request::new(BeginBufferTransferRequest {
+                transfer_id: request.transfer_id.clone(),
+                buffer_id: request.destination_buffer_id.clone(),
+                total_bytes: byte_len,
                 checksum_sha256: checksum_sha256.clone(),
+                pins: request.destination_pins,
             })),
         )
         .await
-        .map_err(|_| Status::deadline_exceeded("timeout gravando buffer no Worker de destino"))?
-        .map_err(|error| {
-            Status::unavailable(format!("falha ao gravar no Worker de destino: {error}"))
-        })?
+        .map_err(|_| Status::deadline_exceeded("timeout inicializando transferência no destino"))?
+        .map_err(|error| Status::unavailable(format!("não foi possível iniciar/retomar transferência: {error}")))?
         .into_inner();
 
-        if !response.accepted {
-            return Err(Status::resource_exhausted(response.message));
+        if !begin.accepted {
+            return Err(Status::failed_precondition(begin.message));
         }
-        if response.checksum_sha256 != checksum_sha256 {
-            return Err(Status::data_loss(
-                "checksum reportado pelo Worker de destino não corresponde à origem",
-            ));
+        if begin.already_complete {
+            return Ok(Response::new(TransferBufferResponse {
+                accepted: true,
+                message: "transferência já concluída anteriormente".into(),
+                byte_len,
+                checksum_sha256,
+            }));
+        }
+
+        let mut offset = usize::try_from(begin.next_offset)
+            .map_err(|_| Status::out_of_range("offset de retomada excede o espaço de endereçamento"))?;
+        if offset > data.len() {
+            return Err(Status::data_loss("offset de retomada maior que o buffer de origem"));
+        }
+
+        while offset < data.len() {
+            let end = offset.saturating_add(MAX_BUFFER_CHUNK_BYTES).min(data.len());
+            let chunk = data[offset..end].to_vec();
+            let chunk_checksum_sha256 = sha256_checksum(&chunk);
+            let mut advanced = false;
+            let mut last_error = String::new();
+
+            for attempt in 0..MAX_BUFFER_CHUNK_RETRIES {
+                let response = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    destination.put_buffer_chunk(Request::new(PutBufferChunkRequest {
+                        transfer_id: request.transfer_id.clone(),
+                        offset: offset as u64,
+                        data: chunk.clone(),
+                        chunk_checksum_sha256: chunk_checksum_sha256.clone(),
+                    })),
+                )
+                .await;
+
+                match response {
+                    Ok(Ok(response)) => {
+                        let response = response.into_inner();
+                        let next_offset = usize::try_from(response.next_offset).map_err(|_| {
+                            Status::out_of_range("offset de chunk excede o espaço de endereçamento")
+                        })?;
+
+                        if response.accepted && next_offset > offset && next_offset <= data.len() {
+                            offset = next_offset;
+                            advanced = true;
+                            break;
+                        }
+                        if !response.accepted && next_offset < offset {
+                            offset = next_offset;
+                            advanced = true;
+                            break;
+                        }
+
+                        last_error = response.message;
+                    }
+                    Ok(Err(error)) => last_error = error.to_string(),
+                    Err(_) => last_error = "timeout enviando chunk".into(),
+                }
+
+                if attempt + 1 < MAX_BUFFER_CHUNK_RETRIES {
+                    tokio::time::sleep(Duration::from_millis(25 * (attempt as u64 + 1))).await;
+                }
+            }
+
+            if !advanced {
+                return Err(Status::unavailable(format!(
+                    "chunk não progrediu em {MAX_BUFFER_CHUNK_RETRIES} tentativas; transfer_id={} offset={offset}: {last_error}",
+                    request.transfer_id
+                )));
+            }
+        }
+
+        let committed = tokio::time::timeout(
+            Duration::from_secs(5),
+            destination.commit_buffer_transfer(Request::new(CommitBufferTransferRequest {
+                transfer_id: request.transfer_id.clone(),
+            })),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("timeout confirmando transferência"))?
+        .map_err(|error| Status::unavailable(format!("falha ao confirmar transferência: {error}")))?
+        .into_inner();
+
+        if !committed.accepted || committed.total_bytes != byte_len {
+            return Err(Status::data_loss("resposta de commit de transferência inconsistente"));
+        }
+        if committed.checksum_sha256 != checksum_sha256 {
+            return Err(Status::data_loss("checksum final do destino difere da origem"));
         }
 
         info!(
             node_id = %self.node_id,
             source_buffer_id = %request.source_buffer_id,
+            transfer_id = %request.transfer_id,
             byte_len,
-            "buffer transferido diretamente para outro Worker"
+            "buffer transferido em chunks com validação SHA-256"
         );
 
         Ok(Response::new(TransferBufferResponse {

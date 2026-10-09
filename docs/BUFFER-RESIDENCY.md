@@ -85,4 +85,4 @@ As métricas peer-to-peer alimentam a estimativa de custo quando disponíveis; n
 
 ## Próximos passos
 
-Adicionar chunking/retry para buffers grandes, manter telemetria persistente por enlace, validar perda/jitter em amostras repetidas e ampliar os testes de falha e replanejamento. Evoluir a recuperação local para eliminar cópias desnecessárias sem declarar zero-copy prematuramente.
+Manter telemetria persistente por enlace, validar perda/jitter em amostras repetidas e ampliar os testes de falha e replanejamento. A retomada de chunks existe em memória durante a vida do processo; reinicialização do Worker exige reiniciar a transferência do offset zero. Evoluir a recuperação local para eliminar cópias desnecessárias sem declarar zero-copy prematuramente.

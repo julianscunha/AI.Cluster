@@ -190,6 +190,54 @@ message TransferBufferRequest {
   string destination_endpoint = 2;
   string destination_buffer_id = 3;
   uint32 destination_pins = 4;
+  string transfer_id = 5;
+}
+
+message BeginBufferTransferRequest {
+  string transfer_id = 1;
+  string buffer_id = 2;
+  uint64 total_bytes = 3;
+  string checksum_sha256 = 4;
+  uint32 pins = 5;
+}
+
+message BeginBufferTransferResponse {
+  bool accepted = 1;
+  bool already_complete = 2;
+  uint64 next_offset = 3;
+  string message = 4;
+}
+
+message PutBufferChunkRequest {
+  string transfer_id = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+  string chunk_checksum_sha256 = 4;
+}
+
+message PutBufferChunkResponse {
+  bool accepted = 1;
+  uint64 next_offset = 2;
+  string message = 3;
+}
+
+message CommitBufferTransferRequest {
+  string transfer_id = 1;
+}
+
+message CommitBufferTransferResponse {
+  bool accepted = 1;
+  uint64 total_bytes = 2;
+  string checksum_sha256 = 3;
+  string message = 4;
+}
+
+message AbortBufferTransferRequest {
+  string transfer_id = 1;
+}
+
+message AbortBufferTransferResponse {
+  bool aborted = 1;
 }
 
 message TransferBufferResponse {
@@ -321,6 +369,10 @@ service WorkerRuntime {
   rpc GetBuffer(GetBufferRequest) returns (GetBufferResponse);
   rpc HasBuffer(HasBufferRequest) returns (HasBufferResponse);
   rpc TransferBuffer(TransferBufferRequest) returns (TransferBufferResponse);
+  rpc BeginBufferTransfer(BeginBufferTransferRequest) returns (BeginBufferTransferResponse);
+  rpc PutBufferChunk(PutBufferChunkRequest) returns (PutBufferChunkResponse);
+  rpc CommitBufferTransfer(CommitBufferTransferRequest) returns (CommitBufferTransferResponse);
+  rpc AbortBufferTransfer(AbortBufferTransferRequest) returns (AbortBufferTransferResponse);
   rpc ReleaseBufferPin(ReleaseBufferPinRequest) returns (ReleaseBufferPinResponse);
   rpc PeerProbe(PeerProbeRequest) returns (PeerProbeResponse);
   rpc ProbePeerLink(ProbePeerLinkRequest) returns (ProbePeerLinkResponse);

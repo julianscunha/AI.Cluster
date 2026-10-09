@@ -1004,6 +1004,7 @@ async fn prepare_graph_work(
                             destination_endpoint: destination.worker_endpoint.clone(),
                             destination_buffer_id: destination_buffer_id.clone(),
                             destination_pins: 1,
+                            transfer_id: destination_buffer_id.clone(),
                         })),
                     )
                     .await
@@ -1079,6 +1080,16 @@ async fn prepare_graph_work(
                             Duration::from_millis(500),
                             client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
                                 buffer_id: destination_buffer_id,
+                            })),
+                        )
+                        .await;
+                    }
+
+                    if let Some(client) = local_client.as_mut() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_millis(500),
+                            client.abort_buffer_transfer(Request::new(AbortBufferTransferRequest {
+                                transfer_id: destination_buffer_id.clone(),
                             })),
                         )
                         .await;

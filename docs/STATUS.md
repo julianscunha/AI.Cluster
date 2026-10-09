@@ -60,7 +60,11 @@ Arquitetura: v0.1
 - escolha entre ControllerRelay e WorkerToWorker no Residency Planner;
 - sondagem peer-to-peer sob demanda para RTT de ida e volta e throughput gRPC de payload echo;
 - cache de métricas por par direcionado com TTL de 30 segundos;
-- checksum SHA-256 em buffers, confirmação no Worker de destino e validação de inputs locais/inline.
+- checksum SHA-256 em buffers, confirmação no Worker de destino e validação de inputs locais/inline;
+- transferência de buffers em chunks de até 1 MiB;
+- retry por chunk e retomada por offset usando transfer_id idempotente;
+- reserva de capacidade durante transferências parciais e commit atômico após validação do checksum completo;
+- aborto de sessões parciais quando o Controller recorre ao cache.
 
 ## Experimental
 
