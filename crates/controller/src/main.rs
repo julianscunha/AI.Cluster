@@ -817,8 +817,9 @@ async fn prepare_graph_work(
         } else {
             None
         };
-        let primary_transfer_duration_us =
-            primary_transfer_plan.as_ref().map(|plan| plan.estimated_duration_us);
+        let primary_transfer_duration_us = primary_transfer_plan
+            .as_ref()
+            .map(|plan| plan.estimated_duration_us);
 
         let decision = plan_buffer_access(BufferAccessOptions {
             local_copy_available,
