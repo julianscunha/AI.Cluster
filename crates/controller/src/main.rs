@@ -917,6 +917,7 @@ async fn prepare_graph_work(
                 destination_node_id = %destination.node_id,
                 rtt_us = metrics.rtt_us,
                 round_trip_mb_per_sec = metrics.round_trip_mb_per_sec,
+                metric_age_ms = metrics.measured_at.elapsed().as_millis() as u64,
                 samples = metrics.sample_count,
                 observations = metrics.observation_count,
                 failures = metrics.failure_count,
@@ -1199,7 +1200,7 @@ fn estimate_worker_to_worker_us(
     byte_len: u64,
     source: &NodeInfo,
     destination: &NodeInfo,
-    measured: Option<&PeerLinkMetrics>,
+    measured: Option<&peer_link_store::PeerLinkMetrics>,
 ) -> u64 {
     if let Some(metrics) = measured.filter(|metrics| {
         metrics.rtt_us.is_finite()
