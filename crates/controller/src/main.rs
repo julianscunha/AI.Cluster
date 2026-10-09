@@ -811,11 +811,7 @@ async fn prepare_graph_work(
             if let Some(source) = source_node.filter(|source| source.node_id != destination_node_id)
             {
                 let cached = peer_links
-                    .fresh_metrics(
-                        &source.node_id,
-                        &destination.node_id,
-                        PEER_LINK_METRICS_TTL,
-                    )
+                    .fresh_metrics(&source.node_id, &destination.node_id, PEER_LINK_METRICS_TTL)
                     .await;
 
                 if cached.is_some() {
@@ -1214,8 +1210,7 @@ fn estimate_worker_to_worker_us(
         // Falhas de sondagem são um indicador aproximado de confiabilidade do enlace.
         // Limita-se a penalidade para evitar que poucas falhas tornem a rota inutilizável.
         let success_rate = (1.0 - metrics.failure_rate).clamp(0.25, 1.0);
-        let reliability_adjusted_transfer_us =
-            ((transfer_us as f64) / success_rate).ceil() as u64;
+        let reliability_adjusted_transfer_us = ((transfer_us as f64) / success_rate).ceil() as u64;
         return (metrics.rtt_us.ceil().max(0.0) as u64)
             .saturating_add(reliability_adjusted_transfer_us);
     }

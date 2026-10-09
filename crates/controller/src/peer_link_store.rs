@@ -245,7 +245,9 @@ fn metrics_from_history(
         .filter(|observation| {
             observation.rtt_us.is_some_and(f64::is_finite)
                 && observation.rtt_us.is_some_and(|value| value >= 0.0)
-                && observation.round_trip_mb_per_sec.is_some_and(f64::is_finite)
+                && observation
+                    .round_trip_mb_per_sec
+                    .is_some_and(f64::is_finite)
                 && observation
                     .round_trip_mb_per_sec
                     .is_some_and(|value| value > 0.0)
@@ -353,9 +355,7 @@ fn load_state(path: &PathBuf) -> io::Result<StoreState> {
         let mut observations: VecDeque<LinkObservation> = link
             .observations
             .into_iter()
-            .filter(|observation| {
-                now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms
-            })
+            .filter(|observation| now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms)
             .collect();
         while observations.len() > MAX_OBSERVATIONS_PER_LINK {
             observations.pop_front();
@@ -385,11 +385,13 @@ fn persist_state(path: &PathBuf, state: &StoreState) -> io::Result<()> {
         links: state
             .links
             .iter()
-            .map(|((source_node_id, destination_node_id), observations)| PersistedLink {
-                source_node_id: source_node_id.clone(),
-                destination_node_id: destination_node_id.clone(),
-                observations: observations.clone(),
-            })
+            .map(
+                |((source_node_id, destination_node_id), observations)| PersistedLink {
+                    source_node_id: source_node_id.clone(),
+                    destination_node_id: destination_node_id.clone(),
+                    observations: observations.clone(),
+                },
+            )
             .collect(),
     };
     let bytes = serde_json::to_vec_pretty(&persisted)
@@ -459,13 +461,7 @@ mod tests {
         let store = PeerLinkStore::in_memory();
         for value in 0..(MAX_OBSERVATIONS_PER_LINK + 5) {
             store
-                .record_success(
-                    "worker-a",
-                    "worker-b",
-                    100.0 + value as f64,
-                    10.0,
-                    3,
-                )
+                .record_success("worker-a", "worker-b", 100.0 + value as f64, 10.0, 3)
                 .await;
         }
 
