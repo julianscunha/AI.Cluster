@@ -1079,7 +1079,7 @@ async fn prepare_graph_work(
                         let _ = tokio::time::timeout(
                             Duration::from_millis(500),
                             client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
-                                buffer_id: destination_buffer_id,
+                                buffer_id: destination_buffer_id.clone(),
                             })),
                         )
                         .await;

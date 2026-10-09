@@ -26,6 +26,8 @@ mod buffer_store;
 const DEFAULT_WORKER_BUFFER_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PEER_PROBE_BYTES: usize = 1024 * 1024;
 const MAX_PEER_PROBE_SAMPLES: u32 = 5;
+const MAX_BUFFER_CHUNK_BYTES: usize = 1024 * 1024;
+const MAX_BUFFER_CHUNK_RETRIES: usize = 3;
 
 #[derive(Clone)]
 struct WorkerService {
