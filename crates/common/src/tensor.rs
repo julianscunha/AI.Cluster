@@ -1,4 +1,19 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+pub fn sha256_checksum(data: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(data);
+    let mut checksum = String::with_capacity(71);
+    checksum.push_str("sha256:");
+
+    for byte in digest {
+        checksum.push(char::from(HEX[(byte >> 4) as usize]));
+        checksum.push(char::from(HEX[(byte & 0x0f) as usize]));
+    }
+
+    checksum
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TensorDType {
@@ -128,6 +143,14 @@ mod tests {
         plan_buffer_transfer, BufferDescriptor, DataLocation, TensorDType, TensorDescriptor,
         TransferStrategy,
     };
+
+    #[test]
+    fn sha256_checksum_usa_formato_estavel() {
+        assert_eq!(
+            super::sha256_checksum(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
 
     #[test]
     fn tensor_element_count_e_dimensionado() {

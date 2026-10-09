@@ -7,7 +7,10 @@ use std::{
 };
 
 use real_ai_cluster_benchmark::{matmul_row_shard, run as run_benchmark};
-use real_ai_cluster_common::hardware::{discover, StorageKind};
+use real_ai_cluster_common::{
+    hardware::{discover, StorageKind},
+    tensor::sha256_checksum,
+};
 use real_ai_cluster_protocol::v1::{
     cluster_control_client::ClusterControlClient,
     worker_runtime_client::WorkerRuntimeClient,
@@ -21,6 +24,8 @@ use tracing::{info, warn};
 mod buffer_store;
 
 const DEFAULT_WORKER_BUFFER_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_PEER_PROBE_BYTES: usize = 1024 * 1024;
+const MAX_PEER_PROBE_SAMPLES: u32 = 5;
 
 #[derive(Clone)]
 struct WorkerService {
@@ -43,22 +48,30 @@ impl WorkerRuntime for WorkerService {
         let mut effective_payload = work.payload.clone();
 
         for input in &work.inputs {
-            if input.local_buffer {
-                let bytes = {
-                    let mut store = self.buffers.write().await;
-                    store.get_for_consumer(&input.buffer_id)
-                }
-                .ok_or_else(|| {
-                    Status::failed_precondition(format!(
-                        "buffer local não está disponível: {}",
-                        input.buffer_id
-                    ))
-                })?;
-
-                effective_payload.extend_from_slice(&bytes);
+            let bytes = if input.local_buffer {
+                let mut store = self.buffers.write().await;
+                store
+                    .get_for_consumer(&input.buffer_id)
+                    .ok_or_else(|| {
+                        Status::failed_precondition(format!(
+                            "buffer local não está disponível: {}",
+                            input.buffer_id
+                        ))
+                    })?
             } else {
-                effective_payload.extend_from_slice(&input.data);
+                input.data.clone()
+            };
+
+            if !input.checksum_sha256.is_empty()
+                && sha256_checksum(&bytes) != input.checksum_sha256
+            {
+                return Err(Status::data_loss(format!(
+                    "checksum SHA-256 inválido para input {}",
+                    input.buffer_id
+                )));
             }
+
+            effective_payload.extend_from_slice(&bytes);
         }
 
         let output = match work.operation.as_str() {
@@ -149,6 +162,17 @@ impl WorkerRuntime for WorkerService {
             return Err(Status::invalid_argument("buffer_id é obrigatório"));
         }
 
+        let actual_checksum = sha256_checksum(&request.data);
+        if request.checksum_sha256.is_empty() {
+            return Err(Status::invalid_argument("checksum_sha256 é obrigatório"));
+        }
+        if request.checksum_sha256 != actual_checksum {
+            return Err(Status::data_loss(format!(
+                "checksum SHA-256 incompatível no buffer {}",
+                request.buffer_id
+            )));
+        }
+
         self.buffers
             .write()
             .await
@@ -162,6 +186,7 @@ impl WorkerRuntime for WorkerService {
         Ok(Response::new(PutBufferResponse {
             accepted: true,
             message: "buffer armazenado localmente".into(),
+            checksum_sha256: actual_checksum,
         }))
     }
 
@@ -173,22 +198,24 @@ impl WorkerRuntime for WorkerService {
         let data = {
             let mut store = self.buffers.write().await;
             if request.consume_pin {
-                store.get_for_consumer(&request.buffer_id)
+                store.get_for_consumer_with_checksum(&request.buffer_id)
             } else {
-                store.get(&request.buffer_id)
+                store.get_with_checksum(&request.buffer_id)
             }
         };
 
         Ok(Response::new(match data {
-            Some(data) => GetBufferResponse {
+            Some((data, checksum_sha256)) => GetBufferResponse {
                 found: true,
                 message: "buffer encontrado".into(),
                 data,
+                checksum_sha256,
             },
             None => GetBufferResponse {
                 found: false,
                 message: "buffer não encontrado".into(),
                 data: Vec::new(),
+                checksum_sha256: String::new(),
             },
         }))
     }
@@ -216,9 +243,9 @@ impl WorkerRuntime for WorkerService {
             ));
         }
 
-        let data = {
+        let (data, checksum_sha256) = {
             let mut store = self.buffers.write().await;
-            store.get(&request.source_buffer_id)
+            store.get_with_checksum(&request.source_buffer_id)
         }
         .ok_or_else(|| {
             Status::failed_precondition(format!(
@@ -242,6 +269,7 @@ impl WorkerRuntime for WorkerService {
                 buffer_id: request.destination_buffer_id,
                 data,
                 pins: request.destination_pins,
+                checksum_sha256: checksum_sha256.clone(),
             })),
         )
         .await
@@ -254,11 +282,11 @@ impl WorkerRuntime for WorkerService {
         if !response.accepted {
             return Err(Status::resource_exhausted(response.message));
         }
-
-        self.buffers
-            .write()
-            .await
-            .release_consumer(&request.source_buffer_id);
+        if response.checksum_sha256 != checksum_sha256 {
+            return Err(Status::data_loss(
+                "checksum reportado pelo Worker de destino não corresponde à origem",
+            ));
+        }
 
         info!(
             node_id = %self.node_id,
@@ -271,6 +299,7 @@ impl WorkerRuntime for WorkerService {
             accepted: true,
             message: "buffer transferido entre Workers".into(),
             byte_len,
+            checksum_sha256,
         }))
     }
 
@@ -286,6 +315,114 @@ impl WorkerRuntime for WorkerService {
             .release_consumer(&request.buffer_id);
 
         Ok(Response::new(ReleaseBufferPinResponse { released }))
+    }
+
+    async fn peer_probe(
+        &self,
+        request: Request<PeerProbeRequest>,
+    ) -> Result<Response<PeerProbeResponse>, Status> {
+        let payload = request.into_inner().payload;
+        if payload.len() > MAX_PEER_PROBE_BYTES {
+            return Err(Status::resource_exhausted(format!(
+                "payload de probe excede {MAX_PEER_PROBE_BYTES} bytes"
+            )));
+        }
+
+        Ok(Response::new(PeerProbeResponse {
+            accepted: true,
+            node_id: self.node_id.clone(),
+            payload,
+        }))
+    }
+
+    async fn probe_peer_link(
+        &self,
+        request: Request<ProbePeerLinkRequest>,
+    ) -> Result<Response<ProbePeerLinkResponse>, Status> {
+        let request = request.into_inner();
+        if request.destination_endpoint.is_empty() {
+            return Err(Status::invalid_argument("destination_endpoint é obrigatório"));
+        }
+        if request.payload_bytes == 0
+            || request.payload_bytes as usize > MAX_PEER_PROBE_BYTES
+            || request.samples == 0
+            || request.samples > MAX_PEER_PROBE_SAMPLES
+        {
+            return Err(Status::invalid_argument(format!(
+                "payload_bytes deve estar entre 1 e {MAX_PEER_PROBE_BYTES}, samples entre 1 e {MAX_PEER_PROBE_SAMPLES}"
+            )));
+        }
+
+        let mut client = tokio::time::timeout(
+            Duration::from_secs(2),
+            WorkerRuntimeClient::connect(request.destination_endpoint),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("timeout conectando ao Worker peer"))?
+        .map_err(|error| Status::unavailable(format!("Worker peer indisponível: {error}")))?;
+
+        let mut rtt_samples = Vec::with_capacity(request.samples as usize);
+        let mut destination_node_id = String::new();
+
+        for _ in 0..request.samples {
+            let started = Instant::now();
+            let response = tokio::time::timeout(
+                Duration::from_secs(1),
+                client.peer_probe(Request::new(PeerProbeRequest { payload: Vec::new() })),
+            )
+            .await
+            .map_err(|_| Status::deadline_exceeded("timeout no probe de RTT peer-to-peer"))?
+            .map_err(|error| Status::unavailable(format!("probe peer-to-peer falhou: {error}")))?
+            .into_inner();
+
+            if !response.accepted || !response.payload.is_empty() {
+                return Err(Status::data_loss("resposta inválida no probe de RTT peer-to-peer"));
+            }
+            destination_node_id = response.node_id;
+            rtt_samples.push(started.elapsed().as_secs_f64() * 1_000_000.0);
+        }
+
+        let payload = vec![0xA5; request.payload_bytes as usize];
+        let mut throughput_samples = Vec::with_capacity(request.samples as usize);
+
+        for _ in 0..request.samples {
+            let started = Instant::now();
+            let response = tokio::time::timeout(
+                Duration::from_secs(2),
+                client.peer_probe(Request::new(PeerProbeRequest {
+                    payload: payload.clone(),
+                })),
+            )
+            .await
+            .map_err(|_| Status::deadline_exceeded("timeout no probe de throughput peer-to-peer"))?
+            .map_err(|error| Status::unavailable(format!("probe de throughput falhou: {error}")))?
+            .into_inner();
+
+            let elapsed_seconds = started.elapsed().as_secs_f64().max(f64::MIN_POSITIVE);
+            if !response.accepted || response.payload != payload {
+                return Err(Status::data_loss(
+                    "resposta inválida no probe de throughput peer-to-peer",
+                ));
+            }
+            destination_node_id = response.node_id;
+            let payload_mib = payload.len() as f64 / (1024.0 * 1024.0);
+            throughput_samples.push(payload_mib / elapsed_seconds);
+        }
+
+        rtt_samples.sort_by(f64::total_cmp);
+        throughput_samples.sort_by(f64::total_cmp);
+        let rtt_us = rtt_samples[rtt_samples.len() / 2];
+        let round_trip_mb_per_sec = throughput_samples[throughput_samples.len() / 2];
+
+        Ok(Response::new(ProbePeerLinkResponse {
+            accepted: true,
+            message: "medição peer-to-peer concluída".into(),
+            source_node_id: self.node_id.clone(),
+            destination_node_id,
+            rtt_us,
+            round_trip_mb_per_sec,
+            sample_count: request.samples,
+        }))
     }
 
     async fn execute_matrix_block(

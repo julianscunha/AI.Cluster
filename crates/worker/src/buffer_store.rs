@@ -3,9 +3,12 @@ use std::{
     fmt::{Display, Formatter},
 };
 
+use real_ai_cluster_common::tensor::sha256_checksum;
+
 #[derive(Debug)]
 struct StoredBuffer {
     data: Vec<u8>,
+    checksum_sha256: String,
     last_access: u64,
     pins: usize,
 }
@@ -100,6 +103,7 @@ impl BufferStore {
         self.buffers.insert(
             buffer_id,
             StoredBuffer {
+                checksum_sha256: sha256_checksum(&data),
                 data,
                 last_access: self.next_access,
                 pins,
@@ -110,15 +114,27 @@ impl BufferStore {
     }
 
     pub fn get(&mut self, buffer_id: &str) -> Option<Vec<u8>> {
+        self.get_with_checksum(buffer_id).map(|(data, _)| data)
+    }
+
+    pub fn get_with_checksum(&mut self, buffer_id: &str) -> Option<(Vec<u8>, String)> {
         self.next_access = self.next_access.saturating_add(1);
         let next_access = self.next_access;
         let buffer = self.buffers.get_mut(buffer_id)?;
         buffer.last_access = next_access;
-        Some(buffer.data.clone())
+        Some((buffer.data.clone(), buffer.checksum_sha256.clone()))
     }
 
     pub fn get_for_consumer(&mut self, buffer_id: &str) -> Option<Vec<u8>> {
-        let data = self.get(buffer_id)?;
+        self.get_for_consumer_with_checksum(buffer_id)
+            .map(|(data, _)| data)
+    }
+
+    pub fn get_for_consumer_with_checksum(
+        &mut self,
+        buffer_id: &str,
+    ) -> Option<(Vec<u8>, String)> {
+        let data = self.get_with_checksum(buffer_id)?;
         if let Some(buffer) = self.buffers.get_mut(buffer_id) {
             buffer.pins = buffer.pins.saturating_sub(1);
         }

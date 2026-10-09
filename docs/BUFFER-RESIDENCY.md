@@ -75,6 +75,14 @@ O prepare_graph_work consulta o Residency Planner e verifica a disponibilidade l
 
 Se o Worker produtor não possuir a cópia, se a rota direta falhar ou se o buffer local do consumidor não tiver sido materializado, o Controller usa seu Buffer Store como fallback. O TransferPlan distingue ControllerRelay de WorkerToWorker. As estimativas de custo ainda usam medições de rede worker-to-controller como aproximação e precisam ser calibradas com métricas peer-to-peer reais. O planner favorece WorkerToWorker em empate porque evita encaminhar a segunda cópia de dados pelo Controller.
 
+## Medição peer-to-peer e integridade
+
+O Worker Runtime expõe PeerProbe e ProbePeerLink. O Worker de origem mede o RTT de ida e volta e a taxa observada de payload echo diretamente com o destino, usando até três amostras de payload de 256 KiB. O Controller consulta essas medições sob demanda e mantém o resultado por par direcionado durante 30 segundos. Essa taxa é uma medição gRPC round-trip, não uma promessa de throughput unidirecional sustentado.
+
+Cada buffer recebe um checksum SHA-256 no formato `sha256:<hex>`. O Worker de destino valida o checksum antes de armazenar o buffer; o Worker produtor confirma ao Controller o checksum aceito. Inputs inline e locais também são validados antes de serem consumidos. A execução retorna DataLoss quando a integridade não confere.
+
+As métricas peer-to-peer alimentam a estimativa de custo quando disponíveis; na ausência ou falha da sondagem, o Controller usa uma estimativa aproximada baseada na capability reportada.
+
 ## Próximos passos
 
-Integrar transferência direta entre Workers, checksums, verificação de integridade, chunking/retry para buffers grandes, telemetria da residência e métricas reais de transferência. Evoluir a recuperação local para eliminar cópias desnecessárias sem declarar zero-copy prematuramente.
+Adicionar chunking/retry para buffers grandes, manter telemetria persistente por enlace, validar perda/jitter em amostras repetidas e ampliar os testes de falha e replanejamento. Evoluir a recuperação local para eliminar cópias desnecessárias sem declarar zero-copy prematuramente.

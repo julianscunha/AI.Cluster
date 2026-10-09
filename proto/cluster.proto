@@ -118,6 +118,7 @@ message WorkInput {
   string buffer_id = 1;
   bytes data = 2;
   bool local_buffer = 3;
+  string checksum_sha256 = 4;
 }
 
 message WorkUnit {
@@ -155,11 +156,13 @@ message PutBufferRequest {
   string buffer_id = 1;
   bytes data = 2;
   uint32 pins = 3;
+  string checksum_sha256 = 4;
 }
 
 message PutBufferResponse {
   bool accepted = 1;
   string message = 2;
+  string checksum_sha256 = 3;
 }
 
 message GetBufferRequest {
@@ -171,6 +174,7 @@ message GetBufferResponse {
   bool found = 1;
   string message = 2;
   bytes data = 3;
+  string checksum_sha256 = 4;
 }
 
 message HasBufferRequest {
@@ -192,6 +196,7 @@ message TransferBufferResponse {
   bool accepted = 1;
   string message = 2;
   uint64 byte_len = 3;
+  string checksum_sha256 = 4;
 }
 
 message ReleaseBufferPinRequest {
@@ -200,6 +205,32 @@ message ReleaseBufferPinRequest {
 
 message ReleaseBufferPinResponse {
   bool released = 1;
+}
+
+message PeerProbeRequest {
+  bytes payload = 1;
+}
+
+message PeerProbeResponse {
+  bool accepted = 1;
+  string node_id = 2;
+  bytes payload = 3;
+}
+
+message ProbePeerLinkRequest {
+  string destination_endpoint = 1;
+  uint32 payload_bytes = 2;
+  uint32 samples = 3;
+}
+
+message ProbePeerLinkResponse {
+  bool accepted = 1;
+  string message = 2;
+  string source_node_id = 3;
+  string destination_node_id = 4;
+  double rtt_us = 5;
+  double round_trip_mb_per_sec = 6;
+  uint32 sample_count = 7;
 }
 
 message DistributedMatMulRequest {
@@ -291,4 +322,6 @@ service WorkerRuntime {
   rpc HasBuffer(HasBufferRequest) returns (HasBufferResponse);
   rpc TransferBuffer(TransferBufferRequest) returns (TransferBufferResponse);
   rpc ReleaseBufferPin(ReleaseBufferPinRequest) returns (ReleaseBufferPinResponse);
+  rpc PeerProbe(PeerProbeRequest) returns (PeerProbeResponse);
+  rpc ProbePeerLink(ProbePeerLinkRequest) returns (ProbePeerLinkResponse);
 }

@@ -57,7 +57,10 @@ Arquitetura: v0.1
 - fallback pelo Controller Cache quando a cópia local não está disponível;
 - transferência Worker-to-Worker acionada pelo Controller, com payload peer-to-peer;
 - RPCs TransferBuffer e ReleaseBufferPin para transferência e ciclo de vida de pins;
-- escolha entre ControllerRelay e WorkerToWorker no Residency Planner.
+- escolha entre ControllerRelay e WorkerToWorker no Residency Planner;
+- sondagem peer-to-peer sob demanda para RTT de ida e volta e throughput gRPC de payload echo;
+- cache de métricas por par direcionado com TTL de 30 segundos;
+- checksum SHA-256 em buffers, confirmação no Worker de destino e validação de inputs locais/inline.
 
 ## Experimental
 
@@ -75,4 +78,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Adicionar checksum/validação de integridade, chunking, retry/resume, métricas peer-to-peer reais, persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
+Adicionar chunking, retry/resume, métricas persistentes por enlace, persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.

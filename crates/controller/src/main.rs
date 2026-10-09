@@ -7,7 +7,7 @@ use std::{
 
 use real_ai_cluster_common::{
     residency::{plan_buffer_access, BufferAccessOptions, BufferAccessSource},
-    tensor::{BufferDescriptor, DataLocation, TransferPlan, TransferStrategy},
+    tensor::{sha256_checksum, BufferDescriptor, DataLocation, TransferPlan, TransferStrategy},
 };
 use real_ai_cluster_protocol::v1::{
     cluster_control_server::{ClusterControl, ClusterControlServer},
@@ -24,11 +24,21 @@ mod scheduler;
 mod transfer;
 
 const DEFAULT_BUFFER_CACHE_BYTES: u64 = 128 * 1024 * 1024;
+const PEER_LINK_METRICS_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone)]
+struct PeerLinkMetrics {
+    rtt_us: f64,
+    round_trip_mb_per_sec: f64,
+    sample_count: u32,
+    measured_at: Instant,
+}
 
 #[derive(Clone)]
 struct Controller {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     buffers: Arc<RwLock<buffer_store::BufferStore>>,
+    peer_links: Arc<RwLock<HashMap<(String, String), PeerLinkMetrics>>>,
     offline_after: Duration,
 }
 
@@ -49,6 +59,7 @@ impl Controller {
             buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(
                 max_buffer_cache_bytes,
             ))),
+            peer_links: Arc::new(RwLock::new(HashMap::new())),
             offline_after: Duration::from_secs(10),
         }
     }
@@ -605,6 +616,7 @@ impl Controller {
                     unit,
                     &graph.execution_id,
                     &self.buffers,
+                    &self.peer_links,
                     &assignment.node_id,
                     &node_list,
                 )
@@ -685,7 +697,7 @@ impl Controller {
                 let buffer = BufferDescriptor {
                     buffer_id: output_buffer_id(&graph.execution_id, &result.work_id),
                     byte_len: result.output.len() as u64,
-                    checksum: None,
+                    checksum: Some(sha256_checksum(&result.output)),
                     location: DataLocation::Node {
                         node_id: result.node_id.clone(),
                     },
@@ -721,6 +733,7 @@ async fn prepare_graph_work(
     unit: &execution::WorkUnitSpec,
     execution_id: &str,
     buffers: &RwLock<buffer_store::BufferStore>,
+    peer_links: &RwLock<HashMap<(String, String), PeerLinkMetrics>>,
     destination_node_id: &str,
     nodes: &[NodeInfo],
 ) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
@@ -801,6 +814,98 @@ async fn prepare_graph_work(
             false
         };
 
+        let peer_metrics = if primary_available {
+            if let Some(source) =
+                source_node.filter(|source| source.node_id != destination_node_id)
+            {
+                let key = (source.node_id.clone(), destination.node_id.clone());
+                let cached = {
+                    let links = peer_links.read().await;
+                    links
+                        .get(&key)
+                        .filter(|metrics| metrics.measured_at.elapsed() <= PEER_LINK_METRICS_TTL)
+                        .cloned()
+                };
+
+                if cached.is_some() {
+                    cached
+                } else if let Some(client) = source_client.as_mut() {
+                    let probe = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        client.probe_peer_link(Request::new(ProbePeerLinkRequest {
+                            destination_endpoint: destination.worker_endpoint.clone(),
+                            payload_bytes: 256 * 1024,
+                            samples: 3,
+                        })),
+                    )
+                    .await;
+
+                    match probe {
+                        Ok(Ok(response)) => {
+                            let response = response.into_inner();
+                            if response.accepted
+                                && response.destination_node_id == destination.node_id
+                                && response.rtt_us.is_finite()
+                                && response.rtt_us >= 0.0
+                                && response.round_trip_mb_per_sec.is_finite()
+                                && response.round_trip_mb_per_sec > 0.0
+                            {
+                                let metrics = PeerLinkMetrics {
+                                    rtt_us: response.rtt_us,
+                                    round_trip_mb_per_sec: response.round_trip_mb_per_sec,
+                                    sample_count: response.sample_count,
+                                    measured_at: Instant::now(),
+                                };
+                                peer_links.write().await.insert(key, metrics.clone());
+                                Some(metrics)
+                            } else {
+                                warn!(
+                                    source_node_id = %source.node_id,
+                                    destination_node_id = %destination.node_id,
+                                    "Worker retornou métricas peer-to-peer inválidas"
+                                );
+                                None
+                            }
+                        }
+                        Ok(Err(error)) => {
+                            warn!(
+                                source_node_id = %source.node_id,
+                                destination_node_id = %destination.node_id,
+                                %error,
+                                "medição peer-to-peer falhou; usando estimativa aproximada"
+                            );
+                            None
+                        }
+                        Err(_) => {
+                            warn!(
+                                source_node_id = %source.node_id,
+                                destination_node_id = %destination.node_id,
+                                "timeout na medição peer-to-peer; usando estimativa aproximada"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(metrics) = &peer_metrics {
+            info!(
+                source_node_id = source_node.map(|node| node.node_id.as_str()).unwrap_or_default(),
+                destination_node_id = %destination.node_id,
+                rtt_us = metrics.rtt_us,
+                round_trip_mb_per_sec = metrics.round_trip_mb_per_sec,
+                samples = metrics.sample_count,
+                "métricas peer-to-peer atualizadas"
+            );
+        }
+
         let controller_cache_available = cached_descriptor.is_some();
         let cache_transfer_duration_us = cached_descriptor
             .as_ref()
@@ -810,8 +915,12 @@ async fn prepare_graph_work(
                 let mut plan =
                     transfer::plan_output_transfer(descriptor, destination_node_id, nodes).ok()?;
                 let source = source_node?;
-                plan.estimated_duration_us =
-                    estimate_worker_to_worker_us(descriptor.byte_len, source, destination);
+                plan.estimated_duration_us = estimate_worker_to_worker_us(
+                    descriptor.byte_len,
+                    source,
+                    destination,
+                    peer_metrics.as_ref(),
+                );
                 Some(plan)
             })
         } else {
@@ -849,6 +958,10 @@ async fn prepare_graph_work(
                     buffer_id,
                     data: Vec::new(),
                     local_buffer: true,
+                    checksum_sha256: cached_descriptor
+                        .as_ref()
+                        .and_then(|descriptor| descriptor.checksum.clone())
+                        .unwrap_or_default(),
                 });
             }
             Some(BufferAccessSource::ControllerCache) => {
@@ -901,13 +1014,37 @@ async fn prepare_graph_work(
                     ));
                 };
 
-                let direct_transfer_succeeded =
-                    matches!(&transfer_result, Ok(Ok(response)) if response.get_ref().accepted);
+                let expected_checksum = cached_descriptor
+                    .as_ref()
+                    .and_then(|descriptor| descriptor.checksum.as_deref())
+                    .unwrap_or_default();
+                let direct_transfer_succeeded = matches!(
+                    &transfer_result,
+                    Ok(Ok(response))
+                        if response.get_ref().accepted
+                            && !expected_checksum.is_empty()
+                            && response.get_ref().checksum_sha256.as_str() == expected_checksum
+                );
 
                 if direct_transfer_succeeded {
                     if controller_cache_available {
                         let mut store = buffers.write().await;
                         store.release_consumer(&buffer_id);
+                    }
+                    if let Some(client) = source_client.as_mut() {
+                        let released = tokio::time::timeout(
+                            Duration::from_millis(500),
+                            client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
+                                buffer_id: buffer_id.clone(),
+                            })),
+                        )
+                        .await;
+                        if !matches!(released, Ok(Ok(_))) {
+                            warn!(
+                                buffer_id = %buffer_id,
+                                "não foi possível liberar pin da residência primária após transferência"
+                            );
+                        }
                     }
 
                     let mut transfer = primary_transfer_plan.ok_or_else(|| {
@@ -920,6 +1057,7 @@ async fn prepare_graph_work(
                         buffer_id: destination_buffer_id,
                         data: Vec::new(),
                         local_buffer: true,
+                        checksum_sha256: expected_checksum.to_owned(),
                     });
                 } else {
                     warn!(
@@ -990,6 +1128,17 @@ async fn controller_cache_input(
         ))
     })?;
 
+    let checksum_sha256 = output
+        .descriptor
+        .checksum
+        .clone()
+        .unwrap_or_else(|| sha256_checksum(&output.bytes));
+    if sha256_checksum(&output.bytes) != checksum_sha256 {
+        return Err(Status::data_loss(format!(
+            "checksum SHA-256 inválido no Controller Cache: {buffer_id}"
+        )));
+    }
+
     let byte_len = output.bytes.len() as u64;
     let transfer = TransferPlan {
         buffer_id: buffer_id.to_owned(),
@@ -1007,12 +1156,31 @@ async fn controller_cache_input(
             buffer_id: buffer_id.to_owned(),
             data: output.bytes,
             local_buffer: false,
+            checksum_sha256,
         },
         transfer,
     ))
 }
 
-fn estimate_worker_to_worker_us(byte_len: u64, source: &NodeInfo, destination: &NodeInfo) -> u64 {
+fn estimate_worker_to_worker_us(
+    byte_len: u64,
+    source: &NodeInfo,
+    destination: &NodeInfo,
+    measured: Option<&PeerLinkMetrics>,
+) -> u64 {
+    if let Some(metrics) = measured.filter(|metrics| {
+        metrics.rtt_us.is_finite()
+            && metrics.rtt_us >= 0.0
+            && metrics.round_trip_mb_per_sec.is_finite()
+            && metrics.round_trip_mb_per_sec > 0.0
+    }) {
+        let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0))
+            / metrics.round_trip_mb_per_sec
+            * 1_000_000.0)
+            .ceil() as u64;
+        return metrics.rtt_us.ceil() as u64 + transfer_us;
+    }
+
     let (Some(source_capability), Some(destination_capability)) =
         (source.capability.as_ref(), destination.capability.as_ref())
     else {
@@ -1026,17 +1194,16 @@ fn estimate_worker_to_worker_us(byte_len: u64, source: &NodeInfo, destination: &
         return u64::MAX / 2;
     }
 
-    // Worker-to-Controller RTTs are only a proxy until peer-to-peer probes exist.
-    let source_rtt = source_capability.network_rtt_us;
-    let destination_rtt = destination_capability.network_rtt_us;
-    let rtt_us = source_rtt.max(destination_rtt);
+    let rtt_us = source_capability
+        .network_rtt_us
+        .max(destination_capability.network_rtt_us);
     let rtt_us = if rtt_us.is_finite() && rtt_us >= 0.0 {
         rtt_us.ceil() as u64
     } else {
         0
     };
-    let transfer_us =
-        ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0).ceil() as u64;
+    let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / throughput * 1_000_000.0)
+        .ceil() as u64;
     rtt_us.saturating_add(transfer_us)
 }
 
@@ -1205,6 +1372,7 @@ mod tests {
         .with_data_inputs(vec!["producer".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
+        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
         {
             let mut store = buffers.blocking_write();
             store
@@ -1249,7 +1417,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (prepared, transfers) = runtime
             .block_on(prepare_graph_work(
-                &unit, "exec-1", &buffers, "node-b", &nodes,
+                &unit, "exec-1", &buffers, &peer_links, "node-b", &nodes,
             ))
             .unwrap();
 
@@ -1275,6 +1443,7 @@ mod tests {
         .with_data_inputs(vec!["producer".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
+        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
         let nodes = vec![
             NodeInfo {
                 node_id: "node-a".into(),
@@ -1321,6 +1490,7 @@ mod tests {
         .with_data_inputs(vec!["missing".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
+        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
         let nodes = vec![NodeInfo {
             node_id: "node-b".into(),
             state: NodeState::Ready as i32,

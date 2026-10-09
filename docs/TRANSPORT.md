@@ -26,7 +26,7 @@ A abstração deve permitir:
 
 ## Grafo de rede
 
-Cada enlace registra largura de banda, latência, jitter, perda, carga e saúde.
+Cada enlace registra largura de banda, latência, jitter, perda, carga e saúde. O Worker Runtime mede RTT de ida e volta e taxa de payload echo diretamente entre os Workers. O Controller mantém a última medição por par direcionado por 30 segundos e usa os valores observados para estimar a transferência. A taxa round-trip não equivale a throughput unidirecional sustentado; medições específicas do data plane devem substituir esta aproximação conforme o protocolo evoluir.
 
 ## Decisão de transporte
 
@@ -64,7 +64,7 @@ O runtime deve permitir sobrepor transferência, prefetch e computação.
 
 ## Integridade
 
-Dados importantes devem possuir checksum e validação no destino.
+Dados importantes devem possuir checksum e validação no destino. Os buffers usam SHA-256 em formato `sha256:<hex>`; o destino valida o checksum ao receber um buffer, e o Worker valida inputs locais e inline antes de usá-los.
 
 ## Prioridades
 
