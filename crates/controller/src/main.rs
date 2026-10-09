@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use real_ai_cluster_common::{
@@ -20,25 +20,18 @@ use tracing::{info, warn};
 
 mod buffer_store;
 mod execution;
+mod peer_link_store;
 mod scheduler;
 mod transfer;
 
 const DEFAULT_BUFFER_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const PEER_LINK_METRICS_TTL: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone)]
-struct PeerLinkMetrics {
-    rtt_us: f64,
-    round_trip_mb_per_sec: f64,
-    sample_count: u32,
-    measured_at: Instant,
-}
-
 #[derive(Clone)]
 struct Controller {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     buffers: Arc<RwLock<buffer_store::BufferStore>>,
-    peer_links: Arc<RwLock<HashMap<(String, String), PeerLinkMetrics>>>,
+    peer_links: Arc<peer_link_store::PeerLinkStore>,
     offline_after: Duration,
 }
 
@@ -59,7 +52,7 @@ impl Controller {
             buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(
                 max_buffer_cache_bytes,
             ))),
-            peer_links: Arc::new(RwLock::new(HashMap::new())),
+            peer_links: Arc::new(peer_link_store::PeerLinkStore::from_env()),
             offline_after: Duration::from_secs(10),
         }
     }
@@ -733,7 +726,7 @@ async fn prepare_graph_work(
     unit: &execution::WorkUnitSpec,
     execution_id: &str,
     buffers: &RwLock<buffer_store::BufferStore>,
-    peer_links: &RwLock<HashMap<(String, String), PeerLinkMetrics>>,
+    peer_links: &peer_link_store::PeerLinkStore,
     destination_node_id: &str,
     nodes: &[NodeInfo],
 ) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
@@ -817,14 +810,13 @@ async fn prepare_graph_work(
         let peer_metrics = if primary_available {
             if let Some(source) = source_node.filter(|source| source.node_id != destination_node_id)
             {
-                let key = (source.node_id.clone(), destination.node_id.clone());
-                let cached = {
-                    let links = peer_links.read().await;
-                    links
-                        .get(&key)
-                        .filter(|metrics| metrics.measured_at.elapsed() <= PEER_LINK_METRICS_TTL)
-                        .cloned()
-                };
+                let cached = peer_links
+                    .fresh_metrics(
+                        &source.node_id,
+                        &destination.node_id,
+                        PEER_LINK_METRICS_TTL,
+                    )
+                    .await;
 
                 if cached.is_some() {
                     cached
@@ -849,21 +841,28 @@ async fn prepare_graph_work(
                                 && response.round_trip_mb_per_sec.is_finite()
                                 && response.round_trip_mb_per_sec > 0.0
                             {
-                                let metrics = PeerLinkMetrics {
-                                    rtt_us: response.rtt_us,
-                                    round_trip_mb_per_sec: response.round_trip_mb_per_sec,
-                                    sample_count: response.sample_count,
-                                    measured_at: Instant::now(),
-                                };
-                                peer_links.write().await.insert(key, metrics.clone());
-                                Some(metrics)
+                                peer_links
+                                    .record_success(
+                                        &source.node_id,
+                                        &destination.node_id,
+                                        response.rtt_us,
+                                        response.round_trip_mb_per_sec,
+                                        response.sample_count,
+                                    )
+                                    .await
                             } else {
                                 warn!(
                                     source_node_id = %source.node_id,
                                     destination_node_id = %destination.node_id,
                                     "Worker retornou métricas peer-to-peer inválidas"
                                 );
-                                None
+                                peer_links
+                                    .record_failure(
+                                        &source.node_id,
+                                        &destination.node_id,
+                                        peer_link_store::ProbeOutcome::Invalid,
+                                    )
+                                    .await
                             }
                         }
                         Ok(Err(error)) => {
@@ -871,21 +870,39 @@ async fn prepare_graph_work(
                                 source_node_id = %source.node_id,
                                 destination_node_id = %destination.node_id,
                                 %error,
-                                "medição peer-to-peer falhou; usando estimativa aproximada"
+                                "medição peer-to-peer falhou; tentando histórico persistido"
                             );
-                            None
+                            peer_links
+                                .record_failure(
+                                    &source.node_id,
+                                    &destination.node_id,
+                                    peer_link_store::ProbeOutcome::Failure,
+                                )
+                                .await
                         }
                         Err(_) => {
                             warn!(
                                 source_node_id = %source.node_id,
                                 destination_node_id = %destination.node_id,
-                                "timeout na medição peer-to-peer; usando estimativa aproximada"
+                                "timeout na medição peer-to-peer; tentando histórico persistido"
                             );
-                            None
+                            peer_links
+                                .record_failure(
+                                    &source.node_id,
+                                    &destination.node_id,
+                                    peer_link_store::ProbeOutcome::Timeout,
+                                )
+                                .await
                         }
                     }
                 } else {
-                    None
+                    peer_links
+                        .historical_metrics(
+                            &source.node_id,
+                            &destination.node_id,
+                            Duration::from_secs(24 * 60 * 60),
+                        )
+                        .await
                 }
             } else {
                 None
@@ -901,7 +918,11 @@ async fn prepare_graph_work(
                 rtt_us = metrics.rtt_us,
                 round_trip_mb_per_sec = metrics.round_trip_mb_per_sec,
                 samples = metrics.sample_count,
-                "métricas peer-to-peer atualizadas"
+                observations = metrics.observation_count,
+                failures = metrics.failure_count,
+                timeouts = metrics.timeout_count,
+                failure_rate = metrics.failure_rate,
+                "telemetria peer-to-peer aplicada ao plano de transferência"
             );
         }
 
@@ -1189,7 +1210,13 @@ fn estimate_worker_to_worker_us(
         let transfer_us = ((byte_len as f64 / (1024.0 * 1024.0)) / metrics.round_trip_mb_per_sec
             * 1_000_000.0)
             .ceil() as u64;
-        return metrics.rtt_us.ceil() as u64 + transfer_us;
+        // Falhas de sondagem são um indicador aproximado de confiabilidade do enlace.
+        // Limita-se a penalidade para evitar que poucas falhas tornem a rota inutilizável.
+        let success_rate = (1.0 - metrics.failure_rate).clamp(0.25, 1.0);
+        let reliability_adjusted_transfer_us =
+            ((transfer_us as f64) / success_rate).ceil() as u64;
+        return (metrics.rtt_us.ceil().max(0.0) as u64)
+            .saturating_add(reliability_adjusted_transfer_us);
     }
 
     let (Some(source_capability), Some(destination_capability)) =
@@ -1383,7 +1410,7 @@ mod tests {
         .with_data_inputs(vec!["producer".into()]);
 
         let buffers = tokio::sync::RwLock::new(BufferStore::new(1024));
-        let peer_links = tokio::sync::RwLock::new(std::collections::HashMap::new());
+        let peer_links = peer_link_store::PeerLinkStore::in_memory();
         {
             let mut store = buffers.blocking_write();
             store

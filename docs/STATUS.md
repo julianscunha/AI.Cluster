@@ -59,7 +59,11 @@ Arquitetura: v0.1
 - RPCs TransferBuffer e ReleaseBufferPin para transferência e ciclo de vida de pins;
 - escolha entre ControllerRelay e WorkerToWorker no Residency Planner;
 - sondagem peer-to-peer sob demanda para RTT de ida e volta e throughput gRPC de payload echo;
-- cache de métricas por par direcionado com TTL de 30 segundos;
+- cache de métricas peer-to-peer por par direcionado com TTL de 30 segundos;
+- persistência de RTT, throughput, sucessos, falhas e timeouts por enlace direcionado;
+- histórico limitado a 32 observações por enlace, com retenção de até 24 horas ao carregar;
+- fallback para métricas históricas quando a sondagem atual falhar;
+- penalidade de custo do caminho Worker-to-Worker baseada na taxa observada de falhas/timeouts;
 - checksum SHA-256 em buffers, confirmação no Worker de destino e validação de inputs locais/inline;
 - transferência de buffers em chunks de até 1 MiB;
 - retry por chunk e retomada por offset usando transfer_id idempotente;
@@ -78,8 +82,8 @@ Arquitetura: v0.1
 - modelo de performance calibrado com dados históricos;
 - pesos finais do Scheduler;
 - custo de recomputação calibrado;
-- seleção dinâmica entre cache e residência primária baseada em telemetria real.
+- calibrar a penalidade de confiabilidade com transferências reais e métricas de perda/jitter.
 
 ## Próxima etapa
 
-Adicionar chunking, retry/resume, métricas persistentes por enlace, persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
+Validar a calibração de confiabilidade dos enlaces e avançar para persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.

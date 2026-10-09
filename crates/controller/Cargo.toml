@@ -8,5 +8,7 @@ real-ai-cluster-common = { path = "../common" }
 real-ai-cluster-protocol = { path = "../protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "sync"] }
 tonic = { version = "0.14", features = ["transport"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
