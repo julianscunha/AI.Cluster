@@ -715,8 +715,7 @@ impl Controller {
                 } else {
                     buffers.insert_with_pins(buffer, result.output.clone(), pins)
                 };
-                insert_result
-                    .map_err(|error| Status::resource_exhausted(error.to_string()))?;
+                insert_result.map_err(|error| Status::resource_exhausted(error.to_string()))?;
                 info!(
                     work_unit_id = %result.work_id,
                     buffer_bytes = buffers.bytes_used(),
