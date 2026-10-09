@@ -129,6 +129,14 @@ impl BufferStore {
         self.buffers.contains_key(buffer_id)
     }
 
+    pub fn release_consumer(&mut self, buffer_id: &str) -> bool {
+        let Some(buffer) = self.buffers.get_mut(buffer_id) else {
+            return false;
+        };
+        buffer.pins = buffer.pins.saturating_sub(1);
+        true
+    }
+
     pub fn bytes_used(&self) -> u64 {
         self.bytes_used
     }
@@ -234,6 +242,19 @@ mod tests {
 
         assert!(!store.contains("a"));
         assert!(store.contains("b"));
+    }
+
+    #[test]
+    fn release_pin_reduz_a_contagem_do_buffer() {
+        let mut store = BufferStore::new(8);
+        store
+            .insert_with_pins("a".into(), vec![1, 2, 3, 4], 2)
+            .unwrap();
+
+        assert!(store.release_consumer("a"));
+        assert!(store.release_consumer("a"));
+        assert!(store.release_consumer("a"));
+        assert!(!store.release_consumer("missing"));
     }
 
     #[test]

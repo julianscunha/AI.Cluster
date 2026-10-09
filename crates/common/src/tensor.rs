@@ -66,6 +66,7 @@ impl DataLocation {
 pub enum TransferStrategy {
     ReuseLocal,
     ControllerRelay,
+    WorkerToWorker,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,11 +102,13 @@ pub fn plan_buffer_transfer(
 
     let estimated_duration_us = match strategy {
         TransferStrategy::ReuseLocal => 0,
-        TransferStrategy::ControllerRelay => {
+        TransferStrategy::ControllerRelay | TransferStrategy::WorkerToWorker => {
             let throughput = source_throughput_mb_per_sec
                 .min(destination_throughput_mb_per_sec)
                 .max(0.001);
-            let transfer_us = (buffer.byte_len as f64 / throughput) as u64;
+            let transfer_us = ((buffer.byte_len as f64 / (1024.0 * 1024.0))
+                / throughput
+                * 1_000_000.0) as u64;
             (source_rtt_us.max(0.0) + destination_rtt_us.max(0.0)) as u64 + transfer_us
         }
     };

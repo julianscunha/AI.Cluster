@@ -3,13 +3,14 @@ use std::{
     hint::black_box,
     net::SocketAddr,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use real_ai_cluster_benchmark::{matmul_row_shard, run as run_benchmark};
 use real_ai_cluster_common::hardware::{discover, StorageKind};
 use real_ai_cluster_protocol::v1::{
     cluster_control_client::ClusterControlClient,
+    worker_runtime_client::WorkerRuntimeClient,
     worker_runtime_server::{WorkerRuntime, WorkerRuntimeServer},
     *,
 };
@@ -199,6 +200,90 @@ impl WorkerRuntime for WorkerService {
         let request = request.into_inner();
         let found = self.buffers.read().await.contains(&request.buffer_id);
         Ok(Response::new(HasBufferResponse { found }))
+    }
+
+    async fn transfer_buffer(
+        &self,
+        request: Request<TransferBufferRequest>,
+    ) -> Result<Response<TransferBufferResponse>, Status> {
+        let request = request.into_inner();
+        if request.source_buffer_id.is_empty()
+            || request.destination_buffer_id.is_empty()
+            || request.destination_endpoint.is_empty()
+        {
+            return Err(Status::invalid_argument(
+                "source_buffer_id, destination_buffer_id e destination_endpoint são obrigatórios",
+            ));
+        }
+
+        let data = {
+            let mut store = self.buffers.write().await;
+            store.get(&request.source_buffer_id)
+        }
+        .ok_or_else(|| {
+            Status::failed_precondition(format!(
+                "buffer de origem não está disponível: {}",
+                request.source_buffer_id
+            ))
+        })?;
+        let byte_len = data.len() as u64;
+
+        let mut destination = tokio::time::timeout(
+            Duration::from_secs(3),
+            WorkerRuntimeClient::connect(request.destination_endpoint),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("timeout conectando ao Worker de destino"))?
+        .map_err(|error| Status::unavailable(format!("Worker de destino indisponível: {error}")))?;
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            destination.put_buffer(Request::new(PutBufferRequest {
+                buffer_id: request.destination_buffer_id,
+                data,
+                pins: request.destination_pins,
+            })),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("timeout gravando buffer no Worker de destino"))?
+        .map_err(|error| Status::unavailable(format!("falha ao gravar no Worker de destino: {error}")))?
+        .into_inner();
+
+        if !response.accepted {
+            return Err(Status::resource_exhausted(response.message));
+        }
+
+        self.buffers
+            .write()
+            .await
+            .release_consumer(&request.source_buffer_id);
+
+        info!(
+            node_id = %self.node_id,
+            source_buffer_id = %request.source_buffer_id,
+            byte_len,
+            "buffer transferido diretamente para outro Worker"
+        );
+
+        Ok(Response::new(TransferBufferResponse {
+            accepted: true,
+            message: "buffer transferido entre Workers".into(),
+            byte_len,
+        }))
+    }
+
+    async fn release_buffer_pin(
+        &self,
+        request: Request<ReleaseBufferPinRequest>,
+    ) -> Result<Response<ReleaseBufferPinResponse>, Status> {
+        let request = request.into_inner();
+        let released = self
+            .buffers
+            .write()
+            .await
+            .release_consumer(&request.buffer_id);
+
+        Ok(Response::new(ReleaseBufferPinResponse { released }))
     }
 
     async fn execute_matrix_block(

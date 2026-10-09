@@ -621,29 +621,15 @@ impl Controller {
                     );
                 }
 
-                let local_output_pins = graph
-                    .units
-                    .iter()
-                    .filter(|consumer| {
-                        plan.node_for(&consumer.work.work_id)
-                            .is_some_and(|candidate| {
-                                candidate.node_id.as_str() == assignment.node_id.as_str()
-                            })
-                    })
-                    .map(|consumer| {
-                        consumer
-                            .data_from
-                            .iter()
-                            .filter(|source_id| source_id.as_str() == work_unit_id.as_str())
-                            .count()
-                    })
-                    .sum::<usize>();
+                let producer_buffer_id = output_buffer_id(&graph.execution_id, work_unit_id);
+                let output_pins = buffer_consumer_counts
+                    .get(&producer_buffer_id)
+                    .copied()
+                    .unwrap_or_default();
 
                 let mut prepared_work = prepared.0;
-                prepared_work.output_buffer_id =
-                    output_buffer_id(&graph.execution_id, work_unit_id);
-                prepared_work.output_buffer_pins =
-                    u32::try_from(local_output_pins).unwrap_or(u32::MAX);
+                prepared_work.output_buffer_id = producer_buffer_id;
+                prepared_work.output_buffer_pins = u32::try_from(output_pins).unwrap_or(u32::MAX);
 
                 executions.push((prepared_work, node));
                 reserved_node_ids.push(assignment.node_id.clone());
@@ -757,7 +743,7 @@ async fn prepare_graph_work(
         .and_then(Result::ok)
     };
 
-    for source_work_id in &unit.data_from {
+    for (input_index, source_work_id) in unit.data_from.iter().enumerate() {
         let buffer_id = output_buffer_id(execution_id, source_work_id);
         let cached_descriptor = {
             let mut store = buffers.write().await;
@@ -780,23 +766,61 @@ async fn prepare_graph_work(
             false
         };
 
+        let source_node = cached_descriptor
+            .as_ref()
+            .and_then(|descriptor| descriptor.location.node_id())
+            .and_then(|source_id| nodes.iter().find(|node| node.node_id == source_id));
+        let mut source_client = if let Some(source) = source_node
+            .filter(|source| source.node_id != destination_node_id)
+            .filter(|source| !source.worker_endpoint.is_empty())
+        {
+            tokio::time::timeout(
+                Duration::from_millis(500),
+                WorkerRuntimeClient::connect(source.worker_endpoint.clone()),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+        } else {
+            None
+        };
+
+        let primary_available = if let Some(client) = source_client.as_mut() {
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                client.has_buffer(Request::new(HasBufferRequest {
+                    buffer_id: buffer_id.clone(),
+                })),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|response| response.into_inner().found)
+            .unwrap_or(false)
+        } else {
+            false
+        };
+
         let controller_cache_available = cached_descriptor.is_some();
         let cache_transfer_duration_us = cached_descriptor
             .as_ref()
             .map(|descriptor| estimate_controller_relay_us(descriptor.byte_len, destination));
-        let remote_route_estimate_us = cached_descriptor
-            .as_ref()
-            .and_then(|descriptor| {
+        let primary_transfer_plan = if primary_available {
+            cached_descriptor.as_ref().and_then(|descriptor| {
                 transfer::plan_output_transfer(descriptor, destination_node_id, nodes).ok()
             })
-            .map(|transfer| transfer.estimated_duration_us);
+        } else {
+            None
+        };
+        let primary_transfer_duration_us =
+            primary_transfer_plan.as_ref().map(|plan| plan.estimated_duration_us);
 
         let decision = plan_buffer_access(BufferAccessOptions {
             local_copy_available,
             controller_cache_available,
-            primary_available: false,
+            primary_available,
             cache_transfer_duration_us,
-            primary_transfer_duration_us: None,
+            primary_transfer_duration_us,
             recompute_duration_us: None,
         });
 
@@ -805,7 +829,6 @@ async fn prepare_graph_work(
             destination_node_id = %destination_node_id,
             residency_source = ?decision.source,
             estimated_us = ?decision.estimated_duration_us,
-            remote_route_estimate_us = ?remote_route_estimate_us,
             "decisão de residency criada"
         );
 
@@ -823,38 +846,111 @@ async fn prepare_graph_work(
                 });
             }
             Some(BufferAccessSource::ControllerCache) => {
-                let output = {
-                    let mut store = buffers.write().await;
-                    store.get_for_consumer(&buffer_id)
+                if primary_available {
+                    if let Some(client) = source_client.as_mut() {
+                        let release = tokio::time::timeout(
+                            Duration::from_millis(500),
+                            client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
+                                buffer_id: buffer_id.clone(),
+                            })),
+                        )
+                        .await;
+                        if !matches!(release, Ok(Ok(_))) {
+                            warn!(
+                                buffer_id = %buffer_id,
+                                "não foi possível liberar pin da cópia primária após escolher Controller Cache"
+                            );
+                        }
+                    }
                 }
-                .ok_or_else(|| {
-                    Status::failed_precondition(format!(
-                        "buffer de saída deixou de estar disponível: {buffer_id}"
-                    ))
-                })?;
 
-                let byte_len = output.bytes.len() as u64;
-                transfer_plans.push(TransferPlan {
-                    buffer_id: buffer_id.clone(),
-                    source: DataLocation::Controller,
-                    destination: DataLocation::Node {
-                        node_id: destination_node_id.to_owned(),
-                    },
-                    strategy: TransferStrategy::ControllerRelay,
-                    byte_len,
-                    estimated_duration_us: estimate_controller_relay_us(byte_len, destination),
-                });
-
-                work.inputs.push(WorkInput {
-                    buffer_id,
-                    data: output.bytes,
-                    local_buffer: false,
-                });
+                let (input, transfer) =
+                    controller_cache_input(&buffer_id, buffers, destination).await?;
+                work.inputs.push(input);
+                transfer_plans.push(transfer);
             }
             Some(BufferAccessSource::Primary) => {
-                return Err(Status::unimplemented(
-                    "leitura remota da residência primária ainda não está implementada",
-                ));
+                let source = source_node.ok_or_else(|| {
+                    Status::unavailable("residência primária não está registrada no cluster")
+                })?;
+                let destination_buffer_id = format!(
+                    "{buffer_id}:to:{}:{}",
+                    unit.work.work_id, input_index
+                );
+
+                let transfer_result = if let Some(client) = source_client.as_mut() {
+                    tokio::time::timeout(
+                        Duration::from_secs(6),
+                        client.transfer_buffer(Request::new(TransferBufferRequest {
+                            source_buffer_id: buffer_id.clone(),
+                            destination_endpoint: destination.worker_endpoint.clone(),
+                            destination_buffer_id: destination_buffer_id.clone(),
+                            destination_pins: 1,
+                        })),
+                    )
+                    .await
+                } else {
+                    return Err(Status::unavailable(
+                        "Worker produtor não está acessível para transferência",
+                    ));
+                };
+
+                let direct_transfer_succeeded =
+                    matches!(&transfer_result, Ok(Ok(response)) if response.get_ref().accepted);
+
+                if direct_transfer_succeeded {
+                    if controller_cache_available {
+                        let mut store = buffers.write().await;
+                        store.release_consumer(&buffer_id);
+                    }
+
+                    let mut transfer = primary_transfer_plan
+                        .ok_or_else(|| Status::internal("plano de transferência primária ausente"))?;
+                    transfer.buffer_id = destination_buffer_id.clone();
+                    transfer.strategy = TransferStrategy::WorkerToWorker;
+                    transfer_plans.push(transfer);
+                    work.inputs.push(WorkInput {
+                        buffer_id: destination_buffer_id,
+                        data: Vec::new(),
+                        local_buffer: true,
+                    });
+                } else {
+                    warn!(
+                        buffer_id = %buffer_id,
+                        ?transfer_result,
+                        "transferência Worker-to-Worker falhou; tentando Controller Cache"
+                    );
+
+                    if let Some(client) = source_client.as_mut() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_millis(500),
+                            client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
+                                buffer_id: buffer_id.clone(),
+                            })),
+                        )
+                        .await;
+                    }
+                    if let Some(client) = local_client.as_mut() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_millis(500),
+                            client.release_buffer_pin(Request::new(ReleaseBufferPinRequest {
+                                buffer_id: destination_buffer_id,
+                            })),
+                        )
+                        .await;
+                    }
+
+                    if !controller_cache_available {
+                        return Err(Status::unavailable(format!(
+                            "transferência direta falhou e não há cópia no Controller Cache: {buffer_id}"
+                        )));
+                    }
+
+                    let (input, transfer) =
+                        controller_cache_input(&buffer_id, buffers, destination).await?;
+                    work.inputs.push(input);
+                    transfer_plans.push(transfer);
+                }
             }
             Some(BufferAccessSource::Recompute) => {
                 return Err(Status::unimplemented(
@@ -870,6 +966,43 @@ async fn prepare_graph_work(
     }
 
     Ok((work, transfer_plans))
+}
+
+async fn controller_cache_input(
+    buffer_id: &str,
+    buffers: &RwLock<buffer_store::BufferStore>,
+    destination: &NodeInfo,
+) -> Result<(WorkInput, TransferPlan), Status> {
+    let output = {
+        let mut store = buffers.write().await;
+        store.get_for_consumer(buffer_id)
+    }
+    .ok_or_else(|| {
+        Status::failed_precondition(format!(
+            "buffer de saída deixou de estar disponível: {buffer_id}"
+        ))
+    })?;
+
+    let byte_len = output.bytes.len() as u64;
+    let transfer = TransferPlan {
+        buffer_id: buffer_id.to_owned(),
+        source: DataLocation::Controller,
+        destination: DataLocation::Node {
+            node_id: destination.node_id.clone(),
+        },
+        strategy: TransferStrategy::ControllerRelay,
+        byte_len,
+        estimated_duration_us: estimate_controller_relay_us(byte_len, destination),
+    };
+
+    Ok((
+        WorkInput {
+            buffer_id: buffer_id.to_owned(),
+            data: output.bytes,
+            local_buffer: false,
+        },
+        transfer,
+    ))
 }
 
 fn estimate_controller_relay_us(byte_len: u64, destination: &NodeInfo) -> u64 {

@@ -181,6 +181,27 @@ message HasBufferResponse {
   bool found = 1;
 }
 
+message TransferBufferRequest {
+  string source_buffer_id = 1;
+  string destination_endpoint = 2;
+  string destination_buffer_id = 3;
+  uint32 destination_pins = 4;
+}
+
+message TransferBufferResponse {
+  bool accepted = 1;
+  string message = 2;
+  uint64 byte_len = 3;
+}
+
+message ReleaseBufferPinRequest {
+  string buffer_id = 1;
+}
+
+message ReleaseBufferPinResponse {
+  bool released = 1;
+}
+
 message DistributedMatMulRequest {
   string work_id = 1;
   uint32 rows = 2;
@@ -268,4 +289,6 @@ service WorkerRuntime {
   rpc PutBuffer(PutBufferRequest) returns (PutBufferResponse);
   rpc GetBuffer(GetBufferRequest) returns (GetBufferResponse);
   rpc HasBuffer(HasBufferRequest) returns (HasBufferResponse);
+  rpc TransferBuffer(TransferBufferRequest) returns (TransferBufferResponse);
+  rpc ReleaseBufferPin(ReleaseBufferPinRequest) returns (ReleaseBufferPinResponse);
 }

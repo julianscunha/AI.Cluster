@@ -54,7 +54,10 @@ Arquitetura: v0.1
 - RPCs PutBuffer, GetBuffer e HasBuffer;
 - WorkInput com referência a buffer local ou bytes inline, mantendo a ordem das data edges;
 - armazenamento local de outputs no Worker produtor antes da resposta de ExecuteWork;
-- fallback pelo Controller Cache quando a cópia local não está disponível.
+- fallback pelo Controller Cache quando a cópia local não está disponível;
+- transferência Worker-to-Worker acionada pelo Controller, com payload peer-to-peer;
+- RPCs TransferBuffer e ReleaseBufferPin para transferência e ciclo de vida de pins;
+- escolha entre ControllerRelay e WorkerToWorker no Residency Planner.
 
 ## Experimental
 
@@ -72,4 +75,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Implementar transferência direta entre Workers e checksums/validação de integridade. Em seguida, adicionar chunking, retry/resume, métricas do data plane, persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
+Adicionar checksum/validação de integridade, chunking, retry/resume, métricas peer-to-peer reais, persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
