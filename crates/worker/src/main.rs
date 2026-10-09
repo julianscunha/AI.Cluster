@@ -96,15 +96,11 @@ impl WorkerRuntime for WorkerService {
         };
 
         if !work.output_buffer_id.is_empty() && work.output_buffer_pins > 0 {
-            let store_result = self
-                .buffers
-                .write()
-                .await
-                .insert_with_pins(
-                    work.output_buffer_id.clone(),
-                    output.clone(),
-                    work.output_buffer_pins as usize,
-                );
+            let store_result = self.buffers.write().await.insert_with_pins(
+                work.output_buffer_id.clone(),
+                output.clone(),
+                work.output_buffer_pins as usize,
+            );
 
             if let Err(error) = store_result {
                 warn!(
@@ -147,7 +143,11 @@ impl WorkerRuntime for WorkerService {
         self.buffers
             .write()
             .await
-            .insert_with_pins(request.buffer_id.clone(), request.data, request.pins as usize)
+            .insert_with_pins(
+                request.buffer_id.clone(),
+                request.data,
+                request.pins as usize,
+            )
             .map_err(|error| Status::resource_exhausted(error.to_string()))?;
 
         Ok(Response::new(PutBufferResponse {
@@ -471,9 +471,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let worker_service = WorkerService {
         node_id: node.node_id.clone(),
-        buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(
-            buffer_capacity,
-        ))),
+        buffers: Arc::new(RwLock::new(buffer_store::BufferStore::new(buffer_capacity))),
     };
 
     let server_addr = worker_bind;

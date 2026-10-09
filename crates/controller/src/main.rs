@@ -579,74 +579,74 @@ impl Controller {
             };
 
             for work_unit_id in &level {
-                    let assignment = plan
-                        .node_for(work_unit_id)
-                        .ok_or_else(|| Status::internal("placement plan não contém a work unit"))?;
+                let assignment = plan
+                    .node_for(work_unit_id)
+                    .ok_or_else(|| Status::internal("placement plan não contém a work unit"))?;
 
-                    let node = node_list
-                        .iter()
-                        .find(|node| node.node_id == assignment.node_id)
-                        .cloned()
-                        .ok_or_else(|| Status::unavailable("node selecionado não está disponível"))?;
+                let node = node_list
+                    .iter()
+                    .find(|node| node.node_id == assignment.node_id)
+                    .cloned()
+                    .ok_or_else(|| Status::unavailable("node selecionado não está disponível"))?;
 
-                    if node.worker_endpoint.is_empty() {
-                        return Err(Status::unavailable(
-                            "node selecionado não possui endpoint de worker",
-                        ));
-                    }
+                if node.worker_endpoint.is_empty() {
+                    return Err(Status::unavailable(
+                        "node selecionado não possui endpoint de worker",
+                    ));
+                }
 
-                    let unit = graph
-                        .units
-                        .iter()
-                        .find(|unit| unit.work.work_id == *work_unit_id)
-                        .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
+                let unit = graph
+                    .units
+                    .iter()
+                    .find(|unit| unit.work.work_id == *work_unit_id)
+                    .ok_or_else(|| Status::internal("work unit não encontrada no grafo"))?;
 
-                    let prepared = prepare_graph_work(
-                        unit,
-                        &graph.execution_id,
-                        &self.buffers,
-                        &assignment.node_id,
-                        &node_list,
-                    )
-                    .await?;
+                let prepared = prepare_graph_work(
+                    unit,
+                    &graph.execution_id,
+                    &self.buffers,
+                    &assignment.node_id,
+                    &node_list,
+                )
+                .await?;
 
-                    for transfer in &prepared.1 {
-                        info!(
-                            work_unit_id = %work_unit_id,
-                            buffer_id = %transfer.buffer_id,
-                            bytes = transfer.byte_len,
-                            estimated_us = transfer.estimated_duration_us,
-                            strategy = ?transfer.strategy,
-                            "transfer plan criado"
-                        );
-                    }
+                for transfer in &prepared.1 {
+                    info!(
+                        work_unit_id = %work_unit_id,
+                        buffer_id = %transfer.buffer_id,
+                        bytes = transfer.byte_len,
+                        estimated_us = transfer.estimated_duration_us,
+                        strategy = ?transfer.strategy,
+                        "transfer plan criado"
+                    );
+                }
 
-                    let local_output_pins = graph
-                        .units
-                        .iter()
-                        .filter(|consumer| {
-                            plan.node_for(&consumer.work.work_id)
-                                .is_some_and(|candidate| {
-                                    candidate.node_id.as_str() == assignment.node_id.as_str()
-                                })
-                        })
-                        .map(|consumer| {
-                            consumer
-                                .data_from
-                                .iter()
-                                .filter(|source_id| source_id.as_str() == work_unit_id.as_str())
-                                .count()
-                        })
-                        .sum::<usize>();
+                let local_output_pins = graph
+                    .units
+                    .iter()
+                    .filter(|consumer| {
+                        plan.node_for(&consumer.work.work_id)
+                            .is_some_and(|candidate| {
+                                candidate.node_id.as_str() == assignment.node_id.as_str()
+                            })
+                    })
+                    .map(|consumer| {
+                        consumer
+                            .data_from
+                            .iter()
+                            .filter(|source_id| source_id.as_str() == work_unit_id.as_str())
+                            .count()
+                    })
+                    .sum::<usize>();
 
-                    let mut prepared_work = prepared.0;
-                    prepared_work.output_buffer_id =
-                        output_buffer_id(&graph.execution_id, work_unit_id);
-                    prepared_work.output_buffer_pins =
-                        u32::try_from(local_output_pins).unwrap_or(u32::MAX);
+                let mut prepared_work = prepared.0;
+                prepared_work.output_buffer_id =
+                    output_buffer_id(&graph.execution_id, work_unit_id);
+                prepared_work.output_buffer_pins =
+                    u32::try_from(local_output_pins).unwrap_or(u32::MAX);
 
-                    executions.push((prepared_work, node));
-                    reserved_node_ids.push(assignment.node_id.clone());
+                executions.push((prepared_work, node));
+                reserved_node_ids.push(assignment.node_id.clone());
             }
 
             self.reserve_workers(&reserved_node_ids).await;
@@ -1013,9 +1013,7 @@ mod tests {
     use super::{
         buffer_store::BufferStore, execution::WorkUnitSpec, output_buffer_id, prepare_graph_work,
     };
-    use real_ai_cluster_common::tensor::{
-        BufferDescriptor, DataLocation, TransferStrategy,
-    };
+    use real_ai_cluster_common::tensor::{BufferDescriptor, DataLocation, TransferStrategy};
     use real_ai_cluster_protocol::v1::{Capability, NodeInfo, NodeState, WorkUnit};
 
     #[test]
@@ -1079,7 +1077,10 @@ mod tests {
 
         assert_eq!(prepared.payload, b"base");
         assert_eq!(prepared.inputs.len(), 1);
-        assert_eq!(prepared.inputs[0].buffer_id, output_buffer_id("exec-1", "producer"));
+        assert_eq!(
+            prepared.inputs[0].buffer_id,
+            output_buffer_id("exec-1", "producer")
+        );
         assert_eq!(prepared.inputs[0].data.as_slice(), b"-output");
         assert!(!prepared.inputs[0].local_buffer);
         assert_eq!(transfers.len(), 1);

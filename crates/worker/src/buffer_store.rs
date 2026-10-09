@@ -185,8 +185,12 @@ mod tests {
     #[test]
     fn armazena_recupera_e_atualiza_lru() {
         let mut store = BufferStore::new(8);
-        store.insert_with_pins("a".into(), vec![1, 2, 3, 4], 0).unwrap();
-        store.insert_with_pins("b".into(), vec![5, 6, 7, 8], 0).unwrap();
+        store
+            .insert_with_pins("a".into(), vec![1, 2, 3, 4], 0)
+            .unwrap();
+        store
+            .insert_with_pins("b".into(), vec![5, 6, 7, 8], 0)
+            .unwrap();
 
         assert_eq!(store.bytes_used(), 8);
         assert_eq!(store.get("a"), Some(vec![1, 2, 3, 4]));
@@ -204,7 +208,9 @@ mod tests {
     #[test]
     fn buffer_pinado_nao_pode_ser_evicted() {
         let mut store = BufferStore::new(8);
-        store.insert_with_pins("a".into(), vec![1, 2, 3, 4], 1).unwrap();
+        store
+            .insert_with_pins("a".into(), vec![1, 2, 3, 4], 1)
+            .unwrap();
 
         let error = store
             .insert_with_pins("b".into(), vec![5, 6, 7, 8, 9, 10, 11, 12], 0)
@@ -217,7 +223,9 @@ mod tests {
     #[test]
     fn consumidor_libera_pin_para_eviction() {
         let mut store = BufferStore::new(8);
-        store.insert_with_pins("a".into(), vec![1, 2, 3, 4], 1).unwrap();
+        store
+            .insert_with_pins("a".into(), vec![1, 2, 3, 4], 1)
+            .unwrap();
 
         assert_eq!(store.get_for_consumer("a"), Some(vec![1, 2, 3, 4]));
         store
