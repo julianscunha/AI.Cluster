@@ -381,7 +381,11 @@ fn metrics_from_history(
         return None;
     }
 
-    let rtt_us = mean(successful_probes.iter().filter_map(|observation| observation.rtt_us));
+    let rtt_us = mean(
+        successful_probes
+            .iter()
+            .filter_map(|observation| observation.rtt_us),
+    );
     let jitter_us = mean(
         successful_probes
             .iter()
@@ -405,8 +409,7 @@ fn metrics_from_history(
     let observed_transfer_mb_per_sec = if total_transfer_duration_us == 0 {
         0.0
     } else {
-        total_transfer_bytes as f64 / MEBIBYTE
-            / (total_transfer_duration_us as f64 / 1_000_000.0)
+        total_transfer_bytes as f64 / MEBIBYTE / (total_transfer_duration_us as f64 / 1_000_000.0)
     };
 
     let failure_count = recent
@@ -569,9 +572,7 @@ fn load_state(path: &Path) -> io::Result<StoreState> {
         let mut observations: VecDeque<LinkObservation> = link
             .observations
             .into_iter()
-            .filter(|observation| {
-                now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms
-            })
+            .filter(|observation| now.saturating_sub(observation.observed_at_unix_ms) <= max_age_ms)
             .collect();
         while observations.len() > MAX_OBSERVATIONS_PER_LINK {
             observations.pop_front();
@@ -719,7 +720,12 @@ mod tests {
     async fn throughput_e_falhas_de_transferencias_sao_agregados_separadamente() {
         let store = PeerLinkStore::in_memory();
         store
-            .record_transfer_success("worker-a", "worker-b", 1024 * 1024, Duration::from_millis(100))
+            .record_transfer_success(
+                "worker-a",
+                "worker-b",
+                1024 * 1024,
+                Duration::from_millis(100),
+            )
             .await;
         store
             .record_transfer_failure("worker-a", "worker-b", ProbeOutcome::Timeout)

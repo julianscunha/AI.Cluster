@@ -1071,19 +1071,13 @@ async fn prepare_graph_work(
                     } else {
                         let outcome = match &transfer_result {
                             Err(_) => peer_link_store::ProbeOutcome::Timeout,
-                            Ok(Err(error))
-                                if error.code() == tonic::Code::DeadlineExceeded =>
-                            {
+                            Ok(Err(error)) if error.code() == tonic::Code::DeadlineExceeded => {
                                 peer_link_store::ProbeOutcome::Timeout
                             }
                             _ => peer_link_store::ProbeOutcome::Failure,
                         };
                         peer_links
-                            .record_transfer_failure(
-                                &source.node_id,
-                                &destination.node_id,
-                                outcome,
-                            )
+                            .record_transfer_failure(&source.node_id, &destination.node_id, outcome)
                             .await;
                         warn!(
                             source_node_id = %source.node_id,
@@ -1252,8 +1246,7 @@ fn estimate_worker_to_worker_us(
     if let Some(metrics) = measured.filter(|metrics| {
         metrics.rtt_us.is_finite()
             && metrics.rtt_us >= 0.0
-            && ((metrics.round_trip_mb_per_sec.is_finite()
-                && metrics.round_trip_mb_per_sec > 0.0)
+            && ((metrics.round_trip_mb_per_sec.is_finite() && metrics.round_trip_mb_per_sec > 0.0)
                 || (metrics.observed_transfer_mb_per_sec.is_finite()
                     && metrics.observed_transfer_mb_per_sec > 0.0))
     }) {
