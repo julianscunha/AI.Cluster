@@ -249,7 +249,9 @@ mod tests {
     #[test]
     fn rejeita_substituir_buffer_pinado() {
         let mut store = BufferStore::new(8);
-        store.insert_with_pins("a".into(), vec![1, 2, 3, 4], 1).unwrap();
+        store
+            .insert_with_pins("a".into(), vec![1, 2, 3, 4], 1)
+            .unwrap();
 
         assert!(matches!(
             store.insert_with_pins("a".into(), vec![9, 9, 9, 9], 0),
