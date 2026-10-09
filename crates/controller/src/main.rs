@@ -699,7 +699,7 @@ async fn prepare_graph_work(
     nodes: &[NodeInfo],
 ) -> Result<(WorkUnit, Vec<TransferPlan>), Status> {
     let mut work = unit.work.clone();
-    let mut transfer_plans = Vec::with_capacity(unit.data_from.len());
+    let transfer_plans = Vec::with_capacity(unit.data_from.len());
 
     for source_work_id in &unit.data_from {
         let buffer_id = output_buffer_id(execution_id, source_work_id);
