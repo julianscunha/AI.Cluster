@@ -1,9 +1,10 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, NodeIdentity,
-    RegisterNodeRequest,
+    RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
 use tokio::time;
 
@@ -62,7 +63,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 health: Some(health()),
             })
             .await?;
+
+        let work = client
+            .request_work(RequestWorkRequest {
+                node_id: node_id.clone(),
+            })
+            .await?
+            .into_inner();
+        if let Some(unit) = work.work {
+            let work_id = unit.work_id.clone();
+            match execute_work(&unit, &node_id) {
+                Some(result) => {
+                    let accepted = client
+                        .submit_work_result(SubmitWorkResultRequest {
+                            result: Some(result),
+                        })
+                        .await?
+                        .into_inner()
+                        .accepted;
+                    println!(
+                        "work {work_id} shape={}x{}x{} compute_done accepted={accepted}",
+                        unit.rows, unit.shared, unit.cols
+                    );
+                }
+                None => println!("work {work_id} payload does not match declared shape; dropped"),
+            }
+        }
     }
+}
+
+/// Rebuilds the matrices from the flat payload, multiplies, and reports the checksum.
+///
+/// Returns `None` when the payload lengths disagree with the declared shape.
+fn execute_work(unit: &WorkUnit, node_id: &str) -> Option<WorkResult> {
+    let expected_a = (unit.rows as usize).checked_mul(unit.shared as usize)?;
+    let expected_b = (unit.shared as usize).checked_mul(unit.cols as usize)?;
+    if unit.matrix_a.len() != expected_a || unit.matrix_b.len() != expected_b {
+        return None;
+    }
+    let a = Matrix {
+        rows: unit.rows,
+        cols: unit.shared,
+        data: unit.matrix_a.clone(),
+    };
+    let b = Matrix {
+        rows: unit.shared,
+        cols: unit.cols,
+        data: unit.matrix_b.clone(),
+    };
+    let started = Instant::now();
+    let product = a.multiply(&b)?;
+    let compute_time_us = started.elapsed().as_micros() as u64;
+    // Compute the checksum before `data` is moved out of the product.
+    let checksum = product.checksum();
+    Some(WorkResult {
+        work_id: unit.work_id.clone(),
+        node_id: node_id.to_string(),
+        rows: product.rows,
+        cols: product.cols,
+        matrix_c: product.data,
+        checksum,
+        compute_time_us,
+    })
 }
 
 fn now_ms() -> u64 {
@@ -155,5 +217,37 @@ mod tests {
         assert_eq!(parse_meminfo(sample, "MemTotal:"), Some(16_384_000));
         assert_eq!(parse_meminfo(sample, "MemAvailable:"), Some(8_192_000));
         assert_eq!(parse_meminfo(sample, "Absent:"), None);
+    }
+
+    #[test]
+    fn executes_matrix_work_and_reports_checksum() {
+        let unit = WorkUnit {
+            work_id: "w1".to_string(),
+            rows: 2,
+            shared: 2,
+            cols: 2,
+            matrix_a: vec![1.0, 2.0, 3.0, 4.0],
+            matrix_b: vec![5.0, 6.0, 7.0, 8.0],
+        };
+        let result = execute_work(&unit, "node-a").expect("shapes match");
+        assert_eq!(result.work_id, "w1");
+        assert_eq!(result.node_id, "node-a");
+        assert_eq!(result.rows, 2);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result.matrix_c, vec![19.0, 22.0, 43.0, 50.0]);
+        assert_eq!(result.checksum, 134.0);
+    }
+
+    #[test]
+    fn rejects_payload_that_disagrees_with_declared_shape() {
+        let unit = WorkUnit {
+            work_id: "w1".to_string(),
+            rows: 2,
+            shared: 2,
+            cols: 2,
+            matrix_a: vec![1.0, 2.0, 3.0],
+            matrix_b: vec![5.0, 6.0, 7.0, 8.0],
+        };
+        assert!(execute_work(&unit, "node-a").is_none());
     }
 }
