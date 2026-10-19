@@ -23,6 +23,9 @@ pub struct CompletedWork {
 struct Dispatched {
     node_id: String,
     dispatched_at_unix_ms: u64,
+    /// Kept so a unit can be handed back to the queue when its node leaves or
+    /// is believed dead. Without this the unit would be stranded forever.
+    unit: WorkUnit,
 }
 
 #[derive(Debug, Default)]
@@ -62,6 +65,10 @@ impl WorkStore {
 
     /// Hands out at most one unit per call so a fast node cannot drain the queue
     /// before its peers get a chance.
+    ///
+    /// ponytail: the unit is cloned into the dispatch table so it can be requeued
+    /// if the node leaves; that doubles payload memory while in flight. Move to an
+    /// id-only table if unit payloads stop fitting in RAM.
     pub fn claim(&self, node_id: &str, now_unix_ms: u64) -> Option<WorkUnit> {
         let mut inner = self.lock();
         let unit = inner.queue.pop_front()?;
@@ -70,6 +77,7 @@ impl WorkStore {
             Dispatched {
                 node_id: node_id.to_string(),
                 dispatched_at_unix_ms: now_unix_ms,
+                unit: unit.clone(),
             },
         );
         Some(unit)
@@ -110,6 +118,30 @@ impl WorkStore {
     pub fn pending(&self) -> usize {
         let inner = self.lock();
         inner.queue.len() + inner.dispatched.len()
+    }
+
+    /// Hands in-flight units belonging to `node_id` back to the queue and reports
+    /// how many moved.
+    ///
+    /// Called when a node leaves or is declared offline, so the work it held is
+    /// offered to the remaining nodes instead of being stranded. A late result
+    /// from the old node is rejected because its dispatch record is gone.
+    pub fn requeue_for_node(&self, node_id: &str) -> usize {
+        let mut inner = self.lock();
+        let stranded: Vec<String> = inner
+            .dispatched
+            .iter()
+            .filter(|(_, record)| record.node_id == node_id)
+            .map(|(work_id, _)| work_id.clone())
+            .collect();
+        let mut requeued = 0;
+        for work_id in stranded {
+            if let Some(record) = inner.dispatched.remove(&work_id) {
+                inner.queue.push_back(record.unit);
+                requeued += 1;
+            }
+        }
+        requeued
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -208,5 +240,49 @@ mod tests {
             .expect("w1 was dispatched");
         assert_eq!(completed.total_latency_us, 100_000);
         assert_eq!(completed.transfer_time_us, 0);
+    }
+
+    #[test]
+    fn requeue_for_node_returns_in_flight_units_to_the_queue() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+        assert_eq!(store.pending(), 1);
+
+        // node-a leaves: the unit goes back to the queue and is still outstanding.
+        assert_eq!(store.requeue_for_node("node-a"), 1);
+        assert_eq!(store.pending(), 1);
+
+        // Its dispatch record is gone, so a late result from node-a is refused.
+        assert!(store.complete(result("w1", 1_000), 2_000).is_none());
+        assert!(store.completed().is_empty());
+
+        // Another node picks the same unit up and finishes it.
+        let taken = store.claim("node-b", 2_000).expect("requeued unit");
+        assert_eq!(taken.work_id, "w1");
+        assert_eq!(taken.matrix_a, vec![1.0, 2.0, 3.0, 4.0]);
+        let mut done = result("w1", 1_000);
+        done.node_id = "node-b".to_string();
+        assert!(store.complete(done, 3_000).is_some());
+        assert_eq!(store.completed().len(), 1);
+        assert_eq!(store.pending(), 0);
+    }
+
+    #[test]
+    fn requeue_leaves_other_nodes_units_alone() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), unit("w2")]);
+        store.claim("node-a", 1_000);
+        store.claim("node-b", 1_000);
+        assert_eq!(store.pending(), 2);
+
+        assert_eq!(store.requeue_for_node("node-c"), 0);
+        assert_eq!(store.pending(), 2);
+
+        // Only node-b's unit comes back when node-b leaves.
+        assert_eq!(store.requeue_for_node("node-b"), 1);
+        assert_eq!(store.pending(), 2);
+        // node-a's unit is still owned by node-a and still completable.
+        assert!(store.complete(result("w1", 1_000), 2_000).is_some());
     }
 }

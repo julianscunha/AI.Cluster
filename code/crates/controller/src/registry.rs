@@ -105,6 +105,39 @@ impl Registry {
         self.lock().contains_key(node_id)
     }
 
+    /// Whether the controller may hand new work to this node. Unknown nodes and
+    /// nodes leaving or believed dead are not eligible.
+    pub fn is_available(&self, node_id: &str) -> bool {
+        match self.lock().get(node_id) {
+            Some(record) => !matches!(
+                record.state,
+                NodeState::Draining
+                    | NodeState::Quarantined
+                    | NodeState::Failed
+                    | NodeState::Offline
+            ),
+            None => false,
+        }
+    }
+
+    /// Marks a known node as draining so no further work is dispatched to it.
+    /// Returns false when the node is unknown, which means it already left.
+    pub fn begin_drain(&self, node_id: &str) -> bool {
+        let mut nodes = self.lock();
+        match nodes.get_mut(node_id) {
+            Some(record) => {
+                record.state = NodeState::Draining;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Removes a node from the registry. Returns false when it was unknown.
+    pub fn remove(&self, node_id: &str) -> bool {
+        self.lock().remove(node_id).is_some()
+    }
+
     pub fn list(&self) -> Vec<NodeSnapshot> {
         let nodes = self.lock();
         let mut ids: Vec<&String> = nodes.keys().collect();
@@ -226,5 +259,39 @@ mod tests {
         assert_eq!(listed[0].registered_at_unix_ms, 1_000);
         assert_eq!(listed[0].last_heartbeat_unix_ms, 5_000);
         assert_eq!(listed[0].capability.as_ref().unwrap().cpu_threads, 16);
+    }
+
+    #[test]
+    fn draining_node_stops_taking_work_and_can_be_removed() {
+        let registry = Registry::new();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        assert!(registry.is_available("node-a"));
+
+        assert!(registry.begin_drain("node-a"));
+        assert!(!registry.is_available("node-a"));
+        assert_eq!(registry.list()[0].state, "DRAINING");
+
+        // Draining must survive a heartbeat; the node is leaving, not recovering.
+        assert!(registry.heartbeat("node-a", 2_000));
+        assert_eq!(registry.list()[0].state, "DRAINING");
+
+        assert!(registry.remove("node-a"));
+        assert!(!registry.knows("node-a"));
+        assert!(registry.list().is_empty());
+
+        // Leaving twice is not an error.
+        assert!(!registry.begin_drain("node-a"));
+        assert!(!registry.remove("node-a"));
+    }
+
+    #[test]
+    fn offline_and_unknown_nodes_are_not_available_for_work() {
+        let registry = Registry::new();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        assert!(registry.is_available("node-a"));
+
+        registry.mark_stale_offline(11_000, 10_000);
+        assert!(!registry.is_available("node-a"));
+        assert!(!registry.is_available("ghost"));
     }
 }

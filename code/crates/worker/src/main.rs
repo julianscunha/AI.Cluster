@@ -2,8 +2,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, NodeIdentity,
-    RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult, WorkUnit,
+    CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
+    NodeIdentity, RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult,
+    WorkUnit,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use tokio::time;
@@ -39,8 +40,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+
+    // Planned departure: stop taking work, then tell the controller so it can hand
+    // this node's in-flight units to someone else before the process exits.
+    let mut shutdown = tokio::spawn(async {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    });
+
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = ticker.tick() => {}
+            _ = &mut shutdown => break,
+        }
+        // select! picks randomly when both branches are ready; if the signal landed
+        // during the previous cycle, leave now instead of running one more tick.
+        if shutdown.is_finished() {
+            break;
+        }
         let heartbeat = client
             .heartbeat(HeartbeatRequest {
                 node_id: node_id.clone(),
@@ -90,6 +111,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    let left = client
+        .leave_node(LeaveNodeRequest {
+            node_id: node_id.clone(),
+        })
+        .await?
+        .into_inner();
+    println!(
+        "left cluster node_id={node_id} accepted={} requeued={}",
+        left.accepted, left.requeued
+    );
+    Ok(())
 }
 
 /// Rebuilds the matrices from the flat payload, multiplies, and reports the checksum.

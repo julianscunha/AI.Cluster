@@ -4,9 +4,10 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
     EnqueueWorkRequest, EnqueueWorkResponse, HealthStreamRequest, HealthStreamResponse,
-    HeartbeatRequest, HeartbeatResponse, ListNodesRequest, ListNodesResponse, RegisterNodeRequest,
-    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse, ListNodesRequest,
+    ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest,
+    RequestWorkResponse, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
+    WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -97,6 +98,37 @@ impl ClusterControl for ClusterControlService {
         }))
     }
 
+    /// Planned departure: stop dispatching to the node, hand its in-flight units
+    /// back to the queue, then drop it from the registry.
+    ///
+    /// An unknown node is not an error — a node may leave twice, and a node that
+    /// was already reaped as offline has nothing left to requeue.
+    async fn leave_node(
+        &self,
+        request: Request<LeaveNodeRequest>,
+    ) -> Result<Response<LeaveNodeResponse>, Status> {
+        let request = request.into_inner();
+        if request.node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id is required"));
+        }
+        if !self.registry.begin_drain(&request.node_id) {
+            return Ok(Response::new(LeaveNodeResponse {
+                accepted: false,
+                requeued: 0,
+            }));
+        }
+        let requeued = self.work.requeue_for_node(&request.node_id);
+        self.registry.remove(&request.node_id);
+        println!(
+            "node {} left; requeued {requeued} in-flight units",
+            request.node_id
+        );
+        Ok(Response::new(LeaveNodeResponse {
+            accepted: true,
+            requeued: requeued as u32,
+        }))
+    }
+
     async fn request_work(
         &self,
         request: Request<RequestWorkRequest>,
@@ -105,9 +137,11 @@ impl ClusterControl for ClusterControlService {
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id is required"));
         }
-        // An unknown node gets no work; it must register first.
-        if !self.registry.knows(&request.node_id) {
-            return Err(Status::failed_precondition("node is not registered"));
+        // Unknown, leaving or dead nodes get no work.
+        if !self.registry.is_available(&request.node_id) {
+            return Err(Status::failed_precondition(
+                "node is not available for work",
+            ));
         }
         match self.work.claim(&request.node_id, unix_ms()) {
             Some(work) => Ok(Response::new(RequestWorkResponse {
@@ -222,6 +256,13 @@ mod tests {
         let service =
             ClusterControlService::new(Arc::new(Registry::new()), work.clone(), "test-cluster");
         (service, work)
+    }
+
+    fn service_with_registry_and_work() -> (ClusterControlService, Arc<Registry>, Arc<WorkStore>) {
+        let registry = Arc::new(Registry::new());
+        let work = Arc::new(WorkStore::new());
+        let service = ClusterControlService::new(registry.clone(), work.clone(), "test-cluster");
+        (service, registry, work)
     }
 
     fn service() -> ClusterControlService {
@@ -460,5 +501,88 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn leave_node_requeues_in_flight_work_and_drops_the_node() {
+        let (service, _registry, work_store) = service_with_registry_and_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        work_store.enqueue([unit("w1")]);
+        let claimed = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(claimed.has_work);
+        assert_eq!(work_store.pending(), 1);
+
+        let left = service
+            .leave_node(Request::new(LeaveNodeRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(left.accepted);
+        assert_eq!(left.requeued, 1);
+
+        // The node is gone and its unit is back in the queue.
+        let listed = service
+            .list_nodes(Request::new(ListNodesRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(listed.nodes.is_empty());
+        assert_eq!(work_store.pending(), 1);
+
+        // Leaving twice reports accepted=false rather than failing the call.
+        let again = service
+            .leave_node(Request::new(LeaveNodeRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!again.accepted);
+        assert_eq!(again.requeued, 0);
+
+        // A blank node id is a client error.
+        let blank = service
+            .leave_node(Request::new(LeaveNodeRequest {
+                node_id: "  ".to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(blank.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn request_work_is_refused_for_an_offline_node() {
+        let (service, registry, _work) = service_with_registry_and_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        registry.mark_stale_offline(unix_ms() + 20_000, 10_000);
+        let refused = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
     }
 }

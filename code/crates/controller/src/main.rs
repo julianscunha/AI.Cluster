@@ -25,12 +25,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ponytail: single sweep interval for all nodes; per-node timers only if grace must vary.
     let sweep = registry.clone();
+    let sweep_work = work.clone();
     tokio::spawn(async move {
         let mut ticker = time::interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
             for node_id in sweep.mark_stale_offline(unix_ms(), grace_ms) {
-                println!("node {node_id} offline after {grace_ms}ms without heartbeat");
+                // A node that went silent still holds its in-flight units; hand
+                // them back so the surviving nodes can finish the work.
+                let requeued = sweep_work.requeue_for_node(&node_id);
+                println!(
+                    "node {node_id} offline after {grace_ms}ms without heartbeat; requeued {requeued} in-flight units"
+                );
             }
         }
     });

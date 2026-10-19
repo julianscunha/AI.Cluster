@@ -140,11 +140,21 @@ message WorkReportResponse {
   uint32 pending = 2;
 }
 
+message LeaveNodeRequest {
+  string node_id = 1;
+}
+
+message LeaveNodeResponse {
+  bool accepted = 1;
+  uint32 requeued = 2;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc LeaveNode(LeaveNodeRequest) returns (LeaveNodeResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);
   rpc EnqueueWork(EnqueueWorkRequest) returns (EnqueueWorkResponse);
