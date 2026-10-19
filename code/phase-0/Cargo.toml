@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/common",
+  "crates/protocol",
+  "crates/controller",
+  "crates/worker",
+  "crates/transport",
+  "crates/benchmark",
+  "crates/cli",
+]

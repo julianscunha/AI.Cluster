@@ -1,0 +1,45 @@
+# 08 — Work Unit
+
+## Definition
+
+Work Unit é a menor unidade executável que o scheduler pode atribuir a um recurso.
+
+## Required fields
+
+```json
+{
+  "work_id": "wu-...",
+  "execution_id": "exec-...",
+  "plan_id": "plan-...",
+  "type": "MATMUL",
+  "precision": "INT4",
+  "dependencies": [],
+  "requirements": {},
+  "priority": "INTERACTIVE",
+  "deadline_ms": 80,
+  "retryable": true
+}
+```
+
+## Requirements
+
+Podem incluir:
+
+- minimum memory;
+- precision;
+- accelerator requirement;
+- latency limit;
+- compute capability;
+- locality requirement.
+
+## Lifecycle
+
+CREATED → READY → QUEUED → RUNNING → COMPLETED.
+
+Exceções:
+
+WAITING, RETRYING, FAILED, CANCELLED, RECOVERY.
+
+## Idempotency
+
+Work Units devem indicar se são recomputáveis/idempotentes. Isso permite retry e speculative execution de forma controlada.

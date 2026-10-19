@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package ai.cluster.v1;
+
+message NodeIdentity {
+  string node_id = 1;
+  string device_id = 2;
+  string architecture = 3;
+  string os_version = 4;
+  string runtime_version = 5;
+}
+
+message CapabilityReport {
+  uint32 cpu_threads = 1;
+  uint64 memory_bytes = 2;
+  double compute_score = 3;
+  double memory_bandwidth_score = 4;
+  double storage_score = 5;
+  double network_score = 6;
+  repeated string precisions = 7;
+  repeated string accelerators = 8;
+}
+
+message HealthReport {
+  double health_score = 1;
+  double cpu_utilization = 2;
+  double memory_utilization = 3;
+  double temperature_c = 4;
+  double storage_health = 5;
+  double network_latency_ms = 6;
+  bool thermal_throttling = 7;
+}
+
+message RegisterNodeRequest {
+  NodeIdentity identity = 1;
+  CapabilityReport capability = 2;
+}
+
+message RegisterNodeResponse {
+  bool accepted = 1;
+  string cluster_id = 2;
+  string message = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  uint64 unix_ms = 2;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+}
+
+message HealthStreamRequest {
+  string node_id = 1;
+  HealthReport health = 2;
+}
+
+message HealthStreamResponse {
+  bool accepted = 1;
+}
+
+service ClusterControl {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
+}

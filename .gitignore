@@ -1,3 +1,10 @@
-/target
-*.log
+# Rust build artifacts
+**/target/
+
+# Local agent state
+.hermes/
+
+# Local secrets
 .env
+.env.*
+!.env.example
