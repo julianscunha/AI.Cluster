@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 ai-cluster-protocol = { path = "../protocol" }
 clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tonic = "0.14"
 
 [[bin]]

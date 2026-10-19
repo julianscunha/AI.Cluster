@@ -124,6 +124,22 @@ message EnqueueWorkResponse {
   uint32 enqueued = 1;
 }
 
+message WorkReportRequest {}
+
+message WorkReportEntry {
+  string work_id = 1;
+  string node_id = 2;
+  uint64 compute_time_us = 3;
+  uint64 transfer_time_us = 4;
+  uint64 total_latency_us = 5;
+  double checksum = 6;
+}
+
+message WorkReportResponse {
+  repeated WorkReportEntry completed = 1;
+  uint32 pending = 2;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -132,4 +148,5 @@ service ClusterControl {
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);
   rpc EnqueueWork(EnqueueWorkRequest) returns (EnqueueWorkResponse);
+  rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
 }

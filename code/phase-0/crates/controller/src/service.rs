@@ -6,7 +6,7 @@ use ai_cluster_protocol::cluster::{
     EnqueueWorkRequest, EnqueueWorkResponse, HealthStreamRequest, HealthStreamResponse,
     HeartbeatRequest, HeartbeatResponse, ListNodesRequest, ListNodesResponse, RegisterNodeRequest,
     RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkUnit,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -183,6 +183,29 @@ impl ClusterControl for ClusterControlService {
         let enqueued = self.work.enqueue(units);
         Ok(Response::new(EnqueueWorkResponse {
             enqueued: enqueued as u32,
+        }))
+    }
+
+    async fn work_report(
+        &self,
+        _request: Request<WorkReportRequest>,
+    ) -> Result<Response<WorkReportResponse>, Status> {
+        let completed = self
+            .work
+            .completed()
+            .into_iter()
+            .map(|record| WorkReportEntry {
+                work_id: record.work_id,
+                node_id: record.node_id,
+                compute_time_us: record.compute_time_us,
+                transfer_time_us: record.transfer_time_us,
+                total_latency_us: record.total_latency_us,
+                checksum: record.checksum,
+            })
+            .collect();
+        Ok(Response::new(WorkReportResponse {
+            completed,
+            pending: self.work.pending() as u32,
         }))
     }
 }
