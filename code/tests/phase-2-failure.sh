@@ -31,10 +31,11 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 echo "=== start controller + two workers ==="
-# Grace must exceed the work hold below: a worker sends no heartbeat while it is
-# holding a unit, so a short grace would reap a healthy worker mid-computation.
+# Grace deliberately shorter than the work hold below. Before the heartbeat was
+# decoupled from the work loop this reaped the healthy worker mid-unit; the run
+# should now only ever reap the node that was killed.
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" \
-  -v aic-target:/t -e AI_CLUSTER_HEARTBEAT_GRACE_MS=20000 \
+  -v aic-target:/t -e AI_CLUSTER_HEARTBEAT_GRACE_MS=9000 \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 for n in b c; do
   MSYS_NO_PATHCONV=1 docker run -d --name "aic-worker-$n" --network "$NET" \

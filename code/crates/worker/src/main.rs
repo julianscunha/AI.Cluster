@@ -52,6 +52,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Liveness runs on its own interval, not inside the work loop. Sharing the loop
+    // means a unit that takes longer than the heartbeat grace starves the heartbeat,
+    // and the controller reaps a healthy worker and hands its unit to another node
+    // while this one is still computing it.
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let heartbeat_task = tokio::spawn({
+        let mut client = client.clone();
+        let node_id = node_id.clone();
+        let identity = identity.clone();
+        let capability = capability.clone();
+        async move {
+            let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {}
+                    _ = &mut stop_rx => break,
+                }
+                match client
+                    .heartbeat(HeartbeatRequest {
+                        node_id: node_id.clone(),
+                        unix_ms: now_ms(),
+                    })
+                    .await
+                {
+                    Ok(beat) => {
+                        if !beat.into_inner().acknowledged {
+                            println!("controller does not know {node_id}; re-registering");
+                            if let Err(err) = client
+                                .register_node(RegisterNodeRequest {
+                                    identity: Some(identity.clone()),
+                                    capability: Some(capability.clone()),
+                                })
+                                .await
+                            {
+                                println!("heartbeat: re-register failed: {err}");
+                            }
+                        }
+                    }
+                    Err(err) => println!("heartbeat failed: {err}"),
+                }
+                if let Err(err) = client
+                    .report_health(HealthStreamRequest {
+                        node_id: node_id.clone(),
+                        health: Some(health()),
+                    })
+                    .await
+                {
+                    println!("health report failed: {err}");
+                }
+            }
+        }
+    });
+
     loop {
         tokio::select! {
             _ = ticker.tick() => {}
@@ -62,29 +115,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if shutdown.is_finished() {
             break;
         }
-        let heartbeat = client
-            .heartbeat(HeartbeatRequest {
-                node_id: node_id.clone(),
-                unix_ms: now_ms(),
-            })
-            .await?
-            .into_inner();
-        if !heartbeat.acknowledged {
-            println!("controller does not know {node_id}; re-registering");
-            client
-                .register_node(RegisterNodeRequest {
-                    identity: Some(identity.clone()),
-                    capability: Some(capability.clone()),
-                })
-                .await?;
-        }
-        client
-            .report_health(HealthStreamRequest {
-                node_id: node_id.clone(),
-                health: Some(health()),
-            })
-            .await?;
-
         let work = client
             .request_work(RequestWorkRequest {
                 node_id: node_id.clone(),
@@ -117,6 +147,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    // Stop liveness before leaving: a beat that lands after LeaveNode would make the
+    // controller re-register this node, undoing the departure.
+    stop_tx.send(()).ok();
+    let _ = heartbeat_task.await;
 
     let left = client
         .leave_node(LeaveNodeRequest {

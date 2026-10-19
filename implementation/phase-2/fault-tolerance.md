@@ -25,6 +25,9 @@ of it, so the graph always reaches an answer instead of hanging.
   reach zero.
 - `RequeueOutcome` reports both counts, so the leave path and the offline sweep can
   log `requeued N, failed M` rather than silently dropping the difference.
+- The worker's heartbeat and health reporting run on their own task with their own
+  interval, so a long unit can no longer starve them. Sharing the work loop made the
+  controller reap healthy workers mid-computation. See "Liveness" below.
 - `WorkReportResponse.failed` exposes the failed count; the CLI prints `failed=`.
 - Worker test hook `AI_CLUSTER_WORK_DELAY_MS` holds a claimed unit before computing
   it. Unset means no delay; it exists so a failure test can kill a worker while it
@@ -49,48 +52,53 @@ source has produced output, so nothing downstream of a failure is ever dispatche
 
 Reproduce with `bash code/tests/phase-2-failure.sh`. Two units are enqueued so both
 workers hold one; each unit is held for 12s so the kill lands while it is in flight;
-`node-b` is then `docker kill`ed, with no leave call.
+`node-b` is then `docker kill`ed, with no leave call. The grace is set to 9s on
+purpose — shorter than the hold — so a healthy worker would be reaped if the
+heartbeat were still sharing the work loop.
 
 ```
 enqueued 2 work units of 256x256
 --- killing node-b: SIGKILL, no leave, no requeue on the way out ---
-w-0   node-c    5717   12025283   12031000
-w-1   node-c   18346   12010654   12029000
+w-0   node-c    6304   12005696   12012000
+w-1   node-c    5637   12008363   12014000
 completed=2 pending=0 failed=0
 ```
 
 Controller log:
 
 ```
-controller listening on 0.0.0.0:50051 (heartbeat grace 20000ms)
-work w-0 finished on node-c compute=5717us transfer=12025283us total=12031000us checksum=696.515865
-node node-b offline after 20000ms without heartbeat; requeued 1 in-flight units, failed 0
-work w-1 finished on node-c compute=18346us transfer=12010654us total=12029000us checksum=1354.312283
+controller listening on 0.0.0.0:50051 (heartbeat grace 9000ms)
+node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
+work w-0 finished on node-c compute=6304us transfer=12005696us total=12012000us checksum=696.515865
+work w-1 finished on node-c compute=5637us transfer=12008363us total=12014000us checksum=1354.312283
 ```
 
 `requeued 1 in-flight units` is the line that matters: `node-b` was holding a unit
-when it died, the unit went back to the queue, and `node-c` finished it. The graph
-drained with no failures. Neither unit's checksum is repeated across nodes, and
-`node-b` never came back — the cluster recovered without it.
+when it died, the unit went back to the queue, and `node-c` finished it. One offline
+event for the node that was actually killed, and none for the node that was alive —
+the false reap is gone. The graph drained with no failures. `node-b` never came back;
+the cluster recovered without it.
 
 The retry cap and cascade are covered by unit tests
 `a_unit_is_failed_once_its_retry_budget_is_spent`,
 `failing_a_unit_fails_its_dependents_with_it`, and
 `a_failed_branch_does_not_fail_unrelated_work`.
 
-## Known ceiling
+## Liveness — heartbeat is decoupled from the work loop
 
-**A worker sends no heartbeat while it is computing.** The heartbeat lives in the
-same sequential loop as the work, so a unit that runs longer than the heartbeat grace
-gets its healthy worker reaped as dead. The controller then requeues a unit that is
-still being computed, and the original worker's result is refused on arrival. The
-work is redone, so the answer stays correct, but the compute is wasted and the unit
-burns a retry.
+The heartbeat and health reporting used to share the worker's sequential loop with
+the work itself. A unit that ran longer than the heartbeat grace therefore starved
+the heartbeat, and the controller reaped a worker that was alive and computing. The
+unit was requeued, the original result was refused on arrival, and the work was done
+twice — correct answer, wasted compute, one retry burned.
 
-This showed up while building the test above. With a 12s hold and a 9s grace, the
-controller logged `node node-c offline ... requeued 1 in-flight units, failed 0`
-repeatedly for a worker that was alive the whole time, and one unit eventually
-exhausted its budget and was failed:
+The heartbeat now runs on its own task on its own interval. The task is stopped
+explicitly before `LeaveNode`, because a beat that landed after the departure would
+make the controller re-register the node and undo it.
+
+This is visible in the failure test, which runs a grace *shorter* than the work hold
+on purpose. Before the fix, the same run logged a healthy worker being reaped over
+and over until a unit ran out of retries:
 
 ```
 node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
@@ -99,9 +107,18 @@ node node-c offline after 9000ms without heartbeat; requeued 1 in-flight units, 
 node node-c offline after 9000ms without heartbeat; requeued 0 in-flight units, failed 1
 ```
 
-The fix is to decouple the heartbeat from the work loop — its own task on its own
-interval — so a long unit cannot starve it. Until then, keep the grace above the
-longest expected unit.
+After the fix, the same configuration reaps only the node that was actually killed:
+
+```
+node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
+```
+
+Grace stays a tunable: too short relative to the heartbeat interval and a healthy
+node is reaped anyway, so keep it comfortably above the interval. The leave path was
+re-checked too — `node-b left` followed by `NODES 0` twelve seconds later, with no
+re-registration.
+
+## Known ceiling
 
 **No failure signal from the worker.** A worker that cannot execute a unit drops it
 silently; the controller only learns of the failure when the node's heartbeat stops.
