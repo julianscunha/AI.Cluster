@@ -1,3 +1,10 @@
+---
+title: "Protocol Messages"
+type: protocol
+status: draft
+tags: [protocol, messages]
+---
+
 # Protocol Messages
 
 ## Node registration

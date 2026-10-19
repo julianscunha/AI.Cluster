@@ -1,3 +1,10 @@
+---
+title: "14 — Model Manager / Registry"
+type: spec
+status: draft
+tags: [spec, model-manager]
+---
+
 # 14 — Model Manager / Registry
 
 ## Objective

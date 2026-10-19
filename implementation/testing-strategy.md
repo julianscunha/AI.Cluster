@@ -1,3 +1,10 @@
+---
+title: "Testing Strategy"
+type: implementation
+status: proposed
+tags: [implementation, testing-strategy]
+---
+
 # Testing Strategy
 
 ## Test layers

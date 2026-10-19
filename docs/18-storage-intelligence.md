@@ -1,3 +1,10 @@
+---
+title: "18 — Storage Intelligence"
+type: spec
+status: draft
+tags: [spec, storage-intelligence]
+---
+
 # 18 — Storage Intelligence
 
 ## Objective

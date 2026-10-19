@@ -1,3 +1,10 @@
+---
+title: "04 — Node and Hardware"
+type: spec
+status: draft
+tags: [spec, node-and-hardware]
+---
+
 # 04 — Node and Hardware
 
 ## Node vs Device

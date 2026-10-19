@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Inference Engine"
+type: spec
+status: decided
+tags: [spec, inference-engine]
+---
+
 # AI Cluster — Inference Engine
 
 Status: DECIDED baseline / EXPERIMENTAL implementation details

@@ -1,3 +1,10 @@
+---
+title: "10 — Execution Planner"
+type: spec
+status: draft
+tags: [spec, execution-planner]
+---
+
 # 10 — Execution Planner
 
 ## Objective

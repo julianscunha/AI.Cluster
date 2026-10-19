@@ -1,3 +1,10 @@
+---
+title: "16 — Graph Engine"
+type: spec
+status: draft
+tags: [spec, graph-engine]
+---
+
 # 16 — Graph Engine
 
 ## Objective

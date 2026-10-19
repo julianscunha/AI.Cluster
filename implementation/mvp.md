@@ -1,3 +1,10 @@
+---
+title: "MVP — First Build"
+type: implementation
+status: proposed
+tags: [implementation, mvp]
+---
+
 # MVP — First Build
 
 ## Objective

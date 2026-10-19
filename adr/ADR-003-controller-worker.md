@@ -1,3 +1,10 @@
+---
+title: "ADR-003 — Controller / Worker"
+type: adr
+status: decided
+tags: [adr, controller-worker]
+---
+
 # ADR-003 — Controller / Worker
 
 Status: DECIDED

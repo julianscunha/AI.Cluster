@@ -1,3 +1,10 @@
+---
+title: "Data Model — Relationships"
+type: data-model
+status: draft
+tags: [data-model, relationships]
+---
+
 # Data Model — Relationships
 
 Core relations:

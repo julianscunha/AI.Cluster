@@ -1,3 +1,10 @@
+---
+title: "Next Tests"
+type: operational
+status: living
+tags: [operational, next-tests]
+---
+
 # Next Tests
 
 Status: VERIFIED means the check runs and its output was observed; PENDING means

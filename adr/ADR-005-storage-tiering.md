@@ -1,3 +1,10 @@
+---
+title: "ADR-005 — Storage Tiering"
+type: adr
+status: decided
+tags: [adr, storage-tiering]
+---
+
 # ADR-005 — Storage Tiering
 
 Status: DECIDED

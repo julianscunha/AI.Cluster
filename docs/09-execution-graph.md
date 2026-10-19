@@ -1,3 +1,10 @@
+---
+title: "09 — Execution Graph"
+type: spec
+status: draft
+tags: [spec, execution-graph]
+---
+
 # 09 — Execution Graph
 
 ## Objective

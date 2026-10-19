@@ -1,3 +1,10 @@
+---
+title: "21 — Performance Model"
+type: spec
+status: draft
+tags: [spec, performance-model]
+---
+
 # 21 — Performance Model
 
 ## Objective

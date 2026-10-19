@@ -1,3 +1,10 @@
+---
+title: "Principles"
+type: system
+status: decided
+tags: [system, principles]
+---
+
 # Principles
 
 Status: DECIDED baseline / v0.1

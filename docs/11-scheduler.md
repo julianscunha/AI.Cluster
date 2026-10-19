@@ -1,3 +1,10 @@
+---
+title: "11 — Scheduler"
+type: spec
+status: draft
+tags: [spec, scheduler]
+---
+
 # 11 — Scheduler
 
 ## Objective

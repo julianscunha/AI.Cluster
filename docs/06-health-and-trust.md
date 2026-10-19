@@ -1,3 +1,10 @@
+---
+title: "06 — Health and Trust"
+type: spec
+status: draft
+tags: [spec, health-and-trust]
+---
+
 # 06 — Health and Trust
 
 ## Health

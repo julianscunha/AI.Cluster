@@ -1,3 +1,10 @@
+---
+title: "19 — Security & Trust"
+type: spec
+status: draft
+tags: [spec, security]
+---
+
 # 19 — Security & Trust
 
 ## Identity

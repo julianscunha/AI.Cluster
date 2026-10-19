@@ -1,3 +1,10 @@
+---
+title: "ADR-002 — Immutable AI Cluster OS"
+type: adr
+status: proposed
+tags: [adr, immutable-os]
+---
+
 # ADR-002 — Immutable AI Cluster OS
 
 Status: PROPOSED

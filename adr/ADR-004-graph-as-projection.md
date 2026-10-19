@@ -1,3 +1,10 @@
+---
+title: "ADR-004 — Graph as Projection"
+type: adr
+status: proposed
+tags: [adr, graph-as-projection]
+---
+
 # ADR-004 — Graph as Projection
 
 Status: PROPOSED

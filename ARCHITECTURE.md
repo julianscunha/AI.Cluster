@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Architecture"
+type: system
+status: decided
+tags: [system, architecture]
+---
+
 # AI Cluster — Architecture
 
 Status: DECIDED baseline / v0.1

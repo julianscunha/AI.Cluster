@@ -1,3 +1,10 @@
+---
+title: "Data Model — Entities"
+type: data-model
+status: draft
+tags: [data-model, entities]
+---
+
 # Data Model — Entities
 
 ## Core entities

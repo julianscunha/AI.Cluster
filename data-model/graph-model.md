@@ -1,3 +1,10 @@
+---
+title: "Data Model — Graph Model"
+type: data-model
+status: draft
+tags: [data-model, graph-model]
+---
+
 # Data Model — Graph Model
 
 ## Graph node types

@@ -1,58 +1,158 @@
-# Directory Map
+---
+title: "Repository Map (MOC)"
+aliases: ["MOC", "Map of Content", "Directory Map"]
+type: system
+status: living
+tags: [system, navigation, moc]
+---
 
-## Root
+# Repository Map — MOC
 
-- `README.md` — entrada do projeto.
-- `ARCHITECTURE.md` — fonte mestre da arquitetura.
-- `REQUIREMENTS.md` — requisitos.
-- `PRINCIPLES.md` — princípios.
-- `EXECUTION-PLAN.md` — sequência de implementação.
-- `STATUS.md` — decisões, propostas, experimentos e questões abertas.
+Ponto de entrada para navegação. `ARCHITECTURE.md` continua sendo a fonte de
+verdade da arquitetura; este documento diz **onde cada coisa vive** e **em que
+ordem ler**.
 
-## docs/
+## 1. Classificação em três camadas
 
-- `01-overview.md` — visão geral.
-- `02-ai-cluster-os.md` — sistema operacional.
-- `03-provisioning.md` — reimage/provisioning.
-- `04-node-and-hardware.md` — hardware/node model.
-- `05-capability-engine.md` — benchmark/capability.
-- `06-health-and-trust.md` — health/trust.
-- `07-worker-runtime.md` — execução local.
-- `08-work-unit.md` — unidade de trabalho.
-- `09-execution-graph.md` — DAG/execution graph.
-- `10-execution-planner.md` — planejamento.
-- `11-scheduler.md` — scheduling.
-- `12-transport-layer.md` — transporte.
-- `13-state-manager.md` — estado/recovery.
-- `14-model-manager.md` — modelos/shards.
-- `15-edge-optimizer.md` — otimização de borda.
-- `16-graph-engine.md` — grafos/retrieval.
-- `17-observability.md` — métricas/eventos/traces/TUI.
-- `18-storage-intelligence.md` — storage/swap/cache.
-- `19-security.md` — identidade/segurança.
-- `20-hotplug-and-recovery.md` — entrada/saída/falhas.
-- `21-performance-model.md` — previsão/capacidade.
-- `22-cli-tui.md` — interface operacional.
-- `23-inference-api.md` — fronteira de consumo externo e contrato de inferência.
-- `24-request-manager.md` — admissão, filas, quotas, orçamento e ciclo de vida da request.
-- `25-inference-engine.md` — execução do Transformer, KV cache e paralelismo de inferência.
+| Camada | Papel | Onde vive |
+|---|---|---|
+| **Documento de sistema** | Visão, princípios, requisitos, arquitetura, decisões e especificação de subsistemas. Responde *o quê* e *por quê*. | raiz, `docs/`, `adr/`, `data-model/`, `protocol/` |
+| **Documento de implementação** | Como e quando construir: roadmap, fases, milestones, MVP, testes, plano de execução e documentação operacional da Fase 0. | `implementation/`, `EXECUTION-PLAN.md`, `code/phase-0/docs/` |
+| **Arquivo de sistema** | O sistema em si: código, contrato de wire, configuração e CI. | `code/phase-0/crates/`, `code/phase-0/proto/`, `code/phase-0/Cargo.*`, `.github/workflows/`, `.gitignore` |
 
-## protocol/
+## 2. Sequência otimizada
 
-Schemas conceituais e regras do Controller ↔ Worker.
+A numeração dos arquivos (`docs/01` … `docs/25`) é **ordem de escrita, não ordem
+de dependência**. A sequência abaixo foi validada contra a cadeia de dependências
+de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 
-## data-model/
+### Camada 1 — Visão e decisões
 
-Entidades, relações e projeção no grafo.
+1. [README.md](README.md) — entrada do projeto.
+2. [docs/01-overview.md](docs/01-overview.md) — escopo, ideia central e cargas de trabalho.
+3. [PRINCIPLES.md](PRINCIPLES.md) — princípios de projeto (P-001…P-015).
+4. [REQUIREMENTS.md](REQUIREMENTS.md) — requisitos funcionais e não funcionais.
+5. [ARCHITECTURE.md](ARCHITECTURE.md) — fonte mestra da arquitetura.
+6. [STATUS.md](STATUS.md) — decidido / proposto / experimental / aberto.
 
-## implementation/
+### Camada 2 — Contrato e modelo de dados
 
-Roadmap, fases, milestones, testes e MVP.
+7. [data-model/entities.md](data-model/entities.md) — entidades e regras de identidade.
+8. [data-model/relationships.md](data-model/relationships.md) — relações entre entidades.
+9. [protocol/versioning.md](protocol/versioning.md) — evolução e compatibilidade.
+10. [protocol/messages.md](protocol/messages.md) — mensagens de registro, trabalho e saúde.
+11. [protocol/controller-worker.md](protocol/controller-worker.md) — lifecycle Controller ↔ Worker.
+12. [code/phase-0/proto/cluster.proto](code/phase-0/proto/cluster.proto) — contrato de wire real (system file).
 
-## adr/
+### Camada 3 — Substrato de execução
 
-Decisões arquiteturais relevantes.
+13. [docs/04-node-and-hardware.md](docs/04-node-and-hardware.md) — node vs device, fingerprint de hardware.
+14. [docs/05-capability-engine.md](docs/05-capability-engine.md) — benchmark e scoring multidimensional.
+15. [docs/06-health-and-trust.md](docs/06-health-and-trust.md) — saúde, confiança e diagnóstico.
+16. [docs/07-worker-runtime.md](docs/07-worker-runtime.md) — execução local e backends de hardware.
+17. [docs/08-work-unit.md](docs/08-work-unit.md) — unidade de trabalho, requisitos e ciclo de vida.
+18. [docs/12-transport-layer.md](docs/12-transport-layer.md) — abstração de transporte e métricas de link.
+19. [docs/09-execution-graph.md](docs/09-execution-graph.md) — DAG, dependências e recovery.
+20. [docs/10-execution-planner.md](docs/10-execution-planner.md) — estratégias, custo e replanejamento.
+21. [docs/11-scheduler.md](docs/11-scheduler.md) — filtragem de candidatos, scoring e reservas.
+22. [docs/17-observability.md](docs/17-observability.md) — métricas, eventos, traces e TUI.
+23. [docs/21-performance-model.md](docs/21-performance-model.md) — previsão, expected vs actual, capacidade.
+24. [docs/13-state-manager.md](docs/13-state-manager.md) — estado, replicação, checkpoint e recovery.
+25. [docs/18-storage-intelligence.md](docs/18-storage-intelligence.md) — detecção HDD/SSD/NVMe e políticas.
+26. [docs/20-hotplug-and-recovery.md](docs/20-hotplug-and-recovery.md) — join, drain, falha e replanejamento.
 
-## code/phase-0/
+### Camada 4 — Otimização e runtime de IA
 
-Workspace Rust executável da Fase 0. Contém `crates/`, `proto/`, `tests/`, `scripts/`, `config/` e documentação operacional específica em `code/phase-0/docs/`.
+27. [docs/16-graph-engine.md](docs/16-graph-engine.md) — domínios de grafo, projeção e queries.
+28. [docs/15-edge-optimizer.md](docs/15-edge-optimizer.md) — cache, retrieval, compressão e token budget.
+29. [docs/14-model-manager.md](docs/14-model-manager.md) — registry, variantes e shards.
+30. [docs/23-inference-api.md](docs/23-inference-api.md) — fronteira do Application Plane.
+31. [docs/24-request-manager.md](docs/24-request-manager.md) — admissão, filas, quotas e orçamento.
+32. [docs/25-inference-engine.md](docs/25-inference-engine.md) — execução do Transformer, KV cache e paralelismo.
+
+### Camada 5 — Ambiente e operação
+
+33. [docs/02-ai-cluster-os.md](docs/02-ai-cluster-os.md) — sistema operacional imutável.
+34. [docs/03-provisioning.md](docs/03-provisioning.md) — descoberta, enrollment e reimage.
+35. [docs/19-security.md](docs/19-security.md) — identidade, attestation e quarantine.
+36. [docs/22-cli-tui.md](docs/22-cli-tui.md) — comandos operacionais e dashboard.
+
+### Camada 6 — Implementação
+
+37. [implementation/roadmap.md](implementation/roadmap.md) — fases 0–9 e critérios de saída.
+38. [implementation/phases.md](implementation/phases.md) — pacotes de trabalho por fase.
+39. [implementation/milestones.md](implementation/milestones.md) — M0–M7 e critérios de aceitação.
+40. [implementation/mvp.md](implementation/mvp.md) — primeiro build e critérios de sucesso.
+41. [implementation/testing-strategy.md](implementation/testing-strategy.md) — camadas de teste e matriz de benchmark.
+42. [EXECUTION-PLAN.md](EXECUTION-PLAN.md) — plano mestre de execução.
+43. [code/phase-0/README.md](code/phase-0/README.md) — escopo do workspace executável.
+44. [code/phase-0/docs/phase-0-acceptance.md](code/phase-0/docs/phase-0-acceptance.md) — critérios A1–A5.
+45. [code/phase-0/docs/two-machine-validation.md](code/phase-0/docs/two-machine-validation.md) — runbook de duas máquinas.
+46. [code/phase-0/docs/next-tests.md](code/phase-0/docs/next-tests.md) — testes verificados e pendentes.
+47. [code/phase-0/docs/current-stack.md](code/phase-0/docs/current-stack.md) — stack inicial.
+48. [code/phase-0/docs/repository-structure.md](code/phase-0/docs/repository-structure.md) — regras do workspace Rust.
+49. [code/phase-0/os/README.md](code/phase-0/os/README.md) — notas de OS do workspace.
+
+### Referência — decisões arquiteturais
+
+[ADR-001](adr/ADR-001-linux-base.md) · [ADR-002](adr/ADR-002-immutable-os.md) ·
+[ADR-003](adr/ADR-003-controller-worker.md) · [ADR-004](adr/ADR-004-graph-as-projection.md) ·
+[ADR-005](adr/ADR-005-storage-tiering.md) · [ADR-006](adr/ADR-006-hotplug.md) ·
+[ADR-007](adr/ADR-007-inference-api-boundary.md)
+
+## 3. Por que a numeração não é a sequência
+
+Cinco divergências entre a numeração atual e a cadeia de dependências:
+
+1. `docs/12-transport-layer.md` é dependência de `docs/09-execution-graph.md`
+   (Work Unit → Transport → Execution Graph), mas está numerado depois.
+2. `docs/02-ai-cluster-os.md` e `docs/03-provisioning.md` estão no início, enquanto
+   roadmap e plano de execução colocam OS/provisioning na Fase 3, depois do substrato.
+3. `docs/17-observability.md` e `docs/21-performance-model.md` estão depois de
+   `docs/14`–`docs/16`, mas telemetria é pré-requisito para validar capability,
+   health e scheduling.
+4. `docs/18-storage-intelligence.md` está longe de `docs/13-state-manager.md`,
+   embora storage e estado pertençam à mesma fase (Phase 4 — Storage/State).
+5. `docs/14-model-manager.md` precede `docs/15-edge-optimizer.md` e
+   `docs/16-graph-engine.md`, mas o roadmap ordena Graph + Edge antes do Model Runtime.
+
+Nenhum arquivo foi renomeado: os nomes são âncoras estáveis. A sequência vive aqui.
+
+## 4. Convenção Obsidian
+
+- **Vault root** = raiz do repositório. `code/phase-0/` faz parte do vault.
+- **Frontmatter** obrigatório em todo documento novo:
+
+```yaml
+---
+title: "Nome do documento"
+type: spec
+status: draft
+tags: [spec, topico]
+---
+```
+
+- **Valores de `type`:** `system`, `spec`, `implementation`, `protocol`, `data-model`, `adr`, `operational`.
+- **Valores de `status`:** `decided`, `proposed`, `experimental`, `open`, `implemented`, `draft`, `living`.
+- **Links:** markdown relativo (`[texto](caminho.md)`). Renderiza no GitHub e o Obsidian
+  resolve como link interno (backlinks e grafo funcionam). `[[wikilink]]` também é aceito.
+- **Regra:** documento novo = arquivo com frontmatter + link a partir deste MOC.
+- `.obsidian/` é ignorado no git (estado local do aplicativo, não do repositório).
+
+## 5. Árvore
+
+```text
+Real.AI.Cluster/
+├── README.md  ARCHITECTURE.md  PRINCIPLES.md  REQUIREMENTS.md  STATUS.md
+├── EXECUTION-PLAN.md  DIRECTORY-MAP.md (este MOC)  AGENTS.md
+├── adr/            decisões arquiteturais (ADR-001…007)
+├── data-model/     entidades, relações e modelo de grafo
+├── docs/           especificação de subsistemas (01…25)
+├── implementation/ roadmap, fases, milestones, MVP e testes
+├── protocol/       protocolo Controller ↔ Worker
+└── code/phase-0/   workspace Rust executável da Fase 0
+    ├── crates/     controller, worker, common, protocol, transport, benchmark, cli
+    ├── proto/      cluster.proto (contrato de wire)
+    ├── docs/       documentação operacional da Fase 0
+    └── os/         notas de OS
+```

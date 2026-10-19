@@ -1,3 +1,10 @@
+---
+title: "07 — Worker Runtime"
+type: spec
+status: draft
+tags: [spec, worker-runtime]
+---
+
 # 07 — Worker Runtime
 
 ## Responsibility

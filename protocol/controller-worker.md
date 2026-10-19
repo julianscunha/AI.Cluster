@@ -1,3 +1,10 @@
+---
+title: "Controller ↔ Worker Protocol"
+type: protocol
+status: proposed
+tags: [protocol, controller-worker]
+---
+
 # Controller ↔ Worker Protocol
 
 Status: PROPOSED

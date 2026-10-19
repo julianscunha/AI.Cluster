@@ -1,3 +1,10 @@
+---
+title: "Requirements"
+type: system
+status: decided
+tags: [system, requirements]
+---
+
 # Requirements
 
 Status: DECIDED baseline / v0.1

@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Phase 0 Skeleton"
+type: operational
+status: living
+tags: [operational, readme]
+---
+
 # AI Cluster — Phase 0 Skeleton
 
 This is the implementation skeleton for Phase 0 of the AI Cluster project.

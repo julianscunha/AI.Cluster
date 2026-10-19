@@ -1,3 +1,10 @@
+---
+title: "17 — Observability / Telemetry Engine"
+type: spec
+status: draft
+tags: [spec, observability]
+---
+
 # 17 — Observability / Telemetry Engine
 
 ## Three telemetry types

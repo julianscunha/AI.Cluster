@@ -1,3 +1,10 @@
+---
+title: "ADR-007 — API como fronteira entre Application Plane e AI Cluster"
+type: adr
+status: decided
+tags: [adr, inference-api-boundary]
+---
+
 # ADR-007 — API como fronteira entre Application Plane e AI Cluster
 
 Status: DECIDED

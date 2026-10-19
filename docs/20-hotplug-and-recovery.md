@@ -1,3 +1,10 @@
+---
+title: "20 — Hot-Plug and Recovery"
+type: spec
+status: draft
+tags: [spec, hotplug-and-recovery]
+---
+
 # 20 — Hot-Plug and Recovery
 
 ## Planned removal

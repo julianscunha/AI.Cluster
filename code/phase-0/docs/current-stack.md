@@ -1,3 +1,10 @@
+---
+title: "Initial Stack Decision"
+type: operational
+status: living
+tags: [operational, current-stack]
+---
+
 # Initial Stack Decision
 
 ## Current proposal

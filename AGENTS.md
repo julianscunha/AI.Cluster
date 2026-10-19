@@ -1,3 +1,10 @@
+---
+title: "AI Cluster"
+type: system
+status: living
+tags: [system, agents]
+---
+
 # AI Cluster
 
 AI Cluster is a Linux-first distributed AI runtime. The repository root is the architecture/specification layer; the only executable workspace is `code/phase-0/`, which is currently a Phase 0 Rust skeleton for the Controller/Worker substrate—not an LLM runtime.

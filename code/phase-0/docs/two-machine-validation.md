@@ -1,3 +1,10 @@
+---
+title: "Two-machine validation runbook"
+type: operational
+status: living
+tags: [operational, two-machine-validation]
+---
+
 # Two-machine validation runbook
 
 The same-host benchmark proves the mechanics but not the claim the spec cares

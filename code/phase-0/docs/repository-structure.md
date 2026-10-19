@@ -1,3 +1,10 @@
+---
+title: "Repository Structure"
+type: operational
+status: living
+tags: [operational, repository-structure]
+---
+
 # Repository Structure
 
 ## Purpose

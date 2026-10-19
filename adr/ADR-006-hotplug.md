@@ -1,3 +1,10 @@
+---
+title: "ADR-006 — Hot-Plug Recovery Model"
+type: adr
+status: decided
+tags: [adr, hotplug]
+---
+
 # ADR-006 — Hot-Plug Recovery Model
 
 Status: DECIDED

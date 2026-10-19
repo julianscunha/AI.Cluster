@@ -1,3 +1,10 @@
+---
+title: "Architecture Status"
+type: system
+status: living
+tags: [system, status]
+---
+
 # Architecture Status
 
 ## Decided

@@ -1,3 +1,10 @@
+---
+title: "08 — Work Unit"
+type: spec
+status: draft
+tags: [spec, work-unit]
+---
+
 # 08 — Work Unit
 
 ## Definition

@@ -1,3 +1,10 @@
+---
+title: "13 — State Manager"
+type: spec
+status: draft
+tags: [spec, state-manager]
+---
+
 # 13 — State Manager
 
 ## Objective

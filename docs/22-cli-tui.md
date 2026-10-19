@@ -1,3 +1,10 @@
+---
+title: "22 — CLI / TUI"
+type: spec
+status: draft
+tags: [spec, cli-tui]
+---
+
 # 22 — CLI / TUI
 
 ## Objective

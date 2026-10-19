@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Distributed AI Runtime"
+type: system
+status: draft
+tags: [system, readme]
+---
+
 # AI Cluster — Distributed AI Runtime
 
 Status: Architecture Draft v0.1
@@ -35,6 +42,7 @@ As decisões usam os estados:
 
 ## Documentos principais
 
+- [Mapa do repositório (MOC)](DIRECTORY-MAP.md) — classificação, sequência de leitura otimizada e convenção Obsidian.
 - `ARCHITECTURE.md` — arquitetura geral.
 - `REQUIREMENTS.md` — requisitos funcionais e não funcionais.
 - `PRINCIPLES.md` — princípios de projeto.

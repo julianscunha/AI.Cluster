@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Inference API"
+type: spec
+status: decided
+tags: [spec, inference-api]
+---
+
 # AI Cluster — Inference API
 
 Status: DECIDED baseline / v0.1

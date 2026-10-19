@@ -1,3 +1,10 @@
+---
+title: "05 — Capability Engine"
+type: spec
+status: draft
+tags: [spec, capability-engine]
+---
+
 # 05 — Capability Engine
 
 ## Objective

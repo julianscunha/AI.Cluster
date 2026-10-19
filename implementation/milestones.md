@@ -1,3 +1,10 @@
+---
+title: "Milestones"
+type: implementation
+status: proposed
+tags: [implementation, milestones]
+---
+
 # Milestones
 
 ## M0 — Two-node compute proof

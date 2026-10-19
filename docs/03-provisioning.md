@@ -1,3 +1,10 @@
+---
+title: "03 — Provisioning"
+type: spec
+status: draft
+tags: [spec, provisioning]
+---
+
 # 03 — Provisioning
 
 ## Goal

@@ -1,3 +1,10 @@
+---
+title: "02 — AI Cluster OS"
+type: spec
+status: draft
+tags: [spec, ai-cluster-os]
+---
+
 # 02 — AI Cluster OS
 
 ## Objective

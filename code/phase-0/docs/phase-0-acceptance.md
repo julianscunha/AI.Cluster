@@ -1,3 +1,10 @@
+---
+title: "Phase 0 Acceptance Criteria"
+type: operational
+status: living
+tags: [operational, phase-0-acceptance]
+---
+
 # Phase 0 Acceptance Criteria
 
 ## A1 Build

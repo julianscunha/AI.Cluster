@@ -1,3 +1,10 @@
+---
+title: "Implementation Phases — Detailed"
+type: implementation
+status: proposed
+tags: [implementation, phases]
+---
+
 # Implementation Phases — Detailed
 
 ## Phase 1 work packages

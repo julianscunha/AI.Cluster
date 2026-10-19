@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Request Manager"
+type: spec
+status: decided
+tags: [spec, request-manager]
+---
+
 # AI Cluster — Request Manager
 
 Status: DECIDED baseline / v0.1

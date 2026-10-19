@@ -1,3 +1,10 @@
+---
+title: "AI Cluster — Master Execution Plan"
+type: system
+status: proposed
+tags: [system, execution-plan]
+---
+
 # AI Cluster — Master Execution Plan
 
 Status: PROPOSED / v0.1

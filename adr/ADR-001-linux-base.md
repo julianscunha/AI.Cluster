@@ -1,3 +1,10 @@
+---
+title: "ADR-001 — Linux Base"
+type: adr
+status: proposed
+tags: [adr, linux-base]
+---
+
 # ADR-001 — Linux Base
 
 Status: PROPOSED

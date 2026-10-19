@@ -1,3 +1,10 @@
+---
+title: "15 — Edge Optimizer"
+type: spec
+status: draft
+tags: [spec, edge-optimizer]
+---
+
 # 15 — Edge Optimizer
 
 ## Objective
