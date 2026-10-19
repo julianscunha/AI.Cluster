@@ -2,21 +2,27 @@
 
 ## A1 Build
 
-- Workspace resolves reproducibly.
-- Controller, Worker and CLI have independent binaries.
-- Protocol is generated from `.proto` definitions.
+- Workspace resolves reproducibly. — SATISFIED: CI builds from a clean checkout.
+- Controller, Worker and CLI have independent binaries. — SATISFIED:
+  `ai-cluster-controller`, `ai-cluster-worker`, `ai-cluster`.
+- Protocol is generated from `.proto` definitions. — SATISFIED: `build.rs` runs
+  `tonic-prost-build` against `proto/cluster.proto` with vendored `protoc`.
 
 ## A2 Protocol
 
-- Node can register.
-- Controller acknowledges registration.
-- Worker sends heartbeat.
-- Worker sends health report.
+- Node can register. — SATISFIED: `RegisterNode` records identity and capabilities.
+- Controller acknowledges registration. — SATISFIED: response carries `accepted`
+  and the assigned `cluster_id`.
+- Worker sends heartbeat. — SATISFIED: five-second interval; a missed grace window
+  flips the node to `OFFLINE`.
+- Worker sends health report. — SATISFIED: memory-pressure score streamed each tick.
 
 ## A3 Identity
 
-- Node identity is independent of IP address.
-- Device identity is separate from logical node identity.
+- Node identity is independent of IP address. — SATISFIED: `node_id` comes from
+  `AI_CLUSTER_NODE_ID` or the hostname, never the network address.
+- Device identity is separate from logical node identity. — SATISFIED: `device_id`
+  reads `/etc/machine-id`, so it survives a logical rename and re-imaging.
 
 ## A4 Measurement
 
