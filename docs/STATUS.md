@@ -88,4 +88,4 @@ Arquitetura: v0.1
 
 ## Próxima etapa
 
-Validar a calibração de confiabilidade dos enlaces e avançar para persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
+Executar o protocolo em docs/peer-link-reliability-calibration.md para validar a confiabilidade dos enlaces antes de alterar pesos; em seguida, avançar para persistência por tier, cancelamento cooperativo e replanejamento do Placement Plan durante a execução.
