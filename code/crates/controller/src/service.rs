@@ -117,15 +117,15 @@ impl ClusterControl for ClusterControlService {
                 requeued: 0,
             }));
         }
-        let requeued = self.work.requeue_for_node(&request.node_id);
+        let outcome = self.work.requeue_for_node(&request.node_id);
         self.registry.remove(&request.node_id);
         println!(
-            "node {} left; requeued {requeued} in-flight units",
-            request.node_id
+            "node {} left; requeued {} in-flight units, failed {}",
+            request.node_id, outcome.requeued, outcome.failed
         );
         Ok(Response::new(LeaveNodeResponse {
             accepted: true,
-            requeued: requeued as u32,
+            requeued: outcome.requeued as u32,
         }))
     }
 
@@ -326,6 +326,7 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(WorkReportResponse {
             completed,
             pending: self.work.pending() as u32,
+            failed: self.work.failed() as u32,
         }))
     }
 }

@@ -66,10 +66,12 @@ Gating and binding are covered by unit tests
 
 ## Known ceiling
 
-**Failure is not handled.** A unit whose worker dies mid-computation is requeued by
-the leave/offline path and re-dispatched — but there is no retry cap and no partial
-graph rollback. A unit that repeatedly fails its own checks would loop forever. That
-is the next slice: the fault-tolerant part of the milestone.
+**Failure handling lives in its own slice.** Reassignment is now bounded: a unit
+whose worker dies is handed back while its retry budget lasts and failed past it,
+with its dependents failed alongside. See
+[Fault Tolerance](fault-tolerance.md). The ceilings that remain — a worker that
+cannot heartbeat while computing, and a worker that drops an unexecutable unit
+silently — are recorded there.
 
 **Outputs are retained for the process lifetime.** Memory grows with completed work;
 prune an output once its dependents are all claimed, or cap the history, when

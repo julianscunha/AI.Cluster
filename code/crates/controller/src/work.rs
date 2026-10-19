@@ -3,11 +3,19 @@
 //! The comparison this enables: total round trip observed by the controller
 //! minus the compute time reported by the worker is the transfer overhead.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ai_cluster_protocol::cluster::{WorkResult, WorkUnit};
+
+/// Total dispatch attempts allowed per unit: the first try plus two reassignments.
+///
+/// A unit whose worker keeps dying is handed back to the queue each time. Without a
+/// cap that loop never ends: the unit bounces between nodes and `pending()` never
+/// reaches zero, so a client polling for completion waits until its own deadline.
+/// Past the cap the unit is failed, and so are the units that depend on it.
+const MAX_ATTEMPTS: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CompletedWork {
@@ -41,6 +49,20 @@ struct Inner {
     /// completed work. Drop an output once its dependents are all claimed, or cap
     /// the history, when long-running controllers start to matter.
     outputs: HashMap<String, Vec<f64>>,
+    /// Dispatch attempts started per unit, keyed by work id. Bumped in `claim`,
+    /// read when a unit is handed back, dropped once the unit is settled.
+    attempts: HashMap<String, u32>,
+    /// Units that will never complete: their retry budget ran out. Their
+    /// dependents are failed with them so the graph terminates.
+    failed: HashSet<String>,
+}
+
+/// What a requeue pass did. A unit either goes back to the queue for another
+/// attempt or, once its budget is spent, is failed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RequeueOutcome {
+    pub requeued: usize,
+    pub failed: usize,
 }
 
 /// In-memory dispatch queue. No persistence: a controller restart loses pending
@@ -61,6 +83,42 @@ fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
         .iter()
         .all(|src| src.is_empty() || outputs.contains_key(*src));
     deps_done && inputs_available
+}
+
+/// Fails `work_id` and every queued unit that depends on it, directly or through
+/// another failed unit. Returns how many units were failed.
+///
+/// A unit whose source failed can never become ready: readiness waits for the
+/// source's *output*, and a failed unit never produces one. Left alone, such a unit
+/// would sit in the queue forever and `pending()` would never reach zero. Failing it
+/// too makes the graph terminate with an answer instead of a hang.
+///
+/// Dependents are always still queued when this runs: `ready` withholds a unit until
+/// its dependencies have produced output, so nothing downstream of a failure can be
+/// in flight yet.
+fn fail_cascade(inner: &mut Inner, work_id: &str) -> usize {
+    let mut failed = 0;
+    let mut pending = vec![work_id.to_string()];
+    while let Some(id) = pending.pop() {
+        if !inner.failed.insert(id.clone()) {
+            continue;
+        }
+        inner.attempts.remove(&id);
+        failed += 1;
+        let mut survivors = VecDeque::with_capacity(inner.queue.len());
+        for unit in inner.queue.drain(..) {
+            if unit.depends_on.iter().any(|dep| dep == &id)
+                || unit.matrix_a_from == id
+                || unit.matrix_b_from == id
+            {
+                pending.push(unit.work_id);
+            } else {
+                survivors.push_back(unit);
+            }
+        }
+        inner.queue = survivors;
+    }
+    failed
 }
 
 impl WorkStore {
@@ -105,6 +163,9 @@ impl WorkStore {
         if let Some(data) = inner.outputs.get(&unit.matrix_b_from) {
             unit.matrix_b = data.clone();
         }
+        // Counting the attempt here rather than at requeue time keeps the number
+        // meaningful for a unit that is claimed and never handed back.
+        *inner.attempts.entry(unit.work_id.clone()).or_insert(0) += 1;
         inner.dispatched.insert(
             unit.work_id.clone(),
             Dispatched {
@@ -145,6 +206,8 @@ impl WorkStore {
         inner
             .outputs
             .insert(result.work_id.clone(), result.matrix_c);
+        // The unit is settled, so its retry budget no longer matters.
+        inner.attempts.remove(&result.work_id);
         Some(completed)
     }
 
@@ -175,7 +238,11 @@ impl WorkStore {
     /// Called when a node leaves or is declared offline, so the work it held is
     /// offered to the remaining nodes instead of being stranded. A late result
     /// from the old node is rejected because its dispatch record is gone.
-    pub fn requeue_for_node(&self, node_id: &str) -> usize {
+    ///
+    /// A unit that has already used up its dispatch attempts is not handed back:
+    /// it is failed, along with everything downstream of it. That is what keeps a
+    /// node that keeps dying from holding the graph open forever.
+    pub fn requeue_for_node(&self, node_id: &str) -> RequeueOutcome {
         let mut inner = self.lock();
         let stranded: Vec<String> = inner
             .dispatched
@@ -183,14 +250,31 @@ impl WorkStore {
             .filter(|(_, record)| record.node_id == node_id)
             .map(|(work_id, _)| work_id.clone())
             .collect();
-        let mut requeued = 0;
+        let mut outcome = RequeueOutcome::default();
         for work_id in stranded {
-            if let Some(record) = inner.dispatched.remove(&work_id) {
+            let Some(record) = inner.dispatched.remove(&work_id) else {
+                continue;
+            };
+            if inner.attempts.get(&work_id).copied().unwrap_or(0) >= MAX_ATTEMPTS {
+                outcome.failed += fail_cascade(&mut inner, &work_id);
+            } else {
                 inner.queue.push_back(record.unit);
-                requeued += 1;
+                outcome.requeued += 1;
             }
         }
-        requeued
+        outcome
+    }
+
+    /// Ids of units that will never complete, in stable order. Includes the units
+    /// failed for spending their retry budget and the dependents failed with them.
+    pub fn failed_units(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.lock().failed.iter().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    pub fn failed(&self) -> usize {
+        self.lock().failed.len()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -302,7 +386,7 @@ mod tests {
         assert_eq!(store.pending(), 1);
 
         // node-a leaves: the unit goes back to the queue and is still outstanding.
-        assert_eq!(store.requeue_for_node("node-a"), 1);
+        assert_eq!(store.requeue_for_node("node-a").requeued, 1);
         assert_eq!(store.pending(), 1);
 
         // Its dispatch record is gone, so a late result from node-a is refused.
@@ -328,11 +412,11 @@ mod tests {
         store.claim("node-b", 1_000);
         assert_eq!(store.pending(), 2);
 
-        assert_eq!(store.requeue_for_node("node-c"), 0);
+        assert_eq!(store.requeue_for_node("node-c").requeued, 0);
         assert_eq!(store.pending(), 2);
 
         // Only node-b's unit comes back when node-b leaves.
-        assert_eq!(store.requeue_for_node("node-b"), 1);
+        assert_eq!(store.requeue_for_node("node-b").requeued, 1);
         assert_eq!(store.pending(), 2);
         // node-a's unit is still owned by node-a and still completable.
         assert!(store.complete(result("w1", 1_000), 2_000).is_some());
@@ -392,7 +476,7 @@ mod tests {
         assert_eq!(first.work_id, "w1");
 
         // node-a leaves with w1 in flight; w1 returns to the queue still ready.
-        assert_eq!(store.requeue_for_node("node-a"), 1);
+        assert_eq!(store.requeue_for_node("node-a").requeued, 1);
         let again = store.claim("node-b", 2_000).expect("w1 requeued");
         assert_eq!(again.work_id, "w1");
         // w2 is still blocked because w1 has not completed.
@@ -433,5 +517,75 @@ mod tests {
         // Never dispatchable: the bound source never completes.
         assert!(store.claim("node-a", 1_000).is_none());
         assert_eq!(store.blocked(), 1);
+    }
+
+    #[test]
+    fn a_unit_is_failed_once_its_retry_budget_is_spent() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+
+        // The first attempts are handed back for another try.
+        for _ in 0..MAX_ATTEMPTS - 1 {
+            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            let outcome = store.requeue_for_node("node-a");
+            assert_eq!(outcome.requeued, 1);
+            assert_eq!(outcome.failed, 0);
+            assert_eq!(store.pending(), 1);
+        }
+
+        // The last attempt spends the budget: the unit is not handed back again.
+        assert_eq!(store.claim("node-a", 2_000).expect("w1").work_id, "w1");
+        let outcome = store.requeue_for_node("node-a");
+        assert_eq!(outcome.requeued, 0);
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(store.failed_units(), vec!["w1".to_string()]);
+        // The graph is no longer outstanding, so a polling client terminates.
+        assert_eq!(store.pending(), 0);
+        assert!(store.claim("node-b", 3_000).is_none());
+        // Its dispatch record is gone, so a late result from the failed unit is refused.
+        assert!(store.complete(result("w1", 1_000), 3_500).is_none());
+        // A second pass over the same node finds nothing left to move.
+        assert_eq!(store.requeue_for_node("node-a"), RequeueOutcome::default());
+        assert_eq!(store.failed(), 1);
+    }
+
+    #[test]
+    fn failing_a_unit_fails_its_dependents_with_it() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+
+        // w2 stays blocked behind w1 for the whole retry loop, so w1 is always next.
+        for _ in 0..MAX_ATTEMPTS {
+            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            store.requeue_for_node("node-a");
+        }
+
+        // w2 can never run now, so it is failed rather than left blocking the queue.
+        assert_eq!(
+            store.failed_units(),
+            vec!["w1".to_string(), "w2".to_string()]
+        );
+        assert_eq!(store.pending(), 0);
+        assert_eq!(store.blocked(), 0);
+        assert!(store.claim("node-b", 2_000).is_none());
+    }
+
+    #[test]
+    fn a_failed_branch_does_not_fail_unrelated_work() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+        for _ in 0..MAX_ATTEMPTS {
+            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            store.requeue_for_node("node-a");
+        }
+        assert_eq!(
+            store.failed_units(),
+            vec!["w1".to_string(), "w2".to_string()]
+        );
+
+        // The store still accepts and runs work after a branch failed.
+        store.enqueue([unit("w3")]);
+        assert_eq!(store.pending(), 1);
+        assert_eq!(store.claim("node-b", 2_000).expect("w3").work_id, "w3");
     }
 }

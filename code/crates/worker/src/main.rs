@@ -93,6 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_inner();
         if let Some(unit) = work.work {
             let work_id = unit.work_id.clone();
+            // Test hook: hold the unit before computing it so a fault-injection run
+            // can kill this worker while the unit is in flight. Unset means no delay.
+            let delay = work_delay();
+            if !delay.is_zero() {
+                time::sleep(delay).await;
+            }
             match execute_work(&unit, &node_id) {
                 Some(result) => {
                     let accepted = client
@@ -165,6 +171,19 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// How long to hold a claimed unit before computing it.
+///
+/// Fault-injection hook for the failure tests: without a hold, a unit is in flight
+/// for microseconds and a worker cannot be reliably killed while holding one. Unset
+/// or unparsable means compute immediately, which is the production behaviour.
+fn work_delay() -> Duration {
+    std::env::var("AI_CLUSTER_WORK_DELAY_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::ZERO)
 }
 
 fn node_id() -> String {

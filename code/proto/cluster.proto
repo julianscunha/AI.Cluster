@@ -157,6 +157,9 @@ message WorkReportEntry {
 message WorkReportResponse {
   repeated WorkReportEntry completed = 1;
   uint32 pending = 2;
+  /// Units that will never complete: their retry budget ran out, or a unit they
+  /// depend on did. Reported so a client can tell "drained" from "gave up".
+  uint32 failed = 3;
 }
 
 message LeaveNodeRequest {

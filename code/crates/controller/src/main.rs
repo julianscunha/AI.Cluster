@@ -33,9 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for node_id in sweep.mark_stale_offline(unix_ms(), grace_ms) {
                 // A node that went silent still holds its in-flight units; hand
                 // them back so the surviving nodes can finish the work.
-                let requeued = sweep_work.requeue_for_node(&node_id);
+                let outcome = sweep_work.requeue_for_node(&node_id);
                 println!(
-                    "node {node_id} offline after {grace_ms}ms without heartbeat; requeued {requeued} in-flight units"
+                    "node {node_id} offline after {grace_ms}ms without heartbeat; requeued {} in-flight units, failed {}",
+                    outcome.requeued, outcome.failed
                 );
             }
         }

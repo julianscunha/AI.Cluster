@@ -185,9 +185,10 @@ fn print_report(report: &WorkReportResponse) {
     }
     let count = report.completed.len().max(1) as u64;
     println!(
-        "completed={} pending={} avg_compute_us={} avg_transfer_us={}",
+        "completed={} pending={} failed={} avg_compute_us={} avg_transfer_us={}",
         report.completed.len(),
         report.pending,
+        report.failed,
         compute_total / count,
         transfer_total / count,
     );
