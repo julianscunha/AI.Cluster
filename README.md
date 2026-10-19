@@ -51,7 +51,7 @@ As decisões usam os estados:
 - `data-model/` — entidades, relações e projeção em grafo.
 - `implementation/` — roadmap, fases e estratégia de testes.
 - `adr/` — decisões arquiteturais.
-- `code/phase-0/` — workspace Rust executável da Fase 0; seus documentos operacionais ficam em `code/phase-0/docs/`.
+- `code/` — sistema: workspace Rust, diretório final onde o código cresce por incrementos; os documentos operacionais da Fase 0 ficam em `implementation/phase-0/`.
 
 ## Regra operacional
 

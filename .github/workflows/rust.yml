@@ -11,7 +11,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: code/phase-0
+    working-directory: code
 
 jobs:
   check:

@@ -17,8 +17,8 @@ ordem ler**.
 | Camada | Papel | Onde vive |
 |---|---|---|
 | **Documento de sistema** | Visão, princípios, requisitos, arquitetura, decisões e especificação de subsistemas. Responde *o quê* e *por quê*. | raiz, `docs/`, `adr/`, `data-model/`, `protocol/` |
-| **Documento de implementação** | Como e quando construir: roadmap, fases, milestones, MVP, testes, plano de execução e documentação operacional da Fase 0. | `implementation/`, `EXECUTION-PLAN.md`, `code/phase-0/docs/` |
-| **Arquivo de sistema** | O sistema em si: código, contrato de wire, configuração e CI. | `code/phase-0/crates/`, `code/phase-0/proto/`, `code/phase-0/Cargo.*`, `.github/workflows/`, `.gitignore` |
+| **Documento de implementação** | Como e quando construir: roadmap, fases, milestones, MVP, testes, plano de execução e documentação operacional da Fase 0. | `implementation/` (inclui `implementation/phase-0/` e `implementation/EXECUTION-PLAN.md`) |
+| **Arquivo de sistema** | O sistema em si: código, contrato de wire, configuração e CI. | `code/crates/`, `code/proto/`, `code/Cargo.*`, `.github/workflows/`, `.gitignore` |
 
 ## 2. Sequência otimizada
 
@@ -42,7 +42,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 9. [protocol/versioning.md](protocol/versioning.md) — evolução e compatibilidade.
 10. [protocol/messages.md](protocol/messages.md) — mensagens de registro, trabalho e saúde.
 11. [protocol/controller-worker.md](protocol/controller-worker.md) — lifecycle Controller ↔ Worker.
-12. [code/phase-0/proto/cluster.proto](code/phase-0/proto/cluster.proto) — contrato de wire real (system file).
+12. [code/proto/cluster.proto](code/proto/cluster.proto) — contrato de wire real (system file).
 
 ### Camada 3 — Substrato de execução
 
@@ -84,14 +84,14 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 39. [implementation/milestones.md](implementation/milestones.md) — M0–M7 e critérios de aceitação.
 40. [implementation/mvp.md](implementation/mvp.md) — primeiro build e critérios de sucesso.
 41. [implementation/testing-strategy.md](implementation/testing-strategy.md) — camadas de teste e matriz de benchmark.
-42. [EXECUTION-PLAN.md](EXECUTION-PLAN.md) — plano mestre de execução.
-43. [code/phase-0/README.md](code/phase-0/README.md) — escopo do workspace executável.
-44. [code/phase-0/docs/phase-0-acceptance.md](code/phase-0/docs/phase-0-acceptance.md) — critérios A1–A5.
-45. [code/phase-0/docs/two-machine-validation.md](code/phase-0/docs/two-machine-validation.md) — runbook de duas máquinas.
-46. [code/phase-0/docs/next-tests.md](code/phase-0/docs/next-tests.md) — testes verificados e pendentes.
-47. [code/phase-0/docs/current-stack.md](code/phase-0/docs/current-stack.md) — stack inicial.
-48. [code/phase-0/docs/repository-structure.md](code/phase-0/docs/repository-structure.md) — regras do workspace Rust.
-49. [code/phase-0/os/README.md](code/phase-0/os/README.md) — notas de OS do workspace.
+42. [EXECUTION-PLAN.md](implementation/EXECUTION-PLAN.md) — plano mestre de execução.
+43. [code/README.md](code/README.md) — escopo do workspace executável.
+44. [implementation/phase-0/phase-0-acceptance.md](implementation/phase-0/phase-0-acceptance.md) — critérios A1–A5.
+45. [implementation/phase-0/two-machine-validation.md](implementation/phase-0/two-machine-validation.md) — runbook de duas máquinas.
+46. [implementation/phase-0/next-tests.md](implementation/phase-0/next-tests.md) — testes verificados e pendentes.
+47. [implementation/phase-0/current-stack.md](implementation/phase-0/current-stack.md) — stack inicial.
+48. [implementation/phase-0/repository-structure.md](implementation/phase-0/repository-structure.md) — regras do workspace Rust.
+49. [code/os/README.md](code/os/README.md) — notas de OS do workspace.
 
 ### Referência — decisões arquiteturais
 
@@ -120,7 +120,7 @@ Nenhum arquivo foi renomeado: os nomes são âncoras estáveis. A sequência viv
 
 ## 4. Convenção Obsidian
 
-- **Vault root** = raiz do repositório. `code/phase-0/` faz parte do vault.
+- **Vault root** = raiz do repositório. `code/` faz parte do vault.
 - **Frontmatter** obrigatório em todo documento novo:
 
 ```yaml
@@ -144,15 +144,19 @@ tags: [spec, topico]
 ```text
 Real.AI.Cluster/
 ├── README.md  ARCHITECTURE.md  PRINCIPLES.md  REQUIREMENTS.md  STATUS.md
-├── EXECUTION-PLAN.md  DIRECTORY-MAP.md (este MOC)  AGENTS.md
+├── DIRECTORY-MAP.md (este MOC)  AGENTS.md
 ├── adr/            decisões arquiteturais (ADR-001…007)
 ├── data-model/     entidades, relações e modelo de grafo
 ├── docs/           especificação de subsistemas (01…25)
-├── implementation/ roadmap, fases, milestones, MVP e testes
+├── implementation/ roadmap, fases, milestones, MVP, testes
+│   ├── EXECUTION-PLAN.md   plano mestre de execução
+│   └── phase-0/    documentação operacional da Fase 0
 ├── protocol/       protocolo Controller ↔ Worker
-└── code/phase-0/   workspace Rust executável da Fase 0
+└── code/           sistema — workspace Rust, diretório final
     ├── crates/     controller, worker, common, protocol, transport, benchmark, cli
     ├── proto/      cluster.proto (contrato de wire)
-    ├── docs/       documentação operacional da Fase 0
     └── os/         notas de OS
 ```
+
+O sistema vive em `code/` desde o início. Fases são **incrementos aplicados ao
+mesmo diretório**, não pastas novas — por isso não existe `code/phase-0/`.
