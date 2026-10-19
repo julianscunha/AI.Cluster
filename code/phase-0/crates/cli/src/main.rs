@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
-use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use ai_cluster_protocol::cluster::{
     EnqueueWorkRequest, ListNodesRequest, WorkReportRequest, WorkReportResponse,
 };
+use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = ClusterControlClient::connect(endpoint.to_string()).await?;
+    let mut client = connect_controller(endpoint.to_string()).await?;
     let nodes = client
         .list_nodes(ListNodesRequest {})
         .await?
@@ -101,7 +101,7 @@ async fn run_benchmark(
     if local {
         return run_local_baseline(size, repetitions);
     }
-    let mut client = ClusterControlClient::connect(endpoint.to_string()).await?;
+    let mut client = connect_controller(endpoint.to_string()).await?;
     let enqueued = client
         .enqueue_work(EnqueueWorkRequest {
             rows: size,

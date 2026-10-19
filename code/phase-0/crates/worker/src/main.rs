@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_cluster_common::matrix::Matrix;
-use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, NodeIdentity,
     RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
+use ai_cluster_protocol::metadata::connect_controller;
 use tokio::time;
 
 const DEFAULT_CONTROLLER: &str = "http://127.0.0.1:50051";
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let capability = capability();
 
-    let mut client = ClusterControlClient::connect(endpoint.clone()).await?;
+    let mut client = connect_controller(endpoint.clone()).await?;
     let registered = client
         .register_node(RegisterNodeRequest {
             identity: Some(identity.clone()),

@@ -5,6 +5,7 @@ use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::ClusterControlService;
 use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
+use ai_cluster_protocol::metadata::ServerMetadata;
 use tokio::time;
 use tonic::transport::Server;
 
@@ -36,7 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("controller listening on {addr} (heartbeat grace {grace_ms}ms)");
     Server::builder()
-        .add_service(ClusterControlServer::new(service))
+        .add_service(ClusterControlServer::with_interceptor(
+            service,
+            ServerMetadata,
+        ))
         .serve(addr)
         .await?;
     Ok(())

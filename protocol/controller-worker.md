@@ -40,6 +40,20 @@ Cada mensagem deve possuir:
 - authentication context;
 - idempotency key para operações mutáveis.
 
+### Implementation status (Phase 0)
+
+`node_id` travels in each protobuf payload. The remaining fields are carried as
+gRPC request metadata, set by an interceptor so no call site repeats them:
+
+| field | header | status |
+|---|---|---|
+| protocol version | `x-ai-cluster-protocol-version` | emitted by clients, enforced by the controller |
+| correlation id | `x-ai-cluster-correlation-id` | fresh value per call |
+| authentication context | `x-ai-cluster-auth` | placeholder `anonymous` until the trust phase |
+| idempotency | — | structural: a work unit leaves the dispatch table on completion, so a duplicate submission has nothing to complete |
+
+The controller rejects any call whose protocol version does not match its own.
+
 ## Streaming
 
 Telemetry e transferências longas devem suportar streaming/backpressure.
