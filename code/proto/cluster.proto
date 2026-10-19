@@ -84,6 +84,11 @@ message WorkUnit {
   repeated double matrix_b = 6;
   /// Work ids that must complete before this unit may be dispatched.
   repeated string depends_on = 7;
+  /// When set, matrix_a is replaced at dispatch by the output of this work id.
+  /// Empty means use the matrix_a payload as-is.
+  string matrix_a_from = 8;
+  /// Same for matrix_b.
+  string matrix_b_from = 9;
 }
 
 message WorkResult {

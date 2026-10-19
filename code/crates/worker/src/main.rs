@@ -262,6 +262,8 @@ mod tests {
             matrix_a: vec![1.0, 2.0, 3.0, 4.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
             depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
         };
         let result = execute_work(&unit, "node-a").expect("shapes match");
         assert_eq!(result.work_id, "w1");
@@ -282,6 +284,8 @@ mod tests {
             matrix_a: vec![1.0, 2.0, 3.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
             depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
         };
         assert!(execute_work(&unit, "node-a").is_none());
     }

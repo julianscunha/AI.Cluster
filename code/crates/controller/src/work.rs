@@ -3,7 +3,7 @@
 //! The comparison this enables: total round trip observed by the controller
 //! minus the compute time reported by the worker is the transfer overhead.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,8 +33,14 @@ struct Inner {
     queue: VecDeque<WorkUnit>,
     dispatched: HashMap<String, Dispatched>,
     completed: Vec<CompletedWork>,
-    /// Ids of units that finished, so a unit's dependencies can be checked.
-    completed_ids: HashSet<String>,
+    /// Output matrix of every completed unit, keyed by work id. A unit's bound
+    /// inputs are read from here at dispatch, so this is the controller-side
+    /// holding area for intermediate results.
+    ///
+    /// ponytail: outputs are kept for the process lifetime, so memory grows with
+    /// completed work. Drop an output once its dependents are all claimed, or cap
+    /// the history, when long-running controllers start to matter.
+    outputs: HashMap<String, Vec<f64>>,
 }
 
 /// In-memory dispatch queue. No persistence: a controller restart loses pending
@@ -43,6 +49,18 @@ struct Inner {
 pub struct WorkStore {
     inner: Mutex<Inner>,
     sequence: AtomicU64,
+}
+
+/// A unit may be dispatched when every dependency has completed and every bound
+/// input is available. The binding check is defensive: controller-built graphs
+/// always bind to declared dependencies, but a unit bound to an id that never
+/// completes would otherwise be dispatched with an empty payload.
+fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
+    let deps_done = unit.depends_on.iter().all(|dep| outputs.contains_key(dep));
+    let inputs_available = [&unit.matrix_a_from, &unit.matrix_b_from]
+        .iter()
+        .all(|src| src.is_empty() || outputs.contains_key(*src));
+    deps_done && inputs_available
 }
 
 impl WorkStore {
@@ -65,7 +83,8 @@ impl WorkStore {
         count
     }
 
-    /// Hands out the first unit whose dependencies have all completed.
+    /// Hands out the first unit whose dependencies have all completed, with any
+    /// bound inputs substituted from the outputs of those dependencies.
     ///
     /// ponytail: scans the queue for a ready unit, so claiming is O(n) in queue
     /// length. Fine at benchmark scale; split into blocked and ready queues when
@@ -75,14 +94,17 @@ impl WorkStore {
     pub fn claim(&self, node_id: &str, now_unix_ms: u64) -> Option<WorkUnit> {
         let mut inner = self.lock();
         let index = {
-            let completed_ids = &inner.completed_ids;
-            inner.queue.iter().position(|unit| {
-                unit.depends_on
-                    .iter()
-                    .all(|dep| completed_ids.contains(dep))
-            })?
+            let outputs = &inner.outputs;
+            inner.queue.iter().position(|unit| ready(unit, outputs))?
         };
-        let unit = inner.queue.remove(index)?;
+        let mut unit = inner.queue.remove(index)?;
+        // Substitute dependency outputs for bound inputs before dispatch.
+        if let Some(data) = inner.outputs.get(&unit.matrix_a_from) {
+            unit.matrix_a = data.clone();
+        }
+        if let Some(data) = inner.outputs.get(&unit.matrix_b_from) {
+            unit.matrix_b = data.clone();
+        }
         inner.dispatched.insert(
             unit.work_id.clone(),
             Dispatched {
@@ -118,8 +140,11 @@ impl WorkStore {
             checksum: result.checksum,
         };
         inner.completed.push(completed.clone());
-        // Recorded so units that depend on this one become claimable.
-        inner.completed_ids.insert(completed.work_id.clone());
+        // Recorded so units that depend on this one become claimable, and so a
+        // dependent unit can read this unit's output as its own input.
+        inner
+            .outputs
+            .insert(result.work_id.clone(), result.matrix_c);
         Some(completed)
     }
 
@@ -133,19 +158,14 @@ impl WorkStore {
         inner.queue.len() + inner.dispatched.len()
     }
 
-    /// Queued units whose dependencies are not satisfied yet.
+    /// Queued units that cannot be dispatched yet: either a dependency is still
+    /// incomplete or a bound input is not available.
     pub fn blocked(&self) -> usize {
         let inner = self.lock();
-        let completed_ids = &inner.completed_ids;
         inner
             .queue
             .iter()
-            .filter(|unit| {
-                !unit
-                    .depends_on
-                    .iter()
-                    .all(|dep| completed_ids.contains(dep))
-            })
+            .filter(|unit| !ready(unit, &inner.outputs))
             .count()
     }
 
@@ -193,6 +213,8 @@ mod tests {
             matrix_a: vec![1.0, 2.0, 3.0, 4.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
             depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
         }
     }
 
@@ -374,6 +396,42 @@ mod tests {
         let again = store.claim("node-b", 2_000).expect("w1 requeued");
         assert_eq!(again.work_id, "w1");
         // w2 is still blocked because w1 has not completed.
+        assert_eq!(store.blocked(), 1);
+    }
+
+    #[test]
+    fn dependent_unit_receives_its_dependency_output_as_input() {
+        let store = WorkStore::new();
+        let mut consumer = dependent("w2", &["w1"]);
+        consumer.matrix_a_from = "w1".to_string();
+        consumer.matrix_b_from = "w1".to_string();
+        // Sourced inputs arrive at dispatch, so the payload is empty for now.
+        consumer.matrix_a = Vec::new();
+        consumer.matrix_b = Vec::new();
+        store.enqueue([unit("w1"), consumer]);
+
+        // w1 runs first and produces a known output.
+        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        assert_eq!(first.work_id, "w1");
+        let mut done = result("w1", 1_000);
+        done.matrix_c = vec![7.0, 8.0, 9.0, 10.0];
+        store.complete(done, 2_000).expect("w1 done");
+
+        // w2 is dispatched with w1's output substituted into both inputs.
+        let second = store.claim("node-b", 2_000).expect("w2 is ready");
+        assert_eq!(second.work_id, "w2");
+        assert_eq!(second.matrix_a, vec![7.0, 8.0, 9.0, 10.0]);
+        assert_eq!(second.matrix_b, vec![7.0, 8.0, 9.0, 10.0]);
+    }
+
+    #[test]
+    fn a_binding_to_an_unknown_work_id_keeps_the_unit_blocked() {
+        let store = WorkStore::new();
+        let mut broken = dependent("w2", &[]);
+        broken.matrix_a_from = "ghost".to_string();
+        store.enqueue([broken]);
+        // Never dispatchable: the bound source never completes.
+        assert!(store.claim("node-a", 1_000).is_none());
         assert_eq!(store.blocked(), 1);
     }
 }

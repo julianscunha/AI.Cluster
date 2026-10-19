@@ -213,6 +213,8 @@ impl ClusterControl for ClusterControlService {
                 matrix_a: a.data,
                 matrix_b: b.data,
                 depends_on: Vec::new(),
+                matrix_a_from: String::new(),
+                matrix_b_from: String::new(),
             }
         });
         let enqueued = self.work.enqueue(units);
@@ -221,11 +223,13 @@ impl ClusterControl for ClusterControlService {
         }))
     }
 
-    /// Enqueues a small diamond: A -> (B, C) -> D.
+    /// Enqueues a small diamond with real data flow: A -> (B, C) -> D.
     ///
-    /// B and C are independent, so they can run on different nodes at the same
-    /// time; D is only dispatched once both have completed. This is the smallest
-    /// graph that exercises dependency gating and parallel branches.
+    /// B and C take A's output as their left input and a seeded matrix as their
+    /// right input, so they run in parallel after A. D takes B's output and C's
+    /// output as its two inputs, so it runs only once both branches have finished.
+    /// This is the smallest graph that exercises gating, parallelism and the
+    /// hand-off of one unit's output into the next unit's input.
     async fn enqueue_graph(
         &self,
         request: Request<EnqueueGraphRequest>,
@@ -235,28 +239,65 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument("size must be greater than zero"));
         }
         let size = request.size;
-        let unit = |work_id: String, depends_on: Vec<String>| {
+        let first = self.work.next_work_id();
+        let left = self.work.next_work_id();
+        let right = self.work.next_work_id();
+        let join = self.work.next_work_id();
+        // A bound input is filled at dispatch from its source's output, so its
+        // payload stays empty here. The salt only seeds the non-bound operand.
+        let make = |work_id: String,
+                    depends_on: Vec<String>,
+                    a_from: String,
+                    b_from: String,
+                    salt: u64| {
             let a = Matrix::seeded(size, size, request.seed);
-            let b = Matrix::seeded(size, size, request.seed ^ 0x9E37_79B9_7F4A_7C15);
+            let b = Matrix::seeded(size, size, request.seed ^ salt);
             WorkUnit {
                 work_id,
                 rows: size,
                 shared: size,
                 cols: size,
-                matrix_a: a.data,
-                matrix_b: b.data,
+                matrix_a: if a_from.is_empty() {
+                    a.data
+                } else {
+                    Vec::new()
+                },
+                matrix_b: if b_from.is_empty() {
+                    b.data
+                } else {
+                    Vec::new()
+                },
                 depends_on,
+                matrix_a_from: a_from,
+                matrix_b_from: b_from,
             }
         };
-        let first = self.work.next_work_id();
-        let left = self.work.next_work_id();
-        let right = self.work.next_work_id();
-        let join = self.work.next_work_id();
         let units = vec![
-            unit(first.clone(), Vec::new()),
-            unit(left.clone(), vec![first.clone()]),
-            unit(right.clone(), vec![first.clone()]),
-            unit(join, vec![left, right]),
+            // A: both operands seeded.
+            make(
+                first.clone(),
+                Vec::new(),
+                String::new(),
+                String::new(),
+                0x9E37_79B9_7F4A_7C15,
+            ),
+            // B and C: left operand from A, distinct seeded right operands.
+            make(
+                left.clone(),
+                vec![first.clone()],
+                first.clone(),
+                String::new(),
+                0x1234_5678_9ABC_DEF0,
+            ),
+            make(
+                right.clone(),
+                vec![first.clone()],
+                first.clone(),
+                String::new(),
+                0x0FED_CBA9_8765_4321,
+            ),
+            // D: both operands from the two branches.
+            make(join, vec![left.clone(), right.clone()], left, right, 0),
         ];
         let enqueued = self.work.enqueue(units);
         Ok(Response::new(EnqueueGraphResponse {
@@ -331,6 +372,8 @@ mod tests {
             matrix_a: vec![1.0, 2.0, 3.0, 4.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
             depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
         }
     }
 
