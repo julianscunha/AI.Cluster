@@ -1617,7 +1617,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-
     #[tokio::test]
     async fn estimativa_prioriza_throughput_de_transferencia_real() {
         let store = super::peer_link_store::PeerLinkStore::in_memory();
@@ -1644,12 +1643,8 @@ mod tests {
         let source = NodeInfo::default();
         let destination = NodeInfo::default();
 
-        let estimated = super::estimate_worker_to_worker_us(
-            1024 * 1024,
-            &source,
-            &destination,
-            Some(&metrics),
-        );
+        let estimated =
+            super::estimate_worker_to_worker_us(1024 * 1024, &source, &destination, Some(&metrics));
 
         // 5 MiB/s observados: 200 ms por MiB, mais RTT+jitter da sonda.
         assert_eq!(estimated, 200_055);
