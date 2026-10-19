@@ -1616,4 +1616,140 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+
+    #[tokio::test]
+    async fn estimativa_prioriza_throughput_de_transferencia_real() {
+        let store = super::peer_link_store::PeerLinkStore::in_memory();
+        store
+            .record_success("worker-a", "worker-b", 50.0, 5.0, 100.0, 3)
+            .await;
+        store
+            .record_transfer_success(
+                "worker-a",
+                "worker-b",
+                1024 * 1024,
+                std::time::Duration::from_millis(200),
+            )
+            .await;
+
+        let metrics = store
+            .historical_metrics(
+                "worker-a",
+                "worker-b",
+                std::time::Duration::from_secs(24 * 60 * 60),
+            )
+            .await
+            .expect("deve haver métricas históricas");
+        let source = NodeInfo::default();
+        let destination = NodeInfo::default();
+
+        let estimated = super::estimate_worker_to_worker_us(
+            1024 * 1024,
+            &source,
+            &destination,
+            Some(&metrics),
+        );
+
+        // 5 MiB/s observados: 200 ms por MiB, mais RTT+jitter da sonda.
+        assert_eq!(estimated, 205_000);
+    }
+
+    #[tokio::test]
+    async fn estimativa_usa_falhas_de_transferencia_quando_existirem_tentativas_reais() {
+        let store = super::peer_link_store::PeerLinkStore::in_memory();
+        store
+            .record_success("worker-a", "worker-b", 50.0, 5.0, 10.0, 3)
+            .await;
+        store
+            .record_failure(
+                "worker-a",
+                "worker-b",
+                super::peer_link_store::ProbeOutcome::Timeout,
+            )
+            .await;
+        store
+            .record_transfer_success(
+                "worker-a",
+                "worker-b",
+                1024 * 1024,
+                std::time::Duration::from_millis(100),
+            )
+            .await;
+
+        let metrics = store
+            .historical_metrics(
+                "worker-a",
+                "worker-b",
+                std::time::Duration::from_secs(24 * 60 * 60),
+            )
+            .await
+            .expect("deve haver métricas históricas");
+        assert!(metrics.probe_failure_rate > 0.0);
+        assert_eq!(metrics.transfer_attempt_count, 1);
+        assert_eq!(metrics.transfer_failure_rate, 0.0);
+
+        let estimated = super::estimate_worker_to_worker_us(
+            1024 * 1024,
+            &NodeInfo::default(),
+            &NodeInfo::default(),
+            Some(&metrics),
+        );
+
+        // A taxa de falha da sonda não deve penalizar a transferência real bem-sucedida.
+        assert_eq!(estimated, 105_000);
+    }
+
+    #[tokio::test]
+    async fn estimativa_aumenta_com_taxa_de_falha_de_transferencia() {
+        let store = super::peer_link_store::PeerLinkStore::in_memory();
+        store
+            .record_transfer_success(
+                "worker-a",
+                "worker-b",
+                1024 * 1024,
+                std::time::Duration::from_millis(100),
+            )
+            .await;
+        let reliable = store
+            .historical_metrics(
+                "worker-a",
+                "worker-b",
+                std::time::Duration::from_secs(24 * 60 * 60),
+            )
+            .await
+            .expect("deve haver métricas históricas");
+        store
+            .record_transfer_failure(
+                "worker-a",
+                "worker-b",
+                super::peer_link_store::ProbeOutcome::Timeout,
+            )
+            .await;
+        let unreliable = store
+            .historical_metrics(
+                "worker-a",
+                "worker-b",
+                std::time::Duration::from_secs(24 * 60 * 60),
+            )
+            .await
+            .expect("deve haver métricas históricas");
+
+        let source = NodeInfo::default();
+        let destination = NodeInfo::default();
+        let reliable_cost = super::estimate_worker_to_worker_us(
+            1024 * 1024,
+            &source,
+            &destination,
+            Some(&reliable),
+        );
+        let unreliable_cost = super::estimate_worker_to_worker_us(
+            1024 * 1024,
+            &source,
+            &destination,
+            Some(&unreliable),
+        );
+
+        assert!(unreliable_cost > reliable_cost);
+    }
 }
