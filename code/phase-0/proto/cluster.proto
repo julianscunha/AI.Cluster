@@ -112,6 +112,18 @@ message SubmitWorkResultResponse {
   string message = 2;
 }
 
+message EnqueueWorkRequest {
+  uint32 rows = 1;
+  uint32 shared = 2;
+  uint32 cols = 3;
+  uint64 seed = 4;
+  uint32 repetitions = 5;
+}
+
+message EnqueueWorkResponse {
+  uint32 enqueued = 1;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -119,4 +131,5 @@ service ClusterControl {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);
+  rpc EnqueueWork(EnqueueWorkRequest) returns (EnqueueWorkResponse);
 }

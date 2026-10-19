@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
-    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    ListNodesRequest, ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse,
-    RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest, SubmitWorkResultResponse,
+    EnqueueWorkRequest, EnqueueWorkResponse, HealthStreamRequest, HealthStreamResponse,
+    HeartbeatRequest, HeartbeatResponse, ListNodesRequest, ListNodesResponse, RegisterNodeRequest,
+    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -151,6 +153,37 @@ impl ClusterControl for ClusterControlService {
                 message: "work was not dispatched by this controller".to_string(),
             })),
         }
+    }
+
+    async fn enqueue_work(
+        &self,
+        request: Request<EnqueueWorkRequest>,
+    ) -> Result<Response<EnqueueWorkResponse>, Status> {
+        let request = request.into_inner();
+        if request.rows == 0 || request.shared == 0 || request.cols == 0 {
+            return Err(Status::invalid_argument(
+                "matrix dimensions must all be greater than zero",
+            ));
+        }
+        let repetitions = request.repetitions.max(1);
+        let units = (0..repetitions).map(|index| {
+            let seed = request.seed.wrapping_add(u64::from(index));
+            // A and B get different seeds so the product is not a square of one matrix.
+            let a = Matrix::seeded(request.rows, request.shared, seed);
+            let b = Matrix::seeded(request.shared, request.cols, seed ^ 0x9E37_79B9_7F4A_7C15);
+            WorkUnit {
+                work_id: self.work.next_work_id(),
+                rows: request.rows,
+                shared: request.shared,
+                cols: request.cols,
+                matrix_a: a.data,
+                matrix_b: b.data,
+            }
+        });
+        let enqueued = self.work.enqueue(units);
+        Ok(Response::new(EnqueueWorkResponse {
+            enqueued: enqueued as u32,
+        }))
     }
 }
 
@@ -351,5 +384,58 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn enqueue_work_builds_units_matching_the_declared_shape() {
+        let (service, work_store) = service_with_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        let enqueued = service
+            .enqueue_work(Request::new(EnqueueWorkRequest {
+                rows: 4,
+                shared: 4,
+                cols: 4,
+                seed: 7,
+                repetitions: 2,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(enqueued.enqueued, 2);
+        assert_eq!(work_store.pending(), 2);
+
+        let claimed = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .work
+            .expect("work unit present");
+        assert_eq!(claimed.rows, 4);
+        assert_eq!(claimed.shared, 4);
+        assert_eq!(claimed.cols, 4);
+        assert_eq!(claimed.matrix_a.len(), 16);
+        assert_eq!(claimed.matrix_b.len(), 16);
+
+        let invalid = service
+            .enqueue_work(Request::new(EnqueueWorkRequest {
+                rows: 0,
+                shared: 4,
+                cols: 4,
+                seed: 1,
+                repetitions: 1,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
     }
 }

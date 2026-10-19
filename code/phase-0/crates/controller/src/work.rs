@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ai_cluster_protocol::cluster::{WorkResult, WorkUnit};
 
@@ -36,11 +37,17 @@ struct Inner {
 #[derive(Debug, Default)]
 pub struct WorkStore {
     inner: Mutex<Inner>,
+    sequence: AtomicU64,
 }
 
 impl WorkStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Monotonic id for controller-generated work units.
+    pub fn next_work_id(&self) -> String {
+        format!("w-{}", self.sequence.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn enqueue(&self, units: impl IntoIterator<Item = WorkUnit>) -> usize {
