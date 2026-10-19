@@ -92,6 +92,12 @@ async fn run_benchmark(
     repetitions: u32,
     local: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Version and parameters travel with the output so two runs are comparable.
+    println!(
+        "benchmark_version={} scope={} size={size} repetitions={repetitions} seed=42",
+        env!("CARGO_PKG_VERSION"),
+        if local { "single-node" } else { "distributed" }
+    );
     if local {
         return run_local_baseline(size, repetitions);
     }

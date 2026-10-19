@@ -20,8 +20,11 @@
 
 ## A4 Measurement
 
-- Benchmark harness can measure a node without changing its cluster score manually.
-- Benchmark output is versioned.
+- Benchmark harness can measure a node without changing its cluster score manually. — SATISFIED
+  by `ai-cluster benchmark`; the controller records worker-reported compute time and
+  its own observed round trip, so no score is entered by hand.
+- Benchmark output is versioned. — SATISFIED by the `benchmark_version=... scope=...
+  size=... repetitions=... seed=...` header printed with every run.
 
 ## A5 No LLM
 
