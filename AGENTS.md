@@ -43,7 +43,7 @@ These are the exact commands in `.github/workflows/rust.yml`. The workspace has 
 
 ## Pitfalls
 
-- The Cargo workspace is not at repository root. The CI workflow currently runs Cargo without `working-directory: code/phase-0`; fix that before relying on GitHub Actions.
+- The Cargo workspace is `code/phase-0/`; the CI workflow sets it as the working directory for every Cargo command.
 - Do not edit generated Protobuf output in `target/`; edit `code/phase-0/proto/cluster.proto` instead.
-- `tonic-prost-build` is used without a vendored `protoc` dependency; provide `protoc` on build hosts if protocol generation fails.
+- The protocol build script selects `protoc-bin-vendored`; do not depend on a host `protoc` installation.
 - `.gitignore` excludes `**/target/`, `.hermes/`, and `.env*` except `.env.example`.
