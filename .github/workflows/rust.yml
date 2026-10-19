@@ -9,6 +9,10 @@ concurrency:
   group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: code/phase-0
+
 jobs:
   check:
     runs-on: ubuntu-latest
