@@ -19,7 +19,10 @@ version = "0.1.0"
 name = "ai-cluster-cli"
 version = "0.1.0"
 dependencies = [
+ "ai-cluster-protocol",
  "clap",
+ "tokio",
+ "tonic",
 ]
 
 [[package]]
