@@ -1,5 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use ai_cluster_protocol::cluster::{
     EnqueueWorkRequest, ListNodesRequest, WorkReportRequest, WorkReportResponse,
@@ -35,6 +36,9 @@ enum Command {
         /// Number of work units to dispatch.
         #[arg(long, default_value_t = 1)]
         repetitions: u32,
+        /// Compute the same workload in-process instead of dispatching it.
+        #[arg(long)]
+        local: bool,
     },
 }
 
@@ -44,9 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
         Command::Events => println!("events is reserved for the telemetry phase"),
-        Command::Benchmark { size, repetitions } => {
-            run_benchmark(&cli.controller, size, repetitions).await?
-        }
+        Command::Benchmark {
+            size,
+            repetitions,
+            local,
+        } => run_benchmark(&cli.controller, size, repetitions, local).await?,
     }
     Ok(())
 }
@@ -84,7 +90,11 @@ async fn run_benchmark(
     endpoint: &str,
     size: u32,
     repetitions: u32,
+    local: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if local {
+        return run_local_baseline(size, repetitions);
+    }
     let mut client = ClusterControlClient::connect(endpoint.to_string()).await?;
     let enqueued = client
         .enqueue_work(EnqueueWorkRequest {
@@ -139,4 +149,35 @@ fn print_report(report: &WorkReportResponse) {
         compute_total / count,
         transfer_total / count,
     );
+}
+
+/// Runs the same matrices in-process on this host as the comparison baseline.
+///
+/// The distributed run's transfer time only means something next to the time the
+/// same work takes without dispatch, serialization or network.
+fn run_local_baseline(size: u32, repetitions: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let a = Matrix::seeded(size, size, 42);
+    let b = Matrix::seeded(size, size, 42 ^ 0x9E37_79B9_7F4A_7C15);
+    let runs = repetitions.max(1);
+    let mut total = Duration::ZERO;
+    for _ in 0..runs {
+        let started = Instant::now();
+        let product = a.multiply(&b).expect("square matrices align");
+        total += started.elapsed();
+        // Keep the optimiser from deleting the work.
+        std::hint::black_box(product.checksum());
+    }
+    let avg_us = total.as_micros() / u128::from(runs);
+    println!("local baseline {size}x{size} repetitions={runs}");
+    println!(
+        "{:<12} {:>14} {:>12}",
+        "SCOPE", "AVG_COMPUTE_US", "TOTAL_US"
+    );
+    println!(
+        "{:<12} {:>14} {:>12}",
+        "single-node",
+        avg_us,
+        total.as_micros()
+    );
+    Ok(())
 }
