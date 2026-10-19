@@ -28,7 +28,7 @@ impl NodeRecord {
         NodeSnapshot {
             identity: Some(self.identity.clone()),
             capability: Some(self.capability.clone()),
-            health: Some(self.health.clone()),
+            health: Some(self.health),
             state: self.state.as_str().to_string(),
             registered_at_unix_ms: self.registered_at_unix_ms,
             last_heartbeat_unix_ms: self.last_heartbeat_unix_ms,
@@ -104,9 +104,7 @@ impl Registry {
         let nodes = self.lock();
         let mut ids: Vec<&String> = nodes.keys().collect();
         ids.sort();
-        ids.into_iter()
-            .map(|id| nodes[id].snapshot())
-            .collect()
+        ids.into_iter().map(|id| nodes[id].snapshot()).collect()
     }
 
     /// Marks nodes that missed `grace_ms` of controller-observed heartbeats as
@@ -128,7 +126,9 @@ impl Registry {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, NodeRecord>> {
-        self.nodes.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.nodes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -149,7 +149,14 @@ mod tests {
     #[test]
     fn register_heartbeat_and_health_round_trip() {
         let registry = Registry::new();
-        registry.register(identity("node-a"), CapabilityReport { cpu_threads: 8, ..Default::default() }, 1_000);
+        registry.register(
+            identity("node-a"),
+            CapabilityReport {
+                cpu_threads: 8,
+                ..Default::default()
+            },
+            1_000,
+        );
 
         let listed = registry.list();
         assert_eq!(listed.len(), 1);
@@ -159,9 +166,15 @@ mod tests {
         assert!(registry.heartbeat("node-a", 2_000));
         assert_eq!(registry.list()[0].last_heartbeat_unix_ms, 2_000);
 
-        let health = HealthReport { health_score: 0.75, ..Default::default() };
+        let health = HealthReport {
+            health_score: 0.75,
+            ..Default::default()
+        };
         assert!(registry.report_health("node-a", health));
-        assert_eq!(registry.list()[0].health.as_ref().unwrap().health_score, 0.75);
+        assert_eq!(
+            registry.list()[0].health.as_ref().unwrap().health_score,
+            0.75
+        );
     }
 
     #[test]
@@ -180,7 +193,10 @@ mod tests {
         assert!(registry.mark_stale_offline(1_500, 10_000).is_empty());
         assert_eq!(registry.list()[0].state, "READY");
 
-        assert_eq!(registry.mark_stale_offline(11_000, 10_000), vec!["node-a".to_string()]);
+        assert_eq!(
+            registry.mark_stale_offline(11_000, 10_000),
+            vec!["node-a".to_string()]
+        );
         assert_eq!(registry.list()[0].state, "OFFLINE");
 
         assert!(registry.heartbeat("node-a", 12_000));
@@ -191,7 +207,14 @@ mod tests {
     fn re_registration_preserves_registration_time() {
         let registry = Registry::new();
         registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
-        registry.register(identity("node-a"), CapabilityReport { cpu_threads: 16, ..Default::default() }, 5_000);
+        registry.register(
+            identity("node-a"),
+            CapabilityReport {
+                cpu_threads: 16,
+                ..Default::default()
+            },
+            5_000,
+        );
 
         let listed = registry.list();
         assert_eq!(listed.len(), 1);

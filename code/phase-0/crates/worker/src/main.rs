@@ -12,7 +12,8 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 5;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let endpoint = std::env::var("AI_CLUSTER_CONTROLLER").unwrap_or_else(|_| DEFAULT_CONTROLLER.to_string());
+    let endpoint =
+        std::env::var("AI_CLUSTER_CONTROLLER").unwrap_or_else(|_| DEFAULT_CONTROLLER.to_string());
     let node_id = node_id();
     let identity = NodeIdentity {
         node_id: node_id.clone(),
@@ -91,7 +92,11 @@ fn os_version() -> String {
             content
                 .lines()
                 .find(|line| line.starts_with("PRETTY_NAME="))
-                .map(|line| line.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                .map(|line| {
+                    line.trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string()
+                })
         })
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "linux".to_string())

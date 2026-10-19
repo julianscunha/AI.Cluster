@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ai_cluster_controller::registry::{unix_ms, Registry};
+use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::ClusterControlService;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use tokio::time;

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
-    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, ListNodesRequest,
-    ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse,
+    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
+    ListNodesRequest, ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse,
 };
 use tonic::{Request, Response, Status};
 
-use crate::registry::{unix_ms, Registry};
+use crate::registry::{Registry, unix_ms};
 
 #[derive(Debug)]
 pub struct ClusterControlService {

@@ -1,12 +1,17 @@
-use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use ai_cluster_protocol::cluster::ListNodesRequest;
+use ai_cluster_protocol::cluster::cluster_control_client::ClusterControlClient;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "ai-cluster")]
 struct Cli {
     /// Controller gRPC endpoint.
-    #[arg(long, global = true, env = "AI_CLUSTER_CONTROLLER", default_value = "http://127.0.0.1:50051")]
+    #[arg(
+        long,
+        global = true,
+        env = "AI_CLUSTER_CONTROLLER",
+        default_value = "http://127.0.0.1:50051"
+    )]
     controller: String,
 
     #[command(subcommand)]
