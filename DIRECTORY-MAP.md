@@ -93,6 +93,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 48. [implementation/phase-0/repository-structure.md](implementation/phase-0/repository-structure.md) — regras do workspace Rust.
 49. [code/os/README.md](code/os/README.md) — notas de OS do workspace.
 50. [implementation/phase-1/join-and-leave.md](implementation/phase-1/join-and-leave.md) — entrada e saída de nós.
+51. [implementation/phase-2/dependency-graph.md](implementation/phase-2/dependency-graph.md) — grafo de dependências.
 
 ### Referência — decisões arquiteturais
 

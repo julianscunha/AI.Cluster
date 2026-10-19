@@ -3,11 +3,11 @@ use std::sync::Arc;
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
-    EnqueueWorkRequest, EnqueueWorkResponse, HealthStreamRequest, HealthStreamResponse,
-    HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse, ListNodesRequest,
-    ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest,
-    RequestWorkResponse, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
-    WorkReportRequest, WorkReportResponse, WorkUnit,
+    EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
+    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
+    LeaveNodeRequest, LeaveNodeResponse, ListNodesRequest, ListNodesResponse, RegisterNodeRequest,
+    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -212,11 +212,56 @@ impl ClusterControl for ClusterControlService {
                 cols: request.cols,
                 matrix_a: a.data,
                 matrix_b: b.data,
+                depends_on: Vec::new(),
             }
         });
         let enqueued = self.work.enqueue(units);
         Ok(Response::new(EnqueueWorkResponse {
             enqueued: enqueued as u32,
+        }))
+    }
+
+    /// Enqueues a small diamond: A -> (B, C) -> D.
+    ///
+    /// B and C are independent, so they can run on different nodes at the same
+    /// time; D is only dispatched once both have completed. This is the smallest
+    /// graph that exercises dependency gating and parallel branches.
+    async fn enqueue_graph(
+        &self,
+        request: Request<EnqueueGraphRequest>,
+    ) -> Result<Response<EnqueueGraphResponse>, Status> {
+        let request = request.into_inner();
+        if request.size == 0 {
+            return Err(Status::invalid_argument("size must be greater than zero"));
+        }
+        let size = request.size;
+        let unit = |work_id: String, depends_on: Vec<String>| {
+            let a = Matrix::seeded(size, size, request.seed);
+            let b = Matrix::seeded(size, size, request.seed ^ 0x9E37_79B9_7F4A_7C15);
+            WorkUnit {
+                work_id,
+                rows: size,
+                shared: size,
+                cols: size,
+                matrix_a: a.data,
+                matrix_b: b.data,
+                depends_on,
+            }
+        };
+        let first = self.work.next_work_id();
+        let left = self.work.next_work_id();
+        let right = self.work.next_work_id();
+        let join = self.work.next_work_id();
+        let units = vec![
+            unit(first.clone(), Vec::new()),
+            unit(left.clone(), vec![first.clone()]),
+            unit(right.clone(), vec![first.clone()]),
+            unit(join, vec![left, right]),
+        ];
+        let enqueued = self.work.enqueue(units);
+        Ok(Response::new(EnqueueGraphResponse {
+            enqueued: enqueued as u32,
+            blocked: self.work.blocked() as u32,
         }))
     }
 
@@ -285,6 +330,7 @@ mod tests {
             cols: 2,
             matrix_a: vec![1.0, 2.0, 3.0, 4.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
+            depends_on: Vec::new(),
         }
     }
 
@@ -584,5 +630,27 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn enqueue_graph_builds_a_diamond_with_blocked_branches() {
+        let (service, work_store) = service_with_work();
+        let response = service
+            .enqueue_graph(Request::new(EnqueueGraphRequest { size: 2, seed: 7 }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.enqueued, 4);
+        // A is ready; B, C and D wait on their dependencies.
+        assert_eq!(response.blocked, 3);
+        assert_eq!(work_store.pending(), 4);
+        assert_eq!(work_store.blocked(), 3);
+
+        // A size of zero is a client error.
+        let invalid = service
+            .enqueue_graph(Request::new(EnqueueGraphRequest { size: 0, seed: 7 }))
+            .await
+            .unwrap_err();
+        assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
     }
 }

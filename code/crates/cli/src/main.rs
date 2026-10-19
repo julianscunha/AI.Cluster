@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    EnqueueWorkRequest, ListNodesRequest, WorkReportRequest, WorkReportResponse,
+    EnqueueGraphRequest, EnqueueWorkRequest, ListNodesRequest, WorkReportRequest,
+    WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
@@ -40,6 +41,12 @@ enum Command {
         #[arg(long)]
         local: bool,
     },
+    /// Dispatch a dependency graph (diamond) and watch the branches gate.
+    Graph {
+        /// Square matrix edge length for every unit in the graph.
+        #[arg(long, default_value_t = 128)]
+        size: u32,
+    },
 }
 
 #[tokio::main]
@@ -53,7 +60,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             repetitions,
             local,
         } => run_benchmark(&cli.controller, size, repetitions, local).await?,
+        Command::Graph { size } => run_graph(&cli.controller, size).await?,
     }
+    Ok(())
+}
+
+/// Enqueues the diamond graph and polls until it drains.
+///
+/// A single-node run cannot show branch parallelism; what it shows is that the
+/// gating works: B and C wait for A, and D waits for both. Run it against two
+/// workers to see B and C land on different nodes.
+async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let response = client
+        .enqueue_graph(EnqueueGraphRequest { size, seed: 42 })
+        .await?
+        .into_inner();
+    println!(
+        "graph enqueued={} blocked={} size={size}",
+        response.enqueued, response.blocked
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let report = loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let report = client.work_report(WorkReportRequest {}).await?.into_inner();
+        if report.pending == 0 || tokio::time::Instant::now() >= deadline {
+            break report;
+        }
+    };
+    print_report(&report);
     Ok(())
 }
 

@@ -3,7 +3,7 @@
 //! The comparison this enables: total round trip observed by the controller
 //! minus the compute time reported by the worker is the transfer overhead.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,6 +33,8 @@ struct Inner {
     queue: VecDeque<WorkUnit>,
     dispatched: HashMap<String, Dispatched>,
     completed: Vec<CompletedWork>,
+    /// Ids of units that finished, so a unit's dependencies can be checked.
+    completed_ids: HashSet<String>,
 }
 
 /// In-memory dispatch queue. No persistence: a controller restart loses pending
@@ -63,15 +65,24 @@ impl WorkStore {
         count
     }
 
-    /// Hands out at most one unit per call so a fast node cannot drain the queue
-    /// before its peers get a chance.
+    /// Hands out the first unit whose dependencies have all completed.
     ///
-    /// ponytail: the unit is cloned into the dispatch table so it can be requeued
-    /// if the node leaves; that doubles payload memory while in flight. Move to an
-    /// id-only table if unit payloads stop fitting in RAM.
+    /// ponytail: scans the queue for a ready unit, so claiming is O(n) in queue
+    /// length. Fine at benchmark scale; split into blocked and ready queues when
+    /// graphs reach thousands of units. The unit is also cloned into the dispatch
+    /// table so it can be requeued if the node leaves; move to an id-only table if
+    /// unit payloads stop fitting in RAM.
     pub fn claim(&self, node_id: &str, now_unix_ms: u64) -> Option<WorkUnit> {
         let mut inner = self.lock();
-        let unit = inner.queue.pop_front()?;
+        let index = {
+            let completed_ids = &inner.completed_ids;
+            inner.queue.iter().position(|unit| {
+                unit.depends_on
+                    .iter()
+                    .all(|dep| completed_ids.contains(dep))
+            })?
+        };
+        let unit = inner.queue.remove(index)?;
         inner.dispatched.insert(
             unit.work_id.clone(),
             Dispatched {
@@ -107,6 +118,8 @@ impl WorkStore {
             checksum: result.checksum,
         };
         inner.completed.push(completed.clone());
+        // Recorded so units that depend on this one become claimable.
+        inner.completed_ids.insert(completed.work_id.clone());
         Some(completed)
     }
 
@@ -118,6 +131,22 @@ impl WorkStore {
     pub fn pending(&self) -> usize {
         let inner = self.lock();
         inner.queue.len() + inner.dispatched.len()
+    }
+
+    /// Queued units whose dependencies are not satisfied yet.
+    pub fn blocked(&self) -> usize {
+        let inner = self.lock();
+        let completed_ids = &inner.completed_ids;
+        inner
+            .queue
+            .iter()
+            .filter(|unit| {
+                !unit
+                    .depends_on
+                    .iter()
+                    .all(|dep| completed_ids.contains(dep))
+            })
+            .count()
     }
 
     /// Hands in-flight units belonging to `node_id` back to the queue and reports
@@ -163,6 +192,7 @@ mod tests {
             cols: 2,
             matrix_a: vec![1.0, 2.0, 3.0, 4.0],
             matrix_b: vec![5.0, 6.0, 7.0, 8.0],
+            depends_on: Vec::new(),
         }
     }
 
@@ -284,5 +314,66 @@ mod tests {
         assert_eq!(store.pending(), 2);
         // node-a's unit is still owned by node-a and still completable.
         assert!(store.complete(result("w1", 1_000), 2_000).is_some());
+    }
+
+    fn dependent(work_id: &str, depends_on: &[&str]) -> WorkUnit {
+        let mut unit = unit(work_id);
+        unit.depends_on = depends_on.iter().map(|d| d.to_string()).collect();
+        unit
+    }
+
+    #[test]
+    fn blocked_units_are_not_claimed_until_dependencies_complete() {
+        let store = WorkStore::new();
+        assert_eq!(store.enqueue([unit("w1"), dependent("w2", &["w1"])]), 2);
+        assert_eq!(store.pending(), 2);
+        assert_eq!(store.blocked(), 1);
+
+        // w2 is behind w1, so claiming in order yields w1 first.
+        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        assert_eq!(first.work_id, "w1");
+
+        // w2 stays blocked while its dependency is still in flight.
+        assert!(store.claim("node-b", 1_000).is_none());
+        assert_eq!(store.blocked(), 1);
+
+        store.complete(result("w1", 1_000), 2_000).expect("w1 done");
+        assert_eq!(store.blocked(), 0);
+
+        // With w1 complete, w2 becomes claimable.
+        let second = store.claim("node-b", 2_000).expect("w2 is ready");
+        assert_eq!(second.work_id, "w2");
+        let mut done = result("w2", 1_000);
+        done.node_id = "node-b".to_string();
+        store.complete(done, 3_000).expect("w2 done");
+        assert_eq!(store.pending(), 0);
+        assert_eq!(store.completed().len(), 2);
+    }
+
+    #[test]
+    fn claim_skips_blocked_units_to_reach_a_ready_one() {
+        let store = WorkStore::new();
+        // The blocked unit sits at the head; a ready unit sits behind it.
+        assert_eq!(store.enqueue([dependent("w2", &["w1"]), unit("w1")]), 2);
+        assert_eq!(store.blocked(), 1);
+
+        // The head is blocked, so the scan must find w1 further down the queue.
+        let claimed = store.claim("node-a", 1_000).expect("w1 is ready");
+        assert_eq!(claimed.work_id, "w1");
+    }
+
+    #[test]
+    fn requeue_keeps_dependencies_intact() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        assert_eq!(first.work_id, "w1");
+
+        // node-a leaves with w1 in flight; w1 returns to the queue still ready.
+        assert_eq!(store.requeue_for_node("node-a"), 1);
+        let again = store.claim("node-b", 2_000).expect("w1 requeued");
+        assert_eq!(again.work_id, "w1");
+        // w2 is still blocked because w1 has not completed.
+        assert_eq!(store.blocked(), 1);
     }
 }

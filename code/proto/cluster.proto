@@ -82,6 +82,8 @@ message WorkUnit {
   uint32 cols = 4;
   repeated double matrix_a = 5;
   repeated double matrix_b = 6;
+  /// Work ids that must complete before this unit may be dispatched.
+  repeated string depends_on = 7;
 }
 
 message WorkResult {
@@ -124,6 +126,18 @@ message EnqueueWorkResponse {
   uint32 enqueued = 1;
 }
 
+message EnqueueGraphRequest {
+  /// Edge length of each square matrix in the graph.
+  uint32 size = 1;
+  uint64 seed = 2;
+}
+
+message EnqueueGraphResponse {
+  uint32 enqueued = 1;
+  /// Units held back until their dependencies complete.
+  uint32 blocked = 2;
+}
+
 message WorkReportRequest {}
 
 message WorkReportEntry {
@@ -158,5 +172,6 @@ service ClusterControl {
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);
   rpc EnqueueWork(EnqueueWorkRequest) returns (EnqueueWorkResponse);
+  rpc EnqueueGraph(EnqueueGraphRequest) returns (EnqueueGraphResponse);
   rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
 }

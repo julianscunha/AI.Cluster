@@ -21,6 +21,8 @@ cross-machine performance claim.
    hardware still PENDING
 7. Compare compute time, transfer time and total latency. — VERIFIED for the
    same-host case (`ai-cluster benchmark --size N --repetitions R`)
+8. Graceful node leave with in-flight work. — VERIFIED (`bash code/tests/phase-1-leave.sh`)
+9. Dependency graph dispatch (diamond). — VERIFIED (`bash code/tests/phase-2-graph.sh`)
 
 ## Measured comparison — 128x128, 4 cores, single host
 
