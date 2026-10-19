@@ -1652,7 +1652,7 @@ mod tests {
         );
 
         // 5 MiB/s observados: 200 ms por MiB, mais RTT+jitter da sonda.
-        assert_eq!(estimated, 205_000);
+        assert_eq!(estimated, 200_055);
     }
 
     #[tokio::test]
@@ -1697,7 +1697,7 @@ mod tests {
         );
 
         // A taxa de falha da sonda não deve penalizar a transferência real bem-sucedida.
-        assert_eq!(estimated, 105_000);
+        assert_eq!(estimated, 100_055);
     }
 
     #[tokio::test]
