@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub mod matrix;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId(pub String);
 

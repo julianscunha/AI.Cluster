@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::ClusterControlService;
+use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use tokio::time;
 use tonic::transport::Server;
@@ -18,7 +19,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(15_000);
 
     let registry = Arc::new(Registry::new());
-    let service = ClusterControlService::new(registry.clone(), "local");
+    let work = Arc::new(WorkStore::new());
+    let service = ClusterControlService::new(registry.clone(), work.clone(), "local");
 
     // ponytail: single sweep interval for all nodes; per-node timers only if grace must vary.
     let sweep = registry.clone();

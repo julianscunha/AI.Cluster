@@ -100,6 +100,11 @@ impl Registry {
         }
     }
 
+    /// Whether the node is registered at all, regardless of its state.
+    pub fn knows(&self, node_id: &str) -> bool {
+        self.lock().contains_key(node_id)
+    }
+
     pub fn list(&self) -> Vec<NodeSnapshot> {
         let nodes = self.lock();
         let mut ids: Vec<&String> = nodes.keys().collect();

@@ -75,9 +75,48 @@ message ListNodesResponse {
   repeated NodeSnapshot nodes = 1;
 }
 
+message WorkUnit {
+  string work_id = 1;
+  uint32 rows = 2;
+  uint32 shared = 3;
+  uint32 cols = 4;
+  repeated double matrix_a = 5;
+  repeated double matrix_b = 6;
+}
+
+message WorkResult {
+  string work_id = 1;
+  string node_id = 2;
+  uint32 rows = 3;
+  uint32 cols = 4;
+  repeated double matrix_c = 5;
+  double checksum = 6;
+  uint64 compute_time_us = 7;
+}
+
+message RequestWorkRequest {
+  string node_id = 1;
+}
+
+message RequestWorkResponse {
+  bool has_work = 1;
+  WorkUnit work = 2;
+}
+
+message SubmitWorkResultRequest {
+  WorkResult result = 1;
+}
+
+message SubmitWorkResultResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
+  rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);
 }
