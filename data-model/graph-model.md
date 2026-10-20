@@ -1,13 +1,13 @@
 ---
-title: "Data Model — Graph Model"
+title: "Modelo de dados — modelo de grafo"
 type: data-model
 status: draft
 tags: [data-model, graph-model]
 ---
 
-# Data Model — Graph Model
+# Modelo de dados — modelo de grafo
 
-## Graph node types
+## Tipos de nó do grafo
 
 ```text
 Cluster
@@ -33,7 +33,7 @@ Skill
 Tool
 ```
 
-## Edge types
+## Tipos de aresta
 
 ```text
 HOSTS
@@ -51,10 +51,10 @@ REQUIRES
 SUPPORTS
 ```
 
-## Principles
+## Princípios
 
-- graph is query/traversal optimized;
-- object stores remain authoritative for large payloads;
-- graph must be reconstructible;
-- topology edges carry metrics and health where appropriate;
-- temporal state should be versioned.
+- o grafo é otimizado para consulta/travessia;
+- object stores continuam sendo autoridade para payloads grandes;
+- o grafo deve ser reconstruível;
+- arestas de topologia carregam métricas e health quando apropriado;
+- estado temporal deve ser versionado.

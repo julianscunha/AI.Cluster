@@ -1,23 +1,23 @@
 ---
-title: "AI Cluster — Phase 0 Skeleton"
+title: "AI Cluster — Esqueleto da Fase 0"
 type: operational
 status: living
 tags: [operational, readme]
 ---
 
-# AI Cluster — Phase 0 Skeleton
+# AI Cluster — Esqueleto da Fase 0
 
-This is the implementation skeleton for Phase 0 of the AI Cluster project.
+Este é o esqueleto de implementação da Fase 0 do projeto AI Cluster.
 
-The first goal is not LLM inference. It is to validate the distributed execution substrate:
+O primeiro objetivo não é inferência de LLM. É validar o substrato de execução distribuída:
 
-- Controller/Worker protocol
-- node identity
+- protocolo Controller/Worker
+- identidade de nó
 - heartbeat
-- capability reporting
-- Work Unit lifecycle
-- transport abstraction
-- benchmark harness
-- CLI/TUI boundary
+- reporte de capabilities
+- ciclo de vida da Work Unit
+- abstração de transporte
+- harness de benchmark
+- fronteira CLI/TUI
 
-No production LLM runtime is included in this phase.
+Nenhum runtime de LLM de produção está incluído nesta fase.

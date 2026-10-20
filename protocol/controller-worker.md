@@ -1,19 +1,19 @@
 ---
-title: "Controller ↔ Worker Protocol"
+title: "Protocolo Controller ↔ Worker"
 type: protocol
 status: proposed
 tags: [protocol, controller-worker]
 ---
 
-# Controller ↔ Worker Protocol
+# Protocolo Controller ↔ Worker
 
-Status: PROPOSED
+Status: PROPOSTO
 
-## Transport
+## Transporte
 
 gRPC + Protobuf é a opção inicial para control plane.
 
-## Lifecycle messages
+## Mensagens de ciclo de vida
 
 ```text
 HELLO
@@ -36,35 +36,35 @@ DRAIN
 LEAVE
 ```
 
-## Message requirements
+## Requisitos de mensagem
 
 Cada mensagem deve possuir:
 
 - protocol version;
 - node_id;
 - correlation id;
-- timestamp/monotonic sequence quando aplicável;
+- timestamp/sequência monotônica quando aplicável;
 - authentication context;
 - idempotency key para operações mutáveis.
 
-### Implementation status (Phase 0)
+### Estado de implementação (Fase 0)
 
-`node_id` travels in each protobuf payload. The remaining fields are carried as
-gRPC request metadata, set by an interceptor so no call site repeats them:
+O `node_id` viaja em cada payload protobuf. Os demais campos são carregados como
+metadata de requisição gRPC, definidos por um interceptor para que nenhum ponto de chamada os repita:
 
-| field | header | status |
+| campo | header | estado |
 |---|---|---|
-| protocol version | `x-ai-cluster-protocol-version` | emitted by clients, enforced by the controller |
-| correlation id | `x-ai-cluster-correlation-id` | fresh value per call |
-| authentication context | `x-ai-cluster-auth` | placeholder `anonymous` until the trust phase |
-| idempotency | — | structural: a work unit leaves the dispatch table on completion, so a duplicate submission has nothing to complete |
+| protocol version | `x-ai-cluster-protocol-version` | emitido pelos clientes, imposto pelo controller |
+| correlation id | `x-ai-cluster-correlation-id` | valor novo a cada chamada |
+| authentication context | `x-ai-cluster-auth` | placeholder `anonymous` até a fase de trust |
+| idempotency | — | estrutural: uma unidade de trabalho sai da tabela de dispatch ao completar, então uma submissão duplicada não tem o que completar |
 
-The controller rejects any call whose protocol version does not match its own.
+O controller rejeita qualquer chamada cuja versão de protocolo não bata com a sua.
 
 ## Streaming
 
-Telemetry e transferências longas devem suportar streaming/backpressure.
+Telemetria e transferências longas devem suportar streaming/backpressure.
 
-## Compatibility
+## Compatibilidade
 
-O Controller deve conhecer capabilities/features suportadas antes de enviar determinada operação.
+O Controller deve conhecer as capabilities/features suportadas antes de enviar determinada operação.

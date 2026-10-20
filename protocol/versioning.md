@@ -1,22 +1,22 @@
 ---
-title: "Protocol Versioning"
+title: "Versionamento do protocolo"
 type: protocol
 status: draft
 tags: [protocol, versioning]
 ---
 
-# Protocol Versioning
+# Versionamento do protocolo
 
-## Rules
+## Regras
 
-- Protobuf schema evolution must be backward compatible within supported version windows.
-- Feature negotiation must occur during registration.
-- Controller and Worker must report protocol/runtime versions separately.
-- Incompatible nodes are rejected or quarantined before workload assignment.
+- A evolução do schema Protobuf deve ser retrocompatível dentro das janelas de versão suportadas.
+- A negociação de features deve ocorrer durante o registro.
+- Controller e Worker devem reportar versões de protocolo/runtime separadamente.
+- Nós incompatíveis são rejeitados ou colocados em quarentena antes da atribuição de carga.
 
-## Upgrade strategy
+## Estratégia de upgrade
 
-Prefer rolling upgrades:
+Prefira upgrades graduais:
 
 ```text
 node01 update
@@ -26,4 +26,4 @@ node01 update
  -> ...
 ```
 
-Never require the entire cluster to upgrade atomically unless explicitly declared as a major breaking release.
+Nunca exija que o cluster inteiro atualize de forma atômica, a menos que seja declarado explicitamente como uma release major de quebra.
