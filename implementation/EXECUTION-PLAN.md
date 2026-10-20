@@ -240,7 +240,11 @@ Critério de saída: perder um worker não corrompe o DAG. — [x]
 Capabilities, memory, trust, health.
 
 - [x] capabilities (cpu_threads) e health (heartbeat);
-- [ ] memory, trust.
+- [x] memory: footprint da unidade (`placement::unit_footprint_bytes`) contra a memória que o
+  nó reporta, decidido em `placement::fits`. Evidência: `bash code/tests/phase-g-memory.sh`.
+- [~] trust: hoje é a exclusão por estado (`registry::eligible` recusa QUARANTINED/FAILED/
+  OFFLINE); os níveis de trust do docs/06 dependem do fluxo de enrollment do docs/19, que ainda
+  não existe.
 
 ### G2 Cost model
 

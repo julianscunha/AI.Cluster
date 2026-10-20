@@ -7,9 +7,10 @@ tags: [implementation, phase-2, placement, scheduler, capability]
 
 # Fase 2 — Placement
 
-Filtragem de candidatos: uma unidade de trabalho declara a capability de que precisa, e o
-controller se recusa a entregá-la a um nó que não a tenha. O dispatch deixa de ser
-por ordem de chegada e vira uma decisão.
+Filtragem de candidatos: o controller se recusa a entregar uma unidade a um nó que não a
+possa rodar. O requisito vem de duas fontes — o `min_cpu_threads` que a unidade declara e o
+footprint da própria unidade contra a memória que o nó reporta. O dispatch deixa de ser por
+ordem de chegada e vira uma decisão.
 
 Esta é a primeira peça do scheduler. Ela filtra candidatos; o modelo de custo (G2) os custa
 e o scheduler global (G3) usa esse custo para decidir — o nó que não é o melhor candidato
@@ -21,24 +22,32 @@ cede a vez. Ver as duas seções abaixo.
   sem requisito, o que vale para toda unidade que o controller constrói hoje, exceto as
   que um cliente marca.
 - `EnqueueWorkRequest.min_cpu_threads` (campo 6 do proto) permite um cliente defini-lo.
-- `WorkStore::claim` recebe o `cpu_threads` do nó que pede e pula unidades que o
-  nó não consegue rodar. O nó continua fazendo poll e pega a próxima unidade que pode assumir.
+- `WorkStore::claim` e `claim_placed` recebem o `CapabilityReport` do nó que pede e pulam
+  unidades que ele não consegue rodar. O nó continua fazendo poll e pega a próxima unidade que
+  pode assumir.
+- `placement::fits` é o único lugar onde a aptidão de um candidato é decidida: passa
+  `min_cpu_threads` e o footprint contra threads e memória. Os dois caminhos de despacho o usam,
+  então o filtro não pode divergir entre eles.
+- `placement::unit_footprint_bytes` deriva o requisito de memória da própria unidade — A e B
+  lidos, C escrito, 8 bytes por elemento. Nenhum campo novo no proto: o requisito não é
+  declarado, é calculado, porque o controller já sabe o tamanho da unidade.
 - `Registry::capability` expõe o último `CapabilityReport` reportado para um
   nó. O registry já o guardava; nada o lia de volta por nó antes.
-- `request_work` lê a capability do nó e passa seu `cpu_threads` para
-  `claim`, então o filtro roda no único lugar onde o trabalho é entregue.
-- O worker reporta menos threads que o host tem quando
-  `AI_CLUSTER_CPU_THREADS` está definida. Sem definir, reporta a realidade. Existe para que um
-  único host possa fazer as vezes de duas máquinas de tamanhos diferentes.
+- `request_work` lê a capability do nó e a passa para `claim`/`claim_placed`, então o filtro
+  roda no único lugar onde o trabalho é entregue.
+- O worker reporta menos threads e menos memória que o host tem quando
+  `AI_CLUSTER_CPU_THREADS` / `AI_CLUSTER_MEMORY_BYTES` estão definidas. Sem definir, reporta a
+  realidade. Existem para que um único host possa fazer as vezes de duas máquinas de tamanhos
+  diferentes.
 - `ai-cluster benchmark --min-threads N` define o requisito nas unidades que
   enfileira.
 
 ## Semântica
 
-O requisito é **duro**, não uma preferência. Uma unidade que precisa de mais threads do que
-um nó tem não é entregue a ele de jeito nenhum — mesmo que isso signifique que a unidade espere. Um nó
-que reporta menos threads do que uma unidade precisa recebe a próxima unidade que *pode* rodar, ou
-nada.
+O requisito é **duro**, não uma preferência. Uma unidade que precisa de mais threads, ou de
+mais memória, do que um nó tem não é entregue a ele de jeito nenhum — mesmo que isso signifique
+que a unidade espere. Um nó que não comporta a unidade recebe a próxima unidade que *pode*
+rodar, ou nada.
 
 Isso importa porque o modelo de dispatch é baseado em pull: os workers fazem poll
 em `RequestWork`, e a única alavanca do controller é o que dar a cada solicitante. Então
@@ -55,7 +64,7 @@ Duas consequências se seguem, e ambas são deliberadas:
   pega uma unidade pesada; ele só não recebe trabalho até aparecer uma unidade leve ou um nó
   capaz pegar a pesada.
 
-## Evidência
+## Evidência — threads
 
 Reproduza com `bash code/tests/phase-2-placement.sh`. Um nó fraco reportando 2
 threads sobe sozinho; uma unidade exigindo 4 threads é enfileirada; nada termina;
@@ -86,6 +95,33 @@ O filtro em si é coberto pelo teste unitário
 `a_weak_node_is_skipped_for_a_unit_that_requires_more_threads`, que verifica os
 três casos num só lugar: um nó fraco recebe a unidade leve em vez da pesada,
 um nó capaz recebe a pesada, e um nó fraco sozinho não recebe nada.
+
+## Evidência — memória
+
+Reproduza com `bash code/tests/phase-g-memory.sh`. Um nó reportando 1.000.000 bytes sobe
+sozinho; uma unidade 256x256 (footprint de 1.572.864 bytes) é enfileirada; nada termina; então
+um nó reportando 2.000.000.000 bytes entra e pega a unidade.
+
+```text
+--- unidade 256x256 precisa de 1572864 bytes ---
+NÓS 1
+NÓ                   ESTADO     ARQ        THREADS    RAM_GB    SAÚDE
+node-small           READY      x86_64           4      0.00     0.75
+--- log do controller durante a janela só-pequeno ---
+OK: nada finalizou; o nó pequeno não pegou uma unidade que não cabe nele
+TRABALHO   NÓ               COMPUTE_US  TRANSFER_US     TOTAL_US
+w-0        node-large             5676        14324        20000
+```
+
+`w-0 node-large` é a linha que importa. O nó pequeno estava presente e fazendo poll enquanto a
+unidade esperava, e nunca a pegou, porque o footprint dela não cabia nos bytes que ele reportou.
+Repare que as threads dos dois nós são as mesmas (4): o discriminante aqui é só a memória.
+
+Coberto pelos testes unitários `a_node_that_cannot_hold_the_unit_is_skipped` (limite exato:
+95 bytes não cabe, 96 cabe), `footprint_is_the_three_matrices_in_bytes` e
+`a_unit_that_does_not_fit_the_reported_memory_is_excluded`.
+`unreported_memory_does_not_filter_a_unit_out` fixa a convenção de que `memory_bytes = 0`
+significa "não reportado" e não "sem RAM".
 
 ## Modelo de custo (G2)
 
@@ -136,10 +172,15 @@ benchmark comparar as duas políticas na mesma carga sem recompilar.
 
 ## Teto conhecido
 
-**Só cpu_threads é filtrado.** Memória, precisão, aceleradores e armazenamento são
-reportados pelo worker e guardados pelo registry, mas nenhuma unidade pode exigi-los
-ainda. O campo de requisito é um número; estenda-o para uma mensagem de requisitos quando
-a próxima capability importar.
+**Precisão, aceleradores e armazenamento ainda não filtram.** O worker reporta esses campos e
+o registry os guarda, mas nenhuma unidade pode exigi-los. `placement::fits` é o lugar onde a
+próxima dimensão entra.
+
+**Trust não tem estado próprio.** A filtragem de trust hoje é a exclusão por estado: um nó
+`QUARANTINED`, `FAILED` ou `OFFLINE` não é candidato (`registry::eligible`). Os níveis de trust
+do `docs/06` (`UNKNOWN` → `TRUSTED`) dependem do fluxo de enrollment do `docs/19`, que ainda
+não existe; implementá-los antes disso deixaria todo nó inelegível ou contradiria a spec.
+Fechar quando o provisionamento existir.
 
 **Uma unidade cujo requisito nenhum nó atende fica pendente.** Sem erro, sem fail-fast:
 o cliente faz poll até seu próprio deadline. O placement não consegue detectar "isto nunca vai

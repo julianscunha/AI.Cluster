@@ -54,6 +54,27 @@ fn transfer_rate(capability: &CapabilityReport) -> f64 {
     }
 }
 
+/// Bytes a unit needs resident to run: two operands read in and one result written
+/// back, at `BYTES_PER_ELEMENT` each. Saturating, so an absurd shape cannot wrap.
+pub fn unit_footprint_bytes(unit: &WorkUnit) -> u64 {
+    let elements = u64::from(unit.rows) * u64::from(unit.shared)
+        + u64::from(unit.shared) * u64::from(unit.cols)
+        + u64::from(unit.rows) * u64::from(unit.cols);
+    elements.saturating_mul(BYTES_PER_ELEMENT as u64)
+}
+
+/// Whether a node's reported capability can run the unit at all.
+///
+/// The declared `min_cpu_threads` and the unit's own footprint are **hard** filters:
+/// a node that cannot run the unit never gets it, however cheap it would otherwise
+/// be. `memory_bytes == 0` means the node did not report memory, so the memory
+/// filter is skipped rather than read as "no RAM" — the same convention as an
+/// unreported health score.
+pub fn fits(unit: &WorkUnit, capability: &CapabilityReport) -> bool {
+    unit.min_cpu_threads <= capability.cpu_threads
+        && (capability.memory_bytes == 0 || unit_footprint_bytes(unit) <= capability.memory_bytes)
+}
+
 /// Predicted cost of running `unit` on the candidate node. Lower is better.
 ///
 /// Terms: compute (flops over the node's rate), transfer (bytes over its network
@@ -74,9 +95,8 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
     let compute = COMPUTE_WEIGHT * flops / compute_rate(candidate.capability);
 
     // A and B are read in, C is written back.
-    let elements = rows * shared + shared * cols + rows * cols;
     let transfer =
-        TRANSFER_WEIGHT * elements * BYTES_PER_ELEMENT / transfer_rate(candidate.capability);
+        TRANSFER_WEIGHT * unit_footprint_bytes(unit) as f64 / transfer_rate(candidate.capability);
 
     let queue = QUEUE_WEIGHT * f64::from(candidate.in_flight);
 
@@ -196,5 +216,25 @@ mod tests {
         let busy = capability(8, 0.0, 0.0);
         let idle = capability(4, 0.0, 0.0);
         assert!(cost(&idle, &health(1.0), 0, &u) < cost(&busy, &health(1.0), 40, &u));
+    }
+
+    #[test]
+    fn footprint_is_the_three_matrices_in_bytes() {
+        // 2x2x2: (4 + 4 + 4) elements * 8 bytes per element.
+        assert_eq!(unit_footprint_bytes(&unit(2, 2, 2)), 96);
+    }
+
+    #[test]
+    fn unreported_memory_does_not_filter_a_unit_out() {
+        // CapabilityReport::default() leaves memory_bytes at 0, meaning "not reported".
+        assert!(fits(&unit(64, 64, 64), &capability(2, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_unit_that_does_not_fit_the_reported_memory_is_excluded() {
+        let mut cap = capability(8, 0.0, 0.0);
+        cap.memory_bytes = 1_000;
+        assert!(fits(&unit(2, 2, 2), &cap)); // 96 bytes
+        assert!(!fits(&unit(64, 64, 64), &cap)); // 98_304 bytes
     }
 }

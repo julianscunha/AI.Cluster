@@ -168,13 +168,13 @@ impl ClusterControl for ClusterControlService {
                 "nó não está disponível para trabalho",
             ));
         }
-        // Candidate filtering: the unit's declared requirement is checked against
-        // what this node reported, so a weak node is not handed work it cannot run.
-        let cpu_threads = self
+        // Candidate filtering: the unit's declared requirement and its own footprint
+        // are checked against what this node reported, so a node that cannot run the
+        // unit is never handed it.
+        let capability = self
             .registry
             .capability(&request.node_id)
-            .map(|capability| capability.cpu_threads)
-            .unwrap_or(0);
+            .unwrap_or_default();
         // Placement (G3): rank the asking node against the other idle candidates and
         // hand it a unit only when it is the cheapest fit. A node that is not the best
         // fit gets nothing and polls again, so the unit waits for the node that fits
@@ -182,9 +182,9 @@ impl ClusterControl for ClusterControlService {
         let claimed = if placement_enabled() {
             let candidates = self.registry.candidates();
             self.work
-                .claim_placed(&request.node_id, cpu_threads, unix_ms(), &candidates)
+                .claim_placed(&request.node_id, &capability, unix_ms(), &candidates)
         } else {
-            self.work.claim(&request.node_id, cpu_threads, unix_ms())
+            self.work.claim(&request.node_id, &capability, unix_ms())
         };
         match claimed {
             Some(work) => Ok(Response::new(RequestWorkResponse {

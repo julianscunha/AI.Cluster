@@ -293,9 +293,15 @@ fn capability() -> CapabilityReport {
                 .map(|threads| threads.get() as u32)
                 .unwrap_or(0)
         });
+    // Same idea for memory: a placement test can stand a small-memory node next to a
+    // large one on a single host. Unset means report reality.
+    let memory_bytes = std::env::var("AI_CLUSTER_MEMORY_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| meminfo_kb("MemTotal:").map(|kb| kb * 1024).unwrap_or(0));
     CapabilityReport {
         cpu_threads,
-        memory_bytes: meminfo_kb("MemTotal:").map(|kb| kb * 1024).unwrap_or(0),
+        memory_bytes,
         precisions: vec!["fp32".to_string()],
         ..Default::default()
     }
