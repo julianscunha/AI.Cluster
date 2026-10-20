@@ -1,62 +1,61 @@
 ---
-title: "Controller state persistence"
+title: "Persistência de estado do controller"
 type: implementation
 status: implemented
 tags: [implementation, persistence, storage, state]
 ---
 
-# Controller state persistence
+# Persistência de estado do controller
 
-The controller kept its queue in memory. A restart — a crash, a redeploy, a killed
-container — lost everything queued and every unit that had not completed. This is the
-first piece of the plan's storage phase: the work queue and its outputs survive a
-restart. See `work.rs:68` for where the previous slice recorded the gap.
+O controller mantinha a fila em memória. Um restart — crash, redeploy, container morto —
+perdia tudo que estava na fila e toda unidade que não havia completado. Esta é a primeira
+peça da fase de storage do plano: a fila de trabalho e seus outputs sobrevivem a um
+restart. Ver `work.rs:68`, onde a fatia anterior registrou a lacuna.
 
-## What changed
+## O que mudou
 
-- `WorkSnapshot` and `WorkOutput` in the proto: the on-disk shape of the store.
-- `WorkStore::with_state(path)`: opens a store backed by the snapshot at `path`,
-  loading it when one exists. A missing file is a first run, not an error.
-- `WorkStore::save_locked`: writes the whole store after each mutation that changes
-  what is queued or completed.
-- `AI_CLUSTER_STATE` names the snapshot file. Unset means memory only, which is what the
-  benchmark and test runs use.
+- `WorkSnapshot` e `WorkOutput` no proto: a forma em disco do store.
+- `WorkStore::with_state(path)`: abre um store apoiado no snapshot em `path`, carregando-o
+  quando existe. Arquivo ausente é primeira execução, não erro.
+- `WorkStore::save_locked`: grava o store inteiro depois de cada mutação que muda o que
+  está na fila ou concluído.
+- `AI_CLUSTER_STATE` nomeia o arquivo de snapshot. Sem ela, é só memória — que é o que os
+  benchmarks e os testes usam.
 
-No new dependency: `prost` is already in the tree through `ai-cluster-protocol`, and the
-snapshot reuses the generated message types rather than growing a second serialization
-path.
+Sem dependência nova: `prost` já está na árvore via `ai-cluster-protocol`, e o snapshot
+reusa os tipos gerados em vez de criar um segundo caminho de serialização.
 
-## Semantics
+## Semântica
 
-The snapshot holds what is **not yet done**: the queue, plus whatever was in flight,
-plus the outputs of what completed. On reload, in-flight units go back to the queue. The
-worker that held one may still be running, but the reloaded controller has no dispatch
-record for it, so that result would be refused. Re-offering the unit is what keeps the
-work from vanishing. A unit may therefore run twice; for a deterministic matrix multiply
-that is the same answer.
+O snapshot guarda o que **ainda não foi feito**: a fila, mais o que estava em voo, mais os
+outputs do que completou. No reload, unidades em voo voltam para a fila. O worker que
+segurava uma pode ainda estar rodando, mas o controller recarregado não tem registro de
+dispatch dela, então esse resultado seria recusado. Reoferecer a unidade é o que impede o
+trabalho de sumir. Uma unidade pode, portanto, rodar duas vezes; para uma multiplicação de
+matrizes determinística, é a mesma resposta.
 
-Deliberately **not** saved on `claim`. A unit in flight when the controller dies is still
-in the previous snapshot's `pending`, so it returns without a save on every poll. Saving
-per claim would put the whole state on disk at the poll rate — with the 200ms idle poll,
-a write per worker per poll — for no added safety.
+Deliberadamente **não** salva no `claim`. Uma unidade em voo quando o controller morre
+ainda está no `pending` do snapshot anterior, então volta sem uma escrita por poll. Salvar
+a cada claim poria o estado inteiro em disco na frequência do poll — com o poll ocioso de
+200ms, uma escrita por worker por poll — sem segurança adicional.
 
-Written to a sibling file first, then renamed into place. A crash mid-write leaves the
-previous snapshot intact rather than a truncated one. A failed write is reported and
-never fatal: the in-memory state stays authoritative for the run. An unreadable snapshot
-is treated as empty and reported, on the same reasoning — a corrupt file must not stop
-the cluster from taking work.
+Escrito primeiro num arquivo irmão, depois renomeado para o lugar. Um crash no meio da
+escrita deixa o snapshot anterior intacto em vez de um truncado. Uma escrita que falha é
+reportada e nunca fatal: o estado em memória continua autoritativo para a execução. Um
+snapshot ilegível é tratado como vazio e reportado, pelo mesmo raciocínio — um arquivo
+corrompido não pode impedir o cluster de aceitar trabalho.
 
-## Evidence
+## Evidência
 
-A diamond DAG enqueued with no worker running, the controller killed, then a fresh
-controller over the same file:
+Um DAG diamante enfileirado sem nenhum worker rodando, o controller morto, depois um
+controller novo sobre o mesmo arquivo:
 
 ```
 state loaded from /t/state.bin: 4 pending unit(s)
 controller listening on 0.0.0.0:50051 (heartbeat grace 15000ms)
 ```
 
-A worker then joined and the graph drained without being re-enqueued:
+Um worker então entrou e o grafo drenou sem ser re-enfileirado:
 
 ```
 EVENTS 5
@@ -67,24 +66,26 @@ EVENTS 5
 1792467794212  work_completed   w-3 on node-1 compute=88us transfer=0us
 ```
 
-Four units, from a queue the first controller never got to dispatch. The regression
-check is `a_snapshot_round_trips_pending_work_and_outputs` in `work.rs`: it asserts a
-dependent unit is *ready* after reload, which only holds if its dependency's output came
-back with it, and that the id sequence continued instead of restarting.
+Quatro unidades, de uma fila que o primeiro controller nunca chegou a despachar. O teste
+de regressão é `a_snapshot_round_trips_pending_work_and_outputs` em `work.rs`: ele afirma
+que uma unidade dependente fica *pronta* após o reload, o que só vale se o output da sua
+dependência voltou junto, e que a sequência de ids continuou em vez de reiniciar.
 
-## Known ceiling
+## Teto conhecido
 
-**The whole state is rewritten on every mutation.** Cost grows with queue size, and each
-completion rewrites the outputs of all of them. Fine at benchmark scale; move to an
-append-only log or a periodic snapshot when the queue gets large or mutations get
-frequent. Marked with a `ponytail:` comment at the write.
+**O estado inteiro é reescrito a cada mutação.** O custo cresce com o tamanho da fila, e
+cada conclusão reescreve os outputs de todas elas. Ok na escala de benchmark; migrar para
+um log append-only ou um snapshot periódico quando a fila crescer ou as mutações ficarem
+frequentes. Marcado com um comentário `ponytail:` na escrita.
 
-**The registry is not persisted.** Nodes recover on their own — a worker whose heartbeat
-is not acknowledged re-registers — but between a restart and the first heartbeat,
-`ai-cluster nodes` shows nothing. That window is the grace interval.
+**O registry não é persistido.** Nós se recuperam sozinhos — um worker cujo heartbeat não
+é reconhecido se re-registra — mas entre um restart e o primeiro heartbeat, `ai-cluster
+nodes` não mostra nada. Essa janela é o intervalo de grace.
 
-**Events are not persisted.** The event log starts empty on reload. The work queue is
-what had to survive; the timeline is a recent-incident view by design.
+**Eventos não são persistidos.** O log de eventos começa vazio no reload. A fila de
+trabalho era o que precisava sobreviver; a linha do tempo é uma visão de incidente
+recente por design.
 
-**Not the whole storage phase.** This is the queue and its outputs. Checkpointing a unit
-mid-compute, replicas, and HOT/WARM/COLD tiers are separate pieces of the same phase.
+**Não é a fase de storage inteira.** Isto é a fila e seus outputs. Checkpoint de uma
+unidade no meio do compute, réplicas e tiers HOT/WARM/COLD são peças separadas da mesma
+fase.
