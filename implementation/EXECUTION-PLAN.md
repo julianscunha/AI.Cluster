@@ -244,7 +244,8 @@ Capabilities, memory, trust, health.
 
 ### G2 Cost model
 
-Compute + communication + queue + locality. — [ ] não iniciado.
+Compute + communication + queue + locality. — [x] compute, transferência, fila e saúde em
+`code/crates/controller/src/placement.rs`; locality ainda não modelada.
 
 ### G3 Global scheduler
 

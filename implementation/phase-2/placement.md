@@ -11,8 +11,8 @@ Filtragem de candidatos: uma unidade de trabalho declara a capability de que pre
 controller se recusa a entregá-la a um nó que não a tenha. O dispatch deixa de ser
 por ordem de chegada e vira uma decisão.
 
-Esta é a primeira peça do scheduler. Ela filtra candidatos; ainda não os custa. Escolher
-*entre* vários nós capazes precisa do modelo de custo e vem depois.
+Esta é a primeira peça do scheduler. Ela filtra candidatos; o modelo de custo (G2) já os
+custa, mas a escolha final entre candidatos ainda é do nó que faz poll — ver o modelo abaixo.
 
 ## O que mudou
 
@@ -86,6 +86,30 @@ O filtro em si é coberto pelo teste unitário
 três casos num só lugar: um nó fraco recebe a unidade leve em vez da pesada,
 um nó capaz recebe a pesada, e um nó fraco sozinho não recebe nada.
 
+## Modelo de custo (G2)
+
+`code/crates/controller/src/placement.rs` estima o custo de rodar uma unidade num nó antes do
+dispatch, para que o scheduler possa ordenar candidatos capazes em vez de aceitar o primeiro
+que faz poll. É uma função pura — mesmas entradas, mesma pontuação — então a ordenação é
+testável sem cluster.
+
+Custo = compute + transferência + fila, tudo escalado por saúde. Menor é melhor.
+
+- **compute** — flops da unidade (2 por elemento de saída) sobre a taxa do nó. Usa
+  `compute_score` quando o worker reportou um; cai para a contagem de threads enquanto isso,
+  porque o worker deixa `compute_score` em 0 até o benchmark de capability rodar.
+- **transferência** — bytes movidos (A e B lidos, C escrito) sobre a taxa de rede do nó. Cai
+  para 1.0 quando não medida.
+- **fila** — peso por unidade já em voo para o nó; uma unidade enfileirada espera. É o termo
+  que impede um nó ocupado mas nominalmente mais rápido de vencer sempre.
+- **saúde** — multiplica o total. Um nó degradado perde empates contra um saudável de igual
+  capability. `health_score = 0` significa "não reportado" e é ignorado, não lido como péssimo.
+
+A pontuação é relativa, não um tempo. As constantes são placeholders até o benchmark reportar
+taxas reais; só a *ordem* entre nós é significativa hoje. Os testes unitários do módulo cobrem
+as direções: mais threads custa menos, unidade maior custa mais, nó com fila custa mais, saúde
+degradada custa mais, e saúde não reportada não penaliza.
+
 ## Teto conhecido
 
 **Só cpu_threads é filtrado.** Memória, precisão, aceleradores e armazenamento são
@@ -99,6 +123,8 @@ rodar" porque só vê o nó que está perguntando, não o cluster inteiro. Fecha
 isso significa resolver requisitos contra o registry quando a unidade é enfileirada,
 ou quando o último nó capaz sai.
 
-**Sem modelo de custo.** Entre nós que todos satisfazem o requisito, o primeiro a fazer poll
-vence. Escolher o nó capaz mais barato precisa de estimativas de compute, comunicação e fila —
-a próxima fatia do scheduler.
+**Modelo de custo sem locality nem térmica.** A função cobre compute, transferência, fila e
+saúde; localidade de dados, folga térmica e custo de mover estado não são modelados porque o
+registry ainda não carrega esses dados. Além disso, o custo ordena candidatos, mas o dispatch
+continua por poll: o modelo já existe e é testado, mas o controller ainda não o usa para
+escolher — ligá-lo ao dispatch é a G3.

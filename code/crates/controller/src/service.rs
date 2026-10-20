@@ -278,7 +278,9 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<EnqueueGraphResponse>, Status> {
         let request = request.into_inner();
         if request.size == 0 {
-            return Err(Status::invalid_argument("o tamanho deve ser maior que zero"));
+            return Err(Status::invalid_argument(
+                "o tamanho deve ser maior que zero",
+            ));
         }
         let size = request.size;
         let first = self.work.next_work_id();

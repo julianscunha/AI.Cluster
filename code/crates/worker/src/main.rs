@@ -146,7 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
                     None => {
-                        println!("trabalho {work_id} payload não corresponde ao shape declarado; descartado")
+                        println!(
+                            "trabalho {work_id} payload não corresponde ao shape declarado; descartado"
+                        )
                     }
                 }
             }
