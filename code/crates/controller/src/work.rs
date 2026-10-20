@@ -4,10 +4,12 @@
 //! minus the compute time reported by the worker is the transfer overhead.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ai_cluster_protocol::cluster::{WorkResult, WorkUnit};
+use ai_cluster_protocol::cluster::{WorkOutput, WorkResult, WorkSnapshot, WorkUnit};
+use prost::Message;
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
 ///
@@ -65,12 +67,15 @@ pub struct RequeueOutcome {
     pub failed: usize,
 }
 
-/// In-memory dispatch queue. No persistence: a controller restart loses pending
-/// work, which is acceptable until the storage phase.
+/// Dispatch queue for work units. Optionally backed by a snapshot file, so a
+/// controller restart does not lose queued work.
 #[derive(Debug, Default)]
 pub struct WorkStore {
     inner: Mutex<Inner>,
     sequence: AtomicU64,
+    /// Where the snapshot is written. `None` means memory only, which is what the
+    /// tests and the benchmark runs use.
+    path: Option<PathBuf>,
 }
 
 /// A unit may be dispatched when every dependency has completed and every bound
@@ -126,6 +131,102 @@ impl WorkStore {
         Self::default()
     }
 
+    /// Opens a store backed by the snapshot at `path`, loading it when one exists.
+    ///
+    /// A missing file is not an error: a controller's first run has nothing to load.
+    /// An unreadable one is reported and treated as empty rather than taking the
+    /// controller down — a corrupt snapshot must not stop the cluster taking work.
+    pub fn with_state(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let store = Self {
+            path: Some(path.clone()),
+            ..Self::default()
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return store,
+            Err(err) => {
+                println!(
+                    "state {} unreadable ({err}); starting empty",
+                    path.display()
+                );
+                return store;
+            }
+        };
+        match WorkSnapshot::decode(bytes.as_slice()) {
+            Ok(snapshot) => {
+                let pending = {
+                    let mut inner = store.lock();
+                    inner.queue = snapshot.pending.into_iter().collect();
+                    inner.outputs = snapshot
+                        .outputs
+                        .into_iter()
+                        .map(|output| (output.work_id, output.matrix))
+                        .collect();
+                    inner.attempts = snapshot.attempts.into_iter().collect();
+                    inner.failed = snapshot.failed.into_iter().collect();
+                    inner.queue.len()
+                };
+                store.sequence.store(snapshot.sequence, Ordering::Relaxed);
+                println!(
+                    "state loaded from {}: {pending} pending unit(s)",
+                    path.display()
+                );
+            }
+            Err(err) => println!(
+                "state {} unreadable ({err}); starting empty",
+                path.display()
+            ),
+        }
+        store
+    }
+
+    /// Writes the whole store to the snapshot path, when it has one.
+    ///
+    /// Called while the caller still holds the lock, so the snapshot is a consistent
+    /// view rather than a mix of before and after. Written to a sibling file first and
+    /// renamed into place: a crash mid-write leaves the previous snapshot intact
+    /// instead of a truncated one. A failed write is reported, never fatal — the
+    /// in-memory state stays authoritative for this run.
+    ///
+    /// Deliberately not called from `claim`: a unit that is in flight when the
+    /// controller dies is still in the previous snapshot's `pending`, so it comes back
+    /// on reload without a save per poll.
+    ///
+    /// ponytail: the whole state is rewritten on every mutation, so the cost grows
+    /// with queue size. Fine at benchmark scale; move to an append-only log or a
+    /// periodic snapshot when the queue gets large or mutations get frequent.
+    fn save_locked(&self, inner: &Inner) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        let snapshot = WorkSnapshot {
+            pending: inner
+                .queue
+                .iter()
+                .cloned()
+                .chain(inner.dispatched.values().map(|record| record.unit.clone()))
+                .collect(),
+            outputs: inner
+                .outputs
+                .iter()
+                .map(|(work_id, matrix)| WorkOutput {
+                    work_id: work_id.clone(),
+                    matrix: matrix.clone(),
+                })
+                .collect(),
+            attempts: inner.attempts.clone(),
+            failed: inner.failed.iter().cloned().collect(),
+            sequence: self.sequence.load(Ordering::Relaxed),
+        };
+        let temp = path.with_extension("tmp");
+        if let Err(err) = std::fs::write(&temp, snapshot.encode_to_vec())
+            .and_then(|()| std::fs::rename(&temp, path))
+        {
+            println!("state save to {} failed: {err}", path.display());
+        }
+    }
+
     /// Monotonic id for controller-generated work units.
     pub fn next_work_id(&self) -> String {
         format!("w-{}", self.sequence.fetch_add(1, Ordering::Relaxed))
@@ -138,6 +239,7 @@ impl WorkStore {
             inner.queue.push_back(unit);
             count += 1;
         }
+        self.save_locked(&inner);
         count
     }
 
@@ -220,6 +322,7 @@ impl WorkStore {
             .insert(result.work_id.clone(), result.matrix_c);
         // The unit is settled, so its retry budget no longer matters.
         inner.attempts.remove(&result.work_id);
+        self.save_locked(&inner);
         Some(completed)
     }
 
@@ -274,6 +377,7 @@ impl WorkStore {
                 outcome.requeued += 1;
             }
         }
+        self.save_locked(&inner);
         outcome
     }
 
@@ -640,5 +744,39 @@ mod tests {
                 .work_id,
             "w3"
         );
+    }
+
+    #[test]
+    fn a_snapshot_round_trips_pending_work_and_outputs() {
+        let dir = std::env::temp_dir().join(format!("aic-work-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        // Mint an id first so the saved sequence is non-zero and can be checked.
+        assert_eq!(store.next_work_id(), "w-0");
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+        store.claim("node-a", 8, 1_000).expect("w1 is ready");
+        store
+            .complete(result("w1", 250), 2_000)
+            .expect("w1 was dispatched");
+
+        // A fresh store over the same file: w2 is still queued, and its dependency's
+        // output came back with it, so it is ready rather than blocked forever.
+        let reloaded = WorkStore::with_state(&path);
+        assert_eq!(reloaded.pending(), 1);
+        assert_eq!(reloaded.blocked(), 0);
+        assert_eq!(
+            reloaded
+                .claim("node-b", 8, 3_000)
+                .expect("w2 is ready")
+                .work_id,
+            "w2"
+        );
+        // The id sequence continued instead of restarting, so nothing collides.
+        assert_eq!(reloaded.next_work_id(), "w-1");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -21,7 +21,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(15_000);
 
     let registry = Arc::new(Registry::new());
-    let work = Arc::new(WorkStore::new());
+    // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
+    // the benchmark runs use; point it at a mounted volume so a restart keeps the
+    // queue instead of losing it with the container.
+    let work = Arc::new(match std::env::var("AI_CLUSTER_STATE") {
+        Ok(path) if !path.trim().is_empty() => WorkStore::with_state(path),
+        _ => WorkStore::new(),
+    });
     let events = Arc::new(EventLog::new());
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");

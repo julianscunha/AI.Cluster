@@ -193,6 +193,30 @@ message ListEventsResponse {
   repeated Event events = 1;
 }
 
+/// Controller state written to disk so a restart does not lose queued work. Not
+/// part of the request surface: this is what the controller saves and reloads,
+/// not something a client sends.
+message WorkSnapshot {
+  /// Units not yet completed: the queue plus whatever was in flight when the
+  /// snapshot was taken, so a unit that was running is offered again rather than
+  /// dropped.
+  repeated WorkUnit pending = 1;
+  /// Output of every completed unit. A dependent unit's bound input is read from
+  /// here, so without it the units downstream could never become ready.
+  repeated WorkOutput outputs = 2;
+  /// Dispatch attempts started per unit, keyed by work id.
+  map<string, uint32> attempts = 3;
+  /// Units that will never complete: their retry budget ran out.
+  repeated string failed = 4;
+  /// Id sequence, so ids minted after a reload cannot collide with loaded ones.
+  uint64 sequence = 5;
+}
+
+message WorkOutput {
+  string work_id = 1;
+  repeated double matrix = 2;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
