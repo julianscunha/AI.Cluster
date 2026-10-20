@@ -9,11 +9,11 @@ tags: [adr, linux-base]
 
 Status: PROPOSED
 
-## Decision
+## Decisão
 
 Construir o AI Cluster OS sobre uma base Linux madura, não escrever um kernel/sistema inteiro do zero.
 
-## Rationale
+## Justificativa
 
 - drivers;
 - ARM64/x86_64;
@@ -21,6 +21,6 @@ Construir o AI Cluster OS sobre uma base Linux madura, não escrever um kernel/s
 - boot/recovery;
 - menor custo inicial.
 
-## Consequence
+## Consequência
 
 O diferencial estará no runtime, provisioning, scheduler, storage intelligence e observability, não no kernel inteiro.

@@ -79,7 +79,7 @@ POST /v1/generate
 
 A compatibilidade é uma camada de adaptação. O protocolo interno do cluster não precisa seguir o protocolo externo.
 
-## 4. Request lifecycle
+## 4. Ciclo de vida da requisição
 
 ```text
 Client
@@ -115,7 +115,7 @@ Inference
 Streaming / Response
 ```
 
-## 5. Request object
+## 5. Objeto de requisição
 
 Todo request recebe um identificador global:
 
@@ -162,7 +162,7 @@ O consumidor não precisa saber em quais nodes os tokens foram produzidos.
 
 A API deve transportar metadados de uso de forma compatível com o cliente sem misturar métricas internas confidenciais na resposta padrão.
 
-## 8. Cancellation
+## 8. Cancelamento
 
 O cliente deve poder cancelar uma execução:
 
@@ -211,7 +211,7 @@ background
 
 O cliente não pode definir arbitrariamente prioridade crítica sem autorização.
 
-## 11. Token accounting
+## 11. Contabilização de tokens
 
 Para cada request, o cluster deve registrar:
 
@@ -247,7 +247,7 @@ planning latency
 queue latency
 ```
 
-## 13. Error model
+## 13. Modelo de erro
 
 Os erros externos devem ser estáveis e simples, mesmo quando a causa interna for complexa.
 
@@ -268,7 +268,7 @@ SERVICE_UNAVAILABLE
 
 Detalhes internos permanecem em trace/event/log, e não devem vazar para o consumidor indiscriminadamente.
 
-## 14. Model discovery
+## 14. Descoberta de modelo
 
 ```http
 GET /v1/models
@@ -287,7 +287,7 @@ A resposta deve expor somente modelos/variantes autorizados:
 
 A existência física dos shards e nodes não faz parte do contrato público.
 
-## 15. Routing policy
+## 15. Política de roteamento
 
 O cliente pode solicitar:
 
@@ -309,7 +309,7 @@ placement
 
 Essas decisões pertencem ao cluster.
 
-## 16. Observability headers
+## 16. Headers de observabilidade
 
 A API deve retornar, quando apropriado:
 
@@ -339,7 +339,7 @@ quota enforcement
 
 O acesso do cliente termina na API. Não deve haver exposição direta dos endpoints do Worker.
 
-## 18. Multi-tenant isolation
+## 18. Isolamento multi-tenant
 
 Mesmo que o primeiro deployment seja single-tenant, o modelo deve permitir isolamento por:
 
@@ -408,7 +408,7 @@ Responsável por:
 - transport;
 - execução distribuída.
 
-## 21. Health da API
+## 21. Saúde da API
 
 A saúde da API deve ser separada da saúde do cluster.
 

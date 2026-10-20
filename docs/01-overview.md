@@ -7,15 +7,15 @@ tags: [spec, overview]
 
 # 01 — Overview
 
-## Purpose
+## Propósito
 
 Definir o escopo do AI Cluster como um runtime distribuído e adaptativo para IA.
 
-## Core idea
+## Ideia central
 
 Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool lógico de recursos, capaz de executar uma única requisição distribuindo um modelo e suas operações entre diferentes dispositivos.
 
-## Primary workloads
+## Cargas de trabalho primárias
 
 - LLM inference;
 - embeddings;
@@ -26,7 +26,7 @@ Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool 
 - deterministic compute;
 - custom AI graphs.
 
-## Operational properties
+## Propriedades operacionais
 
 - zero/low-touch onboarding;
 - reimaging;
@@ -37,7 +37,7 @@ Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool 
 - adaptive token optimization;
 - detailed TUI.
 
-## Out of scope for v0.1
+## Fora do escopo da v0.1
 
 - arbitrary mobile hardware support;
 - universal NPU support;

@@ -93,7 +93,7 @@ Embedding
 
 Os nós internos podem ser agrupados em subgrafos otimizados.
 
-## 5. Kernel abstraction
+## 5. Abstração de kernel
 
 A execução de cada operação passa pela Hardware Abstraction Layer.
 
@@ -108,7 +108,7 @@ Inference Engine
 
 O Engine não deve codificar instruções específicas de hardware diretamente no grafo do modelo.
 
-## 6. Tensor representation
+## 6. Representação de tensor
 
 Cada tensor deve carregar:
 
@@ -127,7 +127,7 @@ checksum, quando necessário
 
 Layouts e formatos devem ser tratados pelo runtime para evitar conversões redundantes.
 
-## 7. Memory planning
+## 7. Planejamento de memória
 
 Antes da execução, o Engine deve construir um plano de memória previsível quando possível:
 
@@ -159,7 +159,7 @@ Deve suportar:
 - replica/checkpoint quando requerido pelo State Manager;
 - eviction de estado não crítico.
 
-## 9. Paged KV concept
+## 9. Conceito de KV paginado
 
 O KV cache deve ser administrado em blocos lógicos, evitando exigir um grande segmento contíguo de memória.
 
@@ -188,7 +188,7 @@ KV lookup
 
 O próximo passo somente começa quando o estado necessário estiver disponível.
 
-## 11. Tensor parallelism
+## 11. Paralelismo de tensor
 
 Uma operação pode ser particionada entre vários workers.
 
@@ -202,7 +202,7 @@ MatMul
 
 A estratégia deve ser usada quando o ganho de compute exceder o custo de comunicação e sincronização.
 
-## 12. Pipeline parallelism
+## 12. Paralelismo de pipeline
 
 Blocos do modelo podem ser atribuídos a estágios:
 
@@ -214,7 +214,7 @@ Stage 3 -> Node Group C
 
 As ativações atravessam os estágios.
 
-## 13. Hybrid parallelism
+## 13. Paralelismo híbrido
 
 O planner pode combinar ambos:
 
@@ -231,7 +231,7 @@ Stage 3
 
 Essa é a estratégia preferencial para hardware heterogêneo, mas deve ser validada experimentalmente.
 
-## 14. Communication/computation overlap
+## 14. Sobreposição comunicação/computação
 
 O Engine deve permitir:
 
@@ -266,7 +266,7 @@ memory bandwidth
 
 Uma topologia ótima para prefill pode não ser ótima para decode.
 
-## 16. Continuous batching
+## 16. Batching contínuo
 
 Quando houver múltiplas requests, o Engine pode agrupar sequências em execução para aumentar utilização do hardware.
 
@@ -279,7 +279,7 @@ request C
 
 O primeiro MVP pode operar com uma request por vez, mas a abstração deve permitir batching futuro.
 
-## 17. Single-request optimization
+## 17. Otimização de requisição única
 
 Como o projeto quer acelerar uma única request, o Engine deve priorizar:
 
@@ -294,7 +294,7 @@ speculative decoding
 
 Não deve depender exclusivamente de batching para obter performance.
 
-## 18. Speculative decoding
+## 18. Decodificação especulativa
 
 Pode haver um modelo draft menor:
 
@@ -316,7 +316,7 @@ verification latency
 energy/cost
 ```
 
-## 19. Sampling
+## 19. Amostragem
 
 O sampling deve ser separado do cálculo do modelo.
 
@@ -344,7 +344,7 @@ stable scheduling
 
 Isso facilita testes, checksum de resultados e diagnóstico.
 
-## 21. Quantization
+## 21. Quantização
 
 O Engine deve conhecer as variantes suportadas do modelo e suas operações.
 
@@ -356,13 +356,13 @@ accumulation = wider precision where required
 
 Qualquer conversão deve ser explícita no Execution Graph e contabilizada no custo.
 
-## 22. Mixed precision
+## 22. Precisão mista
 
 O planner pode escolher precisões diferentes por operação, desde que o Model Profile e o backend garantam validade.
 
 O objetivo é preservar qualidade onde necessário e reduzir custo onde possível.
 
-## 23. Checkpoint/recovery
+## 23. Checkpoint/recuperação
 
 Pontos de checkpoint podem ocorrer após estágios seguros, especialmente em operações longas.
 
@@ -375,7 +375,7 @@ Execution Epoch
 
 O State Manager controla persistência e recuperação. O Inference Engine fornece os hooks necessários.
 
-## 24. Failure semantics
+## 24. Semântica de falha
 
 Uma falha deve ser classificada como:
 
@@ -390,7 +390,7 @@ numerical failure
 
 O Engine não deve ocultar a causa real.
 
-## 25. Numerical validation
+## 25. Validação numérica
 
 Para operações críticas, o runtime pode validar:
 
@@ -404,7 +404,7 @@ kernel output invariants
 
 Validação completa não deve ser ativada indiscriminadamente em caminho quente.
 
-## 26. Performance instrumentation
+## 26. Instrumentação de desempenho
 
 Cada etapa deve poder produzir:
 
@@ -419,7 +419,7 @@ sampling_time
 
 O trace deve preservar a relação com Work Unit e Node.
 
-## 27. Hardware-aware execution
+## 27. Execução ciente do hardware
 
 O Engine consulta capabilities locais:
 
@@ -433,7 +433,7 @@ memory bandwidth
 
 E seleciona kernels compatíveis.
 
-## 28. Local optimization
+## 28. Otimização local
 
 O Worker Runtime pode realizar otimizações locais que não alterem a semântica do plano global:
 
@@ -445,7 +445,7 @@ local scheduling
 cache reuse
 ```
 
-## 29. Global optimization boundary
+## 29. Fronteira de otimização global
 
 Mudanças como:
 
@@ -458,7 +458,7 @@ pipeline boundaries
 
 continuam sob responsabilidade do Controller/Planner.
 
-## 30. Admission requirements
+## 30. Requisitos de admissão
 
 Antes de iniciar uma execução, o Engine deve receber um plano que informe pelo menos:
 
@@ -472,7 +472,7 @@ transport requirements
 state references
 ```
 
-## 31. Completion
+## 31. Conclusão
 
 Uma execução só é considerada concluída após:
 

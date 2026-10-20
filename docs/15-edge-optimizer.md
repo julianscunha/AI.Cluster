@@ -7,7 +7,7 @@ tags: [spec, edge-optimizer]
 
 # 15 — Edge Optimizer
 
-## Objective
+## Objetivo
 
 Reduzir trabalho, tokens, contexto, latência e comunicação antes da inferência pesada.
 
@@ -29,7 +29,7 @@ Request
  -> LLM
 ```
 
-## Fast path
+## Caminho rápido
 
 Quando uma requisição for determinística ou cacheável, evitar LLM.
 
@@ -39,7 +39,7 @@ Exemplos:
 - consulta de estado do cluster;
 - cache hit.
 
-## Graph-assisted retrieval
+## Retrieval assistido por grafo
 
 Usar entidades e relações para navegar rapidamente para fatos relevantes, incidentes, dependências e contexto.
 
@@ -47,11 +47,11 @@ Usar entidades e relações para navegar rapidamente para fatos relevantes, inci
 
 A compressão deve ser orientada pela pergunta, preservando informação relevante e indicando confiança.
 
-## Skill / Tool resolution
+## Resolução de Skill / Tool
 
 Resolver fora do contexto principal quais capabilities/tools realmente são necessárias e enviar apenas schemas relevantes.
 
-## Prompt compiler
+## Compilador de prompt
 
 Transformar contexto disperso em uma representação mínima adequada à tarefa.
 
@@ -59,11 +59,11 @@ Transformar contexto disperso em uma representação mínima adequada à tarefa.
 
 Estimar input, output, maximum, contexto disponível e objetivo de qualidade.
 
-## Optimization decision
+## Decisão de otimização
 
 Cada otimização possui custo próprio. O sistema deve aplicá-la somente quando o saving esperado superar esse custo.
 
-## Metrics
+## Métricas
 
 - original tokens;
 - optimized tokens;

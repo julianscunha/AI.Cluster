@@ -7,7 +7,7 @@ tags: [spec, security]
 
 # 19 — Security & Trust
 
-## Identity
+## Identidade
 
 Separar:
 
@@ -19,11 +19,11 @@ Separar:
 
 Novo node começa UNTRUSTED.
 
-## Authentication
+## Autenticação
 
 PROPOSED: mTLS no control plane e credenciais de workload para data-plane access.
 
-## Authorization
+## Autorização
 
 Node só acessa:
 
@@ -41,7 +41,7 @@ Quando disponível, validar:
 - driver state;
 - integrity.
 
-## Quarantine
+## Quarentena
 
 Pode ser acionada por:
 
@@ -49,6 +49,6 @@ Pode ser acionada por:
 - comportamento inesperado;
 - credenciais comprometidas.
 
-## Revocation
+## Revogação
 
 Revogar certificado, invalidar sessões e remover acesso a modelo/estado.

@@ -7,7 +7,7 @@ tags: [spec, storage-intelligence]
 
 # 18 — Storage Intelligence
 
-## Objective
+## Objetivo
 
 Usar o armazenamento como recurso complementar à memória e à execução, adaptando o comportamento ao tipo e saúde do dispositivo.
 

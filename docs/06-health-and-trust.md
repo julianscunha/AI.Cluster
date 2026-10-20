@@ -7,7 +7,7 @@ tags: [spec, health-and-trust]
 
 # 06 — Health and Trust
 
-## Health
+## Saúde
 
 Health mede condição operacional do hardware/runtime.
 
@@ -20,7 +20,7 @@ Domínios:
 - network;
 - accelerator.
 
-## Trust
+## Confiança
 
 Trust mede se o node está autorizado e íntegro.
 
@@ -28,11 +28,11 @@ Estados:
 
 UNKNOWN, UNTRUSTED, BOOTSTRAPPED, VALIDATED, TRUSTED, QUARANTINED, REVOKED.
 
-## Health states
+## Estados de saúde
 
 READY, ACTIVE, DEGRADED, DRAINING, FAILED, OFFLINE.
 
-## Examples
+## Exemplos
 
 Node pode ser:
 
@@ -52,11 +52,11 @@ Capacity: HIGH
 State: BLOCKED
 ```
 
-## Automated diagnostics
+## Diagnóstico automatizado
 
 O sistema deve registrar a causa provável da degradação e seu impacto estimado.
 
-## Thermal
+## Térmico
 
 Comparar temperatura com baseline específico do hardware, não apenas threshold genérico.
 

@@ -9,10 +9,10 @@ tags: [adr, immutable-os]
 
 Status: PROPOSED
 
-## Decision
+## Decisão
 
 Usar imagem versionada/imutável, com reimage inicial e update A/B.
 
-## Rationale
+## Justificativa
 
 Evita configuration drift e facilita rollback/recovery.

@@ -7,11 +7,11 @@ tags: [spec, scheduler]
 
 # 11 — Scheduler
 
-## Objective
+## Objetivo
 
 Atribuir Work Units a nodes/resources maximizando o objetivo da execução.
 
-## Two-level scheduler
+## Scheduler de dois níveis
 
 Global:
 - node selection;

@@ -7,7 +7,7 @@ tags: [spec, execution-graph]
 
 # 09 — Execution Graph
 
-## Objective
+## Objetivo
 
 Representar uma requisição como um grafo de operações com dependências explícitas.
 
@@ -21,7 +21,7 @@ Execution Graph descreve aquela execução concreta considerando request, precis
 
 Preferir DAGs quando o workload permitir.
 
-## Parallelism
+## Paralelismo
 
 Operações independentes podem ser executadas em paralelo.
 
@@ -33,14 +33,14 @@ W2 ----+--> SYNC --> W4
 W3 ----+
 ```
 
-## Barriers
+## Barreiras
 
 Usar barreiras locais apenas quando necessário. Evitar barreiras globais.
 
-## Versioning
+## Versionamento
 
 Cada Execution Graph está associado a uma versão de plano. Mudanças de placement não devem alterar o significado lógico do grafo.
 
-## Recovery
+## Recuperação
 
 Se um node falhar, Work Units afetadas entram em recovery/retry e podem ser reassociadas a outro node.

@@ -9,7 +9,7 @@ tags: [adr, storage-tiering]
 
 Status: DECIDED
 
-## Decision
+## Decisão
 
 Tratar RAM/VRAM como HOT, SSD/NVMe como WARM e storage persistente/HDD como COLD.
 

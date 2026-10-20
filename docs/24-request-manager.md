@@ -75,7 +75,7 @@ Request
 
 A Request mantém o estado final observado pelo cliente. Cada Execution possui seu próprio plano, epochs, work units e trace.
 
-## 5. Admission Control
+## 5. Controle de admissão
 
 A request não deve ser enviada ao Planner automaticamente.
 
@@ -103,7 +103,7 @@ FALLBACK
 
 Fallback de modelo só pode ocorrer se permitido pela política do consumidor.
 
-## 6. Queue
+## 6. Fila
 
 A fila deve ser lógica e orientada por classe de prioridade.
 
@@ -134,7 +134,7 @@ max queued requests
 max execution time
 ```
 
-## 8. Token budget
+## 8. Orçamento de tokens
 
 Antes da execução, o sistema calcula:
 
@@ -148,7 +148,7 @@ estimated total
 
 A estimativa não é garantia. Ela alimenta planejamento e observabilidade.
 
-## 9. Resource budget
+## 9. Orçamento de recursos
 
 Além de tokens, pode haver estimativa de:
 
@@ -163,7 +163,7 @@ expected latency
 
 Isso permite rejeitar ou enfileirar requests que claramente não cabem na capacidade atual.
 
-## 10. Edge Optimization integration
+## 10. Integração com Edge Optimization
 
 A otimização ocorre depois da validação inicial, mas antes da alocação pesada.
 
@@ -179,7 +179,7 @@ received
 
 Uma otimização que reduza o contexto pode tornar uma request anteriormente inviável executável.
 
-## 11. Early rejection
+## 11. Rejeição antecipada
 
 Requests obviamente inválidas devem ser rejeitadas sem tocar o runtime de inferência.
 
@@ -212,7 +212,7 @@ CRITICAL CAPACITY
 
 O objetivo é proteger o cluster contra sobrecarga, não apenas maximizar a fila.
 
-## 13. Cancellation
+## 13. Cancelamento
 
 Cancelamento deve atravessar toda a cadeia:
 
@@ -246,13 +246,13 @@ fallbacked, if policy allows
 rejected
 ```
 
-## 15. Priority inheritance
+## 15. Herança de prioridade
 
 Work Units criadas a partir de uma request devem herdar sua classe de prioridade, sujeitas às políticas internas.
 
 Uma operação background nunca deve ganhar prioridade de interactive apenas porque pertence a uma request de alto nível, salvo política explícita.
 
-## 16. Concurrency control
+## 16. Controle de concorrência
 
 A concorrência deve considerar:
 
@@ -284,7 +284,7 @@ RUNNING
 
 O Request Manager acompanha TTFT e emissão de chunks, mas não participa de cada token individual além do necessário para controle.
 
-## 18. Token accounting
+## 18. Contabilização de tokens
 
 Ao final, o Request Manager consolida:
 
@@ -298,7 +298,7 @@ tokens avoided
 
 O valor retornado ao consumidor deve ser compatível com a API pública.
 
-## 19. Cost estimation
+## 19. Estimativa de custo
 
 Se houver um modelo de custo, o Request Manager pode estimar:
 
@@ -312,7 +312,7 @@ external model/provider cost
 
 Esses valores não devem ser apresentados como cobrança real sem um módulo específico de billing.
 
-## 20. Recovery
+## 20. Recuperação
 
 Se a Execution falhar e for recuperável:
 
@@ -326,7 +326,7 @@ Execution failed
 
 A Request permanece a mesma.
 
-## 21. Idempotency
+## 21. Idempotência
 
 Requests com chave de idempotência devem evitar duplicação acidental quando o cliente repetir uma chamada após timeout de rede.
 
@@ -337,7 +337,7 @@ Idempotency-Key
 
 A semântica deve ser definida antes do MVP público.
 
-## 22. Fairness
+## 22. Equidade
 
 O Request Manager deve evitar starvation entre classes e tenants.
 
@@ -351,7 +351,7 @@ tenant fairness
 deadline
 ```
 
-## 23. Observability
+## 23. Observabilidade
 
 Cada transição importante gera evento:
 

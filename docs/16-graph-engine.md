@@ -7,11 +7,11 @@ tags: [spec, graph-engine]
 
 # 16 — Graph Engine
 
-## Objective
+## Objetivo
 
 Explorar relações estruturadas para reduzir buscas, localizar dependências e orientar execução/scheduling.
 
-## Graph domains
+## Domínios de grafo
 
 ### Knowledge Graph
 
@@ -33,11 +33,11 @@ Operations, dependencies, tensors, Work Units.
 
 Request, plan, node, event, metric, incident.
 
-## Graphify role
+## Papel do Graphify
 
 O projeto deve adotar a ideia de graph-based retrieval quando relações e travessals reduzirem custo de busca. A tecnologia específica deve ser validada no benchmark; não presumir que todo search é melhor via graph.
 
-## Projection
+## Projeção
 
 A fonte primária de dados permanece nos stores operacionais. O grafo pode ser reconstruído.
 

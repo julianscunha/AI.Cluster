@@ -48,7 +48,7 @@ O sistema não deve ser desenhado apenas como “LLM cluster”. LLM é um workl
                               +----> Planner
 ```
 
-## 3. Application Plane e Inference API
+## 3. Application Plane e API de inferência
 
 O AI Cluster é uma infraestrutura de computação. Agentes, aplicações e orquestradores consomem sua capacidade exclusivamente através da Inference API.
 
@@ -272,7 +272,7 @@ COMPRESSION
 
 O desempenho real corrige o benchmark inicial.
 
-## 12. Performance Model
+## 12. Modelo de desempenho
 
 A previsão deve considerar, no mínimo:
 
@@ -292,7 +292,7 @@ O cluster deve expor:
 - expected throughput;
 - actual throughput.
 
-## 13. Edge Intelligence
+## 13. Inteligência de edge
 
 Antes de inferência pesada, o sistema deve tentar:
 

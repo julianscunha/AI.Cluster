@@ -7,18 +7,18 @@ tags: [spec, state-manager]
 
 # 13 — State Manager
 
-## Objective
+## Objetivo
 
 Preservar o estado necessário para retomar uma execução quando placement ou hardware mudarem.
 
-## State classes
+## Classes de estado
 
 1. Model State.
 2. Execution State.
 3. KV Cache.
 4. Checkpoint/Recovery State.
 
-## Tiers
+## Camadas
 
 ```text
 HOT  -> RAM / VRAM
@@ -37,7 +37,7 @@ Não replicar tudo 1:1. Priorizar:
 
 Caches derivados podem ser descartáveis.
 
-## State directory
+## Diretório de estado
 
 Referências lógicas:
 
@@ -55,7 +55,7 @@ State ownership deve usar leases/heartbeats para identificar rapidamente perda d
 
 Preferir checkpoints incrementais e em pontos de execução seguros; não persistir toda a memória viva a cada token.
 
-## Recovery
+## Recuperação
 
 ```text
 node lost

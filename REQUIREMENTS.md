@@ -5,11 +5,11 @@ status: decided
 tags: [system, requirements]
 ---
 
-# Requirements
+# Requisitos
 
 Status: DECIDED baseline / v0.1
 
-## Functional requirements
+## Requisitos funcionais
 
 ### Cluster
 
@@ -22,7 +22,7 @@ Status: DECIDED baseline / v0.1
 - FR-007 — Recuperar estado após falha de node.
 - FR-008 — Excluir nós comprometidos via quarantine/revoke.
 
-### OS / Provisioning
+### SO / Provisioning
 
 - FR-010 — Aceitar Linux temporário como bootstrap.
 - FR-011 — Reimaging automático para AI Cluster OS.
@@ -30,7 +30,7 @@ Status: DECIDED baseline / v0.1
 - FR-013 — Detectar hardware antes do provisionamento definitivo.
 - FR-014 — Suportar rollback e recovery.
 
-### Inference
+### Inferência
 
 - FR-020 — Executar Work Units distribuídas.
 - FR-021 — Suportar pipeline parallelism.
@@ -41,7 +41,7 @@ Status: DECIDED baseline / v0.1
 - FR-026 — Suportar checkpoint/restore.
 - FR-027 — Suportar speculative execution onde justificável.
 
-### Edge optimization
+### Otimização de edge
 
 - FR-030 — Exact cache.
 - FR-031 — Semantic cache.
@@ -54,7 +54,7 @@ Status: DECIDED baseline / v0.1
 - FR-038 — Token budgeting.
 - FR-039 — Model routing por complexidade.
 
-### Observability
+### Observabilidade
 
 - FR-050 — Mostrar nodes em tempo real.
 - FR-051 — Mostrar health, capacity e trust separadamente.
@@ -67,7 +67,7 @@ Status: DECIDED baseline / v0.1
 - FR-058 — Mostrar trace completo de request.
 - FR-059 — Mostrar eventos e histórico.
 
-## Non-functional requirements
+## Requisitos não funcionais
 
 - NFR-001 — Linux-first.
 - NFR-002 — Arquitetura multi-arquitetura.

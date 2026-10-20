@@ -9,11 +9,11 @@ tags: [adr, graph-as-projection]
 
 Status: PROPOSED
 
-## Decision
+## Decisão
 
 Usar o grafo como camada de relações/traversal/index, sem obrigar o grafo a ser a única fonte de verdade.
 
-## Rationale
+## Justificativa
 
 - rebuild possível;
 - queries relacionais complexas;

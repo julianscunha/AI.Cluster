@@ -7,11 +7,11 @@ tags: [spec, worker-runtime]
 
 # 07 — Worker Runtime
 
-## Responsibility
+## Responsabilidade
 
 Executar Work Units usando o hardware local mais adequado.
 
-## Components
+## Componentes
 
 - Work Unit Engine;
 - Memory Manager;
@@ -23,7 +23,7 @@ Executar Work Units usando o hardware local mais adequado.
 - Checkpoint Manager;
 - Telemetry.
 
-## Hardware backends
+## Backends de hardware
 
 Interface abstrata:
 
@@ -38,15 +38,15 @@ Tensor Engine
 
 Começar com CPU x86_64/ARM64.
 
-## Local scheduling
+## Escalonamento local
 
 O Global Scheduler decide o node. O Local Scheduler decide CPU cores, GPU/NPU e buffers.
 
-## Priority
+## Prioridade
 
 CRITICAL, INTERACTIVE, NORMAL, BACKGROUND, PREFETCH, CACHE.
 
-## Compute vs transfer
+## Compute vs transferência
 
 O runtime deve poder decidir entre transferir um tensor e recomputá-lo quando a previsão indicar menor custo total.
 

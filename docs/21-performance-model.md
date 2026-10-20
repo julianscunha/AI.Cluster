@@ -7,11 +7,11 @@ tags: [spec, performance-model]
 
 # 21 — Performance Model
 
-## Objective
+## Objetivo
 
 Prever custo e capacidade e comparar previsão com resultado observado.
 
-## Inputs
+## Entradas
 
 - hardware benchmark;
 - historical workload metrics;
@@ -22,7 +22,7 @@ Prever custo e capacidade e comparar previsão com resultado observado.
 - precision;
 - context size.
 
-## Outputs
+## Saídas
 
 - latency prediction;
 - throughput prediction;
@@ -31,7 +31,7 @@ Prever custo e capacidade e comparar previsão com resultado observado.
 - confidence;
 - expected variance.
 
-## Learning loop
+## Laço de aprendizado
 
 ```text
 benchmark
@@ -42,7 +42,7 @@ benchmark
  -> improve next plan
 ```
 
-## Cluster capacity
+## Capacidade do cluster
 
 Manter separadamente:
 

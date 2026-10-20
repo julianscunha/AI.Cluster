@@ -7,7 +7,7 @@ tags: [spec, hotplug-and-recovery]
 
 # 20 — Hot-Plug and Recovery
 
-## Planned removal
+## Remoção planejada
 
 ```text
 ACTIVE
@@ -18,7 +18,7 @@ ACTIVE
  -> OFFLINE
 ```
 
-## Unexpected loss
+## Perda inesperada
 
 ```text
 heartbeat lost
@@ -30,7 +30,7 @@ heartbeat lost
  -> resume
 ```
 
-## Join
+## Entrada
 
 ```text
 DISCOVERED
@@ -41,7 +41,7 @@ DISCOVERED
  -> READY
 ```
 
-## Capacity update
+## Atualização de capacidade
 
 After join/leave:
 
@@ -52,6 +52,6 @@ After join/leave:
 5. compare expected improvement;
 6. replan if worthwhile.
 
-## Non-goal
+## Não-objetivo
 
 Não é requisito inicial migrar qualquer memória viva arbitrária byte-a-byte entre hosts. A estratégia deve privilegiar state objects, checkpoints e recomputação seletiva.

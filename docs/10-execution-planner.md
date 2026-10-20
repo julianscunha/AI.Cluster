@@ -7,11 +7,11 @@ tags: [spec, execution-planner]
 
 # 10 — Execution Planner
 
-## Objective
+## Objetivo
 
 Produzir um plano de execução que minimize custo total sob as restrições do cluster.
 
-## Inputs
+## Entradas
 
 - Model Graph;
 - Request profile;
@@ -23,13 +23,13 @@ Produzir um plano de execução que minimize custo total sob as restrições do 
 - trust;
 - Performance Model.
 
-## Strategies
+## Estratégias
 
 - pipeline parallelism;
 - tensor parallelism;
 - hybrid parallelism.
 
-## Cost function
+## Função de custo
 
 Conceitualmente:
 
@@ -41,7 +41,7 @@ minimize(
 
 com pesos dependentes do perfil da requisição.
 
-## Profiles
+## Perfis
 
 - latency;
 - throughput;
@@ -49,10 +49,10 @@ com pesos dependentes do perfil da requisição.
 - efficiency;
 - balanced.
 
-## Planning principle
+## Princípio de planejamento
 
 Um node disponível não precisa ser utilizado. Adicionar hardware pode piorar o plano se communication overhead superar o ganho computacional.
 
-## Replanning
+## Replanejamento
 
 Gerar novo plan versionado em eventos relevantes. Usar hysteresis para evitar oscilação.

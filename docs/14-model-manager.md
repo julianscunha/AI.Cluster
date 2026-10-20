@@ -7,11 +7,11 @@ tags: [spec, model-manager]
 
 # 14 — Model Manager / Registry
 
-## Objective
+## Objetivo
 
 Gerenciar modelos, versões, variantes de precisão e shards independentemente de placement.
 
-## Registry entities
+## Entidades do registry
 
 - Model;
 - Version;
@@ -21,7 +21,7 @@ Gerenciar modelos, versões, variantes de precisão e shards independentemente d
 - Shard;
 - Compatibility profile.
 
-## Model variant
+## Variante de modelo
 
 O mesmo modelo pode possuir:
 
@@ -37,11 +37,11 @@ Q4
 
 A quantização é um atributo/artefato, não necessariamente outro modelo conceitual.
 
-## Immutable execution reference
+## Referência de execução imutável
 
 Uma execução referencia uma variante/version exata e não deve alterá-la arbitrariamente no meio do request.
 
-## Model cache
+## Cache de modelo
 
 Localizações:
 
@@ -57,6 +57,6 @@ Model Manager conhece onde os shards estão. Execution Planner decide onde dever
 
 Pré-carregar o próximo shard quando houver previsibilidade suficiente.
 
-## Compatibility
+## Compatibilidade
 
 Cada shard/variant deve declarar arquitetura, memória mínima, precisão e backends suportados.

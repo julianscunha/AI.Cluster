@@ -7,11 +7,11 @@ tags: [spec, node-and-hardware]
 
 # 04 — Node and Hardware
 
-## Node vs Device
+## Nó vs Device
 
 `Device` identifica hardware físico. `Node` identifica o papel lógico desse hardware no cluster.
 
-## Device discovery
+## Descoberta de dispositivos
 
 Coletar, conforme suporte:
 
@@ -24,7 +24,7 @@ Coletar, conforme suporte:
 - temperature sensors;
 - power data quando disponível.
 
-## Hardware fingerprint
+## Fingerprint de hardware
 
 Usado para reconhecer o equipamento e separar identidade física de identidade lógica.
 
@@ -32,7 +32,7 @@ Usado para reconhecer o equipamento e separar identidade física de identidade l
 
 Deve ser multidimensional e conter baseline, current e confidence.
 
-## Hardware classes
+## Classes de hardware
 
 - x86_64 CPU;
 - x86_64 + GPU;
@@ -42,10 +42,10 @@ Deve ser multidimensional e conter baseline, current e confidence.
 - SBC;
 - mobile device.
 
-## Heterogeneous abstraction
+## Abstração heterogênea
 
 Todos os equipamentos devem apresentar uma interface de Worker comum.
 
-## Device disappearance
+## Desaparecimento de dispositivo
 
 A ausência de heartbeat muda o estado lógico; o Controller não depende de desligamento limpo.

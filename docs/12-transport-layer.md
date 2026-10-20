@@ -7,11 +7,11 @@ tags: [spec, transport-layer]
 
 # 12 — Transport Layer
 
-## Objective
+## Objetivo
 
 Transportar Work Units, tensors, state e artefatos usando o meio mais adequado.
 
-## Transport abstraction
+## Abstração de transporte
 
 ```text
 Transport Manager
@@ -28,7 +28,7 @@ Control plane usa mensagens pequenas, versionadas e autenticadas.
 
 Data plane é otimizado para buffers/tensors.
 
-## Link metrics
+## Métricas de link
 
 - bandwidth;
 - latency;
@@ -38,7 +38,7 @@ Data plane é otimizado para buffers/tensors.
 - current utilization;
 - health.
 
-## Decisions
+## Decisões
 
 Antes de transferir:
 

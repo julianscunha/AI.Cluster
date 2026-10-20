@@ -7,7 +7,7 @@ tags: [spec, capability-engine]
 
 # 05 — Capability Engine
 
-## Objective
+## Objetivo
 
 Medir capacidade real do hardware e converter resultados em um perfil utilizável pelo planner.
 

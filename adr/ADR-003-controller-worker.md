@@ -9,10 +9,10 @@ tags: [adr, controller-worker]
 
 Status: DECIDED
 
-## Decision
+## Decisão
 
 Separar o cluster control plane do Worker Runtime.
 
-## Rationale
+## Justificativa
 
 Permite hardware heterogêneo, scheduler central e execução local otimizada.

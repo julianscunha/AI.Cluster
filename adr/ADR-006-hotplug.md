@@ -9,6 +9,6 @@ tags: [adr, hotplug]
 
 Status: DECIDED
 
-## Decision
+## Decisão
 
 Hot-plug/hot-remove será realizado por state objects, checkpoints, retries, replica promotion e replan. Não assumir migração arbitrária de memória viva.

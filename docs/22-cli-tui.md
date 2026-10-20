@@ -7,11 +7,11 @@ tags: [spec, cli-tui]
 
 # 22 — CLI / TUI
 
-## Objective
+## Objetivo
 
 Operação primariamente via shell, sem dependência de GUI.
 
-## Core commands
+## Comandos centrais
 
 ```bash
 ai-cluster status
@@ -55,7 +55,7 @@ Deve mostrar em tempo real:
 - expected vs actual;
 - current plan.
 
-## Color semantics
+## Semântica de cores
 
 ```text
 GREEN  = normal

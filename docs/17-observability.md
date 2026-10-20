@@ -7,13 +7,13 @@ tags: [spec, observability]
 
 # 17 — Observability / Telemetry Engine
 
-## Three telemetry types
+## Três tipos de telemetria
 
-### Metrics
+### Métricas
 
 Valores contínuos: CPU, RAM, temperature, tokens/s, latency.
 
-### Events
+### Eventos
 
 Mudanças: NODE_JOINED, NODE_DEGRADED, NODE_LOST, SSD_WARNING, REBALANCE_STARTED.
 
@@ -21,7 +21,7 @@ Mudanças: NODE_JOINED, NODE_DEGRADED, NODE_LOST, SSD_WARNING, REBALANCE_STARTED
 
 Caminho completo da execução.
 
-## Node metrics
+## Métricas de nó
 
 - CPU utilization/frequency/load/throttling;
 - RAM usage/swap/bandwidth;
@@ -29,7 +29,7 @@ Caminho completo da execução.
 - storage latency/IOPS/throughput/health/wear;
 - network bandwidth/latency/loss/errors.
 
-## LLM metrics
+## Métricas de LLM
 
 - input tokens;
 - output tokens;
@@ -42,15 +42,15 @@ Caminho completo da execução.
 - context size;
 - KV cache usage.
 
-## Expected vs actual
+## Previsto vs real
 
 Mostrar estimativas e realidade lado a lado.
 
-## Adaptive sampling
+## Amostragem adaptativa
 
 Normal: baixa frequência. Degraded/anomaly: aumentar frequência temporariamente.
 
-## CLI/TUI requirements
+## Requisitos de CLI/TUI
 
 ```text
 ai-cluster status
@@ -65,6 +65,6 @@ ai-cluster topology
 ai-cluster diagnose
 ```
 
-## Explainability
+## Explicabilidade
 
 Diagnósticos devem indicar causa provável, impacto e ação recomendada.
