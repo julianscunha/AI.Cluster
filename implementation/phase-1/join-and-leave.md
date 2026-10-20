@@ -1,38 +1,39 @@
 ---
-title: "Phase 1 — Join and Leave"
+title: "Fase 1 — Entrada e saída de nós"
 type: implementation
 status: implemented
 tags: [implementation, phase-1, lifecycle]
 ---
 
-# Phase 1 — Join and Leave
+# Fase 1 — Entrada e saída de nós
 
-Roadmap exit criterion for Phase 1: **nodes join and leave safely**.
+Critério de saída do roadmap para a Fase 1: **nós entram e saem com segurança**.
 
-## What changed
+## O que mudou
 
-- `LeaveNode` RPC in `code/proto/cluster.proto`: a node announces a planned departure.
-- `Registry::begin_drain`, `Registry::remove`, `Registry::is_available` in
+- RPC `LeaveNode` em `code/proto/cluster.proto`: um nó anuncia uma saída planejada.
+- `Registry::begin_drain`, `Registry::remove`, `Registry::is_available` em
   `code/crates/controller/src/registry.rs`.
-- `WorkStore::requeue_for_node` in `code/crates/controller/src/work.rs`: in-flight
-  units return to the queue instead of being stranded.
-- The dispatch record now keeps the work unit itself, so it can be handed back.
-- `RequestWork` refuses nodes that are draining, offline, failed or quarantined.
-- The controller's offline sweep also requeues, so a node that goes silent without
-  saying goodbye loses its in-flight work to the surviving nodes.
-- The worker installs a SIGTERM/SIGINT handler and calls `LeaveNode` before exiting.
+- `WorkStore::requeue_for_node` em `code/crates/controller/src/work.rs`: unidades em voo
+  voltam para a fila em vez de ficarem encalhadas.
+- O registro de dispatch agora guarda a própria unidade de trabalho, para que ela possa ser
+  devolvida.
+- `RequestWork` recusa nós que estão drenando, offline, com falha ou em quarentena.
+- O sweep de offline do controller também faz requeue, então um nó que fica em silêncio sem
+  se despedir perde seu trabalho em voo para os nós sobreviventes.
+- O worker instala um handler de SIGTERM/SIGINT e chama `LeaveNode` antes de sair.
 
-## Semantics
+## Semântica
 
-A unit is in flight from `claim` until `complete`. Requeue removes the dispatch
-record, so a late result from the departed node is refused — only the node that
-claims the unit next can complete it. Nothing runs twice and nothing is lost.
+Uma unidade está em voo do `claim` até o `complete`. O requeue remove o registro de
+dispatch, então um resultado atrasado do nó que partiu é recusado — só o nó que
+reivindicar a unidade em seguida pode completá-la. Nada roda duas vezes e nada se perde.
 
-## Evidence — Docker, two nodes, one planned leave
+## Evidência — Docker, dois nós, uma saída planejada
 
-Reproduce with `bash code/tests/phase-1-leave.sh`.
+Reproduza com `bash code/tests/phase-1-leave.sh`.
 
-Controller plus `node-b`; `node-c` joins; `node-b` leaves on SIGTERM:
+Controller mais `node-b`; `node-c` entra; `node-b` sai com SIGTERM:
 
 | work | node | compute_us | transfer_us | total_us |
 |---|---|---|---|---|
@@ -43,17 +44,17 @@ Controller plus `node-b`; `node-c` joins; `node-b` leaves on SIGTERM:
 | w-4 | node-b | 670 | 2,330 | 3,000 |
 | w-5 | node-c | 1,345 | 2,655 | 4,000 |
 
-`completed=6 pending=0`. Worker log: `left cluster node_id=node-b accepted=true
-requeued=0`. Controller log: `node node-b left; requeued 0 in-flight units`.
-`ai-cluster nodes` after the leave lists `node-c` only.
+`completed=6 pending=0`. Log do worker: `left cluster node_id=node-b accepted=true
+requeued=0`. Log do controller: `node node-b left; requeued 0 in-flight units`.
+`ai-cluster nodes` após a saída lista só `node-c`.
 
-`requeued=0` because the worker submits its unit before the next tick, so at the
-moment of departure it held nothing. The requeue path itself is covered by unit
-tests `requeue_for_node_returns_in_flight_units_to_the_queue` and
+`requeued=0` porque o worker entrega sua unidade antes do próximo tick, então no
+momento da partida ele não segurava nada. O caminho de requeue em si é coberto pelos testes
+unitários `requeue_for_node_returns_in_flight_units_to_the_queue` e
 `leave_node_requeues_in_flight_work_and_drops_the_node`.
 
-## Known ceiling
+## Teto conhecido
 
-The worker requests one unit per heartbeat tick, so dispatch latency is bounded by
-the five-second heartbeat interval. Revisit when throughput matters more than the
-simplicity of a single loop.
+O worker pede uma unidade por tick de heartbeat, então a latência de dispatch é limitada pelo
+intervalo de heartbeat de cinco segundos. Revisitar quando throughput importar mais do que a
+simplicidade de um único laço.

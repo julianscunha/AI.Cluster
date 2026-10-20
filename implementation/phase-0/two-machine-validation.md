@@ -1,75 +1,75 @@
 ---
-title: "Two-machine validation runbook"
+title: "Runbook de validação em duas máquinas"
 type: operational
 status: living
 tags: [operational, two-machine-validation]
 ---
 
-# Two-machine validation runbook
+# Runbook de validação em duas máquinas
 
-The same-host benchmark proves the mechanics but not the claim the spec cares
-about: that dispatching a work unit across machines costs less than the compute
-it saves. On one host the workers share cores, so the second worker makes the
-numbers *worse*. Only separate machines answer the real question.
+O benchmark no mesmo host prova a mecânica, mas não a afirmação com que a spec se importa:
+que despachar uma unidade de trabalho entre máquinas custa menos do que o compute que ela
+economiza. Em um único host os workers compartilham os mesmos núcleos, então o segundo
+worker deixa os números *piores*. Só máquinas separadas respondem à pergunta real.
 
-## What this proves
+## O que isto prova
 
 `T_total = T_compute + T_communication + T_serialization + T_memory + T_queue`
 
-The single-node baseline (`ai-cluster benchmark --local`) is `T_compute` with no
-transport. The distributed run adds everything else. Two machines on a real
-network are the first setup where the comparison means anything.
+A linha de base de nó único (`ai-cluster benchmark --local`) é `T_compute` sem
+transporte. A execução distribuída acrescenta todo o resto. Duas máquinas numa rede real
+são o primeiro arranjo em que a comparação significa algo.
 
-## Prerequisites
+## Pré-requisitos
 
-- Two Linux machines (the "nodes"), same architecture, reachable over the network.
-- Rust toolchain, or the `aic-rust:1` image used in CI.
-- The controller binds `0.0.0.0:50051`; the worker needs to reach that port.
+- Duas máquinas Linux (os "nós"), mesma arquitetura, alcançáveis pela rede.
+- Toolchain Rust, ou a imagem `aic-rust:1` usada no CI.
+- O controller faz bind em `0.0.0.0:50051`; o worker precisa alcançar essa porta.
 
-## Steps
+## Passos
 
-On **machine A** (controller):
+Na **máquina A** (controller):
 
 ```sh
 cargo run -p ai-cluster-controller --release
 ```
 
-On **machine B** (worker), pointing at A's address:
+Na **máquina B** (worker), apontando para o endereço de A:
 
 ```sh
 AI_CLUSTER_NODE_ID=node-b \
-AI_CLUSTER_CONTROLLER=http://<machine-a-ip>:50051 \
+AI_CLUSTER_CONTROLLER=http://<ip-da-maquina-a>:50051 \
 cargo run -p ai-cluster-worker --release
 ```
 
-Confirm B registered, from machine A:
+Confirme que B se registrou, a partir da máquina A:
 
 ```sh
 cargo run -p ai-cluster-cli --release -- nodes
 ```
 
-Run the comparison — once with only B, then repeat with a second worker on A to
-see whether adding a machine beats adding cores:
+Rode a comparação — uma vez só com B, depois repita com um segundo worker em A para
+ver se adicionar uma máquina supera adicionar núcleos:
 
 ```sh
 cargo run -p ai-cluster-cli --release -- benchmark --size 256 --repetitions 8
 ```
 
-## What to record
+## O que registrar
 
-| run | scope | avg compute | avg transfer | total |
+| execução | escopo | compute médio | transferência média | total |
 |---|---|---|---|---|
-| baseline | `--local` on A | | n/a | |
-| 1 remote worker | A controller + B worker | | | |
-| 2 workers | A controller + A+B workers | | | |
+| base | `--local` em A | | n/a | |
+| 1 worker remoto | controller em A + worker B | | | |
+| 2 workers | controller em A + workers A+B | | | |
 
-The distributed run only wins when `avg compute saved by the extra machine`
-exceeds `avg transfer`. If transfer stays flat while compute drops, distribution
-pays. If transfer grows with compute, the network is the bottleneck.
+A execução distribuída só ganha quando `compute médio economizado pela máquina extra`
+supera a `transferência média`. Se a transferência fica estável enquanto o compute cai, a
+distribuição compensa. Se a transferência cresce com o compute, a rede é o gargalo.
 
-## Known ceiling
+## Teto conhecido
 
-The controller timestamps dispatch and completion in milliseconds, so transfer
-time has ~1ms resolution (`work.rs`). Keep the workload in the hundreds of
-milliseconds per unit, or the measurement noise dominates. Tighten to microsecond
-timestamps before benchmarking sub-millisecond units.
+O controller marca dispatch e conclusão em milissegundos, então o tempo de transferência tem
+resolução de ~1ms (`work.rs`). Mantenha a carga na casa das centenas de milissegundos por
+unidade, ou o ruído de medição domina. Aperte para timestamps em microssegundos antes de
+fazer benchmark de unidades sub-milissegundo.

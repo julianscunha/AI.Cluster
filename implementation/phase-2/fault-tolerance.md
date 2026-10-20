@@ -1,60 +1,62 @@
 ---
-title: "Phase 2 — Fault Tolerance"
+title: "Fase 2 — Tolerância a falhas"
 type: implementation
 status: implemented
 tags: [implementation, phase-2, fault-tolerance, retry]
 ---
 
-# Phase 2 — Fault Tolerance
+# Fase 2 — Tolerância a falhas
 
-Bounded reassignment: a unit whose worker dies is handed to another node, but only
-so many times. Past the budget the unit is failed, and so is everything downstream
-of it, so the graph always reaches an answer instead of hanging.
+Reatribuição limitada: uma unidade cujo worker morre é entregue a outro nó, mas só
+algumas vezes. Passado o orçamento, a unidade falha — e tudo a jusante dela também —, para
+que o grafo sempre chegue a uma resposta em vez de travar.
 
-## What changed
+## O que mudou
 
-- `WorkStore` counts dispatch attempts per work id. `claim` bumps the counter; the
-  count survives a hand-back because it lives in the store, not in the dispatch
-  record that gets dropped.
-- `requeue_for_node` hands a unit back only while its budget lasts. Past
-  `MAX_ATTEMPTS` (3: one first try plus two reassignments) the unit is failed
-  instead of requeued.
-- `fail_cascade` fails a unit's dependents with it, transitively. A dependent waits
-  on its source's *output*, and a failed unit never produces one, so without the
-  cascade the dependent would sit in the queue forever and `pending()` would never
-  reach zero.
-- `RequeueOutcome` reports both counts, so the leave path and the offline sweep can
-  log `requeued N, failed M` rather than silently dropping the difference.
-- The worker's heartbeat and health reporting run on their own task with their own
-  interval, so a long unit can no longer starve them. Sharing the work loop made the
-  controller reap healthy workers mid-computation. See "Liveness" below.
-- `WorkReportResponse.failed` exposes the failed count; the CLI prints `failed=`.
-- Worker test hook `AI_CLUSTER_WORK_DELAY_MS` holds a claimed unit before computing
-  it. Unset means no delay; it exists so a failure test can kill a worker while it
-  is actually holding work.
+- O `WorkStore` conta tentativas de dispatch por work id. O `claim` incrementa o contador;
+  a contagem sobrevive a um hand-back porque vive no store, não no registro de dispatch
+  que é descartado.
+- `requeue_for_node` devolve uma unidade só enquanto o orçamento dura. Passado o
+  `MAX_ATTEMPTS` (3: uma primeira tentativa mais duas reatribuições), a unidade falha em
+  vez de voltar para a fila.
+- `fail_cascade` falha os dependentes de uma unidade junto com ela, transitivamente. Um
+  dependente espera pelo *output* da sua origem, e uma unidade falha nunca produz um, então
+  sem a cascata o dependente ficaria na fila para sempre e `pending()` nunca chegaria a
+  zero.
+- `RequeueOutcome` reporta as duas contagens, para que o caminho de saída e o sweep de
+  offline possam logar `requeued N, failed M` em vez de sumir com a diferença.
+- O heartbeat e o health report do worker rodam em task própria, com intervalo próprio,
+  então uma unidade longa não pode mais matá-los de fome. Compartilhar o laço de trabalho
+  fazia o controller reapar workers saudáveis no meio do compute. Ver "Liveness" abaixo.
+- `WorkReportResponse.failed` expõe a contagem de falhas; o CLI imprime `failed=`.
+- O hook de teste `AI_CLUSTER_WORK_DELAY_MS` segura uma unidade reivindicada antes de
+  computá-la. Sem ela, sem atraso; existe para que um teste de falha possa matar um worker
+  enquanto ele realmente segura trabalho.
 
-## Semantics
+## Semântica
 
-Attempts are counted when a unit is claimed, so the number means "times this unit
-was started", not "times it came back". A unit that completes clears its counter; a
-unit that exhausts it moves to the failed set and its dispatch record is dropped, so
-a late result from the dead worker is refused as usual.
+As tentativas são contadas quando uma unidade é reivindicada, então o número significa
+"vezes que esta unidade foi iniciada", não "vezes que ela voltou". Uma unidade que completa
+limpa seu contador; uma unidade que esgota o orçamento vai para o conjunto de falhas e seu
+registro de dispatch é descartado, então um resultado atrasado do worker morto é recusado
+como sempre.
 
-Failed units are neither queued nor in flight, so `pending()` excludes them. That is
-the point: a client polling for completion terminates on either outcome — drained or
-gave up — instead of waiting for its own deadline. `failed=0` means the graph ran to
-completion; a non-zero count means some branch could not be finished.
+Unidades falhas não estão na fila nem em voo, então `pending()` as exclui. É esse o ponto:
+um cliente que faz poll esperando conclusão termina em qualquer um dos dois desfechos —
+drenou ou desistiu — em vez de esperar pelo seu próprio deadline. `failed=0` significa que o
+grafo rodou até o fim; uma contagem diferente de zero significa que algum branch não pôde
+ser concluído.
 
-The cascade cannot reach a unit in flight: readiness withholds a dependent until its
-source has produced output, so nothing downstream of a failure is ever dispatched.
+A cascata não alcança uma unidade em voo: a prontidão retém um dependente até que sua
+origem tenha produzido output, então nada a jusante de uma falha chega a ser despachado.
 
-## Evidence — Docker, two workers, worker killed mid-unit
+## Evidência — Docker, dois workers, worker morto no meio da unidade
 
-Reproduce with `bash code/tests/phase-2-failure.sh`. Two units are enqueued so both
-workers hold one; each unit is held for 12s so the kill lands while it is in flight;
-`node-b` is then `docker kill`ed, with no leave call. The grace is set to 9s on
-purpose — shorter than the hold — so a healthy worker would be reaped if the
-heartbeat were still sharing the work loop.
+Reproduza com `bash code/tests/phase-2-failure.sh`. Duas unidades são enfileiradas para que
+os dois workers segurem uma cada; cada unidade é segurada por 12s para que o kill caia
+enquanto ela está em voo; `node-b` então leva `docker kill`, sem chamada de leave. A grace é
+posta em 9s de propósito — menor que o hold — para que um worker saudável fosse reapado se
+o heartbeat ainda compartilhasse o laço de trabalho.
 
 ```
 enqueued 2 work units of 256x256
@@ -64,7 +66,7 @@ w-1   node-c    5637   12008363   12014000
 completed=2 pending=0 failed=0
 ```
 
-Controller log:
+Log do controller:
 
 ```
 controller listening on 0.0.0.0:50051 (heartbeat grace 9000ms)
@@ -73,32 +75,31 @@ work w-0 finished on node-c compute=6304us transfer=12005696us total=12012000us 
 work w-1 finished on node-c compute=5637us transfer=12008363us total=12014000us checksum=1354.312283
 ```
 
-`requeued 1 in-flight units` is the line that matters: `node-b` was holding a unit
-when it died, the unit went back to the queue, and `node-c` finished it. One offline
-event for the node that was actually killed, and none for the node that was alive —
-the false reap is gone. The graph drained with no failures. `node-b` never came back;
-the cluster recovered without it.
+`requeued 1 in-flight units` é a linha que importa: `node-b` segurava uma unidade quando
+morreu, a unidade voltou para a fila, e `node-c` a terminou. Um evento de offline para o nó
+que realmente foi morto, e nenhum para o nó que estava vivo — o falso reap sumiu. O grafo
+drenou sem falhas. `node-b` nunca voltou; o cluster se recuperou sem ele.
 
-The retry cap and cascade are covered by unit tests
+O teto de retry e a cascata são cobertos pelos testes unitários
 `a_unit_is_failed_once_its_retry_budget_is_spent`,
-`failing_a_unit_fails_its_dependents_with_it`, and
+`failing_a_unit_fails_its_dependents_with_it` e
 `a_failed_branch_does_not_fail_unrelated_work`.
 
-## Liveness — heartbeat is decoupled from the work loop
+## Liveness — heartbeat desacoplado do laço de trabalho
 
-The heartbeat and health reporting used to share the worker's sequential loop with
-the work itself. A unit that ran longer than the heartbeat grace therefore starved
-the heartbeat, and the controller reaped a worker that was alive and computing. The
-unit was requeued, the original result was refused on arrival, and the work was done
-twice — correct answer, wasted compute, one retry burned.
+O heartbeat e o health report compartilhavam o laço sequencial do worker com o próprio
+trabalho. Uma unidade que rodava mais que a grace do heartbeat, portanto, matava o
+heartbeat de fome, e o controller reapava um worker que estava vivo e computando. A unidade
+era re-enfileirada, o resultado original era recusado na chegada, e o trabalho era feito
+duas vezes — resposta correta, compute desperdiçado, um retry queimado.
 
-The heartbeat now runs on its own task on its own interval. The task is stopped
-explicitly before `LeaveNode`, because a beat that landed after the departure would
-make the controller re-register the node and undo it.
+O heartbeat agora roda em task própria, com intervalo próprio. A task é parada explicitamente
+antes do `LeaveNode`, porque um beat que chegasse depois da partida faria o controller
+re-registrar o nó e desfazer a saída.
 
-This is visible in the failure test, which runs a grace *shorter* than the work hold
-on purpose. Before the fix, the same run logged a healthy worker being reaped over
-and over until a unit ran out of retries:
+Isso é visível no teste de falha, que roda uma grace *menor* que o hold de trabalho de
+propósito. Antes da correção, a mesma execução logava um worker saudável sendo reapado
+repetidamente até uma unidade esgotar os retries:
 
 ```
 node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
@@ -107,27 +108,27 @@ node node-c offline after 9000ms without heartbeat; requeued 1 in-flight units, 
 node node-c offline after 9000ms without heartbeat; requeued 0 in-flight units, failed 1
 ```
 
-After the fix, the same configuration reaps only the node that was actually killed:
+Depois da correção, a mesma configuração reapa só o nó que realmente foi morto:
 
 ```
 node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
 ```
 
-Grace stays a tunable: too short relative to the heartbeat interval and a healthy
-node is reaped anyway, so keep it comfortably above the interval. The leave path was
-re-checked too — `node-b left` followed by `NODES 0` twelve seconds later, with no
-re-registration.
+A grace continua sendo um ajuste: curta demais em relação ao intervalo do heartbeat e um nó
+saudável é reapado mesmo assim, então mantenha-a confortavelmente acima do intervalo. O
+caminho de saída foi reconferido também — `node-b left` seguido de `NODES 0` doze segundos
+depois, sem re-registro.
 
-## Known ceiling
+## Teto conhecido
 
-**No failure signal from the worker.** A worker that cannot execute a unit drops it
-silently; the controller only learns of the failure when the node's heartbeat stops.
-So a live worker holding an unexecutable unit pins that unit in flight until the node
-leaves. The retry budget cannot help, because nothing triggers a hand-back. Closing
-this needs a failure field on the result, so "I could not run this" is distinguishable
-from "I am still running this".
+**Nenhum sinal de falha vindo do worker.** Um worker que não consegue executar uma unidade
+a descarta em silêncio; o controller só descobre a falha quando o heartbeat do nó para.
+Então um worker vivo segurando uma unidade inexequível prende essa unidade em voo até o nó
+sair. O orçamento de retry não ajuda, porque nada dispara um hand-back. Fechar isso exige um
+campo de falha no resultado, para que "não consegui rodar isto" seja distinguível de "ainda
+estou rodando isto".
 
-**Retry does not steer away from the failing node.** A reassigned unit goes to
-whichever node claims next. With one surviving node there is nowhere else to go
-anyway; revisit with placement, where a unit that failed on a node should not be
-handed straight back to it.
+**O retry não desvia do nó que falhou.** Uma unidade reatribuída vai para o nó que a
+reivindicar em seguida. Com um só nó sobrevivente não há para onde ir de qualquer forma;
+revisitar com placement, onde uma unidade que falhou num nó não deveria voltar direto para
+ele.

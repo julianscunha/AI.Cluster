@@ -1,65 +1,64 @@
 ---
-title: "Phase 2 — Placement"
+title: "Fase 2 — Placement"
 type: implementation
 status: implemented
 tags: [implementation, phase-2, placement, scheduler, capability]
 ---
 
-# Phase 2 — Placement
+# Fase 2 — Placement
 
-Candidate filtering: a work unit declares the capability it needs, and the
-controller refuses to hand it to a node that does not have it. Dispatch stops
-being first-come-first-served and becomes a decision.
+Filtragem de candidatos: uma unidade de trabalho declara a capability de que precisa, e o
+controller se recusa a entregá-la a um nó que não a tenha. O dispatch deixa de ser
+por ordem de chegada e vira uma decisão.
 
-This is the first piece of the scheduler. It filters candidates; it does not yet
-cost them. Choosing *among* several capable nodes needs the cost model and comes
-later.
+Esta é a primeira peça do scheduler. Ela filtra candidatos; ainda não os custa. Escolher
+*entre* vários nós capazes precisa do modelo de custo e vem depois.
 
-## What changed
+## O que mudou
 
-- `WorkUnit.min_cpu_threads` (proto field 10) declares the requirement. `0` means
-  no requirement, which is every unit the controller builds today except the ones
-  a client marks.
-- `EnqueueWorkRequest.min_cpu_threads` (proto field 6) lets a client set it.
-- `WorkStore::claim` takes the asking node's `cpu_threads` and skips units the
-  node cannot run. The node keeps polling and gets the next unit it may take.
-- `Registry::capability` exposes the last reported `CapabilityReport` for one
-  node. The registry already stored it; nothing read it back per node before.
-- `request_work` reads the node's capability and passes its `cpu_threads` to
-  `claim`, so the filter runs at the only place work is handed out.
-- The worker reports fewer threads than the host has when
-  `AI_CLUSTER_CPU_THREADS` is set. Unset means report reality. It exists so a
-  single host can stand in for two machines of different sizes.
-- `ai-cluster benchmark --min-threads N` sets the requirement on the units it
-  enqueues.
+- `WorkUnit.min_cpu_threads` (campo 10 do proto) declara o requisito. `0` significa
+  sem requisito, o que vale para toda unidade que o controller constrói hoje, exceto as
+  que um cliente marca.
+- `EnqueueWorkRequest.min_cpu_threads` (campo 6 do proto) permite um cliente defini-lo.
+- `WorkStore::claim` recebe o `cpu_threads` do nó que pede e pula unidades que o
+  nó não consegue rodar. O nó continua fazendo poll e pega a próxima unidade que pode assumir.
+- `Registry::capability` expõe o último `CapabilityReport` reportado para um
+  nó. O registry já o guardava; nada o lia de volta por nó antes.
+- `request_work` lê a capability do nó e passa seu `cpu_threads` para
+  `claim`, então o filtro roda no único lugar onde o trabalho é entregue.
+- O worker reporta menos threads que o host tem quando
+  `AI_CLUSTER_CPU_THREADS` está definida. Sem definir, reporta a realidade. Existe para que um
+  único host possa fazer as vezes de duas máquinas de tamanhos diferentes.
+- `ai-cluster benchmark --min-threads N` define o requisito nas unidades que
+  enfileira.
 
-## Semantics
+## Semântica
 
-The requirement is **hard**, not a preference. A unit that needs more threads than
-a node has is not handed to it at all — even if that means the unit waits. A node
-that reports fewer threads than a unit needs gets the next unit it *can* run, or
-nothing.
+O requisito é **duro**, não uma preferência. Uma unidade que precisa de mais threads do que
+um nó tem não é entregue a ele de jeito nenhum — mesmo que isso signifique que a unidade espere. Um nó
+que reporta menos threads do que uma unidade precisa recebe a próxima unidade que *pode* rodar, ou
+nada.
 
-This matters because the dispatch model is pull-based: workers poll
-`RequestWork`, and the controller's only lever is what to give each asker. So
-placement is expressed as a filter on the queue, not as a controller-side choice
-of node. The first ready unit that both has its dependencies met and fits the
-asker is the one that goes out.
+Isso importa porque o modelo de dispatch é baseado em pull: os workers fazem poll
+em `RequestWork`, e a única alavanca do controller é o que dar a cada solicitante. Então
+o placement é expresso como um filtro na fila, não como uma escolha do controller sobre
+o nó. A primeira unidade pronta que tanto tem suas dependências satisfeitas quanto se encaixa no
+solicitante é a que sai.
 
-Two consequences follow, and both are deliberate:
+Duas consequências se seguem, e ambas são deliberadas:
 
-- A unit whose requirement no surviving node meets stays pending. This is the
-  same "cluster cannot run this" case as an empty cluster; there is no separate
-  handling and no error returned. See the ceiling below.
-- The filter is applied per poll. A weak node polling in a tight loop does not
-  take a heavy unit; it just gets no work until a light unit appears or a capable
-  node takes the heavy one.
+- Uma unidade cujo requisito nenhum nó sobrevivente atende fica pendente. É o
+  mesmo caso de "o cluster não consegue rodar isto" que um cluster vazio; não há tratamento
+  separado nem erro retornado. Ver o teto abaixo.
+- O filtro é aplicado por poll. Um nó fraco fazendo poll em laço apertado não
+  pega uma unidade pesada; ele só não recebe trabalho até aparecer uma unidade leve ou um nó
+  capaz pegar a pesada.
 
-## Evidence
+## Evidência
 
-Reproduce with `bash code/tests/phase-2-placement.sh`. A weak node reporting 2
-threads comes up alone; a unit requiring 4 threads is enqueued; nothing finishes;
-then a strong node reporting 8 threads joins and takes the unit.
+Reproduza com `bash code/tests/phase-2-placement.sh`. Um nó fraco reportando 2
+threads sobe sozinho; uma unidade exigindo 4 threads é enfileirada; nada termina;
+então um nó forte reportando 8 threads entra e pega a unidade.
 
 ```
 --- nodes: the weak node reports 2 threads ---
@@ -76,30 +75,30 @@ w-0        node-strong            5708         8292        14000
 completed=1 pending=0 failed=0 avg_compute_us=5708 avg_transfer_us=8292
 ```
 
-`w-0 node-strong` is the line that matters. The weak node was the only node
-present while the unit was queued and it never ran it; the unit finished on the
-strong node as soon as it joined. First-come-first-served would have handed the
-unit to the weak node the moment it polled, and the run would have finished with
+`w-0 node-strong` é a linha que importa. O nó fraco era o único nó
+presente enquanto a unidade estava na fila e nunca a rodou; a unidade terminou no nó
+forte assim que ele entrou. Por ordem de chegada, a unidade teria ido para o nó fraco
+no momento em que ele fez poll, e a execução teria terminado com
 `w-0 node-weak`.
 
-The filter itself is covered by the unit test
-`a_weak_node_is_skipped_for_a_unit_that_requires_more_threads`, which checks the
-three cases in one place: a weak node gets the light unit instead of the heavy one,
-a capable node gets the heavy one, and a weak node alone gets nothing.
+O filtro em si é coberto pelo teste unitário
+`a_weak_node_is_skipped_for_a_unit_that_requires_more_threads`, que verifica os
+três casos num só lugar: um nó fraco recebe a unidade leve em vez da pesada,
+um nó capaz recebe a pesada, e um nó fraco sozinho não recebe nada.
 
-## Known ceiling
+## Teto conhecido
 
-**Only cpu_threads is filtered.** Memory, precision, accelerators and storage are
-reported by the worker and stored by the registry, but no unit can require them
-yet. The requirement field is one number; extend it to a requirements message when
-the next capability matters.
+**Só cpu_threads é filtrado.** Memória, precisão, aceleradores e armazenamento são
+reportados pelo worker e guardados pelo registry, mas nenhuma unidade pode exigi-los
+ainda. O campo de requisito é um número; estenda-o para uma mensagem de requisitos quando
+a próxima capability importar.
 
-**A unit whose requirement no node meets stays pending.** No error, no fail-fast:
-the client polls until its own deadline. Placement cannot detect "this will never
-run" because it only sees the node that is asking, not the whole cluster. Closing
-this means resolving requirements against the registry when the unit is enqueued,
-or when the last capable node leaves.
+**Uma unidade cujo requisito nenhum nó atende fica pendente.** Sem erro, sem fail-fast:
+o cliente faz poll até seu próprio deadline. O placement não consegue detectar "isto nunca vai
+rodar" porque só vê o nó que está perguntando, não o cluster inteiro. Fechar
+isso significa resolver requisitos contra o registry quando a unidade é enfileirada,
+ou quando o último nó capaz sai.
 
-**No cost model.** Among nodes that all satisfy the requirement, the first to poll
-wins. Choosing the cheapest capable node needs compute, communication and queue
-estimates — the next scheduler slice.
+**Sem modelo de custo.** Entre nós que todos satisfazem o requisito, o primeiro a fazer poll
+vence. Escolher o nó capaz mais barato precisa de estimativas de compute, comunicação e fila —
+a próxima fatia do scheduler.

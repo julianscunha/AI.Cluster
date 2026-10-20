@@ -1,76 +1,78 @@
 ---
-title: "Benchmark Sweep — compute vs transfer"
+title: "Varredura de benchmark — compute vs transfer"
 type: implementation
 status: implemented
 tags: [implementation, phase-0, benchmark, scaling]
 ---
 
-# Benchmark Sweep — compute vs transfer
+# Varredura de benchmark — compute vs transfer
 
-The first experiment of the plan (§20): at what unit size does distributing a matrix
-operation beat the cost of moving it? Compute grows with the cube of the edge length;
-transfer grows with its square. Somewhere between them is the size below which extra
-nodes do not pay for themselves. This is the Phase 0 exit criterion — "two Linux nodes
-exchange a Work Unit and compare compute vs transfer".
+O primeiro experimento do plano (§20): a partir de que tamanho de unidade distribuir uma
+operação de matriz compensa o custo de movê-la? O compute cresce com o cubo da aresta;
+a transferência cresce com o quadrado. Em algum ponto entre eles está o tamanho abaixo do
+qual nós extras não se pagam. Este é o critério de saída da Fase 0 — "dois nós Linux
+trocam uma Work Unit e comparam compute vs transfer".
 
-Harness: `code/tests/scaling-sweep.sh`. Runs the same workload at several sizes across
-1, 2 and 3 workers. Reproduce with
+Harness: `code/tests/scaling-sweep.sh`. Roda a mesma carga em vários tamanhos com
+1, 2 e 3 workers. Reproduza com
 `NODES="1 2 3" SIZES="32 64 128 256" REPS=6 bash code/tests/scaling-sweep.sh`.
 
-## Finding 1 — the poll cadence was the bottleneck, not compute or transfer
+## Achado 1 — a cadência de poll era o gargalo, não o compute nem a transferência
 
-The first run showed a fixed ~36s wall time for six units on one worker, regardless of
-size. Six units at one per heartbeat interval is six times five seconds: the worker's
-work loop shared the heartbeat's ticker, so it asked for work once per 5s however fast
-the compute was. Compute was microseconds; the wait was seconds.
+A primeira execução mostrou um tempo de parede fixo de ~36s para seis unidades em um worker,
+independente do tamanho. Seis unidades, uma por intervalo de heartbeat, são seis vezes cinco
+segundos: o laço de trabalho do worker compartilhava o ticker do heartbeat, então ele pedia
+trabalho uma vez a cada 5s por mais rápido que fosse o compute. O compute era microssegundos;
+a espera era segundos.
 
-The work poll now runs on its own cadence — immediately after finishing a unit, and
-every `WORK_POLL_IDLE_MS` (200ms) when it found nothing.
+O poll de trabalho agora roda na sua própria cadência — imediatamente após terminar uma
+unidade, e a cada `WORK_POLL_IDLE_MS` (200ms) quando não achou nada.
 
-| units | workers | before | after |
+| unidades | workers | antes | depois |
 |-------|---------|--------|-------|
 | 6 | 1 | 54s | 9s |
 | 6 | 2 | 36s | 8s |
 | 6 | 3 | 19s | 9s |
 
-The "before" column fell with worker count only because more workers poll more often in
-aggregate. That is not parallel speedup; it is the same wait sampled from more places.
-This is the trap the sweep was built to expose, and it is why the sweep runs before any
-scheduler work: a throughput number measured on a starved poll loop says nothing about
-placement.
+A coluna "antes" caía com o número de workers só porque mais workers fazem poll com mais
+frequência no agregado. Isso não é speedup paralelo; é a mesma espera amostrada de mais
+lugares. Esta é a armadilha que a varredura foi construída para expor, e é por isso que a
+varredura roda antes de qualquer trabalho de scheduler: um número de throughput medido num
+laço de poll faminto não diz nada sobre placement.
 
-After the fix the wall time is roughly constant (~8s) across node counts and sizes, so
-it is now dominated by fixed overhead — container start plus the CLI's 2s report poll —
-not by the cluster.
+Depois da correção o tempo de parede é aproximadamente constante (~8s) entre contagens de
+nós e tamanhos, então agora é dominado por overhead fixo — start do container mais o poll de
+relatório de 2s do CLI —, não pelo cluster.
 
-## Finding 2 — within the transport ceiling, transfer dominates compute
+## Achado 2 — dentro do teto do transporte, a transferência domina o compute
 
-At size 256, six units on one worker: compute 6–15.5ms, transfer 8.6–17.6ms. Transfer
-still meets or exceeds compute. At smaller sizes compute is sub-millisecond and transfer
-reads at its resolution floor, so 256 is the largest size where the comparison is
-meaningful.
+No tamanho 256, seis unidades em um worker: compute 6–15,5ms, transferência 8,6–17,6ms. A
+transferência ainda empata ou supera o compute. Em tamanhos menores o compute é
+sub-milissegundo e a transferência lê no seu piso de resolução, então 256 é o maior tamanho
+onde a comparação é significativa.
 
-Compute grows as the cube of the edge length and transfer as its square, so a size exists
-where compute overtakes transfer. That size is above 256. A 512x512 unit carries two f64
-matrices, ~4MB, which is the gRPC default message ceiling. So the crossover is just past
-the largest unit the current transport can carry, and reaching it needs either a larger
-message limit or a different transport. Until then, the honest reading is: at every size
-this cluster can actually ship, moving the unit costs more than computing it.
+O compute cresce como o cubo da aresta e a transferência como o quadrado, então existe um
+tamanho onde o compute supera a transferência. Esse tamanho está acima de 256. Uma unidade
+512x512 carrega duas matrizes f64, ~4MB, que é o teto de mensagem padrão do gRPC. Então o
+cruzamento fica logo depois da maior unidade que o transporte atual consegue carregar, e
+alcançá-lo exige ou um limite de mensagem maior ou um transporte diferente. Até lá, a
+leitura honesta é: em todo tamanho que este cluster consegue de fato despachar, mover a
+unidade custa mais do que computá-la.
 
-## Measurement caveats
+## Ressalvas de medição
 
-- `total_latency_us` derives from millisecond timestamps, so total and transfer have ~1ms
-  resolution. Fine at size 256, useless below size 128 where compute is sub-ms. The
-  `transfer=0` rows in the raw output are units that completed in the same millisecond
-  they were dispatched, not units with zero transfer.
-- The per-unit report is cumulative across runs, so a run's `avg_*` includes every earlier
-  size. Read the per-unit rows, not the run averages.
-- `transfer_time_us` is `total_latency - compute_time`, so it is every non-compute cost in
-  the dispatch-to-completion window: round trip, serialization and scheduling jitter. It
-  is an upper bound on network transfer, not a measurement of it.
+- `total_latency_us` deriva de timestamps em milissegundos, então total e transferência têm
+  resolução de ~1ms. Ok no tamanho 256, inútil abaixo de 128, onde o compute é sub-ms. As
+  linhas `transfer=0` na saída bruta são unidades que completaram no mesmo milissegundo em
+  que foram despachadas, não unidades com transferência zero.
+- O relatório por unidade é cumulativo entre execuções, então o `avg_*` de uma execução inclui
+  todo tamanho anterior. Leia as linhas por unidade, não as médias da execução.
+- `transfer_time_us` é `total_latency - compute_time`, então é todo custo não-compute na
+  janela de dispatch até conclusão: round trip, serialização e jitter de escalonamento. É um
+  limite superior da transferência de rede, não uma medição dela.
 
-## What this does not answer
+## O que isto não responde
 
-Whether the cluster beats a single node at scale. The wall time is now overhead-bound at
-six units, so the sweep cannot separate compute from scheduling cost. More units per run,
-or larger units once the transport ceiling moves, would.
+Se o cluster supera um nó único em escala. O tempo de parede agora é limitado por overhead em
+seis unidades, então a varredura não consegue separar compute de custo de escalonamento. Mais
+unidades por execução, ou unidades maiores assim que o teto do transporte se mover, resolveriam.
