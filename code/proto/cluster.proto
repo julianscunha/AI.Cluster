@@ -89,6 +89,9 @@ message WorkUnit {
   string matrix_a_from = 8;
   /// Same for matrix_b.
   string matrix_b_from = 9;
+  /// Candidate filter: the controller will not hand this unit to a node that
+  /// reports fewer cpu_threads than this. 0 means no requirement.
+  uint32 min_cpu_threads = 10;
 }
 
 message WorkResult {
@@ -125,6 +128,8 @@ message EnqueueWorkRequest {
   uint32 cols = 3;
   uint64 seed = 4;
   uint32 repetitions = 5;
+  /// Minimum cpu_threads for every unit enqueued. 0 means no requirement.
+  uint32 min_cpu_threads = 6;
 }
 
 message EnqueueWorkResponse {

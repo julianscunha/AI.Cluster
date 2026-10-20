@@ -141,19 +141,31 @@ impl WorkStore {
         count
     }
 
-    /// Hands out the first unit whose dependencies have all completed, with any
-    /// bound inputs substituted from the outputs of those dependencies.
+    /// Hands out the first unit whose dependencies have all completed and whose
+    /// candidate filter the asking node satisfies, with any bound inputs
+    /// substituted from the outputs of those dependencies.
     ///
-    /// ponytail: scans the queue for a ready unit, so claiming is O(n) in queue
-    /// length. Fine at benchmark scale; split into blocked and ready queues when
-    /// graphs reach thousands of units. The unit is also cloned into the dispatch
-    /// table so it can be requeued if the node leaves; move to an id-only table if
-    /// unit payloads stop fitting in RAM.
-    pub fn claim(&self, node_id: &str, now_unix_ms: u64) -> Option<WorkUnit> {
+    /// The filter is what makes dispatch a placement decision instead of
+    /// first-come-first-served: a unit that declares a minimum cpu_threads is
+    /// skipped for a node that reports fewer, so it waits for a node that can run
+    /// it. The node keeps polling and gets the next unit it is allowed to take.
+    ///
+    /// ponytail: a unit whose requirement no surviving node meets stays pending.
+    /// That is the same "cluster cannot run this" case as an empty cluster, so no
+    /// separate handling here; revisit when placement moves controller-side and a
+    /// unit can be refused with a reason. The scan is also O(n) in queue length —
+    /// fine at benchmark scale, split into blocked and ready queues when graphs
+    /// reach thousands of units. The unit is cloned into the dispatch table so it
+    /// can be requeued if the node leaves; move to an id-only table if unit
+    /// payloads stop fitting in RAM.
+    pub fn claim(&self, node_id: &str, cpu_threads: u32, now_unix_ms: u64) -> Option<WorkUnit> {
         let mut inner = self.lock();
         let index = {
             let outputs = &inner.outputs;
-            inner.queue.iter().position(|unit| ready(unit, outputs))?
+            inner
+                .queue
+                .iter()
+                .position(|unit| ready(unit, outputs) && unit.min_cpu_threads <= cpu_threads)?
         };
         let mut unit = inner.queue.remove(index)?;
         // Substitute dependency outputs for bound inputs before dispatch.
@@ -299,6 +311,7 @@ mod tests {
             depends_on: Vec::new(),
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
+            min_cpu_threads: 0,
         }
     }
 
@@ -318,12 +331,12 @@ mod tests {
     fn enqueue_claim_complete_round_trip() {
         let store = WorkStore::new();
         assert_eq!(store.pending(), 0);
-        assert!(store.claim("node-a", 1_000).is_none());
+        assert!(store.claim("node-a", 8, 1_000).is_none());
 
         assert_eq!(store.enqueue([unit("w1"), unit("w2")]), 2);
         assert_eq!(store.pending(), 2);
 
-        let claimed = store.claim("node-a", 1_000).expect("queue is not empty");
+        let claimed = store.claim("node-a", 8, 1_000).expect("queue is not empty");
         assert_eq!(claimed.work_id, "w1");
         // One queued plus one in flight still counts as two outstanding.
         assert_eq!(store.pending(), 2);
@@ -350,7 +363,7 @@ mod tests {
     fn result_from_a_different_node_is_rejected_and_kept_in_flight() {
         let store = WorkStore::new();
         store.enqueue([unit("w1")]);
-        store.claim("node-a", 1_000);
+        store.claim("node-a", 8, 1_000);
 
         // "node-a" is the dispatchee, so "node-b" cannot complete its work.
         let mut wrong = result("w1", 1_000);
@@ -369,7 +382,7 @@ mod tests {
     fn transfer_time_never_underflows() {
         let store = WorkStore::new();
         store.enqueue([unit("w1")]);
-        store.claim("node-a", 1_000);
+        store.claim("node-a", 8, 1_000);
         // Worker reports more compute than the controller observed.
         let completed = store
             .complete(result("w1", 9_000_000), 1_100)
@@ -382,7 +395,7 @@ mod tests {
     fn requeue_for_node_returns_in_flight_units_to_the_queue() {
         let store = WorkStore::new();
         store.enqueue([unit("w1")]);
-        assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+        assert_eq!(store.claim("node-a", 8, 1_000).expect("w1").work_id, "w1");
         assert_eq!(store.pending(), 1);
 
         // node-a leaves: the unit goes back to the queue and is still outstanding.
@@ -394,7 +407,7 @@ mod tests {
         assert!(store.completed().is_empty());
 
         // Another node picks the same unit up and finishes it.
-        let taken = store.claim("node-b", 2_000).expect("requeued unit");
+        let taken = store.claim("node-b", 8, 2_000).expect("requeued unit");
         assert_eq!(taken.work_id, "w1");
         assert_eq!(taken.matrix_a, vec![1.0, 2.0, 3.0, 4.0]);
         let mut done = result("w1", 1_000);
@@ -408,8 +421,8 @@ mod tests {
     fn requeue_leaves_other_nodes_units_alone() {
         let store = WorkStore::new();
         store.enqueue([unit("w1"), unit("w2")]);
-        store.claim("node-a", 1_000);
-        store.claim("node-b", 1_000);
+        store.claim("node-a", 8, 1_000);
+        store.claim("node-b", 8, 1_000);
         assert_eq!(store.pending(), 2);
 
         assert_eq!(store.requeue_for_node("node-c").requeued, 0);
@@ -436,18 +449,18 @@ mod tests {
         assert_eq!(store.blocked(), 1);
 
         // w2 is behind w1, so claiming in order yields w1 first.
-        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        let first = store.claim("node-a", 8, 1_000).expect("w1 is ready");
         assert_eq!(first.work_id, "w1");
 
         // w2 stays blocked while its dependency is still in flight.
-        assert!(store.claim("node-b", 1_000).is_none());
+        assert!(store.claim("node-b", 8, 1_000).is_none());
         assert_eq!(store.blocked(), 1);
 
         store.complete(result("w1", 1_000), 2_000).expect("w1 done");
         assert_eq!(store.blocked(), 0);
 
         // With w1 complete, w2 becomes claimable.
-        let second = store.claim("node-b", 2_000).expect("w2 is ready");
+        let second = store.claim("node-b", 8, 2_000).expect("w2 is ready");
         assert_eq!(second.work_id, "w2");
         let mut done = result("w2", 1_000);
         done.node_id = "node-b".to_string();
@@ -464,7 +477,7 @@ mod tests {
         assert_eq!(store.blocked(), 1);
 
         // The head is blocked, so the scan must find w1 further down the queue.
-        let claimed = store.claim("node-a", 1_000).expect("w1 is ready");
+        let claimed = store.claim("node-a", 8, 1_000).expect("w1 is ready");
         assert_eq!(claimed.work_id, "w1");
     }
 
@@ -472,12 +485,12 @@ mod tests {
     fn requeue_keeps_dependencies_intact() {
         let store = WorkStore::new();
         store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
-        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        let first = store.claim("node-a", 8, 1_000).expect("w1 is ready");
         assert_eq!(first.work_id, "w1");
 
         // node-a leaves with w1 in flight; w1 returns to the queue still ready.
         assert_eq!(store.requeue_for_node("node-a").requeued, 1);
-        let again = store.claim("node-b", 2_000).expect("w1 requeued");
+        let again = store.claim("node-b", 8, 2_000).expect("w1 requeued");
         assert_eq!(again.work_id, "w1");
         // w2 is still blocked because w1 has not completed.
         assert_eq!(store.blocked(), 1);
@@ -495,14 +508,14 @@ mod tests {
         store.enqueue([unit("w1"), consumer]);
 
         // w1 runs first and produces a known output.
-        let first = store.claim("node-a", 1_000).expect("w1 is ready");
+        let first = store.claim("node-a", 8, 1_000).expect("w1 is ready");
         assert_eq!(first.work_id, "w1");
         let mut done = result("w1", 1_000);
         done.matrix_c = vec![7.0, 8.0, 9.0, 10.0];
         store.complete(done, 2_000).expect("w1 done");
 
         // w2 is dispatched with w1's output substituted into both inputs.
-        let second = store.claim("node-b", 2_000).expect("w2 is ready");
+        let second = store.claim("node-b", 8, 2_000).expect("w2 is ready");
         assert_eq!(second.work_id, "w2");
         assert_eq!(second.matrix_a, vec![7.0, 8.0, 9.0, 10.0]);
         assert_eq!(second.matrix_b, vec![7.0, 8.0, 9.0, 10.0]);
@@ -515,7 +528,7 @@ mod tests {
         broken.matrix_a_from = "ghost".to_string();
         store.enqueue([broken]);
         // Never dispatchable: the bound source never completes.
-        assert!(store.claim("node-a", 1_000).is_none());
+        assert!(store.claim("node-a", 8, 1_000).is_none());
         assert_eq!(store.blocked(), 1);
     }
 
@@ -526,7 +539,7 @@ mod tests {
 
         // The first attempts are handed back for another try.
         for _ in 0..MAX_ATTEMPTS - 1 {
-            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            assert_eq!(store.claim("node-a", 8, 1_000).expect("w1").work_id, "w1");
             let outcome = store.requeue_for_node("node-a");
             assert_eq!(outcome.requeued, 1);
             assert_eq!(outcome.failed, 0);
@@ -534,14 +547,14 @@ mod tests {
         }
 
         // The last attempt spends the budget: the unit is not handed back again.
-        assert_eq!(store.claim("node-a", 2_000).expect("w1").work_id, "w1");
+        assert_eq!(store.claim("node-a", 8, 2_000).expect("w1").work_id, "w1");
         let outcome = store.requeue_for_node("node-a");
         assert_eq!(outcome.requeued, 0);
         assert_eq!(outcome.failed, 1);
         assert_eq!(store.failed_units(), vec!["w1".to_string()]);
         // The graph is no longer outstanding, so a polling client terminates.
         assert_eq!(store.pending(), 0);
-        assert!(store.claim("node-b", 3_000).is_none());
+        assert!(store.claim("node-b", 8, 3_000).is_none());
         // Its dispatch record is gone, so a late result from the failed unit is refused.
         assert!(store.complete(result("w1", 1_000), 3_500).is_none());
         // A second pass over the same node finds nothing left to move.
@@ -556,7 +569,7 @@ mod tests {
 
         // w2 stays blocked behind w1 for the whole retry loop, so w1 is always next.
         for _ in 0..MAX_ATTEMPTS {
-            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            assert_eq!(store.claim("node-a", 8, 1_000).expect("w1").work_id, "w1");
             store.requeue_for_node("node-a");
         }
 
@@ -567,7 +580,7 @@ mod tests {
         );
         assert_eq!(store.pending(), 0);
         assert_eq!(store.blocked(), 0);
-        assert!(store.claim("node-b", 2_000).is_none());
+        assert!(store.claim("node-b", 8, 2_000).is_none());
     }
 
     #[test]
@@ -575,7 +588,7 @@ mod tests {
         let store = WorkStore::new();
         store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
         for _ in 0..MAX_ATTEMPTS {
-            assert_eq!(store.claim("node-a", 1_000).expect("w1").work_id, "w1");
+            assert_eq!(store.claim("node-a", 8, 1_000).expect("w1").work_id, "w1");
             store.requeue_for_node("node-a");
         }
         assert_eq!(
@@ -586,6 +599,46 @@ mod tests {
         // The store still accepts and runs work after a branch failed.
         store.enqueue([unit("w3")]);
         assert_eq!(store.pending(), 1);
-        assert_eq!(store.claim("node-b", 2_000).expect("w3").work_id, "w3");
+        assert_eq!(store.claim("node-b", 8, 2_000).expect("w3").work_id, "w3");
+    }
+
+    #[test]
+    fn a_weak_node_is_skipped_for_a_unit_that_requires_more_threads() {
+        let store = WorkStore::new();
+        let mut heavy = unit("w1");
+        heavy.min_cpu_threads = 4;
+        let light = unit("w2");
+        store.enqueue([heavy, light]);
+
+        // The weak node polls first but only w2 fits, so w2 is handed over and w1
+        // is left for a node that can run it. FCFS would have given it w1.
+        assert_eq!(
+            store.claim("node-weak", 2, 1_000).expect("w2 fits").work_id,
+            "w2"
+        );
+
+        // A capable node gets the unit the weak node skipped.
+        assert_eq!(
+            store
+                .claim("node-strong", 8, 2_000)
+                .expect("w1 fits")
+                .work_id,
+            "w1"
+        );
+
+        // With only a weak node left, the heavy unit stays pending instead of
+        // being handed to a node that cannot run it. A capable node still gets it,
+        // so the unit is waiting, not lost.
+        let mut another = unit("w3");
+        another.min_cpu_threads = 4;
+        store.enqueue([another]);
+        assert!(store.claim("node-weak", 2, 3_000).is_none());
+        assert_eq!(
+            store
+                .claim("node-strong", 8, 4_000)
+                .expect("w3 fits")
+                .work_id,
+            "w3"
+        );
     }
 }

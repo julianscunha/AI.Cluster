@@ -143,7 +143,14 @@ impl ClusterControl for ClusterControlService {
                 "node is not available for work",
             ));
         }
-        match self.work.claim(&request.node_id, unix_ms()) {
+        // Candidate filtering: the unit's declared requirement is checked against
+        // what this node reported, so a weak node is not handed work it cannot run.
+        let cpu_threads = self
+            .registry
+            .capability(&request.node_id)
+            .map(|capability| capability.cpu_threads)
+            .unwrap_or(0);
+        match self.work.claim(&request.node_id, cpu_threads, unix_ms()) {
             Some(work) => Ok(Response::new(RequestWorkResponse {
                 has_work: true,
                 work: Some(work),
@@ -215,6 +222,7 @@ impl ClusterControl for ClusterControlService {
                 depends_on: Vec::new(),
                 matrix_a_from: String::new(),
                 matrix_b_from: String::new(),
+                min_cpu_threads: request.min_cpu_threads,
             }
         });
         let enqueued = self.work.enqueue(units);
@@ -270,6 +278,8 @@ impl ClusterControl for ClusterControlService {
                 depends_on,
                 matrix_a_from: a_from,
                 matrix_b_from: b_from,
+                // Graph units carry no requirement; size is the same for all of them.
+                min_cpu_threads: 0,
             }
         };
         let units = vec![
@@ -375,6 +385,7 @@ mod tests {
             depends_on: Vec::new(),
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
+            min_cpu_threads: 0,
         }
     }
 
@@ -558,6 +569,7 @@ mod tests {
                 cols: 4,
                 seed: 7,
                 repetitions: 2,
+                min_cpu_threads: 0,
             }))
             .await
             .unwrap()
@@ -587,6 +599,7 @@ mod tests {
                 cols: 4,
                 seed: 1,
                 repetitions: 1,
+                min_cpu_threads: 0,
             }))
             .await
             .unwrap_err();

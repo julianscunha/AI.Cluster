@@ -105,6 +105,13 @@ impl Registry {
         self.lock().contains_key(node_id)
     }
 
+    /// Capability as last reported by the node. None when the node is unknown.
+    pub fn capability(&self, node_id: &str) -> Option<CapabilityReport> {
+        self.lock()
+            .get(node_id)
+            .map(|record| record.capability.clone())
+    }
+
     /// Whether the controller may hand new work to this node. Unknown nodes and
     /// nodes leaving or believed dead are not eligible.
     pub fn is_available(&self, node_id: &str) -> bool {

@@ -40,6 +40,10 @@ enum Command {
         /// Compute the same workload in-process instead of dispatching it.
         #[arg(long)]
         local: bool,
+        /// Refuse to hand a unit to a node reporting fewer cpu threads than this.
+        /// 0 means no requirement.
+        #[arg(long, default_value_t = 0)]
+        min_threads: u32,
     },
     /// Dispatch a dependency graph (diamond) and watch the branches gate.
     Graph {
@@ -59,7 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             size,
             repetitions,
             local,
-        } => run_benchmark(&cli.controller, size, repetitions, local).await?,
+            min_threads,
+        } => run_benchmark(&cli.controller, size, repetitions, local, min_threads).await?,
         Command::Graph { size } => run_graph(&cli.controller, size).await?,
     }
     Ok(())
@@ -127,6 +132,7 @@ async fn run_benchmark(
     size: u32,
     repetitions: u32,
     local: bool,
+    min_threads: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Version and parameters travel with the output so two runs are comparable.
     println!(
@@ -145,6 +151,7 @@ async fn run_benchmark(
             cols: size,
             seed: 42,
             repetitions,
+            min_cpu_threads: min_threads,
         })
         .await?
         .into_inner()

@@ -269,10 +269,18 @@ fn meminfo_kb(key: &str) -> Option<u64> {
 }
 
 fn capability() -> CapabilityReport {
+    // Report fewer threads than the host has so a placement test can stand a weak
+    // node next to a strong one without a second machine. Unset means report reality.
+    let cpu_threads = std::env::var("AI_CLUSTER_CPU_THREADS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|threads| threads.get() as u32)
+                .unwrap_or(0)
+        });
     CapabilityReport {
-        cpu_threads: std::thread::available_parallelism()
-            .map(|threads| threads.get() as u32)
-            .unwrap_or(0),
+        cpu_threads,
         memory_bytes: meminfo_kb("MemTotal:").map(|kb| kb * 1024).unwrap_or(0),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
@@ -318,6 +326,7 @@ mod tests {
             depends_on: Vec::new(),
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
+            min_cpu_threads: 0,
         };
         let result = execute_work(&unit, "node-a").expect("shapes match");
         assert_eq!(result.work_id, "w1");
@@ -340,6 +349,7 @@ mod tests {
             depends_on: Vec::new(),
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
+            min_cpu_threads: 0,
         };
         assert!(execute_work(&unit, "node-a").is_none());
     }
