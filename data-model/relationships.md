@@ -1,13 +1,13 @@
 ---
-title: "Data Model — Relationships"
+title: "Modelo de dados — relações"
 type: data-model
 status: draft
 tags: [data-model, relationships]
 ---
 
-# Data Model — Relationships
+# Modelo de dados — relações
 
-Core relations:
+Relações centrais:
 
 ```text
 Cluster HAS_NODE Node
@@ -31,4 +31,4 @@ Node EXPERIENCED Event
 Trace DESCRIBES Execution
 ```
 
-Relationships should carry timestamps/version where placement/state changes over time.
+As relações devem carregar timestamps/versão onde placement/estado mudam ao longo do tempo.

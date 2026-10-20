@@ -7,4 +7,4 @@ tags: [operational, readme]
 
 # AI Cluster OS
 
-OS image work starts in the provisioning phase. Phase 0 only defines the runtime boundary.
+O trabalho da imagem de OS começa na fase de provisioning. A Fase 0 só define a fronteira do runtime.

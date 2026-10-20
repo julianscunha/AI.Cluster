@@ -1,12 +1,12 @@
 ---
-title: "Repository Map (MOC)"
+title: "Mapa do repositório (MOC)"
 aliases: ["MOC", "Map of Content", "Directory Map"]
 type: system
 status: living
 tags: [system, navigation, moc]
 ---
 
-# Repository Map — MOC
+# Mapa do repositório — MOC
 
 Ponto de entrada para navegação. `ARCHITECTURE.md` continua sendo a fonte de
 verdade da arquitetura; este documento diz **onde cada coisa vive** e **em que
