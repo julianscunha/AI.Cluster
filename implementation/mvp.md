@@ -1,13 +1,13 @@
 ---
-title: "MVP — First Build"
+title: "MVP — Primeira build"
 type: implementation
 status: proposed
 tags: [implementation, mvp]
 ---
 
-# MVP — First Build
+# MVP — Primeira build
 
-## Objective
+## Objetivo
 
 Provar que hardware heterogêneo pode colaborar na execução de uma única carga distribuída sem depender inicialmente de um LLM.
 
@@ -29,11 +29,11 @@ Primeiro MVP recomendado:
 - telemetry;
 - CLI.
 
-## Workload
+## Carga de trabalho
 
 Multiplicação de matrizes, operações elementwise e DAG de dependências.
 
-## Demonstration
+## Demonstração
 
 ```text
 Request
@@ -43,7 +43,7 @@ Request
  -> response
 ```
 
-## Measurements
+## Medições
 
 - execution time;
 - network transfer;
@@ -54,6 +54,6 @@ Request
 - predicted vs actual;
 - gain/loss from adding node.
 
-## Success criteria
+## Critérios de sucesso
 
 O MVP só é considerado bem-sucedido se conseguir demonstrar casos em que adicionar um node melhora o tempo ou throughput da execução, e também detectar casos em que adicionar um node piora o resultado devido a comunicação.
