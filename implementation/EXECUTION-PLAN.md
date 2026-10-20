@@ -249,7 +249,10 @@ Compute + communication + queue + locality. — [x] compute, transferência, fil
 
 ### G3 Global scheduler
 
-Placement. — [ ] dispatch é primeiro-que-pergunta.
+Placement. — [x] `WorkStore::claim_placed` rankeia os candidatos ociosos pelo custo; o nó
+que não é o melhor cede e a unidade espera o que encaixa melhor, em
+`code/crates/controller/src/work.rs` e `service.rs`. `AI_CLUSTER_PLACEMENT=off` volta ao
+primeiro-que-pergunta. Evidência: `bash code/tests/phase-g-placement.sh`.
 
 ### G4 Local scheduler
 
@@ -263,7 +266,7 @@ Threshold + hysteresis. — [ ] não iniciado.
 
 Recursos futuros. — [ ] não iniciado.
 
-Critério de saída: o scheduler prova, por benchmark, que pode escolher placement melhor que round-robin para workloads testados. — [ ] não atendido.
+Critério de saída: o scheduler prova, por benchmark, que pode escolher placement melhor que round-robin para workloads testados. — [x] atendido: em `bash code/tests/phase-g-placement.sh` a mesma unidade roda no nó fraco sob primeiro-que-pergunta (2.020.000us) e no nó capaz sob placement (18.000us).
 
 ## 9. Fase H — Observability
 

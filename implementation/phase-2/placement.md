@@ -11,8 +11,9 @@ Filtragem de candidatos: uma unidade de trabalho declara a capability de que pre
 controller se recusa a entregá-la a um nó que não a tenha. O dispatch deixa de ser
 por ordem de chegada e vira uma decisão.
 
-Esta é a primeira peça do scheduler. Ela filtra candidatos; o modelo de custo (G2) já os
-custa, mas a escolha final entre candidatos ainda é do nó que faz poll — ver o modelo abaixo.
+Esta é a primeira peça do scheduler. Ela filtra candidatos; o modelo de custo (G2) os custa
+e o scheduler global (G3) usa esse custo para decidir — o nó que não é o melhor candidato
+cede a vez. Ver as duas seções abaixo.
 
 ## O que mudou
 
@@ -110,6 +111,29 @@ taxas reais; só a *ordem* entre nós é significativa hoje. Os testes unitário
 as direções: mais threads custa menos, unidade maior custa mais, nó com fila custa mais, saúde
 degradada custa mais, e saúde não reportada não penaliza.
 
+## Scheduler global (G3)
+
+`WorkStore::claim_placed` (em `code/crates/controller/src/work.rs`) usa o custo para decidir
+quem recebe a próxima unidade. O `request_work` monta o conjunto de candidatos com
+`Registry::candidates` — os nós disponíveis com sua capability e saúde — e passa para o claim
+junto com o requisito da unidade.
+
+Regra: o nó que pergunta só leva a unidade quando é o **candidato ocioso mais barato** para
+ela. Se outro nó ocioso tem custo menor, o nó que pergunta não recebe nada e volta a fazer
+poll; a unidade fica na fila e o nó que encaixa melhor a pega. É isso que vira o dispatch de
+primeiro-que-pergunta em decisão de placement.
+
+Duas escolhas deliberadas:
+
+- **Só candidatos ociosos entram no ranking.** Um nó com unidade em voo não está fazendo
+  poll, então não pode pegar esta unidade agora e não deve segurá-la. Um nó ocupado porém
+  mais rápido não bloqueia um nó ocioso mais fraco.
+- **Empates quebram por id do nó.** Sem isso, dois nós de custo igual poderiam ambos ceder
+  um para o outro e a unidade nunca sairia da fila.
+
+`AI_CLUSTER_PLACEMENT=off` desliga o scheduler e volta ao primeiro-que-pergunta, para o
+benchmark comparar as duas políticas na mesma carga sem recompilar.
+
 ## Teto conhecido
 
 **Só cpu_threads é filtrado.** Memória, precisão, aceleradores e armazenamento são
@@ -125,6 +149,33 @@ ou quando o último nó capaz sai.
 
 **Modelo de custo sem locality nem térmica.** A função cobre compute, transferência, fila e
 saúde; localidade de dados, folga térmica e custo de mover estado não são modelados porque o
-registry ainda não carrega esses dados. Além disso, o custo ordena candidatos, mas o dispatch
-continua por poll: o modelo já existe e é testado, mas o controller ainda não o usa para
-escolher — ligá-lo ao dispatch é a G3.
+registry ainda não carrega esses dados.
+
+**Um nó ocioso que para de fazer poll pode segurar uma unidade.** O controller infere "ocioso"
+de não ter unidade em voo, e um nó parado continua mandando heartbeat, então nunca é marcado
+offline. A janela é curta porque um nó ocioso faz poll a cada 200ms; um nó travado de verdade
+ainda não é distinguido. Revisitar com idade do último poll ou um contador de recusas.
+
+**Só a primeira unidade elegível é avaliada.** O ranking decide *quem* pega a unidade, não
+*qual* das unidades prontas encaixa melhor no nó que pergunta. Com unidades de tamanhos
+diferentes, escolher a de melhor encaixe pode adiantar mais — é a G4.
+
+**Evidência.** `bash code/tests/phase-g-placement.sh`. Leg A: só o nó fraco (2 threads)
+presente e `AI_CLUSTER_PLACEMENT=off`; a unidade roda nele. Leg B: nó fraco e nó forte
+(8 threads) presentes e ociosos, placement ligado; o fraco cede e a unidade roda no forte. O
+nó fraco leva 2000ms de atraso (`AI_CLUSTER_WORK_DELAY_MS`) para representar uma máquina
+lenta, já que os dois rodam no mesmo host e compartilhariam a CPU.
+
+```text
+--- A) baseline primeiro-a-chegar: apenas o nó fraco (2 threads, 2000ms de atraso) ---
+w-0        node-weak              7043      2012957      2020000
+--- B) placement: nó fraco + nó forte (8 threads), ambos ociosos ---
+w-0        node-strong            7098        10902        18000
+```
+
+As duas linhas são a mesma unidade: sob primeiro-que-pergunta ela rodou no nó fraco e levou
+2.020.000us; sob placement foi para o nó capaz e levou 18.000us. O mecanismo em si é coberto
+pelos testes unitários `placement_gives_a_unit_to_the_cheapest_idle_node`,
+`a_busy_cheaper_node_does_not_hold_up_an_idle_node`, `the_only_idle_candidate_still_takes_work`
+e `equally_good_nodes_do_not_both_yield`, além de `placement_prefers_the_cheaper_idle_node` no
+serviço.

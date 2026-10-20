@@ -8,8 +8,12 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ai_cluster_protocol::cluster::{WorkOutput, WorkResult, WorkSnapshot, WorkUnit};
+use ai_cluster_protocol::cluster::{
+    CapabilityReport, HealthReport, WorkOutput, WorkResult, WorkSnapshot, WorkUnit,
+};
 use prost::Message;
+
+use crate::placement::{Candidate, placement_cost};
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
 ///
@@ -124,6 +128,35 @@ fn fail_cascade(inner: &mut Inner, work_id: &str) -> usize {
         inner.queue = survivors;
     }
     failed
+}
+
+/// Removes the unit at `index` and records the dispatch against `node_id`, with
+/// any bound inputs substituted from their sources' outputs. Shared by `claim`
+/// and `claim_placed` so both dispatch the same way.
+fn take_locked(inner: &mut Inner, index: usize, node_id: &str, now_unix_ms: u64) -> WorkUnit {
+    let mut unit = inner
+        .queue
+        .remove(index)
+        .expect("index comes from a successful position()");
+    // Substitute dependency outputs for bound inputs before dispatch.
+    if let Some(data) = inner.outputs.get(&unit.matrix_a_from) {
+        unit.matrix_a = data.clone();
+    }
+    if let Some(data) = inner.outputs.get(&unit.matrix_b_from) {
+        unit.matrix_b = data.clone();
+    }
+    // Counting the attempt here rather than at requeue time keeps the number
+    // meaningful for a unit that is claimed and never handed back.
+    *inner.attempts.entry(unit.work_id.clone()).or_insert(0) += 1;
+    inner.dispatched.insert(
+        unit.work_id.clone(),
+        Dispatched {
+            node_id: node_id.to_string(),
+            dispatched_at_unix_ms: now_unix_ms,
+            unit: unit.clone(),
+        },
+    );
+    unit
 }
 
 impl WorkStore {
@@ -244,22 +277,18 @@ impl WorkStore {
     }
 
     /// Hands out the first unit whose dependencies have all completed and whose
-    /// candidate filter the asking node satisfies, with any bound inputs
+    /// minimum-threads requirement the asking node satisfies, with any bound inputs
     /// substituted from the outputs of those dependencies.
     ///
-    /// The filter is what makes dispatch a placement decision instead of
-    /// first-come-first-served: a unit that declares a minimum cpu_threads is
-    /// skipped for a node that reports fewer, so it waits for a node that can run
-    /// it. The node keeps polling and gets the next unit it is allowed to take.
+    /// This is the ungated path: the first eligible unit goes to whoever asks
+    /// first. `claim_placed` is the placement-aware version the controller uses.
     ///
     /// ponytail: a unit whose requirement no surviving node meets stays pending.
     /// That is the same "cluster cannot run this" case as an empty cluster, so no
-    /// separate handling here; revisit when placement moves controller-side and a
-    /// unit can be refused with a reason. The scan is also O(n) in queue length —
-    /// fine at benchmark scale, split into blocked and ready queues when graphs
-    /// reach thousands of units. The unit is cloned into the dispatch table so it
-    /// can be requeued if the node leaves; move to an id-only table if unit
-    /// payloads stop fitting in RAM.
+    /// separate handling here. The scan is O(n) in queue length — fine at benchmark
+    /// scale, split into blocked and ready queues when graphs reach thousands of
+    /// units. The unit is cloned into the dispatch table so it can be requeued if
+    /// the node leaves; move to an id-only table if unit payloads stop fitting in RAM.
     pub fn claim(&self, node_id: &str, cpu_threads: u32, now_unix_ms: u64) -> Option<WorkUnit> {
         let mut inner = self.lock();
         let index = {
@@ -269,26 +298,77 @@ impl WorkStore {
                 .iter()
                 .position(|unit| ready(unit, outputs) && unit.min_cpu_threads <= cpu_threads)?
         };
-        let mut unit = inner.queue.remove(index)?;
-        // Substitute dependency outputs for bound inputs before dispatch.
-        if let Some(data) = inner.outputs.get(&unit.matrix_a_from) {
-            unit.matrix_a = data.clone();
+        Some(take_locked(&mut inner, index, node_id, now_unix_ms))
+    }
+
+    /// Hands the asking node the first unit it could take, but only when that node
+    /// is the cheapest **idle** candidate for it. A node that is not the best fit
+    /// gets nothing back and polls again, so the unit waits for the node that fits
+    /// it better instead of going to whoever asked first. That is what turns
+    /// dispatch from first-come-first-served into a placement decision.
+    ///
+    /// Only idle candidates are ranked. A node with a unit already in flight is not
+    /// polling, so it cannot take this unit now and must not hold it up. Ties are
+    /// broken by node id, so two equally good nodes cannot both yield to each other
+    /// and leave the unit unclaimed.
+    ///
+    /// ponytail: a registered but idle node that stops polling can hold a unit
+    /// indefinitely — it keeps heartbeating, so it is never declared offline. The
+    /// window is small because an idle node polls every 200ms; revisit with a
+    /// poll-age check or a refusal counter if a stuck node becomes a real case.
+    pub fn claim_placed(
+        &self,
+        node_id: &str,
+        cpu_threads: u32,
+        now_unix_ms: u64,
+        candidates: &[(String, CapabilityReport, HealthReport)],
+    ) -> Option<WorkUnit> {
+        let mut inner = self.lock();
+        let index = {
+            let outputs = &inner.outputs;
+            inner
+                .queue
+                .iter()
+                .position(|unit| ready(unit, outputs) && unit.min_cpu_threads <= cpu_threads)?
+        };
+        let best = {
+            let unit = &inner.queue[index];
+            let mut best: Option<(&str, f64)> = None;
+            for (id, capability, health) in candidates {
+                let in_flight = inner
+                    .dispatched
+                    .values()
+                    .filter(|record| record.node_id.as_str() == id.as_str())
+                    .count() as u32;
+                if in_flight > 0 || unit.min_cpu_threads > capability.cpu_threads {
+                    continue;
+                }
+                let cost = placement_cost(
+                    unit,
+                    &Candidate {
+                        capability,
+                        health,
+                        in_flight,
+                    },
+                );
+                let better = match best {
+                    None => true,
+                    Some((best_id, best_cost)) => {
+                        cost < best_cost || (cost == best_cost && id.as_str() < best_id)
+                    }
+                };
+                if better {
+                    best = Some((id.as_str(), cost));
+                }
+            }
+            best.map(|(id, _)| id.to_string())
+        };
+        // The asking node only takes the unit when it is the cheapest idle fit.
+        // Otherwise it yields, and the unit waits for the node that fits it better.
+        if best.as_deref() != Some(node_id) {
+            return None;
         }
-        if let Some(data) = inner.outputs.get(&unit.matrix_b_from) {
-            unit.matrix_b = data.clone();
-        }
-        // Counting the attempt here rather than at requeue time keeps the number
-        // meaningful for a unit that is claimed and never handed back.
-        *inner.attempts.entry(unit.work_id.clone()).or_insert(0) += 1;
-        inner.dispatched.insert(
-            unit.work_id.clone(),
-            Dispatched {
-                node_id: node_id.to_string(),
-                dispatched_at_unix_ms: now_unix_ms,
-                unit: unit.clone(),
-            },
-        );
-        Some(unit)
+        Some(take_locked(&mut inner, index, node_id, now_unix_ms))
     }
 
     /// Returns the record only when the unit was dispatched to the same node.
@@ -743,6 +823,118 @@ mod tests {
                 .expect("w3 fits")
                 .work_id,
             "w3"
+        );
+    }
+
+    fn capability(cpu_threads: u32, compute_score: f64) -> CapabilityReport {
+        CapabilityReport {
+            cpu_threads,
+            compute_score,
+            ..Default::default()
+        }
+    }
+
+    fn healthy() -> HealthReport {
+        HealthReport {
+            health_score: 1.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn placement_gives_a_unit_to_the_cheapest_idle_node() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // The weak node polls first, but the strong node is idle and cheaper, so the
+        // weak node yields. First-come-first-served would have handed it w1.
+        assert!(
+            store
+                .claim_placed("node-weak", 2, 1_000, &candidates)
+                .is_none()
+        );
+        // The unit is still queued, not lost, and the node that fits it takes it.
+        assert_eq!(store.pending(), 1);
+        assert_eq!(
+            store
+                .claim_placed("node-strong", 8, 1_000, &candidates)
+                .expect("strong node fits w1")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn a_busy_cheaper_node_does_not_hold_up_an_idle_node() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), unit("w2")]);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // With both idle the strong node takes the first unit.
+        assert_eq!(
+            store
+                .claim_placed("node-strong", 8, 1_000, &candidates)
+                .expect("strong fits w1")
+                .work_id,
+            "w1"
+        );
+        // Now strong is busy, so the weak node is the only idle candidate and takes
+        // the next unit instead of leaving it stranded behind a node that is not
+        // polling.
+        assert_eq!(
+            store
+                .claim_placed("node-weak", 2, 2_000, &candidates)
+                .expect("weak is the only idle candidate")
+                .work_id,
+            "w2"
+        );
+    }
+
+    #[test]
+    fn the_only_idle_candidate_still_takes_work() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let candidates = [("node-weak".to_string(), capability(2, 0.0), healthy())];
+
+        // No cheaper node is present, so the weak node is the best fit and takes it.
+        assert_eq!(
+            store
+                .claim_placed("node-weak", 2, 1_000, &candidates)
+                .expect("weak is the best fit")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn equally_good_nodes_do_not_both_yield() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let candidates = [
+            ("node-a".to_string(), capability(4, 0.0), healthy()),
+            ("node-b".to_string(), capability(4, 0.0), healthy()),
+        ];
+
+        // The costs tie, so the tie breaks by id: node-a wins the unit and node-b
+        // yields. If both yielded the unit would never be claimed.
+        assert!(
+            store
+                .claim_placed("node-b", 4, 1_000, &candidates)
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .claim_placed("node-a", 4, 1_000, &candidates)
+                .expect("node-a wins the tie")
+                .work_id,
+            "w1"
         );
     }
 

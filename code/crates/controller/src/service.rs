@@ -44,6 +44,16 @@ impl ClusterControlService {
     }
 }
 
+/// Placement is on unless explicitly disabled. `AI_CLUSTER_PLACEMENT=off` restores
+/// first-come-first-served dispatch, so the benchmark can compare the two policies
+/// on the same workload without a rebuild.
+fn placement_enabled() -> bool {
+    !matches!(
+        std::env::var("AI_CLUSTER_PLACEMENT").as_deref(),
+        Ok("off") | Ok("0") | Ok("false")
+    )
+}
+
 #[tonic::async_trait]
 impl ClusterControl for ClusterControlService {
     async fn register_node(
@@ -165,7 +175,18 @@ impl ClusterControl for ClusterControlService {
             .capability(&request.node_id)
             .map(|capability| capability.cpu_threads)
             .unwrap_or(0);
-        match self.work.claim(&request.node_id, cpu_threads, unix_ms()) {
+        // Placement (G3): rank the asking node against the other idle candidates and
+        // hand it a unit only when it is the cheapest fit. A node that is not the best
+        // fit gets nothing and polls again, so the unit waits for the node that fits
+        // it better instead of going to whoever asked first.
+        let claimed = if placement_enabled() {
+            let candidates = self.registry.candidates();
+            self.work
+                .claim_placed(&request.node_id, cpu_threads, unix_ms(), &candidates)
+        } else {
+            self.work.claim(&request.node_id, cpu_threads, unix_ms())
+        };
+        match claimed {
             Some(work) => Ok(Response::new(RequestWorkResponse {
                 has_work: true,
                 work: Some(work),
@@ -769,6 +790,49 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn placement_prefers_the_cheaper_idle_node() {
+        let (service, _registry, work_store) = service_with_registry_and_work();
+        for (id, threads) in [("node-weak", 2u32), ("node-strong", 8)] {
+            service
+                .register_node(Request::new(RegisterNodeRequest {
+                    identity: Some(identity(id)),
+                    capability: Some(CapabilityReport {
+                        cpu_threads: threads,
+                        ..Default::default()
+                    }),
+                }))
+                .await
+                .unwrap();
+        }
+        work_store.enqueue([unit("w1")]);
+
+        // The weak node polls first, but the strong node is idle and cheaper, so the
+        // weak node yields and the unit stays queued. First-come-first-served would
+        // have handed it to the weak node.
+        let weak = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-weak".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!weak.has_work);
+        assert!(weak.work.is_none());
+        assert_eq!(work_store.pending(), 1);
+
+        // The node that fits the unit better takes it.
+        let strong = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-strong".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(strong.has_work);
+        assert_eq!(strong.work.expect("strong node got w1").work_id, "w1");
     }
 
     #[tokio::test]

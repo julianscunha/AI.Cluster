@@ -13,6 +13,15 @@ pub fn unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether the controller may hand new work to a node in this state. A node that
+/// is leaving or believed dead is not a candidate, so it never wins a unit.
+fn eligible(state: NodeState) -> bool {
+    !matches!(
+        state,
+        NodeState::Draining | NodeState::Quarantined | NodeState::Failed | NodeState::Offline
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct NodeRecord {
     pub identity: NodeIdentity,
@@ -116,13 +125,7 @@ impl Registry {
     /// nodes leaving or believed dead are not eligible.
     pub fn is_available(&self, node_id: &str) -> bool {
         match self.lock().get(node_id) {
-            Some(record) => !matches!(
-                record.state,
-                NodeState::Draining
-                    | NodeState::Quarantined
-                    | NodeState::Failed
-                    | NodeState::Offline
-            ),
+            Some(record) => eligible(record.state),
             None => false,
         }
     }
@@ -150,6 +153,22 @@ impl Registry {
         let mut ids: Vec<&String> = nodes.keys().collect();
         ids.sort();
         ids.into_iter().map(|id| nodes[id].snapshot()).collect()
+    }
+
+    /// Available nodes as `(node_id, capability, health)`, sorted by id. This is the
+    /// candidate set placement ranks over, read in one lock so a node cannot change
+    /// state halfway through the ranking.
+    pub fn candidates(&self) -> Vec<(String, CapabilityReport, HealthReport)> {
+        let nodes = self.lock();
+        let mut ids: Vec<&String> = nodes.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .filter(|id| eligible(nodes[*id].state))
+            .map(|id| {
+                let record = &nodes[id];
+                (id.clone(), record.capability.clone(), record.health)
+            })
+            .collect()
     }
 
     /// Marks nodes that missed `grace_ms` of controller-observed heartbeats as
