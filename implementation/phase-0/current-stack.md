@@ -1,20 +1,20 @@
 ---
-title: "Initial Stack Decision"
+title: "Decisão de stack inicial"
 type: operational
 status: living
 tags: [operational, current-stack]
 ---
 
-# Initial Stack Decision
+# Decisão de stack inicial
 
-## Current proposal
+## Proposta atual
 
-- Language: Rust
-- RPC: gRPC over HTTP/2
+- Linguagem: Rust
+- RPC: gRPC sobre HTTP/2
 - Schema: Protocol Buffers
 - CLI: clap
-- TUI: ratatui (Phase H)
+- TUI: ratatui (Fase H)
 
-These are implementation choices for the first prototype, not irreversible architectural contracts.
+Estas são escolhas de implementação para o primeiro protótipo, não contratos arquiteturais irreversíveis.
 
-Current upstream documentation confirms tonic 0.14.x provides gRPC over HTTP/2 for Rust, prost 0.14.x provides Protocol Buffers code generation/types, clap 4.6.x is the current documented major line, and Ratatui 0.30.x is the current documented release line at the time of this specification.
+A documentação upstream atual confirma que tonic 0.14.x fornece gRPC sobre HTTP/2 para Rust, prost 0.14.x fornece geração de código/tipos de Protocol Buffers, clap 4.6.x é a linha principal documentada atual, e Ratatui 0.30.x é a linha de release documentada atual no momento desta especificação.

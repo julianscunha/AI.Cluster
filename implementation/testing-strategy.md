@@ -1,85 +1,85 @@
 ---
-title: "Testing Strategy"
+title: "Estratégia de testes"
 type: implementation
 status: proposed
 tags: [implementation, testing-strategy]
 ---
 
-# Testing Strategy
+# Estratégia de testes
 
-## Test layers
+## Camadas de teste
 
-1. Unit tests.
-2. Protocol compatibility tests.
-3. Integration tests.
-4. Fault injection.
-5. Performance benchmarks.
-6. Soak tests.
-7. Recovery tests.
+1. Testes unitários.
+2. Testes de compatibilidade de protocolo.
+3. Testes de integração.
+4. Injeção de falhas.
+5. Benchmarks de desempenho.
+6. Testes de soak.
+7. Testes de recuperação.
 
-## Mandatory scenarios
+## Cenários obrigatórios
 
-### Node join
+### Entrada de nó
 
-New node joins, receives configuration and benchmark.
+Nó novo entra, recebe configuração e benchmark.
 
-### Node drain
+### Drenagem de nó
 
-Node drains while requests are active.
+Nó drena enquanto há requisições ativas.
 
-### Node hard failure
+### Falha brusca de nó
 
-Kill worker/process or power off node and verify recovery.
+Mate o worker/processo ou desligue o nó e verifique a recuperação.
 
-### Thermal degradation
+### Degradação térmica
 
-Artificially reduce node capability and verify scheduler changes weight.
+Reduza artificialmente a capability do nó e verifique se o scheduler muda o peso.
 
-### Network degradation
+### Degradação de rede
 
-Inject latency/bandwidth reduction and verify transport-aware replanning.
+Injete latência/redução de banda e verifique o replanejamento ciente do transporte.
 
-### Storage degradation
+### Degradação de armazenamento
 
-Inject elevated disk latency and verify storage policy changes.
+Injete latência de disco elevada e verifique se a política de storage muda.
 
-### Prediction accuracy
+### Acurácia de predição
 
-Compare expected vs actual execution latency and throughput.
+Compare latência de execução e throughput previstos vs reais.
 
-### Token optimization
+### Otimização de tokens
 
-Measure:
+Meça:
 
-- tokens before;
-- tokens after;
-- tokens avoided;
-- optimizer latency;
-- end-to-end latency.
+- tokens antes;
+- tokens depois;
+- tokens evitados;
+- latência do otimizador;
+- latência ponta a ponta.
 
-## Scaling metrics
+## Métricas de escala
 
-Never claim linear scaling without measurement. Compare:
+Nunca alegue escala linear sem medição. Compare:
 
 ```text
-N nodes
+N nós
 vs
 throughput
 vs
-single-request latency
+latência de requisição única
 vs
-communication overhead
+overhead de comunicação
 ```
 
-## Benchmark matrix
+## Matriz de benchmark
 
-At minimum:
+No mínimo:
 
-- same hardware / same network;
-- heterogeneous hardware / same network;
-- same hardware / degraded network;
-- CPU-only;
-- CPU + accelerator;
-- RAM-only vs SSD-assisted;
-- cache enabled vs disabled;
-- graph retrieval vs baseline retrieval.
+- mesmo hardware / mesma rede;
+- hardware heterogêneo / mesma rede;
+- mesmo hardware / rede degradada;
+- só CPU;
+- CPU + acelerador;
+- só RAM vs assistido por SSD;
+- cache habilitado vs desabilitado;
+- recuperação por grafo vs recuperação base.

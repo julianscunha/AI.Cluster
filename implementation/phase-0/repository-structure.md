@@ -1,15 +1,15 @@
 ---
-title: "Repository Structure"
+title: "Estrutura do repositório"
 type: operational
 status: living
 tags: [operational, repository-structure]
 ---
 
-# Repository Structure
+# Estrutura do repositório
 
-## Purpose
+## Propósito
 
-The implementation is a Rust workspace with explicit control-plane and data-plane boundaries.
+A implementação é um workspace Rust com fronteiras explícitas de control plane e data plane.
 
 ```text
 ai-cluster/
@@ -28,13 +28,13 @@ ai-cluster/
 └── tests/
 ```
 
-## Rules
+## Regras
 
-- `common` contains shared domain types only.
-- `protocol` contains wire contracts and generated RPC types.
-- `controller` owns cluster state and scheduling decisions.
-- `worker` owns local execution and hardware interaction.
-- `transport` abstracts physical communication.
-- `benchmark` measures capability; it does not decide placement.
-- `cli` is an operator interface and never executes worker logic directly.
-- No application/agent code belongs inside the compute plane.
+- `common` contém apenas tipos de domínio compartilhados.
+- `protocol` contém os contratos de rede e os tipos de RPC gerados.
+- `controller` é dono do estado do cluster e das decisões de escalonamento.
+- `worker` é dono da execução local e da interação com o hardware.
+- `transport` abstrai a comunicação física.
+- `benchmark` mede capability; não decide placement.
+- `cli` é uma interface de operador e nunca executa lógica de worker diretamente.
+- Nenhum código de aplicação/agente pertence ao compute plane.

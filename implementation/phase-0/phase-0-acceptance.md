@@ -1,44 +1,44 @@
 ---
-title: "Phase 0 Acceptance Criteria"
+title: "Critérios de aceitação da Fase 0"
 type: operational
 status: living
 tags: [operational, phase-0-acceptance]
 ---
 
-# Phase 0 Acceptance Criteria
+# Critérios de aceitação da Fase 0
 
 ## A1 Build
 
-- Workspace resolves reproducibly. — SATISFIED: CI builds from a clean checkout.
-- Controller, Worker and CLI have independent binaries. — SATISFIED:
+- O workspace resolve de forma reprodutível. — ATENDIDO: o CI compila a partir de um checkout limpo.
+- Controller, Worker e CLI têm binários independentes. — ATENDIDO:
   `ai-cluster-controller`, `ai-cluster-worker`, `ai-cluster`.
-- Protocol is generated from `.proto` definitions. — SATISFIED: `build.rs` runs
-  `tonic-prost-build` against `proto/cluster.proto` with vendored `protoc`.
+- O protocolo é gerado a partir de definições `.proto`. — ATENDIDO: o `build.rs` roda
+  `tonic-prost-build` contra `proto/cluster.proto` com `protoc` vendorizado.
 
-## A2 Protocol
+## A2 Protocolo
 
-- Node can register. — SATISFIED: `RegisterNode` records identity and capabilities.
-- Controller acknowledges registration. — SATISFIED: response carries `accepted`
-  and the assigned `cluster_id`.
-- Worker sends heartbeat. — SATISFIED: five-second interval; a missed grace window
-  flips the node to `OFFLINE`.
-- Worker sends health report. — SATISFIED: memory-pressure score streamed each tick.
+- O nó consegue se registrar. — ATENDIDO: `RegisterNode` registra identidade e capabilities.
+- O controller confirma o registro. — ATENDIDO: a resposta carrega `accepted`
+  e o `cluster_id` atribuído.
+- O worker envia heartbeat. — ATENDIDO: intervalo de cinco segundos; uma janela de grace
+  perdida vira o nó para `OFFLINE`.
+- O worker envia health report. — ATENDIDO: escore de pressão de memória enviado a cada tick.
 
-## A3 Identity
+## A3 Identidade
 
-- Node identity is independent of IP address. — SATISFIED: `node_id` comes from
-  `AI_CLUSTER_NODE_ID` or the hostname, never the network address.
-- Device identity is separate from logical node identity. — SATISFIED: `device_id`
-  reads `/etc/machine-id`, so it survives a logical rename and re-imaging.
+- A identidade do nó é independente do endereço IP. — ATENDIDO: o `node_id` vem de
+  `AI_CLUSTER_NODE_ID` ou do hostname, nunca do endereço de rede.
+- A identidade do dispositivo é separada da identidade lógica do nó. — ATENDIDO: o `device_id`
+  lê `/etc/machine-id`, então sobrevive a um rename lógico e a uma reinstalação de imagem.
 
-## A4 Measurement
+## A4 Medição
 
-- Benchmark harness can measure a node without changing its cluster score manually. — SATISFIED
-  by `ai-cluster benchmark`; the controller records worker-reported compute time and
-  its own observed round trip, so no score is entered by hand.
-- Benchmark output is versioned. — SATISFIED by the `benchmark_version=... scope=...
-  size=... repetitions=... seed=...` header printed with every run.
+- O harness de benchmark consegue medir um nó sem alterar seu escore de cluster manualmente. — ATENDIDO
+  por `ai-cluster benchmark`; o controller registra o compute time reportado pelo worker e
+  seu próprio round trip observado, então nenhum escore é digitado à mão.
+- A saída do benchmark é versionada. — ATENDIDO pelo cabeçalho `benchmark_version=... scope=...
+  size=... repetitions=... seed=...` impresso em toda execução.
 
-## A5 No LLM
+## A5 Sem LLM
 
-The phase is considered complete without any model runtime. The gate is the distributed substrate, not inference quality.
+A fase é considerada completa sem qualquer runtime de modelo. O gate é o substrato distribuído, não a qualidade de inferência.
