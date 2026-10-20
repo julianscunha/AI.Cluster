@@ -5,12 +5,14 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
     HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    LeaveNodeRequest, LeaveNodeResponse, ListNodesRequest, ListNodesResponse, RegisterNodeRequest,
-    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
+    ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest,
+    RequestWorkResponse, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
+    WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
+use crate::events::EventLog;
 use crate::registry::{Registry, unix_ms};
 use crate::work::WorkStore;
 
@@ -18,6 +20,7 @@ use crate::work::WorkStore;
 pub struct ClusterControlService {
     registry: Arc<Registry>,
     work: Arc<WorkStore>,
+    events: Arc<EventLog>,
     cluster_id: String,
 }
 
@@ -25,11 +28,13 @@ impl ClusterControlService {
     pub fn new(
         registry: Arc<Registry>,
         work: Arc<WorkStore>,
+        events: Arc<EventLog>,
         cluster_id: impl Into<String>,
     ) -> Self {
         Self {
             registry,
             work,
+            events,
             cluster_id: cluster_id.into(),
         }
     }
@@ -53,8 +58,10 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument("node_id is required"));
         }
         let node_id = identity.node_id.clone();
+        let now = unix_ms();
         self.registry
-            .register(identity, request.capability.unwrap_or_default(), unix_ms());
+            .register(identity, request.capability.unwrap_or_default(), now);
+        self.events.record(now, "node_registered", node_id.clone());
         Ok(Response::new(RegisterNodeResponse {
             accepted: true,
             cluster_id: self.cluster_id.clone(),
@@ -123,6 +130,14 @@ impl ClusterControl for ClusterControlService {
             "node {} left; requeued {} in-flight units, failed {}",
             request.node_id, outcome.requeued, outcome.failed
         );
+        self.events.record(
+            unix_ms(),
+            "node_left",
+            format!(
+                "{} requeued={} failed={}",
+                request.node_id, outcome.requeued, outcome.failed
+            ),
+        );
         Ok(Response::new(LeaveNodeResponse {
             accepted: true,
             requeued: outcome.requeued as u32,
@@ -184,6 +199,17 @@ impl ClusterControl for ClusterControlService {
                     completed.total_latency_us,
                     completed.checksum,
                 );
+                self.events.record(
+                    unix_ms(),
+                    "work_completed",
+                    format!(
+                        "{} on {} compute={}us transfer={}us",
+                        completed.work_id,
+                        completed.node_id,
+                        completed.compute_time_us,
+                        completed.transfer_time_us
+                    ),
+                );
                 Ok(Response::new(SubmitWorkResultResponse {
                     accepted: true,
                     message: "result recorded".to_string(),
@@ -226,6 +252,14 @@ impl ClusterControl for ClusterControlService {
             }
         });
         let enqueued = self.work.enqueue(units);
+        self.events.record(
+            unix_ms(),
+            "work_enqueued",
+            format!(
+                "{} units {}x{}x{}",
+                enqueued, request.rows, request.shared, request.cols
+            ),
+        );
         Ok(Response::new(EnqueueWorkResponse {
             enqueued: enqueued as u32,
         }))
@@ -310,6 +344,11 @@ impl ClusterControl for ClusterControlService {
             make(join, vec![left.clone(), right.clone()], left, right, 0),
         ];
         let enqueued = self.work.enqueue(units);
+        self.events.record(
+            unix_ms(),
+            "graph_enqueued",
+            format!("{enqueued} units size={size}"),
+        );
         Ok(Response::new(EnqueueGraphResponse {
             enqueued: enqueued as u32,
             blocked: self.work.blocked() as u32,
@@ -339,6 +378,16 @@ impl ClusterControl for ClusterControlService {
             failed: self.work.failed() as u32,
         }))
     }
+
+    async fn list_events(
+        &self,
+        request: Request<ListEventsRequest>,
+    ) -> Result<Response<ListEventsResponse>, Status> {
+        let limit = request.into_inner().limit as usize;
+        Ok(Response::new(ListEventsResponse {
+            events: self.events.recent(limit),
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -350,15 +399,24 @@ mod tests {
 
     fn service_with_work() -> (ClusterControlService, Arc<WorkStore>) {
         let work = Arc::new(WorkStore::new());
-        let service =
-            ClusterControlService::new(Arc::new(Registry::new()), work.clone(), "test-cluster");
+        let service = ClusterControlService::new(
+            Arc::new(Registry::new()),
+            work.clone(),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
         (service, work)
     }
 
     fn service_with_registry_and_work() -> (ClusterControlService, Arc<Registry>, Arc<WorkStore>) {
         let registry = Arc::new(Registry::new());
         let work = Arc::new(WorkStore::new());
-        let service = ClusterControlService::new(registry.clone(), work.clone(), "test-cluster");
+        let service = ClusterControlService::new(
+            registry.clone(),
+            work.clone(),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
         (service, registry, work)
     }
 
@@ -709,5 +767,37 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_events_are_recorded_and_listed() {
+        let (service, _work) = service_with_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        let events = service
+            .list_events(Request::new(ListEventsRequest { limit: 0 }))
+            .await
+            .unwrap()
+            .into_inner()
+            .events;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "node_registered");
+        assert!(events[0].detail.contains("node-a"));
+
+        // A limit returns only the newest event, still oldest first.
+        let limited = service
+            .list_events(Request::new(ListEventsRequest { limit: 1 }))
+            .await
+            .unwrap()
+            .into_inner()
+            .events;
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].kind, "node_registered");
     }
 }

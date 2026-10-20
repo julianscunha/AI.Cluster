@@ -176,6 +176,23 @@ message LeaveNodeResponse {
   uint32 requeued = 2;
 }
 
+/// One thing that happened, as the controller saw it. Controller-observed time:
+/// node-supplied clocks are never used for ordering.
+message Event {
+  uint64 at_unix_ms = 1;
+  string kind = 2;
+  string detail = 3;
+}
+
+message ListEventsRequest {
+  /// Most recent N events, oldest first. 0 means every event still held.
+  uint32 limit = 1;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -187,4 +204,5 @@ service ClusterControl {
   rpc EnqueueWork(EnqueueWorkRequest) returns (EnqueueWorkResponse);
   rpc EnqueueGraph(EnqueueGraphRequest) returns (EnqueueGraphResponse);
   rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
 }

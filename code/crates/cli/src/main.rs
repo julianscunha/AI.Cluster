@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, EnqueueWorkRequest, ListNodesRequest, WorkReportRequest,
-    WorkReportResponse,
+    EnqueueGraphRequest, EnqueueWorkRequest, ListEventsRequest, ListNodesRequest,
+    WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
@@ -28,7 +28,13 @@ struct Cli {
 enum Command {
     Status,
     Nodes,
-    Events,
+    /// Recent lifecycle events, oldest first: joins, departures, offline reaps,
+    /// work enqueued and work completed.
+    Events {
+        /// Most recent N events. 0 means everything the controller still holds.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
     /// Dispatch matrix work units and compare compute against transfer cost.
     Benchmark {
         /// Square matrix edge length.
@@ -58,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
-        Command::Events => println!("events is reserved for the telemetry phase"),
+        Command::Events { limit } => print_events(&cli.controller, limit).await?,
         Command::Benchmark {
             size,
             repetitions,
@@ -122,6 +128,25 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.cpu_threads,
             capability.memory_bytes as f64 / 1_073_741_824.0,
             health.health_score,
+        );
+    }
+    Ok(())
+}
+
+/// Prints the controller's recent lifecycle events, oldest first.
+async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let events = client
+        .list_events(ListEventsRequest { limit })
+        .await?
+        .into_inner()
+        .events;
+    println!("EVENTS {}", events.len());
+    println!("{:<14} {:<16} DETAIL", "AT_UNIX_MS", "KIND");
+    for event in events {
+        println!(
+            "{:<14} {:<16} {}",
+            event.at_unix_ms, event.kind, event.detail
         );
     }
     Ok(())

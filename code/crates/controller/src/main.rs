@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ai_cluster_controller::events::EventLog;
 use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::ClusterControlService;
 use ai_cluster_controller::work::WorkStore;
@@ -21,11 +22,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let registry = Arc::new(Registry::new());
     let work = Arc::new(WorkStore::new());
-    let service = ClusterControlService::new(registry.clone(), work.clone(), "local");
+    let events = Arc::new(EventLog::new());
+    let service =
+        ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
 
     // ponytail: single sweep interval for all nodes; per-node timers only if grace must vary.
     let sweep = registry.clone();
     let sweep_work = work.clone();
+    let sweep_events = events.clone();
     tokio::spawn(async move {
         let mut ticker = time::interval(Duration::from_secs(5));
         loop {
@@ -37,6 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "node {node_id} offline after {grace_ms}ms without heartbeat; requeued {} in-flight units, failed {}",
                     outcome.requeued, outcome.failed
+                );
+                sweep_events.record(
+                    unix_ms(),
+                    "node_offline",
+                    format!(
+                        "{node_id} after {grace_ms}ms requeued={} failed={}",
+                        outcome.requeued, outcome.failed
+                    ),
                 );
             }
         }
