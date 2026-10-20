@@ -1,132 +1,162 @@
 ---
-title: "Implementation Roadmap"
+title: "Roadmap de Implementação"
 type: implementation
-status: proposed
+status: living
 tags: [implementation, roadmap]
 ---
 
-# Implementation Roadmap
+# Roadmap de Implementação
 
-Status: PROPOSED
+Status: EM EXECUÇÃO — itens executados marcados.
 
-## Phase 0 — Architecture and benchmark harness
+Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 
-Deliver:
+## Fase 0 — Arquitetura e harness de benchmark
 
-- repository structure;
-- protocol skeleton;
-- node agent skeleton;
-- benchmark harness;
-- telemetry schema;
-- local matrix workload.
+Entregar:
 
-Exit criteria: two Linux nodes can exchange a Work Unit and compare compute vs transfer.
+- [x] estrutura do repositório;
+- [x] esqueleto do protocolo;
+- [x] esqueleto do node agent;
+- [x] harness de benchmark;
+- [~] esquema de telemetria — eventos prontos; métricas agregadas (H1) pendentes;
+- [x] workload de matriz local.
 
-## Phase 1 — Minimal cluster
+Critério de saída: dois nós Linux trocam uma Work Unit e comparam compute vs transfer.
 
-Deliver:
+- [~] mecânica provada com dois containers; a comparação que importa (dispatch entre
+  máquinas custa menos que o compute que economiza) exige duas máquinas físicas e ainda
+  não foi rodada. Runbook em `phase-0/two-machine-validation.md`.
 
-- Controller;
-- Worker;
-- registration;
-- heartbeat;
-- capabilities;
-- health;
-- CLI status.
+## Fase 1 — Cluster mínimo
 
-Exit criteria: nodes join and leave safely.
+Entregar:
 
-## Phase 2 — Distributed execution
+- [x] Controller;
+- [x] Worker;
+- [x] registration;
+- [x] heartbeat;
+- [x] capabilities;
+- [x] health;
+- [x] CLI status.
 
-Deliver:
+Critério de saída: nós entram e saem com segurança.
 
-- Work Unit;
-- Execution Graph;
-- placement;
-- global/local scheduler;
-- transport abstraction;
-- retries.
+- [x] `phase-1/join-and-leave.md`; heartbeat desacoplado do laço de trabalho
+  (commit `b219ec6`).
 
-Exit criteria: one DAG executes across multiple nodes and recovers from one planned node loss.
+## Fase 2 — Execução distribuída
 
-## Phase 3 — AI Cluster OS
+Entregar:
 
-Deliver:
+- [x] Work Unit;
+- [x] Execution Graph;
+- [~] placement — filtro por capability (`min_cpu_threads`) existe; cost model não;
+- [ ] global/local scheduler — dispatch é primeiro-que-pergunta, não escolha;
+- [~] transport abstraction — gRPC direto, sem camada de abstração;
+- [x] retries.
 
-- immutable image;
-- bootstrap;
-- provisioning;
-- reimage;
-- recovery;
-- A/B update.
+Critério de saída: um DAG executa em vários nós e recupera de uma perda planejada de nó.
 
-Exit criteria: clean machine is converted automatically to a worker.
+- [x] `phase-2/dependency-graph.md`, `phase-2/fault-tolerance.md`; E2E
+  `phase-2-failure.sh` (worker morto → `requeued 1 in-flight units`, grafo drena).
+- [~] placement: `phase-2/placement.md` — nó fraco não pega unidade pesada. Mas o
+  critério da fase seguinte (melhor que round-robin) ainda não é atendido.
 
-## Phase 4 — Storage/State
+## Fase 3 — AI Cluster OS
 
-Deliver:
+Entregar:
 
-- storage detection;
-- swap/cache policies;
-- state directory;
-- checkpoint;
-- recovery;
-- warm/cold tiers.
+- [ ] immutable image;
+- [ ] bootstrap;
+- [ ] provisioning;
+- [ ] reimage;
+- [ ] recovery;
+- [ ] A/B update.
 
-Exit criteria: node loss does not erase recoverable execution state.
+Critério de saída: máquina limpa vira worker automaticamente. — não iniciado.
 
-## Phase 5 — Graph + Edge Optimizer
+## Fase 4 — Storage/State
 
-Deliver:
+Entregar:
 
-- graph representation;
-- graph retrieval;
-- exact/semantic cache;
-- dedup;
-- context selection;
-- token budgeting.
+- [ ] storage detection;
+- [ ] swap/cache policies;
+- [~] state directory — `AI_CLUSTER_STATE` aponta um arquivo; não é diretório de estado;
+- [~] checkpoint — snapshot da fila e dos outputs, não de unidade em execução;
+- [~] recovery — reload no startup do controller;
+- [ ] warm/cold tiers.
 
-Exit criteria: benchmark shows measurable token/latency savings.
+Critério de saída: perda de nó não apaga estado recuperável de execução.
 
-## Phase 6 — Model Runtime
+- [~] `persistence.md` cobre restart do **controller**. Perda de **nó** continua sendo
+  recuperada por requeue (`fault-tolerance.md`), não por checkpoint.
 
-Deliver:
+## Fase 5 — Graph + Edge Optimizer
 
-- model registry;
-- model shards;
-- quantized variants;
-- CPU inference backend;
-- pipeline/tensor/hybrid planning.
+Entregar:
 
-Exit criteria: robust model executes on multiple CPU nodes.
+- [ ] graph representation;
+- [ ] graph retrieval;
+- [ ] exact/semantic cache;
+- [ ] dedup;
+- [ ] context selection;
+- [ ] token budgeting.
 
-## Phase 7 — Heterogeneous acceleration
+Critério de saída: benchmark mostra economia mensurável de token/latência. — não iniciado.
 
-Deliver:
+## Fase 6 — Model Runtime
 
-- GPU backend;
-- ARM64 backend;
-- NPU plugin architecture;
-- USB transport;
-- mobile worker prototype.
+Entregar:
 
-## Phase 8 — Adaptive optimization
+- [ ] model registry;
+- [ ] model shards;
+- [ ] quantized variants;
+- [ ] CPU inference backend;
+- [ ] pipeline/tensor/hybrid planning.
 
-Deliver:
+Critério de saída: modelo robusto executa em vários nós CPU. — não iniciado.
 
-- learned performance model;
-- dynamic rebalancing;
-- speculative execution;
-- predictive prefetch;
-- capacity inference.
+## Fase 7 — Heterogeneous acceleration
 
-## Phase 9 — Production hardening
+Entregar:
 
-Deliver:
+- [ ] GPU backend;
+- [ ] ARM64 backend;
+- [ ] NPU plugin architecture;
+- [ ] USB transport;
+- [ ] mobile worker prototype.
 
-- security hardening;
-- attestation;
-- upgrade/rollback;
-- audit;
-- failure injection;
-- long-run soak tests.
+— não iniciado.
+
+## Fase 8 — Adaptive optimization
+
+Entregar:
+
+- [ ] learned performance model;
+- [ ] dynamic rebalancing;
+- [ ] speculative execution;
+- [ ] predictive prefetch;
+- [ ] capacity inference.
+
+— não iniciado.
+
+## Fase 9 — Production hardening
+
+Entregar:
+
+- [ ] security hardening;
+- [ ] attestation;
+- [ ] upgrade/rollback;
+- [ ] audit;
+- [ ] failure injection;
+- [ ] long-run soak tests.
+
+— não iniciado.
+
+## Observabilidade (Fase H do EXECUTION-PLAN)
+
+- [x] H2 Events — `telemetry.md`, `ai-cluster events`;
+- [ ] H1 Metrics — agregados de nó, runtime e cluster;
+- [ ] H3 Trace correlation — ligar requisição do cliente às units que ela gerou;
+- [ ] H4/H5 — pendentes.

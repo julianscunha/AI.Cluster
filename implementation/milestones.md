@@ -1,74 +1,94 @@
 ---
 title: "Milestones"
 type: implementation
-status: proposed
+status: living
 tags: [implementation, milestones]
 ---
 
 # Milestones
 
-## M0 — Two-node compute proof
+Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 
-Acceptance:
+## M0 — Prova de compute em dois nós
 
-- two Linux machines;
-- discoverable by Controller;
-- one can send a matrix operation to another;
-- telemetry recorded.
+Aceite:
 
-## M1 — Three-node fault-tolerant DAG
+- [x] dois nós Linux;
+- [x] descobertos pelo Controller;
+- [x] um envia uma operação de matriz para o outro;
+- [~] telemetria registrada — eventos prontos; métricas agregadas pendentes.
 
-Acceptance:
+Ressalva: validado com dois containers no mesmo host. Duas máquinas físicas ainda não
+foram rodadas (`phase-0/two-machine-validation.md`).
 
-- DAG with parallel branches;
-- one node can drain;
-- one node can fail and execution recovers.
+## M1 — DAG tolerante a falhas em três nós
 
-## M2 — Automatic provisioning
+Aceite:
 
-Acceptance:
+- [x] DAG com branches paralelas;
+- [x] um nó pode drenar;
+- [x] um nó pode falhar e a execução recupera.
 
-- clean test machine bootstraps;
-- image installed automatically;
-- node rejoins as READY.
+Evidência: `phase-2/dependency-graph.md`, `phase-2/fault-tolerance.md`,
+E2E `phase-2-failure.sh`.
 
-## M3 — Storage intelligence
+## M2 — Provisionamento automático
 
-Acceptance:
+Aceite:
 
-- HDD/SSD/NVMe differentiated;
-- policies dynamically applied;
-- dashboard shows storage health.
+- [ ] máquina de teste limpa faz bootstrap;
+- [ ] imagem instalada automaticamente;
+- [ ] nó reingressa como READY.
 
-## M4 — LLM CPU prototype
+— não iniciado (Fase 3 do roadmap).
 
-Acceptance:
+## M3 — Inteligência de storage
 
-- model split across multiple CPU nodes;
-- expected/actual inference metrics collected;
-- communication overhead visible.
+Aceite:
 
-## M5 — Edge optimization
+- [ ] HDD/SSD/NVMe diferenciados;
+- [ ] políticas aplicadas dinamicamente;
+- [ ] dashboard mostra saúde do storage.
 
-Acceptance:
+— não iniciado (Fase 4 do roadmap; `persistence.md` é só o começo).
 
-- token reduction benchmark;
-- cache hit benchmark;
-- graph retrieval benchmark;
-- optimizer overhead measured.
+## M4 — Protótipo LLM em CPU
 
-## M6 — Heterogeneous prototype
+Aceite:
 
-Acceptance:
+- [ ] modelo dividido entre vários nós CPU;
+- [ ] métricas de inferência esperado/real coletadas;
+- [ ] overhead de comunicação visível.
 
-- x86 + ARM cluster;
-- different capacities;
-- scheduler uses workload-specific scores.
+— não iniciado (Fase 6 do roadmap).
 
-## M7 — Mobile worker
+## M5 — Otimização de borda
 
-Acceptance:
+Aceite:
 
-- supported phone reimaged;
-- connected via USB;
-- contributes measurable compute without compromising cluster stability.
+- [ ] benchmark de redução de tokens;
+- [ ] benchmark de cache hit;
+- [ ] benchmark de recuperação de grafo;
+- [ ] overhead do otimizador medido.
+
+— não iniciado (Fase 5 do roadmap).
+
+## M6 — Protótipo heterogêneo
+
+Aceite:
+
+- [ ] cluster x86 + ARM;
+- [ ] capacidades diferentes;
+- [ ] scheduler usa scores por workload.
+
+— não iniciado. Depende do scheduler (Fase 2, `placement`).
+
+## M7 — Worker móvel
+
+Aceite:
+
+- [ ] celular compatível reimaged;
+- [ ] conectado via USB;
+- [ ] contribui com compute mensurável sem comprometer a estabilidade do cluster.
+
+— não iniciado (Fase 7 do roadmap).

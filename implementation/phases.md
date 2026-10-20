@@ -1,72 +1,74 @@
 ---
-title: "Implementation Phases — Detailed"
+title: "Fases de Implementação — Detalhado"
 type: implementation
-status: proposed
+status: living
 tags: [implementation, phases]
 ---
 
-# Implementation Phases — Detailed
+# Fases de Implementação — Detalhado
 
-## Phase 1 work packages
+Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
+
+## Pacotes de trabalho da Fase 1
 
 ### Controller core
-- cluster state in memory;
-- event bus;
-- node registry;
-- scheduler interface.
+- [x] estado do cluster em memória;
+- [ ] event bus — hoje é um ring buffer de eventos (`events.rs`), não um bus;
+- [x] node registry;
+- [ ] scheduler interface — dispatch é primeiro-que-pergunta;
 
 ### Worker core
-- heartbeat;
-- capability report;
-- CPU benchmark;
-- Work Unit runner.
+- [x] heartbeat;
+- [x] capability report;
+- [ ] CPU benchmark — a capability reporta threads, não mede desempenho;
+- [x] Work Unit runner.
 
 ### CLI
-- status;
-- nodes;
-- node show;
-- events.
+- [x] status;
+- [x] nodes;
+- [ ] node show;
+- [x] events.
 
-## Phase 2 work packages
+## Pacotes de trabalho da Fase 2
 
-- dependency DAG;
-- queue;
-- placement;
-- network measurements;
-- transfer protocol;
-- retries;
-- trace correlation.
+- [x] dependency DAG;
+- [x] queue;
+- [~] placement — filtro por capability; sem cost model;
+- [ ] network measurements;
+- [ ] transfer protocol;
+- [x] retries;
+- [ ] trace correlation.
 
-## Phase 3 work packages
+## Pacotes de trabalho da Fase 3
 
-- image build;
-- bootstrap;
-- installer;
-- bootloader;
-- identity persistence;
-- A/B recovery.
+- [ ] image build;
+- [ ] bootstrap;
+- [ ] installer;
+- [ ] bootloader;
+- [ ] identity persistence;
+- [ ] A/B recovery.
 
-## Phase 4 work packages
+## Pacotes de trabalho da Fase 4
 
-- SSD/HDD/NVMe detection;
-- SMART/health where available;
-- dynamic cache allocation;
-- swap manager;
-- checkpoint manager.
+- [ ] SSD/HDD/NVMe detection;
+- [ ] SMART/health where available;
+- [ ] dynamic cache allocation;
+- [ ] swap manager;
+- [~] checkpoint manager — snapshot da fila (`persistence.md`), não de unidade em execução.
 
-## Phase 5 work packages
+## Pacotes de trabalho da Fase 5
 
-- graph ingestion;
-- graph queries;
-- retrieval evaluator;
-- exact cache;
-- semantic cache;
-- compression evaluator.
+- [ ] graph ingestion;
+- [ ] graph queries;
+- [ ] retrieval evaluator;
+- [ ] exact cache;
+- [ ] semantic cache;
+- [ ] compression evaluator.
 
-## Phase 6 work packages
+## Pacotes de trabalho da Fase 6
 
-- model manifest;
-- shard format;
-- model cache;
-- CPU kernel integration;
-- distributed model execution.
+- [ ] model manifest;
+- [ ] shard format;
+- [ ] model cache;
+- [ ] CPU kernel integration;
+- [ ] distributed model execution.
