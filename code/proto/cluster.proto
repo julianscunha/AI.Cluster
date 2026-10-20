@@ -82,15 +82,15 @@ message WorkUnit {
   uint32 cols = 4;
   repeated double matrix_a = 5;
   repeated double matrix_b = 6;
-  /// Work ids that must complete before this unit may be dispatched.
+  /// Ids de trabalho que devem completar antes que esta unidade possa ser despachada.
   repeated string depends_on = 7;
-  /// When set, matrix_a is replaced at dispatch by the output of this work id.
-  /// Empty means use the matrix_a payload as-is.
+  /// Quando definido, matrix_a é substituído no despacho pela saída deste id de trabalho.
+  /// Vazio significa usar o payload de matrix_a como está.
   string matrix_a_from = 8;
-  /// Same for matrix_b.
+  /// O mesmo para matrix_b.
   string matrix_b_from = 9;
-  /// Candidate filter: the controller will not hand this unit to a node that
-  /// reports fewer cpu_threads than this. 0 means no requirement.
+  /// Filtro de candidatos: o controller não entregará esta unidade a um nó que
+  /// reporte menos cpu_threads que isto. 0 significa sem requisito.
   uint32 min_cpu_threads = 10;
 }
 
@@ -128,7 +128,7 @@ message EnqueueWorkRequest {
   uint32 cols = 3;
   uint64 seed = 4;
   uint32 repetitions = 5;
-  /// Minimum cpu_threads for every unit enqueued. 0 means no requirement.
+  /// Mínimo de cpu_threads para cada unidade enfileirada. 0 significa sem requisito.
   uint32 min_cpu_threads = 6;
 }
 
@@ -137,14 +137,14 @@ message EnqueueWorkResponse {
 }
 
 message EnqueueGraphRequest {
-  /// Edge length of each square matrix in the graph.
+  /// Comprimento da aresta de cada matriz quadrada no grafo.
   uint32 size = 1;
   uint64 seed = 2;
 }
 
 message EnqueueGraphResponse {
   uint32 enqueued = 1;
-  /// Units held back until their dependencies complete.
+  /// Unidades retidas até que suas dependências completem.
   uint32 blocked = 2;
 }
 
@@ -162,8 +162,8 @@ message WorkReportEntry {
 message WorkReportResponse {
   repeated WorkReportEntry completed = 1;
   uint32 pending = 2;
-  /// Units that will never complete: their retry budget ran out, or a unit they
-  /// depend on did. Reported so a client can tell "drained" from "gave up".
+  /// Unidades que nunca completarão: seu orçamento de retry acabou, ou o de uma
+  /// unidade da qual dependem. Reportado para um cliente distinguir "drenado" de "desistiu".
   uint32 failed = 3;
 }
 
@@ -176,8 +176,8 @@ message LeaveNodeResponse {
   uint32 requeued = 2;
 }
 
-/// One thing that happened, as the controller saw it. Controller-observed time:
-/// node-supplied clocks are never used for ordering.
+/// Algo que aconteceu, como o controller viu. Tempo observado pelo controller:
+/// relógios fornecidos pelos nós nunca são usados para ordenação.
 message Event {
   uint64 at_unix_ms = 1;
   string kind = 2;
@@ -185,7 +185,7 @@ message Event {
 }
 
 message ListEventsRequest {
-  /// Most recent N events, oldest first. 0 means every event still held.
+  /// N eventos mais recentes, mais antigos primeiro. 0 significa todo evento ainda retido.
   uint32 limit = 1;
 }
 
@@ -193,22 +193,22 @@ message ListEventsResponse {
   repeated Event events = 1;
 }
 
-/// Controller state written to disk so a restart does not lose queued work. Not
-/// part of the request surface: this is what the controller saves and reloads,
-/// not something a client sends.
+/// Estado do controller gravado em disco para que um restart não perca trabalho em fila.
+/// Não faz parte da superfície de requests: isto é o que o controller salva e recarrega,
+/// não algo que um cliente envia.
 message WorkSnapshot {
-  /// Units not yet completed: the queue plus whatever was in flight when the
-  /// snapshot was taken, so a unit that was running is offered again rather than
-  /// dropped.
+  /// Unidades ainda não concluídas: a fila mais o que estava em voo quando o
+  /// snapshot foi tirado, de modo que uma unidade em execução é oferecida de novo em vez
+  /// de descartada.
   repeated WorkUnit pending = 1;
-  /// Output of every completed unit. A dependent unit's bound input is read from
-  /// here, so without it the units downstream could never become ready.
+  /// Saída de cada unidade concluída. A entrada vinculada de uma unidade dependente é lida
+  /// daqui, então sem isto as unidades a jusante nunca ficariam prontas.
   repeated WorkOutput outputs = 2;
-  /// Dispatch attempts started per unit, keyed by work id.
+  /// Tentativas de despacho iniciadas por unidade, indexadas por id de trabalho.
   map<string, uint32> attempts = 3;
-  /// Units that will never complete: their retry budget ran out.
+  /// Unidades que nunca completarão: seu orçamento de retry acabou.
   repeated string failed = 4;
-  /// Id sequence, so ids minted after a reload cannot collide with loaded ones.
+  /// Sequência de ids, para que ids gerados após um reload não colidam com os carregados.
   uint64 sequence = 5;
 }
 
