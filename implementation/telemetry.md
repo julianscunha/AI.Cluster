@@ -1,47 +1,47 @@
 ---
-title: "Telemetry — lifecycle events"
+title: "Telemetria — eventos de ciclo de vida"
 type: implementation
 status: implemented
 tags: [implementation, telemetry, observability, events]
 ---
 
-# Telemetry — lifecycle events
+# Telemetria — eventos de ciclo de vida
 
-The controller already printed what happened. Now it also records it, so the
-timeline is readable by a client instead of only by whoever is tailing the
-container log. This is H2 of the plan's Observability phase, and it closes
-`ai-cluster events`, which until now printed "reserved for the telemetry phase".
+O controller já imprimia o que acontecia. Agora também registra, para que a linha do tempo
+seja legível por um cliente e não só por quem está acompanhando o log do container. Isto é
+o H2 da fase de Observability do plano, e fecha o `ai-cluster events`, que até então
+imprimia "reserved for the telemetry phase".
 
-## What changed
+## O que mudou
 
-- `Event`, `ListEventsRequest`, `ListEventsResponse` and `ListEvents` in the proto.
-- `EventLog` (`code/crates/controller/src/events.rs`): a bounded ring buffer of
-  the last 256 events, oldest first.
-- The service records at the lifecycle points: `node_registered`, `node_left`,
+- `Event`, `ListEventsRequest`, `ListEventsResponse` e `ListEvents` no proto.
+- `EventLog` (`code/crates/controller/src/events.rs`): ring buffer limitado dos últimos
+  256 eventos, mais antigo primeiro.
+- O serviço registra nos pontos de ciclo de vida: `node_registered`, `node_left`,
   `node_offline`, `work_enqueued`, `graph_enqueued`, `work_completed`.
-- The offline sweep in the controller's `main` records `node_offline` too: it is
-  the one lifecycle transition that happens without a request to hang it on.
-- `ai-cluster events [--limit N]` prints them oldest first. Default is the last 20;
-  `--limit 0` means everything still held.
+- O sweep de offline no `main` do controller registra `node_offline` também: é a única
+  transição de ciclo de vida que acontece sem uma requisição para pendurar.
+- `ai-cluster events [--limit N]` imprime mais antigo primeiro. Padrão são os últimos 20;
+  `--limit 0` significa tudo que ainda está guardado.
 
-## Semantics
+## Semântica
 
-Every event carries controller-observed time. Node clocks are never used for
-ordering — the same rule as liveness: a node may report whatever time it likes, so
-the only trustworthy clock is the controller's.
+Todo evento carrega o tempo observado pelo controller. Relógios de nó nunca são usados para
+ordenação — a mesma regra da liveness: um nó pode reportar a hora que quiser, então o único
+relógio confiável é o do controller.
 
-The log is a **ring buffer, not a store**. Past 256 events the oldest is dropped.
-It answers "what just happened", which is what an operator asks during an
-incident; it does not answer "what happened last week". See the ceiling.
+O log é um **ring buffer, não um store**. Passados 256 eventos o mais antigo é descartado.
+Responde "o que acabou de acontecer", que é o que um operador pergunta durante um
+incidente; não responde "o que aconteceu semana passada". Ver o teto.
 
-stdout and the event log both keep the facts, and they are not redundant: the
-print lines are what the E2E scripts and `docker logs` read, the events are what a
-client can query. Replacing the prints would break the existing failure tests,
-which parse the controller's stdout.
+stdout e o log de eventos guardam os mesmos fatos, e não são redundantes: as linhas de
+print são o que os scripts de E2E e o `docker logs` leem, os eventos são o que um cliente
+pode consultar. Trocar os prints quebraria os testes de falha existentes, que fazem parse
+do stdout do controller.
 
-## Evidence
+## Evidência
 
-Controller plus two workers, two units, then a graceful departure of one worker:
+Controller mais dois workers, duas unidades, depois a saída graciosa de um worker:
 
 ```
 EVENTS 6
@@ -54,27 +54,28 @@ AT_UNIX_MS     KIND             DETAIL
 1792464774608  node_left        node-2 requeued=0 failed=0
 ```
 
-Six events, oldest first, one line per thing that happened. Note the two units
-landed on the same node — that is the ceiling below, not a typo.
+Seis eventos, mais antigo primeiro, uma linha por coisa que aconteceu. Note que as duas
+unidades caíram no mesmo nó — isso é o teto abaixo, não um erro de digitação.
 
-The ring buffer is covered by two unit tests in `events.rs` — the oldest is
-dropped once full, and `recent` returns the newest N oldest-first — and the wiring
-by `lifecycle_events_are_recorded_and_listed` in `service.rs`, which checks that a
-registration shows up through the RPC and that `--limit` trims from the front.
+O ring buffer é coberto por dois testes unitários em `events.rs` — o mais antigo é
+descartado quando enche, e `recent` devolve os N mais novos com o mais antigo primeiro — e
+a ligação por `lifecycle_events_are_recorded_and_listed` em `service.rs`, que verifica que
+um registro aparece via RPC e que `--limit` corta pela frente.
 
-## Known ceiling
+## Teto conhecido
 
-**One worker took both units.** A worker now polls again the moment it finishes a
-unit, so a fast worker can empty the queue before a slower one asks. This is the
-placement ceiling showing up in practice: dispatch is first-to-poll, and there is
-no cost model yet to balance across nodes. Fixing it belongs to the scheduler, not
-to telemetry. A short per-worker cooldown would hide it — at the cost of the
-throughput the cadence fix just bought, so it is the wrong lever.
+**Um worker pegou as duas unidades.** Um worker agora pergunta de novo assim que termina
+uma unidade, então um worker rápido pode esvaziar a fila antes de um mais lento perguntar.
+Este é o teto de placement aparecendo na prática: o dispatch é primeiro-que-pergunta, e
+ainda não há cost model para balancear entre nós. Consertar isso pertence ao scheduler, não
+à telemetria. Um cooldown curto por worker esconderia o sintoma — ao custo do throughput
+que a correção da cadência acabou de comprar, então é a alavanca errada.
 
-**No metrics, no traces, no prediction error.** This is H2 only. Nothing
-aggregates (H1), nothing ties a client request to the work units it produced (H3),
-and nothing exposes expected-vs-actual (H5). These events are a timeline, not a
-dashboard.
+**Sem métricas, sem traces, sem prediction error.** Isto é só o H2. Nada agrega (H1), nada
+liga uma requisição de cliente às unidades que ela produziu (H3), e nada expõe
+previsto-vs-real (H5). Estes eventos são uma linha do tempo, não um dashboard.
 
-**In memory, lost on restart.** Same as the work queue. That is the storage phase,
-and the plan's chain puts it after telemetry.
+**Em memória, perdido no restart.** Diferente da fila de trabalho, que agora persiste
+(`persistence.md`). O log de eventos é uma visão de incidente recente por design — o que
+precisava sobreviver era a fila. Persistir eventos é uma decisão separada, e a cadeia do
+plano põe storage depois de telemetria.
