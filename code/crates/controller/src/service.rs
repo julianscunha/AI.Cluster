@@ -53,9 +53,9 @@ impl ClusterControl for ClusterControlService {
         let request = request.into_inner();
         let identity = request
             .identity
-            .ok_or_else(|| Status::invalid_argument("identity is required"))?;
+            .ok_or_else(|| Status::invalid_argument("identidade é obrigatória"))?;
         if identity.node_id.trim().is_empty() {
-            return Err(Status::invalid_argument("node_id is required"));
+            return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         let node_id = identity.node_id.clone();
         let now = unix_ms();
@@ -65,7 +65,7 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RegisterNodeResponse {
             accepted: true,
             cluster_id: self.cluster_id.clone(),
-            message: format!("node {node_id} registered"),
+            message: format!("nó {node_id} registrado"),
         }))
     }
 
@@ -75,7 +75,7 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<HeartbeatResponse>, Status> {
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
-            return Err(Status::invalid_argument("node_id is required"));
+            return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         // The node-supplied timestamp is advisory only; liveness uses controller time.
         let acknowledged = self.registry.heartbeat(&request.node_id, unix_ms());
@@ -88,7 +88,7 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<HealthStreamResponse>, Status> {
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
-            return Err(Status::invalid_argument("node_id is required"));
+            return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         let accepted = self
             .registry
@@ -116,7 +116,7 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<LeaveNodeResponse>, Status> {
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
-            return Err(Status::invalid_argument("node_id is required"));
+            return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         if !self.registry.begin_drain(&request.node_id) {
             return Ok(Response::new(LeaveNodeResponse {
@@ -127,14 +127,14 @@ impl ClusterControl for ClusterControlService {
         let outcome = self.work.requeue_for_node(&request.node_id);
         self.registry.remove(&request.node_id);
         println!(
-            "node {} left; requeued {} in-flight units, failed {}",
+            "nó {} saiu; {} unidades em voo reenfileiradas, {} falharam",
             request.node_id, outcome.requeued, outcome.failed
         );
         self.events.record(
             unix_ms(),
             "node_left",
             format!(
-                "{} requeued={} failed={}",
+                "{} reenfileiradas={} falharam={}",
                 request.node_id, outcome.requeued, outcome.failed
             ),
         );
@@ -150,12 +150,12 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<RequestWorkResponse>, Status> {
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
-            return Err(Status::invalid_argument("node_id is required"));
+            return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         // Unknown, leaving or dead nodes get no work.
         if !self.registry.is_available(&request.node_id) {
             return Err(Status::failed_precondition(
-                "node is not available for work",
+                "nó não está disponível para trabalho",
             ));
         }
         // Candidate filtering: the unit's declared requirement is checked against
@@ -184,14 +184,14 @@ impl ClusterControl for ClusterControlService {
         let result = request
             .into_inner()
             .result
-            .ok_or_else(|| Status::invalid_argument("result is required"))?;
+            .ok_or_else(|| Status::invalid_argument("resultado é obrigatório"))?;
         if result.work_id.trim().is_empty() {
-            return Err(Status::invalid_argument("work_id is required"));
+            return Err(Status::invalid_argument("work_id é obrigatório"));
         }
         match self.work.complete(result, unix_ms()) {
             Some(completed) => {
                 println!(
-                    "work {} finished on {} compute={}us transfer={}us total={}us checksum={:.6}",
+                    "trabalho {} finalizado em {} compute={}us transfer={}us total={}us checksum={:.6}",
                     completed.work_id,
                     completed.node_id,
                     completed.compute_time_us,
@@ -203,7 +203,7 @@ impl ClusterControl for ClusterControlService {
                     unix_ms(),
                     "work_completed",
                     format!(
-                        "{} on {} compute={}us transfer={}us",
+                        "{} em {} compute={}us transfer={}us",
                         completed.work_id,
                         completed.node_id,
                         completed.compute_time_us,
@@ -212,12 +212,12 @@ impl ClusterControl for ClusterControlService {
                 );
                 Ok(Response::new(SubmitWorkResultResponse {
                     accepted: true,
-                    message: "result recorded".to_string(),
+                    message: "resultado registrado".to_string(),
                 }))
             }
             None => Ok(Response::new(SubmitWorkResultResponse {
                 accepted: false,
-                message: "work was not dispatched by this controller".to_string(),
+                message: "trabalho não foi despachado por este controller".to_string(),
             })),
         }
     }
@@ -229,7 +229,7 @@ impl ClusterControl for ClusterControlService {
         let request = request.into_inner();
         if request.rows == 0 || request.shared == 0 || request.cols == 0 {
             return Err(Status::invalid_argument(
-                "matrix dimensions must all be greater than zero",
+                "todas as dimensões da matriz devem ser maiores que zero",
             ));
         }
         let repetitions = request.repetitions.max(1);
@@ -256,7 +256,7 @@ impl ClusterControl for ClusterControlService {
             unix_ms(),
             "work_enqueued",
             format!(
-                "{} units {}x{}x{}",
+                "{} unidades {}x{}x{}",
                 enqueued, request.rows, request.shared, request.cols
             ),
         );
@@ -278,7 +278,7 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<EnqueueGraphResponse>, Status> {
         let request = request.into_inner();
         if request.size == 0 {
-            return Err(Status::invalid_argument("size must be greater than zero"));
+            return Err(Status::invalid_argument("o tamanho deve ser maior que zero"));
         }
         let size = request.size;
         let first = self.work.next_work_id();
@@ -347,7 +347,7 @@ impl ClusterControl for ClusterControlService {
         self.events.record(
             unix_ms(),
             "graph_enqueued",
-            format!("{enqueued} units size={size}"),
+            format!("{enqueued} unidades tamanho={size}"),
         );
         Ok(Response::new(EnqueueGraphResponse {
             enqueued: enqueued as u32,

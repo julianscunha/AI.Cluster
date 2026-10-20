@@ -45,14 +45,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // them back so the surviving nodes can finish the work.
                 let outcome = sweep_work.requeue_for_node(&node_id);
                 println!(
-                    "node {node_id} offline after {grace_ms}ms without heartbeat; requeued {} in-flight units, failed {}",
+                    "nó {node_id} offline após {grace_ms}ms sem heartbeat; {} unidades em voo reenfileiradas, {} falharam",
                     outcome.requeued, outcome.failed
                 );
                 sweep_events.record(
                     unix_ms(),
                     "node_offline",
                     format!(
-                        "{node_id} after {grace_ms}ms requeued={} failed={}",
+                        "{node_id} após {grace_ms}ms reenfileiradas={} falharam={}",
                         outcome.requeued, outcome.failed
                     ),
                 );
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    println!("controller listening on {addr} (heartbeat grace {grace_ms}ms)");
+    println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     Server::builder()
         .add_service(ClusterControlServer::with_interceptor(
             service,

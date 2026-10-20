@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Phase 2 slice: dependency graph dispatch.
+# Fatia da Fase 2: dispatch do grafo de dependência.
 #
-# Flow: controller + two workers -> enqueue the diamond A -> (B, C) -> D.
-# The point is ordering: B and C must not be dispatched until A completes, and D
-# must not be dispatched until both B and C complete.
+# Fluxo: controller + dois workers -> enfileirar o diamante A -> (B, C) -> D.
+# O ponto é a ordenação: B e C não devem ser despachados até A completar, e D
+# não deve ser despachado até B e C completarem.
 set -uo pipefail
 
 NET=aic-net
@@ -16,12 +16,12 @@ run() {
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
-echo "=== cleanup ==="
+echo "=== limpeza ==="
 docker rm -f aic-controller aic-worker1 aic-worker2 >/dev/null 2>&1
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== start controller + two workers ==="
+echo "=== iniciar controller + dois workers ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" \
   -v aic-target:/t "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 for pair in "aic-worker1:node-b" "aic-worker2:node-c"; do
@@ -33,11 +33,11 @@ for pair in "aic-worker1:node-b" "aic-worker2:node-c"; do
 done
 sleep 8
 
-echo "--- nodes ---"
+echo "--- nós ---"
 run "$R/ai-cluster nodes"
 
-echo "=== enqueue the diamond and wait for it to drain ==="
+echo "=== enfileirar o diamante e aguardar drenar ==="
 run "$R/ai-cluster graph --size 128"
 
-echo "--- controller log ---"
+echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -15

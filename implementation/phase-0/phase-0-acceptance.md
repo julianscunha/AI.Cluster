@@ -36,8 +36,8 @@ tags: [operational, phase-0-acceptance]
 - O harness de benchmark consegue medir um nó sem alterar seu escore de cluster manualmente. — ATENDIDO
   por `ai-cluster benchmark`; o controller registra o compute time reportado pelo worker e
   seu próprio round trip observado, então nenhum escore é digitado à mão.
-- A saída do benchmark é versionada. — ATENDIDO pelo cabeçalho `benchmark_version=... scope=...
-  size=... repetitions=... seed=...` impresso em toda execução.
+- A saída do benchmark é versionada. — ATENDIDO pelo cabeçalho `versao_benchmark=... escopo=...
+  tamanho=... repeticoes=... semente=42` impresso em toda execução.
 
 ## A5 Sem LLM
 

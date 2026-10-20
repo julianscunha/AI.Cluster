@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Phase 2 slice: fault tolerance — a worker dies and the DAG still finishes.
+# Fatia da Fase 2: tolerância a falhas — um worker morre e o DAG ainda termina.
 #
-# The acceptance criterion this checks: losing a worker does not corrupt the DAG.
-# The worker is killed with no graceful leave, so the controller only notices when
-# its heartbeat grace expires. Whatever the dead node held must end up either
-# requeued to the surviving node or failed cleanly — never left outstanding.
+# O critério de aceitação verificado: perder um worker não corrompe o DAG.
+# O worker é morto sem saída graciosa, então o controller só percebe quando
+# sua graça de heartbeat expira. O que o nó morto segurava deve terminar ou
+# reenfileirado no nó sobrevivente ou falhado de forma limpa — nunca deixado pendente.
 set -uo pipefail
 
 NET=aic-net
 IMG=aic-rust:1
 R=/t/release
 CONTROLLER=http://aic-controller:50051
-# Size stays under the gRPC message ceiling; keep it there.
+# O tamanho fica abaixo do teto de mensagem do gRPC; mantenha-o lá.
 SIZE=${SIZE:-256}
 KILL_AFTER=${KILL_AFTER:-10}
-# Hold each claimed unit before computing it, so the kill lands while a unit is in
-# flight. Without this the in-flight window is microseconds wide and the test only
-# ever exercises the idle path. Longer than the 5s heartbeat interval on purpose:
-# once a worker has claimed, it is holding the unit whenever the kill arrives.
+# Segure cada unidade reivindicada antes de computá-la, para que o kill caia com uma unidade em
+# voo. Sem isso a janela em voo tem poucos microssegundos e o teste só
+# exercita o caminho ocioso. Mais longo que o intervalo de heartbeat de 5s de propósito:
+# uma vez que um worker reivindicou, ele segura a unidade quando o kill chega.
 WORK_DELAY_MS=${WORK_DELAY_MS:-12000}
 
 run() {
@@ -25,15 +25,15 @@ run() {
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
-echo "=== cleanup ==="
+echo "=== limpeza ==="
 docker rm -f aic-controller aic-worker-b aic-worker-c >/dev/null 2>&1
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== start controller + two workers ==="
-# Grace deliberately shorter than the work hold below. Before the heartbeat was
-# decoupled from the work loop this reaped the healthy worker mid-unit; the run
-# should now only ever reap the node that was killed.
+echo "=== iniciar controller + dois workers ==="
+# Graça deliberadamente menor que a retenção de trabalho abaixo. Antes de o heartbeat ser
+# desacoplado do laço de trabalho, isso ceifava o worker saudável no meio da unidade; a execução
+# agora só deve ceifar o nó que foi morto.
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" \
   -v aic-target:/t -e AI_CLUSTER_HEARTBEAT_GRACE_MS=9000 \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
@@ -45,22 +45,22 @@ for n in b c; do
 done
 sleep 8
 
-echo "--- nodes before the failure ---"
+echo "--- nós antes da falha ---"
 run "$R/ai-cluster nodes"
 
-echo "=== enqueue two units so both workers hold one, then kill a worker mid-flight ==="
-# Two ready units and two workers: each worker claims one, so the node that dies is
-# actually holding work. The diamond would not do this — it has a single ready head,
-# so only one worker can ever be busy at a time.
+echo "=== enfileirar duas unidades para que ambos os workers segurem uma, então matar um worker em voo ==="
+# Duas unidades prontas e dois workers: cada worker reivindica uma, então o nó que morre
+# está de fato segurando trabalho. O diamante não faria isso — ele tem uma única cabeça pronta,
+# então só um worker pode estar ocupado por vez.
 run "$R/ai-cluster benchmark --size "$SIZE" --repetitions 2" &
 CLI=$!
 sleep "$KILL_AFTER"
-echo "--- killing node-b: SIGKILL, no leave, no requeue on the way out ---"
+echo "--- matando node-b: SIGKILL, sem leave, sem requeue na saída ---"
 docker kill aic-worker-b >/dev/null 2>&1
 wait "$CLI"
 
-echo "--- nodes after the failure ---"
+echo "--- nós após a falha ---"
 run "$R/ai-cluster nodes"
 
-echo "--- controller log ---"
+echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -20

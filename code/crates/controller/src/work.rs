@@ -147,7 +147,7 @@ impl WorkStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return store,
             Err(err) => {
                 println!(
-                    "state {} unreadable ({err}); starting empty",
+                    "estado {} ilegível ({err}); iniciando vazio",
                     path.display()
                 );
                 return store;
@@ -169,12 +169,12 @@ impl WorkStore {
                 };
                 store.sequence.store(snapshot.sequence, Ordering::Relaxed);
                 println!(
-                    "state loaded from {}: {pending} pending unit(s)",
+                    "estado carregado de {}: {pending} unidade(s) pendente(s)",
                     path.display()
                 );
             }
             Err(err) => println!(
-                "state {} unreadable ({err}); starting empty",
+                "estado {} ilegível ({err}); iniciando vazio",
                 path.display()
             ),
         }
@@ -223,7 +223,7 @@ impl WorkStore {
         if let Err(err) = std::fs::write(&temp, snapshot.encode_to_vec())
             .and_then(|()| std::fs::rename(&temp, path))
         {
-            println!("state save to {} failed: {err}", path.display());
+            println!("salvar estado em {} falhou: {err}", path.display());
         }
     }
 

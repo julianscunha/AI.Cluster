@@ -51,19 +51,19 @@ Um DAG diamante enfileirado sem nenhum worker rodando, o controller morto, depoi
 controller novo sobre o mesmo arquivo:
 
 ```
-state loaded from /t/state.bin: 4 pending unit(s)
-controller listening on 0.0.0.0:50051 (heartbeat grace 15000ms)
+estado carregado de /t/state.bin: 4 unidade(s) pendente(s)
+controller escutando em 0.0.0.0:50051 (graça de heartbeat 15000ms)
 ```
 
 Um worker então entrou e o grafo drenou sem ser re-enfileirado:
 
 ```
-EVENTS 5
+EVENTOS 5
 1792467794202  node_registered  node-1
-1792467794204  work_completed   w-0 on node-1 compute=94us transfer=1906us
-1792467794207  work_completed   w-1 on node-1 compute=88us transfer=912us
-1792467794210  work_completed   w-2 on node-1 compute=88us transfer=912us
-1792467794212  work_completed   w-3 on node-1 compute=88us transfer=0us
+1792467794204  work_completed   w-0 em node-1 compute=94us transfer=1906us
+1792467794207  work_completed   w-1 em node-1 compute=88us transfer=912us
+1792467794210  work_completed   w-2 em node-1 compute=88us transfer=912us
+1792467794212  work_completed   w-3 em node-1 compute=88us transfer=0us
 ```
 
 Quatro unidades, de uma fila que o primeiro controller nunca chegou a despachar. O teste

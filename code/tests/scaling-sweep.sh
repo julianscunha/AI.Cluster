@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# First experiment (§20): at what unit size does distributing beat the transfer cost?
+# Primeiro experimento (§20): a partir de que tamanho de unidade distribuir compensa o custo de transferência?
 #
-# Runs the same workload at several matrix sizes across 1, 2 and 3 workers and
-# records per-unit compute and transfer. Compute grows with the cube of the edge
-# length; transfer grows with its square. The size where compute overtakes transfer
-# is the crossover: below it, moving the work costs more than the work itself, so
-# extra nodes do not pay for themselves.
+# Roda a mesma carga em vários tamanhos de matriz com 1, 2 e 3 workers e
+# registra compute e transferência por unidade. O compute cresce com o cubo da aresta
+# e a transferência com o quadrado. O tamanho em que o compute supera a transferência
+# é o cruzamento: abaixo dele, mover o trabalho custa mais que o próprio trabalho, então
+# nós extras não se pagam.
 #
-# Sizes stay under the gRPC message ceiling. A size-S unit carries two SxS f64
-# matrices, so S=512 is already ~4MB, at tonic's default decode limit.
+# Os tamanhos ficam abaixo do teto de mensagem do gRPC. Uma unidade de tamanho S carrega duas matrizes f64 SxS,
+# então S=512 já é ~4MB, no limite de decode padrão do tonic.
 set -uo pipefail
 
 NET=aic-net
@@ -46,7 +46,7 @@ for nodes in $NODES; do
   sleep 8
 
   for size in $SIZES; do
-    echo "=== nodes=$nodes size=$size reps=$REPS ==="
+    echo "=== nós=$nodes tamanho=$size reps=$REPS ==="
     start=$(date +%s)
     run "$R/ai-cluster benchmark --size "$size" --repetitions $REPS"
     end=$(date +%s)
@@ -56,4 +56,4 @@ done
 
 teardown
 docker network rm "$NET" >/dev/null 2>&1
-echo "=== sweep complete ==="
+echo "=== varredura completa ==="

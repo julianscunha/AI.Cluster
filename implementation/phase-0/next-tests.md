@@ -19,7 +19,7 @@ desempenho entre máquinas.
 5. Baseline de benchmark de matriz de nó único. — VERIFICADO (`ai-cluster benchmark --local`)
 6. Benchmark distribuído de matriz com dois nós. — VERIFICADO em um host; hardware real
    ainda PENDENTE
-7. Comparar compute time, transfer time e total latency. — VERIFICADO para o
+7. Comparar tempo de compute, tempo de transferência e latência total. — VERIFICADO para o
    caso mesmo-host (`ai-cluster benchmark --size N --repetitions R`)
 8. Saída graciosa de nó com trabalho em voo. — VERIFICADO (`bash code/tests/phase-1-leave.sh`)
 9. Dispatch de grafo de dependências (diamante). — VERIFICADO (`bash code/tests/phase-2-graph.sh`)
@@ -52,7 +52,7 @@ docker run -d --name aic-worker1 --network aic-net -v aic-target:/t \
 ```
 
 Observado: `node-b` se registra e chega a `READY`; 6/6 unidades de trabalho completam com
-`pending=0`; os checksums batem com os registros do controller.
+`pendentes=0`; os checksums batem com os registros do controller.
 
 ### Comparação medida — 256x256, host único, dois containers
 

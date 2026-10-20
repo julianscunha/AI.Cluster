@@ -88,7 +88,7 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
         .await?
         .into_inner();
     println!(
-        "graph enqueued={} blocked={} size={size}",
+        "grafo enfileirado={} bloqueados={} tamanho={size}",
         response.enqueued, response.blocked
     );
 
@@ -111,10 +111,10 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner()
         .nodes;
-    println!("NODES {}", nodes.len());
+    println!("NÓS {}", nodes.len());
     println!(
         "{:<20} {:<10} {:<10} {:>7} {:>9} {:>8}",
-        "NODE", "STATE", "ARCH", "THREADS", "RAM_GB", "HEALTH"
+        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "SAÚDE"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -141,8 +141,8 @@ async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::err
         .await?
         .into_inner()
         .events;
-    println!("EVENTS {}", events.len());
-    println!("{:<14} {:<16} DETAIL", "AT_UNIX_MS", "KIND");
+    println!("EVENTOS {}", events.len());
+    println!("{:<14} {:<16} DETALHE", "EM_UNIX_MS", "TIPO");
     for event in events {
         println!(
             "{:<14} {:<16} {}",
@@ -161,9 +161,9 @@ async fn run_benchmark(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Version and parameters travel with the output so two runs are comparable.
     println!(
-        "benchmark_version={} scope={} size={size} repetitions={repetitions} seed=42",
+        "versao_benchmark={} escopo={} tamanho={size} repeticoes={repetitions} semente=42",
         env!("CARGO_PKG_VERSION"),
-        if local { "single-node" } else { "distributed" }
+        if local { "no-unico" } else { "distribuido" }
     );
     if local {
         return run_local_baseline(size, repetitions);
@@ -181,7 +181,7 @@ async fn run_benchmark(
         .await?
         .into_inner()
         .enqueued;
-    println!("enqueued {enqueued} work units of {size}x{size}");
+    println!("enfileiradas {enqueued} unidades de trabalho de {size}x{size}");
 
     // Poll until the queue drains. The deadline keeps a stuck worker from hanging the CLI.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
@@ -199,7 +199,7 @@ async fn run_benchmark(
 fn print_report(report: &WorkReportResponse) {
     println!(
         "{:<10} {:<14} {:>12} {:>12} {:>12}",
-        "WORK", "NODE", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
+        "TRABALHO", "NÓ", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
     );
     let mut compute_total = 0_u64;
     let mut transfer_total = 0_u64;
@@ -217,7 +217,7 @@ fn print_report(report: &WorkReportResponse) {
     }
     let count = report.completed.len().max(1) as u64;
     println!(
-        "completed={} pending={} failed={} avg_compute_us={} avg_transfer_us={}",
+        "concluidas={} pendentes={} falharam={} media_compute_us={} media_transfer_us={}",
         report.completed.len(),
         report.pending,
         report.failed,
@@ -243,14 +243,14 @@ fn run_local_baseline(size: u32, repetitions: u32) -> Result<(), Box<dyn std::er
         std::hint::black_box(product.checksum());
     }
     let avg_us = total.as_micros() / u128::from(runs);
-    println!("local baseline {size}x{size} repetitions={runs}");
+    println!("baseline local {size}x{size} repeticoes={runs}");
     println!(
         "{:<12} {:>14} {:>12}",
-        "SCOPE", "AVG_COMPUTE_US", "TOTAL_US"
+        "ESCOPO", "MEDIA_COMPUTE_US", "TOTAL_US"
     );
     println!(
         "{:<12} {:>14} {:>12}",
-        "single-node",
+        "no-unico",
         avg_us,
         total.as_micros()
     );

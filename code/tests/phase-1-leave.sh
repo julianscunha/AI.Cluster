@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Phase 1 exit criterion: nodes join and leave safely.
+# Critério de saída da Fase 1: nós entram e saem com segurança.
 #
-# Flow: controller + two workers -> enqueue work -> stop one worker with SIGTERM
-# (planned leave) -> the survivor must finish every unit, with nothing stranded.
+# Fluxo: controller + dois workers -> enfileirar trabalho -> parar um worker com SIGTERM
+# (saída planejada) -> o sobrevivente deve terminar cada unidade, sem nada encalhado.
 set -uo pipefail
 
 NET=aic-net
@@ -14,7 +14,7 @@ LOG=/tmp/aic-leave-bench.log
 run() { MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
         -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"; }
 
-echo "=== cleanup ==="
+echo "=== limpeza ==="
 docker rm -f aic-controller aic-worker1 aic-worker2 >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
 docker network create "$NET" >/dev/null
@@ -29,34 +29,34 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker1 --network "$NET" \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 
 sleep 6
-echo "=== nodes before leave ==="
+echo "=== nós antes da saída ==="
 run "$R/ai-cluster nodes"
 
-echo "=== enqueue 6 units (polls until the queue drains) ==="
+echo "=== enfileirar 6 unidades (faz poll até a fila drenar) ==="
 run "$R/ai-cluster benchmark --size 128 --repetitions 6" >"$LOG" 2>&1 &
 BENCH=$!
 sleep 4
 
-echo "=== worker2 (node-c) joins mid-run ==="
+echo "=== worker2 (node-c) entra no meio da execução ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-worker2 --network "$NET" \
   -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-c \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== graceful leave: docker stop aic-worker1 ==="
+echo "=== saída graciosa: docker stop aic-worker1 ==="
 docker stop aic-worker1
 sleep 2
 
-echo "=== nodes after leave ==="
+echo "=== nós após a saída ==="
 run "$R/ai-cluster nodes"
 
-echo "=== waiting for the benchmark to drain ==="
+echo "=== aguardando o benchmark drenar ==="
 wait $BENCH
-echo "--- benchmark output ---"
+echo "--- saída do benchmark ---"
 cat "$LOG"
 
-echo "--- controller log ---"
+echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -15
 
-echo "=== worker1 log (graceful leave) ==="
+echo "=== log do worker1 (saída graciosa) ==="
 docker logs aic-worker1 2>&1 | tail -8

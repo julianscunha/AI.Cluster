@@ -81,7 +81,7 @@ impl Interceptor for ServerMetadata {
             Ok(request)
         } else {
             Err(Status::failed_precondition(format!(
-                "protocol version {version} is not supported; this controller speaks {PROTOCOL_VERSION}"
+                "versão de protocolo {version} não é suportada; este controller fala {PROTOCOL_VERSION}"
             )))
         }
     }

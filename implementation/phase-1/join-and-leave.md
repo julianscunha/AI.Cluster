@@ -35,7 +35,7 @@ Reproduza com `bash code/tests/phase-1-leave.sh`.
 
 Controller mais `node-b`; `node-c` entra; `node-b` sai com SIGTERM:
 
-| work | node | compute_us | transfer_us | total_us |
+| trabalho | nó | compute_us | transfer_us | total_us |
 |---|---|---|---|---|
 | w-0 | node-b | 2,658 | 8,342 | 11,000 |
 | w-1 | node-c | 643 | 3,357 | 4,000 |
@@ -44,8 +44,8 @@ Controller mais `node-b`; `node-c` entra; `node-b` sai com SIGTERM:
 | w-4 | node-b | 670 | 2,330 | 3,000 |
 | w-5 | node-c | 1,345 | 2,655 | 4,000 |
 
-`completed=6 pending=0`. Log do worker: `left cluster node_id=node-b accepted=true
-requeued=0`. Log do controller: `node node-b left; requeued 0 in-flight units`.
+`concluidas=6 pendentes=0`. Log do worker: `saiu do cluster node_id=node-b aceito=true
+requeued=0`. Log do controller: `nó node-b saiu; 0 unidades em voo reenfileiradas, 0 falharam`.
 `ai-cluster nodes` após a saída lista só `node-c`.
 
 `requeued=0` porque o worker entrega sua unidade antes do próximo tick, então no

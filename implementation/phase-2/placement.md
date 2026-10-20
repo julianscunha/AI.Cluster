@@ -61,18 +61,18 @@ threads sobe sozinho; uma unidade exigindo 4 threads é enfileirada; nada termin
 então um nó forte reportando 8 threads entra e pega a unidade.
 
 ```
---- nodes: the weak node reports 2 threads ---
-NODES 1
-NODE                 STATE      ARCH       THREADS    RAM_GB   HEALTH
+--- nós: o nó fraco reporta 2 threads ---
+NÓS 1
+NÓ                   ESTADO     ARQ        THREADS    RAM_GB   SAÚDE
 node-weak            READY      x86_64           2      3.77     0.73
-=== enqueue a unit needing 4 threads; only the weak node is present ===
-enqueued 1 work units of 256x256
---- controller log during the weak-only window ---
-OK: nothing finished; the weak node did not take the heavy unit
-=== start the strong node; the waiting unit should go to it ===
-WORK       NODE             COMPUTE_US  TRANSFER_US     TOTAL_US
+=== enfileirar uma unidade que precisa de 4 threads; apenas o nó fraco está presente ===
+enfileiradas 1 unidades de trabalho de 256x256
+--- log do controller durante a janela só-fraco ---
+OK: nada finalizou; o nó fraco não pegou a unidade pesada
+=== iniciar o nó forte; a unidade em espera deve ir para ele ===
+TRABALHO   NÓ               COMPUTE_US  TRANSFER_US     TOTAL_US
 w-0        node-strong            5708         8292        14000
-completed=1 pending=0 failed=0 avg_compute_us=5708 avg_transfer_us=8292
+concluidas=1 pendentes=0 falharam=0 media_compute_us=5708 media_transfer_us=8292
 ```
 
 `w-0 node-strong` é a linha que importa. O nó fraco era o único nó

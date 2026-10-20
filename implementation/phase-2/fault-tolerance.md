@@ -59,23 +59,23 @@ posta em 9s de propósito — menor que o hold — para que um worker saudável 
 o heartbeat ainda compartilhasse o laço de trabalho.
 
 ```
-enqueued 2 work units of 256x256
---- killing node-b: SIGKILL, no leave, no requeue on the way out ---
+enfileiradas 2 unidades de trabalho de 256x256
+--- matando node-b: SIGKILL, sem leave, sem requeue na saída ---
 w-0   node-c    6304   12005696   12012000
 w-1   node-c    5637   12008363   12014000
-completed=2 pending=0 failed=0
+concluidas=2 pendentes=0 falharam=0
 ```
 
 Log do controller:
 
 ```
-controller listening on 0.0.0.0:50051 (heartbeat grace 9000ms)
-node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
-work w-0 finished on node-c compute=6304us transfer=12005696us total=12012000us checksum=696.515865
-work w-1 finished on node-c compute=5637us transfer=12008363us total=12014000us checksum=1354.312283
+controller escutando em 0.0.0.0:50051 (graça de heartbeat 9000ms)
+nó node-b offline após 9000ms sem heartbeat; 1 unidades em voo reenfileiradas, 0 falharam
+trabalho w-0 finalizado em node-c compute=6304us transfer=12005696us total=12012000us checksum=696.515865
+trabalho w-1 finalizado em node-c compute=5637us transfer=12008363us total=12014000us checksum=1354.312283
 ```
 
-`requeued 1 in-flight units` é a linha que importa: `node-b` segurava uma unidade quando
+`1 unidades em voo reenfileiradas` é a linha que importa: `node-b` segurava uma unidade quando
 morreu, a unidade voltou para a fila, e `node-c` a terminou. Um evento de offline para o nó
 que realmente foi morto, e nenhum para o nó que estava vivo — o falso reap sumiu. O grafo
 drenou sem falhas. `node-b` nunca voltou; o cluster se recuperou sem ele.
@@ -102,21 +102,21 @@ propósito. Antes da correção, a mesma execução logava um worker saudável s
 repetidamente até uma unidade esgotar os retries:
 
 ```
-node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
-node node-c offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
-node node-c offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
-node node-c offline after 9000ms without heartbeat; requeued 0 in-flight units, failed 1
+nó node-b offline após 9000ms sem heartbeat; 1 unidades em voo reenfileiradas, 0 falharam
+nó node-c offline após 9000ms sem heartbeat; 1 unidades em voo reenfileiradas, 0 falharam
+nó node-c offline após 9000ms sem heartbeat; 1 unidades em voo reenfileiradas, 0 falharam
+nó node-c offline após 9000ms sem heartbeat; 0 unidades em voo reenfileiradas, 1 falharam
 ```
 
 Depois da correção, a mesma configuração reapa só o nó que realmente foi morto:
 
 ```
-node node-b offline after 9000ms without heartbeat; requeued 1 in-flight units, failed 0
+nó node-b offline após 9000ms sem heartbeat; 1 unidades em voo reenfileiradas, 0 falharam
 ```
 
 A grace continua sendo um ajuste: curta demais em relação ao intervalo do heartbeat e um nó
 saudável é reapado mesmo assim, então mantenha-a confortavelmente acima do intervalo. O
-caminho de saída foi reconferido também — `node-b left` seguido de `NODES 0` doze segundos
+caminho de saída foi reconferido também — `nó node-b saiu` seguido de `NÓS 0` doze segundos
 depois, sem re-registro.
 
 ## Teto conhecido

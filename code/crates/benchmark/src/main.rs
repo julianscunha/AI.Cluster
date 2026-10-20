@@ -1,3 +1,3 @@
 fn main() {
-    println!("AI Cluster benchmark harness — skeleton");
+    println!("Harness de benchmark do AI Cluster — esqueleto");
 }

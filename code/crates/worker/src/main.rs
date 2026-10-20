@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner();
     println!(
-        "registered node_id={node_id} accepted={} cluster_id={} controller={endpoint}",
+        "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id
     );
 
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     Ok(beat) => {
                         if !beat.into_inner().acknowledged {
-                            println!("controller does not know {node_id}; re-registering");
+                            println!("controller não conhece {node_id}; re-registrando");
                             if let Err(err) = client
                                 .register_node(RegisterNodeRequest {
                                     identity: Some(identity.clone()),
@@ -88,11 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .await
                             {
-                                println!("heartbeat: re-register failed: {err}");
+                                println!("heartbeat: re-registro falhou: {err}");
                             }
                         }
                     }
-                    Err(err) => println!("heartbeat failed: {err}"),
+                    Err(err) => println!("heartbeat falhou: {err}"),
                 }
                 if let Err(err) = client
                     .report_health(HealthStreamRequest {
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                     .await
                 {
-                    println!("health report failed: {err}");
+                    println!("relatório de saúde falhou: {err}");
                 }
             }
         }
@@ -141,12 +141,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .into_inner()
                             .accepted;
                         println!(
-                            "work {work_id} shape={}x{}x{} compute_done accepted={accepted}",
+                            "trabalho {work_id} shape={}x{}x{} compute_done aceito={accepted}",
                             unit.rows, unit.shared, unit.cols
                         );
                     }
                     None => {
-                        println!("work {work_id} payload does not match declared shape; dropped")
+                        println!("trabalho {work_id} payload não corresponde ao shape declarado; descartado")
                     }
                 }
             }
@@ -172,7 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner();
     println!(
-        "left cluster node_id={node_id} accepted={} requeued={}",
+        "saiu do cluster node_id={node_id} aceito={} requeued={}",
         left.accepted, left.requeued
     );
     Ok(())

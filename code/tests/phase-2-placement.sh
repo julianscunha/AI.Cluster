@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Phase 2 slice: placement — a unit's requirement decides which node runs it.
+# Fatia da Fase 2: placement — o requisito de uma unidade decide qual nó a executa.
 #
-# The acceptance criterion this checks: the scheduler picks placement better than
-# first-come-first-served. A unit that declares min_cpu_threads is refused to a
-# node reporting fewer, so it waits for a capable node instead of being handed to
-# the first one that polls. Without the filter the weak node takes it and the run
-# finishes with the unit on node-weak.
+# O critério de aceitação verificado: o scheduler escolhe placement melhor do que
+# primeiro-a-chegar. Uma unidade que declara min_cpu_threads é recusada a um
+# nó que reporta menos, então espera por um nó capaz em vez de ser entregue ao
+# primeiro que faz poll. Sem o filtro, o nó fraco a pega e a execução
+# termina com a unidade em node-weak.
 #
-# Sequence: bring up a weak node alone, enqueue a unit that needs more threads than
-# it has, show the unit stays unfinished, then add a strong node and show the unit
-# goes to it. The weak node's capability is forced down with AI_CLUSTER_CPU_THREADS
-# so a single host can stand in for two machines of different sizes.
+# Sequência: subir um nó fraco sozinho, enfileirar uma unidade que precisa de mais threads do que
+# ele tem, mostrar que a unidade fica inacabada, então adicionar um nó forte e mostrar que a unidade
+# vai para ele. A capability do nó fraco é forçada para baixo com AI_CLUSTER_CPU_THREADS
+# para que um único host represente duas máquinas de tamanhos diferentes.
 set -uo pipefail
 
 NET=aic-net
@@ -27,12 +27,12 @@ run() {
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
-echo "=== cleanup ==="
+echo "=== limpeza ==="
 docker rm -f aic-controller aic-worker-weak aic-worker-strong >/dev/null 2>&1
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== start controller + the weak node only ==="
+echo "=== iniciar controller + apenas o nó fraco ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" \
   -v aic-target:/t "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-weak --network "$NET" \
@@ -41,32 +41,32 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-weak --network "$NET" \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "--- nodes: the weak node reports $WEAK_THREADS threads ---"
+echo "--- nós: o nó fraco reporta $WEAK_THREADS threads ---"
 run "$R/ai-cluster nodes"
 
-echo "=== enqueue a unit needing $MIN_THREADS threads; only the weak node is present ==="
-# The client polls until the queue drains, which cannot happen while the only node
-# present is too weak to take the unit. So it runs in the background and is expected
-# to still be polling when the strong node is added below.
+echo "=== enfileirar uma unidade que precisa de $MIN_THREADS threads; apenas o nó fraco está presente ==="
+# O cliente faz poll até a fila drenar, o que não pode acontecer enquanto o único nó
+# presente for fraco demais para pegar a unidade. Então roda em background e espera-se
+# que ainda esteja fazendo poll quando o nó forte for adicionado abaixo.
 MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
   sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1 --min-threads $MIN_THREADS" &
 CLI=$!
 sleep 12
 
-echo "--- controller log during the weak-only window ---"
-if docker logs aic-controller 2>&1 | grep -q "finished on"; then
-  echo "FAIL: a unit finished while only the weak node was present"
+echo "--- log do controller durante a janela só-fraco ---"
+if docker logs aic-controller 2>&1 | grep -q "finalizado em"; then
+  echo "FALHA: uma unidade finalizou enquanto apenas o nó fraco estava presente"
 else
-  echo "OK: nothing finished; the weak node did not take the heavy unit"
+  echo "OK: nada finalizou; o nó fraco não pegou a unidade pesada"
 fi
 
-echo "=== start the strong node; the waiting unit should go to it ==="
+echo "=== iniciar o nó forte; a unidade em espera deve ir para ele ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-strong --network "$NET" \
   -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-strong \
   -e AI_CLUSTER_CPU_THREADS="$STRONG_THREADS" \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 wait "$CLI"
 
-echo "--- controller log ---"
+echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -12

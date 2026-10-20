@@ -44,14 +44,14 @@ do stdout do controller.
 Controller mais dois workers, duas unidades, depois a saída graciosa de um worker:
 
 ```
-EVENTS 6
-AT_UNIX_MS     KIND             DETAIL
+EVENTOS 6
+EM_UNIX_MS     TIPO             DETALHE
 1792464749316  node_registered  node-1
 1792464756107  node_registered  node-2
-1792464769235  work_enqueued    2 units 64x64x64
-1792464769317  work_completed   w-0 on node-1 compute=99us transfer=1901us
-1792464769318  work_completed   w-1 on node-1 compute=89us transfer=911us
-1792464774608  node_left        node-2 requeued=0 failed=0
+1792464769235  work_enqueued    2 unidades 64x64x64
+1792464769317  work_completed   w-0 em node-1 compute=99us transfer=1901us
+1792464769318  work_completed   w-1 em node-1 compute=89us transfer=911us
+1792464774608  node_left        node-2 reenfileiradas=0 falharam=0
 ```
 
 Seis eventos, mais antigo primeiro, uma linha por coisa que aconteceu. Note que as duas

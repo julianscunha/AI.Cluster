@@ -43,10 +43,10 @@ hop; adicione quando a transferência dominar.
 
 Reproduza com `bash code/tests/phase-2-graph.sh`.
 
-`node-b` e `node-c` registrados; `graph --size 128` reportou `enqueued=4 blocked=3`
-(A pronta, B/C/D bloqueadas), depois drenou até `pending=0`:
+`node-b` e `node-c` registrados; `graph --size 128` reportou `grafo enfileirado=4 bloqueados=3`
+(A pronta, B/C/D bloqueadas), depois drenou até `pendentes=0`:
 
-| work | node | compute_us | transfer_us | total_us | checksum |
+| trabalho | nó | compute_us | transfer_us | total_us | checksum |
 |---|---|---|---|---|---|
 | w-0 (A) | node-c | 804 | 9,196 | 10,000 | 476.977911 |
 | w-1 (B) | node-b | 1,117 | 3,883 | 5,000 | 150.229166 |
