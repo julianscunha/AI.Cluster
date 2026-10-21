@@ -86,6 +86,12 @@ enum Command {
         /// Nó a liberar.
         node: String,
     },
+    /// Painel de uma tela: nós, fila de trabalho e reservas (H4).
+    Dashboard {
+        /// Atualiza a cada N segundos até Ctrl-C. 0 imprime uma vez e sai.
+        #[arg(long, default_value_t = 0)]
+        watch: u64,
+    },
 }
 
 /// The `request` subcommands, matching the `request trace <id>` surface in the spec.
@@ -135,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => run_reserve(&cli.controller, &node, &request_id, ttl_ms).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
         Command::Release { node } => release_reservation(&cli.controller, &node).await?,
+        Command::Dashboard { watch } => print_dashboard(&cli.controller, watch).await?,
     }
     Ok(())
 }
@@ -315,6 +322,93 @@ async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>>
         metrics.total_latency_us, metrics.avg_latency_us
     );
     Ok(())
+}
+
+/// Painel de uma tela (H4): nós, fila de trabalho e reservas ativas no mesmo lugar.
+///
+/// Junta o que o controlador já expõe. Os campos do painel da spec que ainda não têm
+/// fonte — TTFT, ITL, tokens/s, tokens evitados, KV cache, previsto vs real — não
+/// aparecem: imprimi-los zerados diria que valem zero, que é diferente de não existirem.
+///
+/// Sem `--watch` a vista é impressa uma vez e o comando sai, para poder ser lido por um
+/// script. Com `--watch N` ela se repete a cada N segundos até Ctrl-C, e a tela é limpa
+/// entre uma volta e outra para o painel não virar um log.
+async fn print_dashboard(
+    endpoint: &str,
+    watch_secs: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    loop {
+        let nodes = client
+            .list_nodes(ListNodesRequest {})
+            .await?
+            .into_inner()
+            .nodes;
+        let metrics = client.get_metrics(GetMetricsRequest {}).await?.into_inner();
+        let reservations = client
+            .list_reservations(ListReservationsRequest {})
+            .await?
+            .into_inner()
+            .reservations;
+
+        if watch_secs > 0 {
+            // Home + limpa a tela, para a volta seguinte sobrescrever a anterior.
+            print!("\x1b[2J\x1b[H");
+        }
+
+        println!(
+            "PAINEL nós_disponíveis={}/{}",
+            metrics.nodes_available, metrics.nodes_total
+        );
+        println!();
+        println!(
+            "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8}",
+            "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE"
+        );
+        for node in nodes {
+            let identity = node.identity.unwrap_or_default();
+            let capability = node.capability.unwrap_or_default();
+            let health = node.health.unwrap_or_default();
+            println!(
+                "{:<20} {:<12} {:>7} {:>9.2} {:>8.2} {:>8.2}",
+                identity.node_id,
+                node.state,
+                capability.cpu_threads,
+                capability.memory_bytes as f64 / 1_073_741_824.0,
+                capability.compute_score,
+                health.health_score,
+            );
+        }
+        println!();
+        println!(
+            "TRABALHO concluídas={} pendentes={} bloqueadas={} falhas={}",
+            metrics.units_completed,
+            metrics.units_pending,
+            metrics.units_blocked,
+            metrics.units_failed
+        );
+        println!(
+            "TEMPO compute_total_us={} compute_media_us={} latencia_total_us={} latencia_media_us={}",
+            metrics.total_compute_time_us,
+            metrics.avg_compute_time_us,
+            metrics.total_latency_us,
+            metrics.avg_latency_us
+        );
+        println!();
+        println!("RESERVAS {}", reservations.len());
+        for reservation in reservations {
+            println!(
+                "  {:<20} requisição={} expira_em_unix_ms={}",
+                reservation.node_id, reservation.request_id, reservation.expires_at_unix_ms
+            );
+        }
+
+        if watch_secs == 0 {
+            return Ok(());
+        }
+        // Ctrl-C encerra o processo pelo sinal padrão: não é preciso tratá-lo aqui.
+        tokio::time::sleep(Duration::from_secs(watch_secs)).await;
+    }
 }
 
 /// Prints the units a client request produced and what each one cost (H3).

@@ -320,7 +320,13 @@ persistência do work store.
 
 ### H4 TUI
 
-Dashboard em shell. — [ ] não iniciado.
+Dashboard em shell. — [x] (`dashboard.md`): `ai-cluster dashboard` lê `ListNodes`, `GetMetrics`
+e `ListReservations` e imprime numa vista só os nós (estado, threads, RAM, compute, saúde), a
+fila de trabalho (concluídas/pendentes/bloqueadas/falhas e tempos) e as reservas ativas. Sem
+`--watch` imprime uma vez e sai, para um script poder ler; com `--watch N` repinta a cada N
+segundos até Ctrl-C. Os campos do painel da spec sem fonte ainda — TTFT, ITL, tokens/s, tokens
+evitados, KV cache, previsto vs real — não aparecem: zerá-los diria que valem zero. Evidência:
+`bash code/tests/phase-h-dashboard.sh` (ocioso → 2 unidades → reserva ativa).
 
 ### H5 Previsto vs real
 

@@ -102,6 +102,9 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 57. [implementation/phase-2/local-scheduler.md](implementation/phase-2/local-scheduler.md) — concessão de cores e execução paralela.
 58. [implementation/phase-2/fault-tolerance.md](implementation/phase-2/fault-tolerance.md) — retries e recuperação de nó.
 59. [implementation/phase-2/capability-benchmark.md](implementation/phase-2/capability-benchmark.md) — compute medido no worker (C2).
+60. [implementation/traces.md](implementation/traces.md) — correlação requisição ↔ unidades (H3).
+61. [implementation/dashboard.md](implementation/dashboard.md) — painel de uma tela (H4).
+62. [implementation/reservations.md](implementation/reservations.md) — reserva de nó para execução futura (G6).
 
 ### Referência — decisões arquiteturais
 

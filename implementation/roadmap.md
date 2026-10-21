@@ -166,4 +166,7 @@ Entregar:
   `ai-cluster metrics`); métricas de nó e exportador não;
 - [x] H3 Trace correlation — ligar requisição do cliente às units que ela gerou (`traces.md`,
   `ai-cluster request trace <id>`);
-- [ ] H4/H5 — pendentes.
+- [x] H4 Dashboard — painel de uma tela sobre as chamadas que já existem (`dashboard.md`,
+  `ai-cluster dashboard [--watch N]`); TTFT, ITL, tokens/s, KV cache e previsto vs real não,
+  por dependerem de fontes que ainda não existem;
+- [ ] H5 Previsto vs real — pendente: precisa de uma fonte de previsão (Fase L/M).
