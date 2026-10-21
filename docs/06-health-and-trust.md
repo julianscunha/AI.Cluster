@@ -5,7 +5,7 @@ status: draft
 tags: [spec, health-and-trust]
 ---
 
-# 06 — Health and Trust
+# 06 — Saúde e confiança
 
 ## Saúde
 
@@ -60,6 +60,6 @@ O sistema deve registrar a causa provável da degradação e seu impacto estimad
 
 Comparar temperatura com baseline específico do hardware, não apenas threshold genérico.
 
-## Storage
+## Armazenamento
 
 Detectar health warning, wear, latency anomaly e performance regression quando os dados do dispositivo estiverem disponíveis.

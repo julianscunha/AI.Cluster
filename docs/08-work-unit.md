@@ -5,7 +5,7 @@ status: draft
 tags: [spec, work-unit]
 ---
 
-# 08 — Work Unit
+# 08 — Unidade de trabalho
 
 ## Definição
 

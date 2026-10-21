@@ -5,7 +5,7 @@ status: decided
 tags: [spec, request-manager]
 ---
 
-# AI Cluster — Request Manager
+# AI Cluster — Gerenciador de requisições
 
 Status: DECIDED baseline / v0.1
 
@@ -62,7 +62,7 @@ EXPIRED
 
 Estados devem ser idempotentes e persistíveis no control plane.
 
-## 4. Request versus Execution
+## 4. Requisição versus execução
 
 Uma Request representa a intenção externa. Uma Execution representa uma tentativa concreta de executá-la.
 
@@ -270,7 +270,7 @@ Não basta limitar apenas número de requests.
 
 Uma request longa pode consumir muito mais recursos que dezenas de requests pequenas.
 
-## 17. Streaming lifecycle
+## 17. Ciclo de vida do streaming
 
 Para streaming:
 
@@ -380,7 +380,7 @@ cancellations
 completion rate
 ```
 
-## 24. Separation from Scheduler
+## 24. Separação do escalonador
 
 O Request Manager decide **se e em que condições uma request pode executar**.
 

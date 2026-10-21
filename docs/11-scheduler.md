@@ -5,7 +5,7 @@ status: draft
 tags: [spec, scheduler]
 ---
 
-# 11 — Scheduler
+# 11 — Escalonador
 
 ## Objetivo
 
@@ -26,7 +26,7 @@ Local:
 - local memory;
 - local order.
 
-## Candidate filtering
+## Filtragem de candidatos
 
 Excluir rapidamente nodes sem:
 
@@ -36,7 +36,7 @@ Excluir rapidamente nodes sem:
 - network reachability;
 - precision support.
 
-## Scoring dimensions
+## Dimensões de pontuação
 
 - compute cost;
 - communication cost;
@@ -48,14 +48,14 @@ Excluir rapidamente nodes sem:
 - reliability;
 - deadline feasibility.
 
-## Reservation
+## Reserva
 
 Recursos podem ser reservados para execução futura.
 
-## Rebalancing
+## Rebalanceamento
 
 Somente migrar quando o ganho esperado superar um threshold configurável e o custo de migração.
 
-## Speculative execution
+## Execução especulativa
 
 Usar apenas para stragglers e quando a economia de latência esperada justificar o consumo de compute.

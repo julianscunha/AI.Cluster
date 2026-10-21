@@ -5,7 +5,7 @@ status: draft
 tags: [spec, observability]
 ---
 
-# 17 — Observability / Telemetry Engine
+# 17 — Motor de observabilidade / telemetria
 
 ## Três tipos de telemetria
 

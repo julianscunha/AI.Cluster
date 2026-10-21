@@ -5,13 +5,13 @@ status: draft
 tags: [spec, execution-graph]
 ---
 
-# 09 — Execution Graph
+# 09 — Grafo de execução
 
 ## Objetivo
 
 Representar uma requisição como um grafo de operações com dependências explícitas.
 
-## Model Graph vs Execution Graph
+## Grafo de modelo vs grafo de execução
 
 Model Graph descreve a arquitetura do modelo.
 

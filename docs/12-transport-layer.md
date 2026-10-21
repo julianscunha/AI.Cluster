@@ -5,7 +5,7 @@ status: draft
 tags: [spec, transport-layer]
 ---
 
-# 12 — Transport Layer
+# 12 — Camada de transporte
 
 ## Objetivo
 
@@ -22,7 +22,7 @@ Transport Manager
  `- future transports
 ```
 
-## Control vs data plane
+## Plano de controle vs plano de dados
 
 Control plane usa mensagens pequenas, versionadas e autenticadas.
 
@@ -53,7 +53,7 @@ Antes de transferir:
 
 Objetos grandes devem suportar chunks, retry, resume e checksum.
 
-## Compression
+## Compressão
 
 Pode ser aplicada quando o ganho de bandwidth superar custo de compressão/decompressão.
 

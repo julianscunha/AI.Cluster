@@ -322,7 +322,7 @@ persistência do work store.
 
 Dashboard em shell. — [ ] não iniciado.
 
-### H5 Expected vs actual
+### H5 Previsto vs real
 
 Expor prediction error. — [ ] não iniciado.
 

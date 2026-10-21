@@ -5,7 +5,7 @@ status: decided
 tags: [spec, inference-engine]
 ---
 
-# AI Cluster — Inference Engine
+# AI Cluster — Motor de inferência
 
 Status: DECIDED baseline / EXPERIMENTAL implementation details
 
@@ -74,7 +74,7 @@ Token N
   -> Token N+2
 ```
 
-## 4. Execution Graph do Transformer
+## 4. Grafo de execução do Transformer
 
 O runtime deve representar pelo menos:
 
@@ -173,7 +173,7 @@ KV Cache
 
 Isso facilita crescimento, movimentação e recuperação.
 
-## 10. Decode scheduler
+## 10. Escalonador de decode
 
 Cada passo de decode gera um conjunto de operações dependentes.
 

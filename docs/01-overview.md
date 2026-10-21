@@ -5,7 +5,7 @@ status: draft
 tags: [spec, overview]
 ---
 
-# 01 — Overview
+# 01 — Visão geral
 
 ## Propósito
 

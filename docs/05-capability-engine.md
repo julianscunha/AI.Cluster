@@ -5,7 +5,7 @@ status: draft
 tags: [spec, capability-engine]
 ---
 
-# 05 — Capability Engine
+# 05 — Motor de capacidade
 
 ## Objetivo
 
@@ -23,7 +23,7 @@ O benchmark inicial mede:
 - accelerator kernels disponíveis;
 - workload-specific kernels.
 
-## Dynamic capability
+## Capacidade dinâmica
 
 A capacidade efetiva é ajustada conforme:
 
@@ -34,7 +34,7 @@ A capacidade efetiva é ajustada conforme:
 - storage degradation;
 - power/energy policy.
 
-## Scores
+## Pontuações
 
 Não usar apenas um score global.
 
@@ -53,10 +53,10 @@ CapabilityProfile
   thermal_headroom
 ```
 
-## Model
+## Modelo
 
 `estimated_cost(work, node)` deve ser uma função do workload e do estado atual do node.
 
-## Confidence
+## Confiança
 
 Toda estimativa deve carregar uma medida de confiança derivada da quantidade/qualidade dos dados históricos.

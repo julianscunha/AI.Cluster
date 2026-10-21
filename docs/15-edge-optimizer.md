@@ -5,7 +5,7 @@ status: draft
 tags: [spec, edge-optimizer]
 ---
 
-# 15 — Edge Optimizer
+# 15 — Otimizador de borda
 
 ## Objetivo
 
@@ -43,7 +43,7 @@ Exemplos:
 
 Usar entidades e relações para navegar rapidamente para fatos relevantes, incidentes, dependências e contexto.
 
-## Compression
+## Compressão
 
 A compressão deve ser orientada pela pergunta, preservando informação relevante e indicando confiança.
 

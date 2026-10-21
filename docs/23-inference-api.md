@@ -5,7 +5,7 @@ status: decided
 tags: [spec, inference-api]
 ---
 
-# AI Cluster — Inference API
+# AI Cluster — API de inferência
 
 Status: DECIDED baseline / v0.1
 

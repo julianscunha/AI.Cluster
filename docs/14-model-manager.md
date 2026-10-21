@@ -5,7 +5,7 @@ status: draft
 tags: [spec, model-manager]
 ---
 
-# 14 — Model Manager / Registry
+# 14 — Gerenciador de modelos / Registry
 
 ## Objetivo
 

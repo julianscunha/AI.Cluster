@@ -5,7 +5,7 @@ status: draft
 tags: [spec, security]
 ---
 
-# 19 — Security & Trust
+# 19 — Segurança e confiança
 
 ## Identidade
 
@@ -15,7 +15,7 @@ Separar:
 - logical node identity;
 - cluster certificate.
 
-## Enrollment
+## Registro
 
 Novo node começa UNTRUSTED.
 
@@ -31,7 +31,7 @@ Node só acessa:
 - model shards autorizados;
 - state objects autorizados.
 
-## Attestation
+## Atestação
 
 Quando disponível, validar:
 

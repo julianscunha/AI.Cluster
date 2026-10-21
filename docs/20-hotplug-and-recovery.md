@@ -5,7 +5,7 @@ status: draft
 tags: [spec, hotplug-and-recovery]
 ---
 
-# 20 — Hot-Plug and Recovery
+# 20 — Hot-plug e recuperação
 
 ## Remoção planejada
 

@@ -29,7 +29,7 @@ PROPOSED: usar uma distribuição Linux enxuta/imutável existente como base, em
 
 A escolha final deve considerar kernel support, ARM64, secure boot, driver ecosystem, image build, recovery e lifecycle.
 
-## Runtime layout
+## Layout do runtime
 
 ```text
 /usr/lib/ai-cluster/

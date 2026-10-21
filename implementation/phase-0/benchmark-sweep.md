@@ -5,7 +5,7 @@ status: implemented
 tags: [implementation, phase-0, benchmark, scaling]
 ---
 
-# Varredura de benchmark — compute vs transfer
+# Varredura de benchmark — compute vs transferência
 
 O primeiro experimento do plano (§20): a partir de que tamanho de unidade distribuir uma
 operação de matriz compensa o custo de movê-la? O compute cresce com o cubo da aresta;

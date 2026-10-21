@@ -5,7 +5,7 @@ status: draft
 tags: [spec, graph-engine]
 ---
 
-# 16 — Graph Engine
+# 16 — Motor de grafo
 
 ## Objetivo
 
@@ -13,23 +13,23 @@ Explorar relações estruturadas para reduzir buscas, localizar dependências e 
 
 ## Domínios de grafo
 
-### Knowledge Graph
+### Grafo de conhecimento
 
 Document, chunk, entity, fact, incident, service.
 
-### Hardware Graph
+### Grafo de hardware
 
 Node, CPU, RAM, GPU, NPU, storage.
 
-### Network Graph
+### Grafo de rede
 
 Links e suas métricas.
 
-### Execution Graph
+### Grafo de execução
 
 Operations, dependencies, tensors, Work Units.
 
-### Observability Graph
+### Grafo de observabilidade
 
 Request, plan, node, event, metric, incident.
 

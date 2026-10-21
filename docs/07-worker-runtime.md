@@ -5,7 +5,7 @@ status: draft
 tags: [spec, worker-runtime]
 ---
 
-# 07 — Worker Runtime
+# 07 — Runtime do worker
 
 ## Responsabilidade
 

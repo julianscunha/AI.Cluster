@@ -5,7 +5,7 @@ status: draft
 tags: [spec, node-and-hardware]
 ---
 
-# 04 — Node and Hardware
+# 04 — Nó e hardware
 
 ## Nó vs Device
 
@@ -28,7 +28,7 @@ Coletar, conforme suporte:
 
 Usado para reconhecer o equipamento e separar identidade física de identidade lógica.
 
-## Capability profile
+## Perfil de capacidade
 
 Deve ser multidimensional e conter baseline, current e confidence.
 

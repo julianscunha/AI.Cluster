@@ -5,7 +5,7 @@ status: draft
 tags: [spec, provisioning]
 ---
 
-# 03 — Provisioning
+# 03 — Provisionamento
 
 ## Objetivo
 
@@ -53,6 +53,6 @@ Antes de apagar o disco:
 4. identidade de provisionamento estabelecida;
 5. estratégia de recovery disponível.
 
-## Estados de provisioning
+## Estados de provisionamento
 
 DISCOVERED → ENROLLING → TRUSTED → PROVISIONING → REBOOTING → VALIDATING → BENCHMARKING → READY.

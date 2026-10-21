@@ -5,7 +5,7 @@ status: draft
 tags: [spec, execution-planner]
 ---
 
-# 10 — Execution Planner
+# 10 — Planejador de execução
 
 ## Objetivo
 

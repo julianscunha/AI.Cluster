@@ -5,7 +5,7 @@ status: draft
 tags: [spec, state-manager]
 ---
 
-# 13 — State Manager
+# 13 — Gerenciador de estado
 
 ## Objetivo
 
@@ -26,7 +26,7 @@ WARM -> NVMe / SSD
 COLD -> persistent/distributed storage
 ```
 
-## Replication
+## Replicação
 
 Não replicar tudo 1:1. Priorizar:
 

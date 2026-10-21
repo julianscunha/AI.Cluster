@@ -5,7 +5,7 @@ status: draft
 tags: [spec, performance-model]
 ---
 
-# 21 — Performance Model
+# 21 — Modelo de desempenho
 
 ## Objetivo
 
