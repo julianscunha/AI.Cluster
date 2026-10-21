@@ -44,6 +44,12 @@ impl ClusterControlService {
     }
 }
 
+/// Hysteresis band for the placement decision (G5), as a fraction of the cheapest
+/// candidate's cost. A node yields only when another candidate is cheaper by more than
+/// this much, so a near-equal node takes the unit instead of waiting a poll interval
+/// for a saving that may not exist. Zero means "strictly cheapest", the pre-G5 policy.
+const DEFAULT_PLACEMENT_TOLERANCE: f64 = 0.10;
+
 /// Placement is on unless explicitly disabled. `AI_CLUSTER_PLACEMENT=off` restores
 /// first-come-first-served dispatch, so the benchmark can compare the two policies
 /// on the same workload without a rebuild.
@@ -52,6 +58,30 @@ fn placement_enabled() -> bool {
         std::env::var("AI_CLUSTER_PLACEMENT").as_deref(),
         Ok("off") | Ok("0") | Ok("false")
     )
+}
+
+/// Reads the hysteresis band from `AI_CLUSTER_PLACEMENT_TOLERANCE`.
+///
+/// See [`clamp_tolerance`] for what happens to a bad value.
+fn placement_tolerance() -> f64 {
+    clamp_tolerance(
+        std::env::var("AI_CLUSTER_PLACEMENT_TOLERANCE")
+            .ok()
+            .and_then(|value| value.trim().parse::<f64>().ok()),
+    )
+}
+
+/// The band, clamped so a bad value cannot break the placement decision.
+///
+/// A negative band would sit below the cheapest cost, so every candidate would yield and
+/// the unit would be stranded; a non-finite one would poison the comparison for everyone.
+/// A negative value clamps to zero; a non-finite or missing value falls back to the
+/// default. Split from the env lookup so the edge cases can be tested exactly.
+fn clamp_tolerance(parsed: Option<f64>) -> f64 {
+    match parsed {
+        Some(value) if value.is_finite() => value.max(0.0),
+        _ => DEFAULT_PLACEMENT_TOLERANCE,
+    }
 }
 
 #[tonic::async_trait]
@@ -176,13 +206,19 @@ impl ClusterControl for ClusterControlService {
             .capability(&request.node_id)
             .unwrap_or_default();
         // Placement (G3): rank the asking node against the other idle candidates and
-        // hand it a unit only when it is the cheapest fit. A node that is not the best
-        // fit gets nothing and polls again, so the unit waits for the node that fits
-        // it better instead of going to whoever asked first.
+        // hand it a unit only when it is cheap enough for it — cheapest, or within the
+        // hysteresis band (G5) of cheapest. A node that is neither gets nothing and
+        // polls again, so the unit waits for the node that fits it better instead of
+        // going to whoever asked first.
         let claimed = if placement_enabled() {
             let candidates = self.registry.candidates();
-            self.work
-                .claim_placed(&request.node_id, &capability, unix_ms(), &candidates)
+            self.work.claim_placed(
+                &request.node_id,
+                &capability,
+                unix_ms(),
+                &candidates,
+                placement_tolerance(),
+            )
         } else {
             self.work.claim(&request.node_id, &capability, unix_ms())
         };
@@ -452,6 +488,23 @@ mod tests {
             node_id: node_id.to_string(),
             device_id: format!("{node_id}-device"),
             ..Default::default()
+        }
+    }
+
+    /// A unit large enough that compute dominates the fixed transfer term, so a thread
+    /// difference is a real cost difference. See the same helper in `work.rs`.
+    fn big_unit(work_id: &str) -> WorkUnit {
+        WorkUnit {
+            work_id: work_id.to_string(),
+            rows: 64,
+            shared: 64,
+            cols: 64,
+            matrix_a: vec![0.0; 64 * 64],
+            matrix_b: vec![0.0; 64 * 64],
+            depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
+            min_cpu_threads: 0,
         }
     }
 
@@ -807,11 +860,14 @@ mod tests {
                 .await
                 .unwrap();
         }
-        work_store.enqueue([unit("w1")]);
+        work_store.enqueue([big_unit("w1")]);
 
         // The weak node polls first, but the strong node is idle and cheaper, so the
         // weak node yields and the unit stays queued. First-come-first-served would
         // have handed it to the weak node.
+        // The unit is 64x64x64 on purpose: on a small unit the thread-independent
+        // transfer term dwarfs compute, the two costs land within the G5 hysteresis
+        // band, and the weak node would rightly take it instead of yielding.
         let weak = service
             .request_work(Request::new(RequestWorkRequest {
                 node_id: "node-weak".to_string(),
@@ -865,5 +921,23 @@ mod tests {
             .events;
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].kind, "node_registered");
+    }
+
+    #[test]
+    fn clamps_the_placement_tolerance_band() {
+        // A negative band would sit below the cheapest cost and strand every unit, so
+        // it clamps to zero — strictly cheapest.
+        assert_eq!(clamp_tolerance(Some(-1.0)), 0.0);
+        // A non-finite value would poison the comparison for every candidate.
+        assert_eq!(clamp_tolerance(Some(f64::NAN)), DEFAULT_PLACEMENT_TOLERANCE);
+        assert_eq!(
+            clamp_tolerance(Some(f64::INFINITY)),
+            DEFAULT_PLACEMENT_TOLERANCE
+        );
+        // Unset means the default, not zero.
+        assert_eq!(clamp_tolerance(None), DEFAULT_PLACEMENT_TOLERANCE);
+        // A real value passes through untouched.
+        assert_eq!(clamp_tolerance(Some(0.25)), 0.25);
+        assert_eq!(clamp_tolerance(Some(0.0)), 0.0);
     }
 }

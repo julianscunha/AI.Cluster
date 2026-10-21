@@ -268,7 +268,16 @@ que com 1, mesmo checksum).
 
 ### G5 Rebalancing
 
-Threshold + hysteresis. — [ ] não iniciado.
+Threshold + hysteresis. — [x] o nó só cede a unidade quando outro candidato ocioso é mais
+barato por mais que a banda de histerese (`AI_CLUSTER_PLACEMENT_TOLERANCE`, padrão 0.10),
+em `service::placement_tolerance` e `WorkStore::claim_placed`. Ceder custa até um intervalo
+de poll, então recusar ceder por diferença de arredondamento troca ociosidade certa por
+economia incerta; a banda também substitui o antigo desempate por id. Coberto por
+`a_near_equal_node_takes_the_unit_instead_of_yielding`,
+`a_clearly_worse_node_still_yields_with_the_band_on`,
+`a_zero_band_means_strictly_cheapest`, `a_wide_band_lets_a_worse_node_take_the_unit` e
+`clamps_the_placement_tolerance_band`. Rebalanceamento de trabalho já em voo (mover uma
+unidade de um nó sobrecarregado) não existe — as unidades são curtas e voltam à fila.
 
 ### G6 Reservations
 

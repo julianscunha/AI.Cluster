@@ -155,18 +155,23 @@ quem recebe a próxima unidade. O `request_work` monta o conjunto de candidatos 
 junto com o requisito da unidade.
 
 Regra: o nó que pergunta só leva a unidade quando é o **candidato ocioso mais barato** para
-ela. Se outro nó ocioso tem custo menor, o nó que pergunta não recebe nada e volta a fazer
-poll; a unidade fica na fila e o nó que encaixa melhor a pega. É isso que vira o dispatch de
-primeiro-que-pergunta em decisão de placement.
+ela — ou **quase** isso. Se outro nó ocioso tem custo menor, o nó que pergunta não recebe
+nada e volta a fazer poll; a unidade fica na fila e o nó que encaixa melhor a pega. É isso
+que vira o dispatch de primeiro-que-pergunta em decisão de placement.
 
 Duas escolhas deliberadas:
 
 - **Só candidatos ociosos entram no ranking.** Um nó com unidade em voo não está fazendo
   poll, então não pode pegar esta unidade agora e não deve segurá-la. Um nó ocupado porém
   mais rápido não bloqueia um nó ocioso mais fraco.
-- **Empates quebram por id do nó.** Sem isso, dois nós de custo igual poderiam ambos ceder
-  um para o outro e a unidade nunca sairia da fila.
+- **Histerese (G5): o nó só cede quando o outro é mais barato por mais que a banda.** Ceder
+  não é de graça — a unidade espera até um intervalo de poll para o outro nó perguntar —
+  então recusar ceder por uma diferença de arredondamento troca uma ociosidade certa por uma
+  economia que pode não existir. A banda também substitui o antigo desempate por id: nós
+  quase iguais não se recusam mais, então uma unidade não pode ficar presa entre eles. Banda
+  zero significa "estritamente mais barato", a política anterior à G5.
 
+`AI_CLUSTER_PLACEMENT_TOLERANCE` (padrão `0.10`) ajusta a banda de histerese;
 `AI_CLUSTER_PLACEMENT=off` desliga o scheduler e volta ao primeiro-que-pergunta, para o
 benchmark comparar as duas políticas na mesma carga sem recompilar.
 
@@ -218,5 +223,5 @@ As duas linhas são a mesma unidade: sob primeiro-que-pergunta ela rodou no nó 
 2.020.000us; sob placement foi para o nó capaz e levou 18.000us. O mecanismo em si é coberto
 pelos testes unitários `placement_gives_a_unit_to_the_cheapest_idle_node`,
 `a_busy_cheaper_node_does_not_hold_up_an_idle_node`, `the_only_idle_candidate_still_takes_work`
-e `equally_good_nodes_do_not_both_yield`, além de `placement_prefers_the_cheaper_idle_node` no
+e `a_near_equal_node_takes_the_unit_instead_of_yielding`, além de `placement_prefers_the_cheaper_idle_node` no
 serviço.

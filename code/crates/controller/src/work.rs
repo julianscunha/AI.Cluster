@@ -306,16 +306,22 @@ impl WorkStore {
         Some(take_locked(&mut inner, index, node_id, now_unix_ms))
     }
 
-    /// Hands the asking node the first unit it could take, but only when that node
-    /// is the cheapest **idle** candidate for it. A node that is not the best fit
-    /// gets nothing back and polls again, so the unit waits for the node that fits
-    /// it better instead of going to whoever asked first. That is what turns
-    /// dispatch from first-come-first-served into a placement decision.
+    /// Hands the asking node the first unit it could take, but only when that node is
+    /// cheap enough for it. A node that is not gets nothing back and polls again, so
+    /// the unit waits for the node that fits it better instead of going to whoever
+    /// asked first. That is what turns dispatch from first-come-first-served into a
+    /// placement decision.
     ///
     /// Only idle candidates are ranked. A node with a unit already in flight is not
-    /// polling, so it cannot take this unit now and must not hold it up. Ties are
-    /// broken by node id, so two equally good nodes cannot both yield to each other
-    /// and leave the unit unclaimed.
+    /// polling, so it cannot take this unit now and must not hold it up.
+    ///
+    /// Hysteresis: the asking node yields only when another candidate is cheaper by
+    /// more than `tolerance`, a fraction of that candidate's cost. Yielding is not
+    /// free — the unit waits up to a poll interval for the other node to ask — so
+    /// refusing to yield over a rounding-level difference trades a certain idle gap
+    /// for a saving that may not exist. The band also subsumes the old id tie-break:
+    /// near-equal nodes no longer refuse each other, so a unit cannot be stranded
+    /// between them. A zero band means "strictly cheapest".
     ///
     /// ponytail: a registered but idle node that stops polling can hold a unit
     /// indefinitely — it keeps heartbeating, so it is never declared offline. The
@@ -327,6 +333,7 @@ impl WorkStore {
         capability: &CapabilityReport,
         now_unix_ms: u64,
         candidates: &[(String, CapabilityReport, HealthReport)],
+        tolerance: f64,
     ) -> Option<WorkUnit> {
         let mut inner = self.lock();
         let index = {
@@ -336,9 +343,10 @@ impl WorkStore {
                 .iter()
                 .position(|unit| ready(unit, outputs) && fits(unit, capability))?
         };
-        let best = {
+        let mut best: Option<f64> = None;
+        let mut asking: Option<f64> = None;
+        {
             let unit = &inner.queue[index];
-            let mut best: Option<(&str, f64)> = None;
             for (id, capability, health) in candidates {
                 let in_flight = inner
                     .dispatched
@@ -356,21 +364,25 @@ impl WorkStore {
                         in_flight,
                     },
                 );
-                let better = match best {
-                    None => true,
-                    Some((best_id, best_cost)) => {
-                        cost < best_cost || (cost == best_cost && id.as_str() < best_id)
-                    }
-                };
-                if better {
-                    best = Some((id.as_str(), cost));
+                if id.as_str() == node_id {
+                    asking = Some(cost);
+                }
+                match best {
+                    None => best = Some(cost),
+                    Some(current) if cost < current => best = Some(cost),
+                    _ => {}
                 }
             }
-            best.map(|(id, _)| id.to_string())
+        }
+        let best = best?;
+        // The asking node takes the unit when it is the cheapest idle fit, or close
+        // enough to it that yielding would cost more than the saving is worth. Only a
+        // meaningfully cheaper candidate makes it yield.
+        let within_band = match asking {
+            Some(cost) => cost <= best * (1.0 + tolerance),
+            None => false,
         };
-        // The asking node only takes the unit when it is the cheapest idle fit.
-        // Otherwise it yields, and the unit waits for the node that fits it better.
-        if best.as_deref() != Some(node_id) {
+        if !within_band {
             return None;
         }
         Some(take_locked(&mut inner, index, node_id, now_unix_ms))
@@ -488,6 +500,28 @@ impl WorkStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A unit large enough that compute dominates the fixed transfer term.
+    ///
+    /// The 2x2x2 helper is too small to test placement on: its footprint is 96 bytes
+    /// against 16 flops, so the thread-independent transfer term dwarfs compute and the
+    /// cost gap between a 2-thread and an 8-thread node is only ~6%. 64x64x64 gives
+    /// 98_304 bytes against 524_288 flops, so threads move the cost by ~2.2x — a real
+    /// difference rather than noise.
+    fn big_unit(work_id: &str) -> WorkUnit {
+        WorkUnit {
+            work_id: work_id.to_string(),
+            rows: 64,
+            shared: 64,
+            cols: 64,
+            matrix_a: vec![0.0; 64 * 64],
+            matrix_b: vec![0.0; 64 * 64],
+            depends_on: Vec::new(),
+            matrix_a_from: String::new(),
+            matrix_b_from: String::new(),
+            min_cpu_threads: 0,
+        }
+    }
 
     fn unit(work_id: &str) -> WorkUnit {
         WorkUnit {
@@ -920,14 +954,14 @@ mod tests {
         // weak node yields. First-come-first-served would have handed it w1.
         assert!(
             store
-                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates)
+                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates, 0.0)
                 .is_none()
         );
         // The unit is still queued, not lost, and the node that fits it takes it.
         assert_eq!(store.pending(), 1);
         assert_eq!(
             store
-                .claim_placed("node-strong", &capability(8, 0.0), 1_000, &candidates)
+                .claim_placed("node-strong", &capability(8, 0.0), 1_000, &candidates, 0.0)
                 .expect("strong node fits w1")
                 .work_id,
             "w1"
@@ -946,7 +980,7 @@ mod tests {
         // With both idle the strong node takes the first unit.
         assert_eq!(
             store
-                .claim_placed("node-strong", &capability(8, 0.0), 1_000, &candidates)
+                .claim_placed("node-strong", &capability(8, 0.0), 1_000, &candidates, 0.0)
                 .expect("strong fits w1")
                 .work_id,
             "w1"
@@ -956,7 +990,7 @@ mod tests {
         // polling.
         assert_eq!(
             store
-                .claim_placed("node-weak", &capability(2, 0.0), 2_000, &candidates)
+                .claim_placed("node-weak", &capability(2, 0.0), 2_000, &candidates, 0.0)
                 .expect("weak is the only idle candidate")
                 .work_id,
             "w2"
@@ -972,7 +1006,7 @@ mod tests {
         // No cheaper node is present, so the weak node is the best fit and takes it.
         assert_eq!(
             store
-                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates)
+                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates, 0.0)
                 .expect("weak is the best fit")
                 .work_id,
             "w1"
@@ -980,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn equally_good_nodes_do_not_both_yield() {
+    fn a_near_equal_node_takes_the_unit_instead_of_yielding() {
         let store = WorkStore::new();
         store.enqueue([unit("w1")]);
         let candidates = [
@@ -988,17 +1022,80 @@ mod tests {
             ("node-b".to_string(), capability(4, 0.0), healthy()),
         ];
 
-        // The costs tie, so the tie breaks by id: node-a wins the unit and node-b
-        // yields. If both yielded the unit would never be claimed.
+        // Hysteresis: node-b is as good as node-a, so it takes the unit instead of
+        // yielding and waiting a poll interval for a saving that would not exist. The
+        // band replaces the old id tie-break — near-equal nodes cannot strand a unit
+        // between them, because either one may take it.
+        assert_eq!(
+            store
+                .claim_placed("node-b", &capability(4, 0.0), 1_000, &candidates, 0.10)
+                .expect("node-b is within the band")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn a_clearly_worse_node_still_yields_with_the_band_on() {
+        let store = WorkStore::new();
+        // A big unit: on the 2x2x2 helper the thread-independent transfer term dwarfs
+        // compute, so the gap between 2 and 8 threads is only ~6% and the band swallows
+        // it. Here the gap is ~2.2x, so "clearly worse" is actually true.
+        store.enqueue([big_unit("w1")]);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // The band must not turn placement back into first-come-first-served: a node
+        // whose cost is far above the cheapest still yields, band or no band.
         assert!(
             store
-                .claim_placed("node-b", &capability(4, 0.0), 1_000, &candidates)
+                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates, 0.10)
                 .is_none()
         );
         assert_eq!(
             store
-                .claim_placed("node-a", &capability(4, 0.0), 1_000, &candidates)
-                .expect("node-a wins the tie")
+                .claim_placed("node-strong", &capability(8, 0.0), 1_000, &candidates, 0.10)
+                .expect("strong is the cheapest fit")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn a_zero_band_means_strictly_cheapest() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // The pre-G5 policy, kept so the band's effect can be measured against it.
+        assert!(
+            store
+                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates, 0.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_wide_band_lets_a_worse_node_take_the_unit() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // A band wide enough to cover the gap admits the weak node — the knob is what
+        // decides how much worse a candidate may be and still take the unit. This is
+        // the dial between "cheapest wins" and "first to ask wins".
+        assert_eq!(
+            store
+                .claim_placed("node-weak", &capability(2, 0.0), 1_000, &candidates, 10.0)
+                .expect("a wide band admits the weak node")
                 .work_id,
             "w1"
         );
