@@ -6,8 +6,9 @@ use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::ClusterControlService;
 use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
-use ai_cluster_protocol::metadata::ServerMetadata;
+use ai_cluster_protocol::metadata::{MAX_MESSAGE_BYTES, ServerMetadata};
 use tokio::time;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Server;
 
 #[tokio::main]
@@ -60,12 +61,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // The generated `with_interceptor` builds its own server without the size limits, so
+    // the limits are set on the server first and the interceptor is attached afterwards.
+    let server = ClusterControlServer::new(service)
+        .max_decoding_message_size(MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(MAX_MESSAGE_BYTES);
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     Server::builder()
-        .add_service(ClusterControlServer::with_interceptor(
-            service,
-            ServerMetadata,
-        ))
+        .add_service(InterceptedService::new(server, ServerMetadata))
         .serve(addr)
         .await?;
     Ok(())

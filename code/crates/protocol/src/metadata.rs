@@ -22,6 +22,20 @@ pub const VERSION_HEADER: &str = "x-ai-cluster-protocol-version";
 pub const CORRELATION_HEADER: &str = "x-ai-cluster-correlation-id";
 pub const AUTH_HEADER: &str = "x-ai-cluster-auth";
 
+/// Ceiling for a single gRPC message, in bytes, in both directions.
+///
+/// A work unit travels as one message carrying its operands as `repeated double`: a
+/// 512x512 unit is two f64 matrices, so its payload is already past the 4MB gRPC
+/// default and a worker refuses to decode it — the unit can never be dispatched. The
+/// limit is raised rather than the unit split, because units are sent whole today.
+/// This is not the placement filter: whether a unit *should* go to a node is
+/// `placement::fits`, which reads the node's reported memory. This only stops the
+/// transport from rejecting a unit the placement layer already allowed.
+///
+/// ponytail: 64MB covers units up to ~1024x1024, whose footprint is ~24MB. Stream or
+/// chunk the operands when units grow past what a node can hold in RAM anyway.
+pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
 /// Placeholder auth context.
 ///
 /// ponytail: no authentication exists yet; the real token arrives with the
@@ -88,16 +102,20 @@ impl Interceptor for ServerMetadata {
 }
 
 /// Connects to a controller with the metadata interceptors attached.
+///
+/// The message-size ceiling is raised past the gRPC default so a worker can receive a
+/// work unit whose operands exceed 4MB — see [`MAX_MESSAGE_BYTES`].
 pub async fn connect_controller(
     dst: impl Into<String>,
 ) -> Result<MetadataClient, Box<dyn std::error::Error>> {
     let channel = tonic::transport::Endpoint::from_shared(dst.into())?
         .connect()
         .await?;
-    Ok(ClusterControlClient::with_interceptor(
-        channel,
-        ClientMetadata,
-    ))
+    Ok(
+        ClusterControlClient::with_interceptor(channel, ClientMetadata)
+            .max_decoding_message_size(MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(MAX_MESSAGE_BYTES),
+    )
 }
 
 #[cfg(test)]
