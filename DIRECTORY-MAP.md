@@ -96,7 +96,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 51. [implementation/phase-2/dependency-graph.md](implementation/phase-2/dependency-graph.md) — grafo de dependências.
 52. [implementation/telemetry.md](implementation/telemetry.md) — eventos de ciclo de vida e incidentes (H2).
 53. [implementation/metrics.md](implementation/metrics.md) — roll-up de métricas do cluster (H1).
-54. [implementation/persistence.md](implementation/persistence.md) — snapshot da fila e dos outputs.
+54. [implementation/persistence.md](implementation/persistence.md) — snapshot da fila, dos outputs, do dono das unidades em voo e a cópia (I1).
 55. [implementation/phase-0/benchmark-sweep.md](implementation/phase-0/benchmark-sweep.md) — varredura 1/2/3 nós × tamanhos.
 56. [implementation/phase-2/placement.md](implementation/phase-2/placement.md) — filtro por capability/memória e escolha de nó.
 57. [implementation/phase-2/local-scheduler.md](implementation/phase-2/local-scheduler.md) — concessão de cores e execução paralela.

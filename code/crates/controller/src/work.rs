@@ -4,12 +4,13 @@
 //! minus the compute time reported by the worker is the transfer overhead.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ai_cluster_protocol::cluster::{
-    CapabilityReport, HealthReport, TraceEntry, WorkOutput, WorkResult, WorkSnapshot, WorkUnit,
+    CapabilityReport, HealthReport, TraceEntry, WorkLease, WorkOutput, WorkResult, WorkSnapshot,
+    WorkUnit,
 };
 use prost::Message;
 
@@ -223,6 +224,16 @@ fn take_locked(
     unit
 }
 
+/// The redundant copy that sits next to the primary snapshot.
+///
+/// Named by appending rather than replacing the extension, so `state.bin` gets
+/// `state.bin.replica` and cannot collide with a file already called `state.replica`.
+fn replica_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".replica");
+    PathBuf::from(name)
+}
+
 impl WorkStore {
     pub fn new() -> Self {
         Self::default()
@@ -230,84 +241,113 @@ impl WorkStore {
 
     /// Opens a store backed by the snapshot at `path`, loading it when one exists.
     ///
-    /// A missing file is not an error: a controller's first run has nothing to load.
-    /// An unreadable one is reported and treated as empty rather than taking the
-    /// controller down — a corrupt snapshot must not stop the cluster taking work.
+    /// A missing file is not an error: a controller's first run has nothing to load. An
+    /// unreadable one falls back to the redundant copy beside it before giving up, and only
+    /// when neither decodes does the store start empty — a corrupt snapshot must not stop the
+    /// cluster taking work. The copy is the second half of the state directory: losing one
+    /// file should cost at most the mutations since the last save, not the whole queue.
     pub fn with_state(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let store = Self {
             path: Some(path.clone()),
             ..Self::default()
         };
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return store,
-            Err(err) => {
-                println!(
-                    "estado {} ilegível ({err}); iniciando vazio",
-                    path.display()
-                );
-                return store;
+        let mut reported = false;
+        for candidate in [path.clone(), replica_path(&path)] {
+            let bytes = match std::fs::read(&candidate) {
+                Ok(bytes) => bytes,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    println!("estado {} ilegível ({err})", candidate.display());
+                    reported = true;
+                    continue;
+                }
+            };
+            // An empty file decodes as a default snapshot, so it would pass for "nothing to do"
+            // even when the queue it held is gone. Nothing here to load — try the copy instead.
+            if bytes.is_empty() {
+                continue;
             }
-        };
-        match WorkSnapshot::decode(bytes.as_slice()) {
-            Ok(snapshot) => {
-                let pending = {
-                    let mut inner = store.lock();
-                    inner.queue = snapshot.pending.into_iter().collect();
-                    inner.outputs = snapshot
-                        .outputs
-                        .into_iter()
-                        .map(|output| (output.work_id, output.matrix))
-                        .collect();
-                    inner.attempts = snapshot.attempts.into_iter().collect();
-                    inner.failed = snapshot
-                        .failed
-                        .into_iter()
-                        .map(|id| (id, String::new()))
-                        .collect();
-                    inner.queue.len()
-                };
-                store.sequence.store(snapshot.sequence, Ordering::Relaxed);
-                println!(
-                    "estado carregado de {}: {pending} unidade(s) pendente(s)",
-                    path.display()
-                );
-            }
-            Err(err) => println!(
-                "estado {} ilegível ({err}); iniciando vazio",
-                path.display()
-            ),
+            let Ok(snapshot) = WorkSnapshot::decode(bytes.as_slice()) else {
+                println!("estado {} ilegível (não decodifica)", candidate.display());
+                reported = true;
+                continue;
+            };
+            let (pending, dispatched) = {
+                let mut inner = store.lock();
+                inner.queue = snapshot.pending.into_iter().collect();
+                inner.outputs = snapshot
+                    .outputs
+                    .into_iter()
+                    .map(|output| (output.work_id, output.matrix))
+                    .collect();
+                inner.attempts = snapshot.attempts.into_iter().collect();
+                inner.failed = snapshot
+                    .failed
+                    .into_iter()
+                    .map(|id| (id, String::new()))
+                    .collect();
+                // Posse restaurada do disco: a unidade em voo não volta para a fila, então o
+                // dono que sobreviveu ao restart tem seu resultado aceito em vez de recusado.
+                // Quem não volta é reoferecido quando o grace passa — ver `unknown_owners`.
+                inner.dispatched = snapshot
+                    .dispatched
+                    .into_iter()
+                    .filter_map(|lease| {
+                        Some((
+                            lease.work_id.clone(),
+                            Dispatched {
+                                node_id: lease.node_id,
+                                dispatched_at_unix_ms: lease.dispatched_at_unix_ms,
+                                predicted_compute_us: lease.predicted_compute_us,
+                                unit: lease.unit?,
+                            },
+                        ))
+                    })
+                    .collect();
+                (inner.queue.len(), inner.dispatched.len())
+            };
+            store.sequence.store(snapshot.sequence, Ordering::Relaxed);
+            println!(
+                "estado carregado de {}: {pending} pendente(s), {dispatched} em voo",
+                candidate.display()
+            );
+            return store;
+        }
+        if reported {
+            println!("nenhum estado carregado; iniciando vazio");
         }
         store
     }
 
-    /// Writes the whole store to the snapshot path, when it has one.
+    /// Writes the whole store to the snapshot path and its redundant copy, when it has one.
     ///
     /// Called while the caller still holds the lock, so the snapshot is a consistent
-    /// view rather than a mix of before and after. Written to a sibling file first and
-    /// renamed into place: a crash mid-write leaves the previous snapshot intact
-    /// instead of a truncated one. A failed write is reported, never fatal — the
-    /// in-memory state stays authoritative for this run.
+    /// view rather than a mix of before and after. Each file is written to a sibling
+    /// first and renamed into place: a crash mid-write leaves the previous snapshot
+    /// intact instead of a truncated one. A failed write is reported, never fatal — the
+    /// in-memory state stays authoritative for this run. With two files a crash leaves at
+    /// least one complete copy: the two may differ in age, never in validity.
     ///
-    /// Deliberately not called from `claim`: a unit that is in flight when the
-    /// controller dies is still in the previous snapshot's `pending`, so it comes back
-    /// on reload without a save per poll.
+    /// The in-flight units go to `dispatched` with their owner rather than back into
+    /// `pending`, so a reload knows who held what instead of offering the unit to a second
+    /// node while the first is still working on it.
     ///
-    /// ponytail: the whole state is rewritten on every mutation, so the cost grows
-    /// with queue size. Fine at benchmark scale; move to an append-only log or a
-    /// periodic snapshot when the queue gets large or mutations get frequent.
+    /// Deliberately not called from `claim`: a unit claimed but not yet saved is still in
+    /// the previous snapshot's `pending`, so it comes back on reload without a save per
+    /// poll. The cost is that such a unit loses its owner — the same double dispatch the
+    /// old code did for every in-flight unit.
+    ///
+    /// ponytail: the whole state is rewritten on every mutation, and now twice — the copy
+    /// doubles the write cost to buy redundancy. Fine at benchmark scale; move to an
+    /// append-only log or a periodic snapshot when the queue gets large or mutations get
+    /// frequent.
     fn save_locked(&self, inner: &Inner) {
         let Some(path) = &self.path else {
             return;
         };
         let snapshot = WorkSnapshot {
-            pending: inner
-                .queue
-                .iter()
-                .cloned()
-                .chain(inner.dispatched.values().map(|record| record.unit.clone()))
-                .collect(),
+            pending: inner.queue.iter().cloned().collect(),
             outputs: inner
                 .outputs
                 .iter()
@@ -319,12 +359,29 @@ impl WorkStore {
             attempts: inner.attempts.clone(),
             failed: inner.failed.keys().cloned().collect(),
             sequence: self.sequence.load(Ordering::Relaxed),
+            dispatched: inner
+                .dispatched
+                .iter()
+                .map(|(work_id, record)| WorkLease {
+                    work_id: work_id.clone(),
+                    node_id: record.node_id.clone(),
+                    dispatched_at_unix_ms: record.dispatched_at_unix_ms,
+                    predicted_compute_us: record.predicted_compute_us,
+                    unit: Some(record.unit.clone()),
+                })
+                .collect(),
         };
-        let temp = path.with_extension("tmp");
-        if let Err(err) = std::fs::write(&temp, snapshot.encode_to_vec())
-            .and_then(|()| std::fs::rename(&temp, path))
-        {
-            println!("salvar estado em {} falhou: {err}", path.display());
+        // Encoded once, written twice: serialisation is the expensive part and both files
+        // hold the same bytes. Each rename is atomic on its own, so whichever write is
+        // interrupted leaves the other file complete.
+        let bytes = snapshot.encode_to_vec();
+        for target in [path.clone(), replica_path(path)] {
+            let temp = target.with_extension("tmp");
+            if let Err(err) =
+                std::fs::write(&temp, &bytes).and_then(|()| std::fs::rename(&temp, &target))
+            {
+                println!("salvar estado em {} falhou: {err}", target.display());
+            }
         }
     }
 
@@ -622,6 +679,25 @@ impl WorkStore {
         }
         self.save_locked(&inner);
         outcome
+    }
+
+    /// Owners of in-flight units whose node is not in `known`, in stable order.
+    ///
+    /// Called by the controller's sweep once the heartbeat grace has passed since startup.
+    /// After a restart the registry is empty while the snapshot still names the previous
+    /// owners, so the sweep cannot tell "the owner is coming back" from "the owner is gone"
+    /// until the grace window closes. This is the list to hand to `requeue_for_node`.
+    pub fn unknown_owners(&self, known: &[String]) -> Vec<String> {
+        let inner = self.lock();
+        let mut owners: Vec<String> = inner
+            .dispatched
+            .values()
+            .map(|record| record.node_id.clone())
+            .filter(|node_id| !known.iter().any(|known| known == node_id))
+            .collect();
+        owners.sort();
+        owners.dedup();
+        owners
     }
 
     /// Ids of units that will never complete, in stable order. Includes the units
@@ -1437,6 +1513,125 @@ mod tests {
         assert_eq!(reloaded.next_work_id(), "w-1");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The point of persisting ownership: a unit in flight when the controller dies comes
+    /// back owned by the same node, so the result that node eventually sends is accepted.
+    /// Before the lease was saved the unit came back only in the queue, and the reloaded
+    /// controller rejected the very result the worker was already computing.
+    #[test]
+    fn an_in_flight_unit_keeps_its_owner_across_a_restart() {
+        let dir = std::env::temp_dir().join(format!("aic-work-owner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1"), unit("w2")]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        store
+            .claim("node-b", &capability(8, 0.0), 1_000)
+            .expect("w2 is ready");
+        // Completing w2 writes the snapshot, and that is where w1's lease gets persisted:
+        // `claim` deliberately does not save, so only a later mutation carries it to disk.
+        let mut w2_result = result("w2", 250);
+        w2_result.node_id = "node-b".to_string();
+        store.complete(w2_result, 2_000).expect("w2 was dispatched");
+
+        let reloaded = WorkStore::with_state(&path);
+        // w1 is still in flight, not back in the queue, and still owned by node-a.
+        assert_eq!(reloaded.pending(), 1);
+        assert_eq!(reloaded.blocked(), 0);
+        assert_eq!(
+            reloaded.unknown_owners(&["node-a".to_string()]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            reloaded.unknown_owners(&["node-b".to_string()]),
+            vec!["node-a".to_string()]
+        );
+        reloaded
+            .complete(result("w1", 250), 3_000)
+            .expect("w1's owner survived the restart, so its result is accepted");
+        assert_eq!(reloaded.pending(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The redundant copy is what makes a single damaged file survivable. Only when both
+    /// copies are unreadable does the store start empty, and even then it starts.
+    #[test]
+    fn a_corrupt_primary_snapshot_falls_back_to_the_replica() {
+        let dir = std::env::temp_dir().join(format!("aic-work-replica-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1"), unit("w2")]);
+        drop(store);
+        // The save wrote both files; clobber only the primary.
+        std::fs::write(&path, b"truncated").expect("corrupt the primary");
+        assert_eq!(WorkStore::with_state(&path).pending(), 2);
+
+        std::fs::write(&path, b"truncated").expect("corrupt the primary");
+        std::fs::write(replica_path(&path), b"truncated").expect("corrupt the replica");
+        assert_eq!(
+            WorkStore::with_state(&path).pending(),
+            0,
+            "both copies gone means an empty start, not a failure to start"
+        );
+
+        // A file truncated to zero bytes decodes as a default snapshot, so it must not be
+        // mistaken for "nothing to do" while the copy still holds the queue.
+        std::fs::write(&path, b"").expect("truncate the primary");
+        assert_eq!(
+            WorkStore::with_state(&path).pending(),
+            0,
+            "both copies empty is a legitimate empty start"
+        );
+        // Rebuild the copy, then truncate only the primary again: the copy has to win.
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1"), unit("w2")]);
+        drop(store);
+        std::fs::write(&path, b"").expect("truncate the primary");
+        assert_eq!(WorkStore::with_state(&path).pending(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A lease whose owner never came back is listed, so the controller's sweep can hand its
+    /// work to the nodes that are actually there.
+    #[test]
+    fn an_unknown_owner_is_listed_until_its_node_registers() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), unit("w2")]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        store
+            .claim("node-b", &capability(8, 0.0), 1_000)
+            .expect("w2 is ready");
+
+        assert_eq!(
+            store.unknown_owners(&["node-a".to_string(), "node-b".to_string()]),
+            Vec::<String>::new(),
+            "a node that is present owns its work, so nothing is reported"
+        );
+        assert_eq!(
+            store.unknown_owners(&["node-b".to_string()]),
+            vec!["node-a".to_string()]
+        );
+
+        // Handing the missing owner's work back clears it from the list.
+        store.requeue_for_node("node-a");
+        assert_eq!(store.pending(), 2);
+        assert_eq!(
+            store.unknown_owners(&["node-b".to_string()]),
+            Vec::<String>::new()
+        );
     }
 
     /// A unit under a given client request, so a reservation can be matched to it (G6).

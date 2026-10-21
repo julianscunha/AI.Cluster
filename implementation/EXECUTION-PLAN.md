@@ -352,9 +352,15 @@ Critério de saída: qualquer requisição de teste possui trace completo e mét
 
 ### I1 State directory
 
-IDs, ownership, replicas.
-
-- [~] IDs e um arquivo de estado (`AI_CLUSTER_STATE`); ownership e replicas não.
+IDs, ownership, replicas. — [x] (`persistence.md`): `AI_CLUSTER_STATE` nomeia o arquivo de
+snapshot; a fila e seus outputs sobrevivem a um restart, e agora também o **dono** de cada
+unidade em voo. As unidades despachadas vão em `WorkSnapshot.dispatched` e voltam ao reload
+com o mesmo nó, então o resultado que aquele worker já estava calculando é aceito em vez de
+descartado; quem não volta é reoferecido quando o grace passa (`WorkStore::unknown_owners`).
+Cada gravação escreve dois arquivos, `path` e `path.replica`, e um primário ilegível ou de
+zero bytes leva à cópia. A cópia é local — não uma réplica em outro nó — e o diretório de
+referências lógicas (`state://…`) não existe: nenhuma das duas noções tem consumidor
+enquanto não houver estado por chave. Evidência: `bash code/tests/phase-i-state.sh`.
 
 ### I2 HOT/WARM/COLD
 

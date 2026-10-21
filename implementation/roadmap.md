@@ -87,7 +87,9 @@ Entregar:
 
 - [x] storage detection — `/sys/block`: NVMe/SSD/HDD por nó (`storage-tiers.md`, I2);
 - [ ] swap/cache policies;
-- [~] state directory — `AI_CLUSTER_STATE` aponta um arquivo; não é diretório de estado;
+- [x] state directory — `AI_CLUSTER_STATE` nomeia o snapshot; dono das unidades em voo e uma
+  cópia ao lado sobrevivem ao restart (`persistence.md`, I1). Diretório de referências
+  lógicas e réplica em outro nó não existem;
 - [~] checkpoint — snapshot da fila e dos outputs, não de unidade em execução;
 - [~] recovery — reload no startup do controller;
 - [~] warm/cold tiers — as camadas são detectadas por nó; alocar espaço por camada não existe;

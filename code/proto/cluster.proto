@@ -328,9 +328,8 @@ message GetMetricsRequest {}
 /// Não faz parte da superfície de requests: isto é o que o controller salva e recarrega,
 /// não algo que um cliente envia.
 message WorkSnapshot {
-  /// Unidades ainda não concluídas: a fila mais o que estava em voo quando o
-  /// snapshot foi tirado, de modo que uma unidade em execução é oferecida de novo em vez
-  /// de descartada.
+  /// Unidades ainda não despachadas: só a fila. O que está em voo vai em `dispatched`,
+  /// com o dono, para que um restart do controller saiba de quem era cada unidade.
   repeated WorkUnit pending = 1;
   /// Saída de cada unidade concluída. A entrada vinculada de uma unidade dependente é lida
   /// daqui, então sem isto as unidades a jusante nunca ficariam prontas.
@@ -341,6 +340,19 @@ message WorkSnapshot {
   repeated string failed = 4;
   /// Sequência de ids, para que ids gerados após um reload não colidam com os carregados.
   uint64 sequence = 5;
+  /// Unidades em voo, com o nó que as segura. É o registro de posse: um reload sabe quem
+  /// era o dono, em vez de oferecer a unidade de novo e aceitar só o resultado do novo dono.
+  repeated WorkLease dispatched = 6;
+}
+
+/// Posse de uma unidade despachada: quem a segura e desde quando. `unit` viaja junto porque
+/// o dono pode não voltar — sem o payload, a unidade não teria como ser reoferecida.
+message WorkLease {
+  string work_id = 1;
+  string node_id = 2;
+  uint64 dispatched_at_unix_ms = 3;
+  uint64 predicted_compute_us = 4;
+  WorkUnit unit = 5;
 }
 
 message WorkOutput {

@@ -37,6 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sweep = registry.clone();
     let sweep_work = work.clone();
     let sweep_events = events.clone();
+    // Quando o controller subiu. A posse restaurada do disco é medida contra isto, não
+    // contra o horário do despacho original: o que importa é se o dono voltou depois do
+    // restart.
+    let started_unix_ms = unix_ms();
     tokio::spawn(async move {
         let mut ticker = time::interval(Duration::from_secs(5));
         loop {
@@ -57,6 +61,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         outcome.requeued, outcome.failed
                     ),
                 );
+            }
+            // Unidades em voo cujo dono nunca reapareceu depois de um restart: a posse veio
+            // do snapshot, mas o nó não voltou. Antes do grace elas esperam — o dono pode
+            // estar voltando, e reoferecer agora só faria a unidade rodar duas vezes. Passado
+            // o grace valem as mesmas regras de um nó perdido: volta para a fila, ou falha se
+            // o orçamento de tentativas acabou.
+            if unix_ms().saturating_sub(started_unix_ms) >= grace_ms {
+                let known: Vec<String> = sweep
+                    .list()
+                    .iter()
+                    .filter_map(|node| node.identity.as_ref().map(|id| id.node_id.clone()))
+                    .collect();
+                for node_id in sweep_work.unknown_owners(&known) {
+                    let outcome = sweep_work.requeue_for_node(&node_id);
+                    println!(
+                        "nó {node_id} não voltou após o restart; {} unidades em voo reenfileiradas, {} falharam",
+                        outcome.requeued, outcome.failed
+                    );
+                    sweep_events.record(
+                        unix_ms(),
+                        "node_offline",
+                        format!(
+                            "{node_id} ausente após restart reenfileiradas={} falharam={}",
+                            outcome.requeued, outcome.failed
+                        ),
+                    );
+                }
             }
         }
     });
