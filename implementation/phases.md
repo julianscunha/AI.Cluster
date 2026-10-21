@@ -27,7 +27,7 @@ Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 ### CLI
 - [x] status;
 - [x] nodes;
-- [ ] node show;
+- [x] node show;
 - [x] events.
 
 ## Pacotes de trabalho da Fase 2

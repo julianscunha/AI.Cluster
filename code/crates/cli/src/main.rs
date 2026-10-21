@@ -29,6 +29,11 @@ struct Cli {
 enum Command {
     Status,
     Nodes,
+    /// Um nó só, com a capability e a saúde completas (B4).
+    Node {
+        #[command(subcommand)]
+        action: NodeAction,
+    },
     /// Cluster-wide roll-up: node counts, queue depth and completed-unit timings.
     Metrics,
     /// Recent lifecycle events, oldest first: joins, departures, offline reaps,
@@ -104,11 +109,24 @@ enum RequestAction {
     },
 }
 
+/// The `node` subcommands, matching the `node show <id>` surface in the spec (B4).
+#[derive(Subcommand, Debug)]
+enum NodeAction {
+    /// Um nó pelo id, com tudo que o controller sabe sobre ele.
+    Show {
+        /// Node id, as printed by `nodes`.
+        id: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
+        Command::Node { action } => match action {
+            NodeAction::Show { id } => print_node(&cli.controller, &id).await?,
+        },
         Command::Metrics => print_metrics(&cli.controller).await?,
         Command::Events { limit } => print_events(&cli.controller, limit).await?,
         Command::Request { action } => match action {
@@ -297,6 +315,106 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     Ok(())
+}
+
+/// Um nó só, com tudo que o controller sabe sobre ele (B4).
+///
+/// A tabela de `nodes` cabe numa linha por nó, então deixa de fora o que não cabe: o compute
+/// medido, as classes de armazenamento, a pressão de memória e a reserva do nó. Este é o
+/// lugar onde esses campos aparecem juntos.
+///
+/// Sem RPC de nó único: `ListNodes` já traz todos numa chamada só, então filtrar aqui não
+/// custa uma ida a mais ao controller. Um id desconhecido é informativo, não erro — o mesmo
+/// tratamento de um trace de requisição desconhecida.
+///
+/// Os campos de saúde que o worker nunca preenche — `storage_health`, `network_latency_ms`,
+/// `thermal_throttling` — ficam de fora. Imprimi-los zerados diria que valem zero, que é
+/// diferente de não existirem.
+async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let node = client
+        .list_nodes(ListNodesRequest {})
+        .await?
+        .into_inner()
+        .nodes
+        .into_iter()
+        .find(|node| {
+            node.identity
+                .as_ref()
+                .is_some_and(|identity| identity.node_id == id)
+        });
+    let Some(node) = node else {
+        println!("NÓ {id} não encontrado");
+        return Ok(());
+    };
+    let identity = node.identity.unwrap_or_default();
+    let capability = node.capability.unwrap_or_default();
+    let health = node.health.unwrap_or_default();
+    let reservation = client
+        .list_reservations(ListReservationsRequest {})
+        .await?
+        .into_inner()
+        .reservations
+        .into_iter()
+        .find(|reservation| reservation.node_id == id);
+
+    println!("NÓ {}", identity.node_id);
+    println!(
+        "  estado={} arquitetura={}",
+        node.state, identity.architecture
+    );
+    println!(
+        "  dispositivo={} so={} runtime={}",
+        identity.device_id, identity.os_version, identity.runtime_version
+    );
+    println!(
+        "  registrado_em_unix_ms={} ultimo_heartbeat_unix_ms={}",
+        node.registered_at_unix_ms, node.last_heartbeat_unix_ms
+    );
+    println!("CAPABILITY");
+    println!(
+        "  threads={} memoria_bytes={} compute_score={:.4}",
+        capability.cpu_threads, capability.memory_bytes, capability.compute_score
+    );
+    println!(
+        "  armazenamento={} precisoes={} aceleradores={}",
+        list_or_dash(&capability.storage_classes),
+        list_or_dash(&capability.precisions),
+        list_or_dash(&capability.accelerators),
+    );
+    println!("SAÚDE");
+    println!("  score={:.2}", health.health_score);
+    println!(
+        "  cpu={:.2}% memoria={:.2}% swap={:.2}%",
+        health.cpu_utilization * 100.0,
+        health.memory_utilization * 100.0,
+        health.swap_utilization * 100.0,
+    );
+    println!(
+        "  temperatura_c={:.2} iops={:.2}",
+        health.temperature_c, health.disk_io_ops
+    );
+    match reservation {
+        Some(reservation) => {
+            println!("RESERVA");
+            println!(
+                "  requisicao={} expira_em_unix_ms={}",
+                reservation.request_id, reservation.expires_at_unix_ms
+            );
+        }
+        None => println!("RESERVA nenhuma"),
+    }
+    Ok(())
+}
+
+/// Joins a list for display, or `-` when it is empty. Empty means "not measured" for the
+/// storage classes, so it must not read as a blank value.
+fn list_or_dash(values: &[String]) -> String {
+    if values.is_empty() {
+        "-".to_string()
+    } else {
+        values.join(",")
+    }
 }
 
 /// Prints the controller's recent lifecycle events, oldest first.

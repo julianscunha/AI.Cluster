@@ -122,7 +122,8 @@ ai-cluster events
 
 - [x] `status`;
 - [x] `nodes`;
-- [ ] `node show <id>`;
+- [x] `node show <id>` — detalhe de um nó: capability e saúde completas, o que a tabela de
+  `nodes` deixa de fora, mais a reserva do nó. Evidência: `bash code/tests/phase-b4-node-show.sh`.
 - [x] `events`.
 
 Critério de saída: cluster de 2–4 máquinas Linux funciona sem operação manual contínua.

@@ -59,8 +59,9 @@ fontes existirem, cada uma entra como uma seção a mais, sem mexer nas que já 
 - **Não há histórico na tela.** É o estado de agora; uma faixa de tempo exigiria série temporal,
   que o H1 deliberadamente não guarda.
 - **Terminal limpo, não curses.** A tela é repintada com sequências ANSI simples. Não há
-  navegação, paginação nem seleção de nó — quem precisa de detalhe de um nó usa `ai-cluster nodes`
-  ou `ai-cluster request trace <id>`.
+  navegação, paginação nem seleção de nó — quem precisa de detalhe de um nó usa
+  `ai-cluster node show <id>`, e quem precisa do caminho de uma requisição usa
+  `ai-cluster request trace <id>`.
 
 ## Evidência
 
