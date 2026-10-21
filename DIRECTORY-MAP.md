@@ -105,6 +105,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 60. [implementation/traces.md](implementation/traces.md) — correlação requisição ↔ unidades (H3).
 61. [implementation/dashboard.md](implementation/dashboard.md) — painel de uma tela (H4).
 62. [implementation/reservations.md](implementation/reservations.md) — reserva de nó para execução futura (G6).
+63. [implementation/predictions.md](implementation/predictions.md) — previsto vs real: o erro do modelo de custo (H5).
 
 ### Referência — decisões arquiteturais
 

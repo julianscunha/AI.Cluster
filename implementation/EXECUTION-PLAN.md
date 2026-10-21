@@ -330,9 +330,19 @@ evitados, KV cache, previsto vs real — não aparecem: zerá-los diria que vale
 
 ### H5 Previsto vs real
 
-Expor prediction error. — [ ] não iniciado.
+Expor prediction error. — [x] (`predictions.md`): `predicted_compute_us` no `TraceEntry` e
+`placement::predicted_compute_us` fazem o modelo de custo prever **tempo**, não só ordenar —
+`REFERENCE_CORE_GFLOPS` passou a viver em `ai_cluster_common::matrix` para o controlador
+inverter a normalização do worker sem duas cópias do mesmo número. O trace mostra
+`PREDITO_US` por unidade e uma linha `PREVISTO somado_us=... erro_pct=...`; zero é lido como
+"não previsto", nunca como previsão de zero µs. O erro medido é grande e honesto: ~32× de
+subestimação em unidades pequenas (64³), porque o score é calibrado single-core num kernel
+de 256³. Evidência: `bash code/tests/phase-h-predictions.sh` (44us previstos para duas
+unidades de 64³, 175us para uma de 128³) e `bash code/tests/phase-h-traces.sh` (a coluna no
+trace de uma requisição real). O caminho "nó sem score" é coberto por teste unitário: não há
+ambiente para forçar score zero no worker.
 
-Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; métricas de nó e percentis ainda não.
+Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; e o trace agora carrega o previsto ao lado do real (`predictions.md`, H5), que é a resposta a "quanto do que demorou o modelo já sabia". Métricas de nó e percentis ainda não.
 
 ## 10. Fase I — State Manager
 

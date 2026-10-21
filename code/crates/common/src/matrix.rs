@@ -141,6 +141,14 @@ pub fn flops(rows: u32, shared: u32, cols: u32) -> f64 {
     2.0 * f64::from(rows) * f64::from(shared) * f64::from(cols)
 }
 
+/// Per-core matmul throughput, in GFLOP/s, that a capability score of 1.0 means.
+///
+/// The worker normalises its measured rate against this (`compute_score`), and the
+/// controller inverts the same normalisation to turn a score back into time (H5).
+/// Both ends read the constant from here so the normalisation and its inverse cannot
+/// drift apart — a change on one side alone would silently mis-scale every prediction.
+pub const REFERENCE_CORE_GFLOPS: f64 = 6.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;

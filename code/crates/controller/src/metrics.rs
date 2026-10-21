@@ -67,6 +67,9 @@ mod tests {
             compute_time_us,
             total_latency_us,
             transfer_time_us: total_latency_us.saturating_sub(compute_time_us),
+            // These tests cover the compute/latency roll-up, not the prediction (H5), so
+            // the predicted time is left unset. Zero reads as "not predicted".
+            predicted_compute_us: 0,
             checksum: 0.0,
         }
     }

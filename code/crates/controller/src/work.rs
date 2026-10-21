@@ -13,7 +13,7 @@ use ai_cluster_protocol::cluster::{
 };
 use prost::Message;
 
-use crate::placement::{Candidate, fits, placement_cost};
+use crate::placement::{Candidate, fits, placement_cost, predicted_compute_us};
 use crate::reservations::{Reservation, Reservations};
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
@@ -34,6 +34,10 @@ pub struct CompletedWork {
     pub compute_time_us: u64,
     pub total_latency_us: u64,
     pub transfer_time_us: u64,
+    /// Compute time the cost model predicted for this unit on the node it went to (H5),
+    /// captured at dispatch. Zero when the node reported no compute score. Compared
+    /// against `compute_time_us`, the worker's measurement, to expose the model's error.
+    pub predicted_compute_us: u64,
     pub checksum: f64,
 }
 
@@ -41,6 +45,9 @@ pub struct CompletedWork {
 struct Dispatched {
     node_id: String,
     dispatched_at_unix_ms: u64,
+    /// Prediction carried from claim time to completion (H5). Held here because the
+    /// node's capability is only in hand at claim time, not when the result comes back.
+    predicted_compute_us: u64,
     /// Kept so a unit can be handed back to the queue when its node leaves or
     /// is believed dead. Without this the unit would be stranded forever.
     unit: WorkUnit,
@@ -81,13 +88,15 @@ fn trace_row(
     status: &str,
     times: Option<&CompletedWork>,
 ) -> TraceEntry {
-    let (compute_time_us, transfer_time_us, total_latency_us) = times.map_or((0, 0, 0), |record| {
-        (
-            record.compute_time_us,
-            record.transfer_time_us,
-            record.total_latency_us,
-        )
-    });
+    let (compute_time_us, transfer_time_us, total_latency_us, predicted_compute_us) =
+        times.map_or((0, 0, 0, 0), |record| {
+            (
+                record.compute_time_us,
+                record.transfer_time_us,
+                record.total_latency_us,
+                record.predicted_compute_us,
+            )
+        });
     TraceEntry {
         work_id: work_id.to_string(),
         node_id: node_id.to_string(),
@@ -95,6 +104,7 @@ fn trace_row(
         compute_time_us,
         transfer_time_us,
         total_latency_us,
+        predicted_compute_us,
     }
 }
 
@@ -180,7 +190,13 @@ fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
 /// Removes the unit at `index` and records the dispatch against `node_id`, with
 /// any bound inputs substituted from their sources' outputs. Shared by `claim`
 /// and `claim_placed` so both dispatch the same way.
-fn take_locked(inner: &mut Inner, index: usize, node_id: &str, now_unix_ms: u64) -> WorkUnit {
+fn take_locked(
+    inner: &mut Inner,
+    index: usize,
+    node_id: &str,
+    now_unix_ms: u64,
+    predicted_compute_us: u64,
+) -> WorkUnit {
     let mut unit = inner
         .queue
         .remove(index)
@@ -200,6 +216,7 @@ fn take_locked(inner: &mut Inner, index: usize, node_id: &str, now_unix_ms: u64)
         Dispatched {
             node_id: node_id.to_string(),
             dispatched_at_unix_ms: now_unix_ms,
+            predicted_compute_us,
             unit: unit.clone(),
         },
     );
@@ -385,7 +402,14 @@ impl WorkStore {
                         .is_none_or(|request| request == unit.request_id)
             })?
         };
-        Some(take_locked(&mut inner, index, node_id, now_unix_ms))
+        let predicted = predicted_compute_us(&inner.queue[index], capability);
+        Some(take_locked(
+            &mut inner,
+            index,
+            node_id,
+            now_unix_ms,
+            predicted,
+        ))
     }
 
     /// Hands the asking node the first unit it could take, but only when that node is
@@ -483,8 +507,10 @@ impl WorkStore {
         // G6: a unit whose request holds a node belongs to that node — the hold is a promise
         // that this work lands there, so no other node may take it. The unit waits for the
         // held node to poll; if it never does, the TTL releases the hold and placement resumes.
+        let predicted = predicted_compute_us(&inner.queue[index], capability);
         if held_somewhere {
-            return held_here.then(|| take_locked(&mut inner, index, node_id, now_unix_ms));
+            return held_here
+                .then(|| take_locked(&mut inner, index, node_id, now_unix_ms, predicted));
         }
         let best = best?;
         // The asking node takes the unit when it is the cheapest idle fit, or close
@@ -497,7 +523,13 @@ impl WorkStore {
         if !within_band {
             return None;
         }
-        Some(take_locked(&mut inner, index, node_id, now_unix_ms))
+        Some(take_locked(
+            &mut inner,
+            index,
+            node_id,
+            now_unix_ms,
+            predicted,
+        ))
     }
 
     /// Returns the record only when the unit was dispatched to the same node.
@@ -522,6 +554,7 @@ impl WorkStore {
             compute_time_us: result.compute_time_us,
             total_latency_us,
             transfer_time_us: total_latency_us.saturating_sub(result.compute_time_us),
+            predicted_compute_us: dispatched.predicted_compute_us,
             checksum: result.checksum,
         };
         inner.completed.push(completed.clone());
@@ -1540,5 +1573,48 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].0, "node-b");
         assert_eq!(listed[0].1.request_id, "req-x");
+    }
+
+    #[test]
+    fn a_predicted_compute_time_flows_from_claim_to_trace() {
+        let store = WorkStore::new();
+        store.enqueue([big_unit("w1")]);
+        // A measured compute score, so a prediction exists: 64x64x64 is 524_288 flops and
+        // the node runs 4 threads at the reference rate, so 524_288 / (4 * 6_000) = 22us.
+        assert_eq!(
+            store
+                .claim("node-a", &capability(4, 1.0), 1_000)
+                .expect("w1 is claimed")
+                .work_id,
+            "w1"
+        );
+        let completed = store
+            .complete(result("w1", 900), 1_050)
+            .expect("w1 completes");
+        // The prediction is captured at dispatch and survives to completion, where it sits
+        // beside the worker's measurement so the error can be read off.
+        assert_eq!(completed.predicted_compute_us, 22);
+        assert_eq!(completed.compute_time_us, 900);
+        let trace = store.trace("req-test");
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].predicted_compute_us, 22);
+        assert_eq!(trace[0].compute_time_us, 900);
+    }
+
+    #[test]
+    fn an_unmeasured_node_leaves_the_prediction_unset_in_the_trace() {
+        let store = WorkStore::new();
+        store.enqueue([big_unit("w1")]);
+        // compute_score 0 means the node never reported a rate, so nothing is predicted.
+        // Zero in the trace must read as "not predicted", not as a zero-microsecond guess.
+        store
+            .claim("node-a", &capability(4, 0.0), 1_000)
+            .expect("w1 is claimed");
+        store
+            .complete(result("w1", 900), 1_050)
+            .expect("w1 completes");
+        let trace = store.trace("req-test");
+        assert_eq!(trace[0].predicted_compute_us, 0);
+        assert_eq!(trace[0].compute_time_us, 900);
     }
 }

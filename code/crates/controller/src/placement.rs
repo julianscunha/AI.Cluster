@@ -9,6 +9,7 @@
 //! the capability benchmark reports real compute and network rates; only the
 //! ordering between nodes is meant to be meaningful today.
 
+use ai_cluster_common::matrix::REFERENCE_CORE_GFLOPS;
 use ai_cluster_protocol::cluster::{CapabilityReport, HealthReport, WorkUnit};
 
 /// Relative weight of one unit of compute work.
@@ -107,6 +108,30 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
     };
 
     (compute + transfer + queue) * health_penalty
+}
+
+/// Predicted time the worker will spend computing `unit`, in microseconds (H5).
+///
+/// Zero when the node has not reported a compute score: an unmeasured node has no rate
+/// to predict from, and zero reads as "not predicted" rather than as "instant" — the same
+/// convention as an unreported health score. A caller comparing against actual time must
+/// skip the zero rows rather than read them as a perfect prediction.
+///
+/// The cost model's compute term is `flops / compute_rate`, whose unit is only meaningful
+/// up to the reference core's rate. Inverting the worker's normalisation — a core scoring
+/// 1.0 runs at `REFERENCE_CORE_GFLOPS` — turns it back into time: `compute_rate` times the
+/// reference is the node's throughput in GFLOP/s, and 1 GFLOP/s is 1e3 flops per microsecond.
+///
+/// Known ceiling: assumes compute scales linearly with thread count, the same assumption
+/// the worker's benchmark makes. Turbo and SMT mean a real multithreaded run is a little
+/// under the linear estimate, so the prediction runs optimistic on wide nodes.
+pub fn predicted_compute_us(unit: &WorkUnit, capability: &CapabilityReport) -> u64 {
+    if capability.compute_score <= 0.0 {
+        return 0;
+    }
+    let gflops = compute_rate(capability) * REFERENCE_CORE_GFLOPS;
+    let flops = 2.0 * f64::from(unit.rows) * f64::from(unit.shared) * f64::from(unit.cols);
+    (flops / (gflops * 1e3)).round() as u64
 }
 
 #[cfg(test)]
@@ -237,5 +262,40 @@ mod tests {
         cap.memory_bytes = 1_000;
         assert!(fits(&unit(2, 2, 2), &cap)); // 96 bytes
         assert!(!fits(&unit(64, 64, 64), &cap)); // 98_304 bytes
+    }
+
+    #[test]
+    fn the_prediction_matches_the_reference_rate() {
+        // 64x64x64 is 524_288 flops. One core at the reference rate (6 GFLOP/s, i.e.
+        // 6_000 flops/us) needs 524_288 / 6_000 = 87us. A score of 1.0 on one thread is
+        // exactly that core, so the prediction has to land on 87 — this pins the whole
+        // normalisation-inversion chain, including the shared reference constant.
+        let u = unit(64, 64, 64);
+        assert_eq!(predicted_compute_us(&u, &capability(1, 1.0, 0.0)), 87);
+    }
+
+    #[test]
+    fn more_threads_predicts_less_time() {
+        let u = unit(64, 64, 64);
+        let weak = predicted_compute_us(&u, &capability(2, 1.0, 0.0));
+        let strong = predicted_compute_us(&u, &capability(8, 1.0, 0.0));
+        assert!(strong < weak, "strong={strong} weak={weak}");
+    }
+
+    #[test]
+    fn a_bigger_unit_predicts_more_time() {
+        let cap = capability(4, 1.0, 0.0);
+        assert!(
+            predicted_compute_us(&unit(128, 128, 128), &cap)
+                > predicted_compute_us(&unit(32, 32, 32), &cap)
+        );
+    }
+
+    #[test]
+    fn an_unmeasured_node_predicts_nothing() {
+        // compute_score 0 means "not measured", so there is no rate to predict from.
+        // Zero reads as "not predicted", never as a zero-microsecond prediction.
+        let u = unit(64, 64, 64);
+        assert_eq!(predicted_compute_us(&u, &capability(4, 0.0, 0.0)), 0);
     }
 }

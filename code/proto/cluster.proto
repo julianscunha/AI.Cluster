@@ -172,6 +172,10 @@ message TraceEntry {
   uint64 compute_time_us = 4;
   uint64 transfer_time_us = 5;
   uint64 total_latency_us = 6;
+  /// Tempo de compute que o modelo de custo previu para esta unidade no nó que a
+  /// recebeu (H5). Zero quando o nó não reportou compute score, ou quando a unidade
+  /// ainda não foi despachada — zero significa "não previsto", não "instantâneo".
+  uint64 predicted_compute_us = 7;
 }
 
 message GetTraceRequest {

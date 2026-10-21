@@ -168,5 +168,7 @@ Entregar:
   `ai-cluster request trace <id>`);
 - [x] H4 Dashboard — painel de uma tela sobre as chamadas que já existem (`dashboard.md`,
   `ai-cluster dashboard [--watch N]`); TTFT, ITL, tokens/s, KV cache e previsto vs real não,
-  por dependerem de fontes que ainda não existem;
-- [ ] H5 Previsto vs real — pendente: precisa de uma fonte de previsão (Fase L/M).
+  porque dependem de fontes que ainda não existem ou não são agregadas (previsto vs real
+  existe no trace, `predictions.md`, mas o `GetMetrics` ainda não soma a previsão);
+- [x] H5 Previsto vs real — o modelo de custo prevê tempo, não só ordena; o trace mostra a
+  previsão ao lado da medição e o erro entre as duas (`predictions.md`);

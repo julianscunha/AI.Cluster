@@ -435,18 +435,20 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
         return Ok(());
     }
     println!(
-        "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12}",
-        "TRABALHO", "NÓ", "ESTADO", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
+        "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12} {:>12}",
+        "TRABALHO", "NÓ", "ESTADO", "COMPUTE_US", "PREDITO_US", "TRANSFER_US", "TOTAL_US"
     );
     let mut compute_total = 0_u64;
+    let mut predicted_total = 0_u64;
     let mut transfer_total = 0_u64;
     let mut latency_total = 0_u64;
     for unit in &response.units {
         compute_total += unit.compute_time_us;
+        predicted_total += unit.predicted_compute_us;
         transfer_total += unit.transfer_time_us;
         latency_total += unit.total_latency_us;
         println!(
-            "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12}",
+            "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12} {:>12}",
             unit.work_id,
             if unit.node_id.is_empty() {
                 "-"
@@ -455,6 +457,7 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
             },
             unit.status,
             unit.compute_time_us,
+            unit.predicted_compute_us,
             unit.transfer_time_us,
             unit.total_latency_us,
         );
@@ -466,6 +469,17 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
         transfer_total,
         latency_total,
     );
+    // H5: previsto vs real. Só faz sentido quando algo foi previsto: um nó sem compute
+    // score reporta zero, e zero ali significa "não previsto", não "instantâneo". Uma
+    // unidade não concluída também conta zero dos dois lados e sai da conta sozinha.
+    if predicted_total > 0 {
+        let error_pct =
+            (compute_total as f64 - predicted_total as f64) / predicted_total as f64 * 100.0;
+        println!(
+            "PREVISTO somado_us={} erro_pct={:.1}",
+            predicted_total, error_pct
+        );
+    }
     Ok(())
 }
 

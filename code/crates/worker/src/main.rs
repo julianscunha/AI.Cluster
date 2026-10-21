@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ai_cluster_common::matrix::{Matrix, flops};
+use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
     NodeIdentity, RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult,
@@ -20,8 +20,8 @@ const WORK_POLL_IDLE_MS: u64 = 200;
 /// measures `REFERENCE_CORE_GFLOPS` scores 1.0, which is exactly what the placement
 /// model assumed before a score existed — so enabling the benchmark leaves a cluster
 /// of ordinary nodes ranked as it was, while slower and faster cores sort correctly
-/// against each other.
-const REFERENCE_CORE_GFLOPS: f64 = 6.0;
+/// against each other. Defined in `ai_cluster_common::matrix` so the controller can
+/// invert the same normalisation to predict time (H5).
 /// Matmul edge length for the compute benchmark. Large enough for the O(n^3) kernel to
 /// dominate per-call overhead, small enough to keep startup in the tens of milliseconds.
 const BENCH_SIZE: u32 = 256;
