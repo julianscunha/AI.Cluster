@@ -29,6 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let capability = capability();
+    // Fase G4: the local scheduler decides how many cores this unit gets. One unit runs
+    // at a time here, so the unit gets the whole budget the node reports.
+    let cores = core_budget(capability.cpu_threads);
 
     let mut client = connect_controller(endpoint.clone()).await?;
     let registered = client
@@ -131,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if !delay.is_zero() {
                     time::sleep(delay).await;
                 }
-                match execute_work(&unit, &node_id) {
+                match execute_work(&unit, &node_id, cores) {
                     Some(result) => {
                         let accepted = client
                             .submit_work_result(SubmitWorkResultRequest {
@@ -141,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .into_inner()
                             .accepted;
                         println!(
-                            "trabalho {work_id} shape={}x{}x{} compute_done aceito={accepted}",
+                            "trabalho {work_id} shape={}x{}x{} compute_done threads={cores} aceito={accepted}",
                             unit.rows, unit.shared, unit.cols
                         );
                     }
@@ -180,10 +183,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Rebuilds the matrices from the flat payload, multiplies, and reports the checksum.
+/// Rebuilds the matrices from the flat payload, multiplies on `cores` threads, and reports
+/// the checksum.
 ///
 /// Returns `None` when the payload lengths disagree with the declared shape.
-fn execute_work(unit: &WorkUnit, node_id: &str) -> Option<WorkResult> {
+fn execute_work(unit: &WorkUnit, node_id: &str, cores: usize) -> Option<WorkResult> {
     let expected_a = (unit.rows as usize).checked_mul(unit.shared as usize)?;
     let expected_b = (unit.shared as usize).checked_mul(unit.cols as usize)?;
     if unit.matrix_a.len() != expected_a || unit.matrix_b.len() != expected_b {
@@ -200,7 +204,7 @@ fn execute_work(unit: &WorkUnit, node_id: &str) -> Option<WorkResult> {
         data: unit.matrix_b.clone(),
     };
     let started = Instant::now();
-    let product = a.multiply(&b)?;
+    let product = a.multiply_with_threads(&b, cores)?;
     let compute_time_us = started.elapsed().as_micros() as u64;
     // Compute the checksum before `data` is moved out of the product.
     let checksum = product.checksum();
@@ -282,6 +286,24 @@ fn meminfo_kb(key: &str) -> Option<u64> {
     parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?, key)
 }
 
+/// Cores the local scheduler grants one unit on this node (Fase G4).
+///
+/// The worker runs one unit at a time, so that unit gets the whole budget. The count the
+/// node reports is the ceiling — a node that reports 2 threads must not quietly run 8 —
+/// and the host's real parallelism caps it too, so a node that reports more threads than
+/// the machine has does not oversubscribe and run slower than serial. Never zero.
+fn core_budget(reported_threads: u32) -> usize {
+    let available = std::thread::available_parallelism()
+        .map(|threads| threads.get())
+        .unwrap_or(1);
+    grant_cores(reported_threads, available)
+}
+
+/// The grant itself, split from the host lookup so it can be tested exactly.
+fn grant_cores(reported_threads: u32, available: usize) -> usize {
+    (reported_threads.max(1) as usize).min(available.max(1))
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -348,7 +370,7 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
         };
-        let result = execute_work(&unit, "node-a").expect("shapes match");
+        let result = execute_work(&unit, "node-a", 4).expect("shapes match");
         assert_eq!(result.work_id, "w1");
         assert_eq!(result.node_id, "node-a");
         assert_eq!(result.rows, 2);
@@ -371,6 +393,19 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
         };
-        assert!(execute_work(&unit, "node-a").is_none());
+        assert!(execute_work(&unit, "node-a", 1).is_none());
+    }
+
+    #[test]
+    fn grants_the_smaller_of_reported_and_available() {
+        assert_eq!(grant_cores(8, 4), 4);
+        assert_eq!(grant_cores(2, 8), 2);
+        assert_eq!(grant_cores(4, 4), 4);
+    }
+
+    #[test]
+    fn never_grants_zero_cores() {
+        assert_eq!(grant_cores(0, 4), 1);
+        assert_eq!(grant_cores(8, 0), 1);
     }
 }

@@ -59,27 +59,67 @@ impl Matrix {
 
     /// `self * rhs`, or `None` when the shapes do not line up.
     ///
-    /// ponytail: naive O(n^3) triple loop in i-k-j order; blocked/parallel kernels only if the benchmark shows compute is the bottleneck.
+    /// Single-threaded. Use `multiply_with_threads` to spread the same work over the
+    /// cores the local scheduler granted.
+    ///
+    /// ponytail: naive O(n^3) triple loop in i-k-j order; a blocked kernel is the next step if the benchmark shows compute is still the bottleneck.
     pub fn multiply(&self, rhs: &Matrix) -> Option<Matrix> {
+        self.multiply_with_threads(rhs, 1)
+    }
+
+    /// `self * rhs` split across up to `threads` OS threads, or `None` when the shapes
+    /// do not line up.
+    ///
+    /// The split is by output rows and each row is still accumulated in the same i-k-j
+    /// order by a single thread, so the product is bit-for-bit identical to the serial
+    /// one and the cross-node checksum is unaffected — only the time to produce it
+    /// changes. Threads beyond the row count get nothing to do; 0 means 1.
+    pub fn multiply_with_threads(&self, rhs: &Matrix, threads: usize) -> Option<Matrix> {
         if self.cols != rhs.rows {
             return None;
         }
-        let n = self.rows as usize;
-        let m = rhs.cols as usize;
-        let k = self.cols as usize;
         let mut out = Matrix::zeros(self.rows, rhs.cols);
-        for i in 0..n {
+        let m = rhs.cols as usize;
+        let rows = self.rows as usize;
+        let threads = threads.max(1).min(rows.max(1));
+        // `m == 0` leaves nothing to chunk; the serial path already handles it.
+        if threads <= 1 || m == 0 {
+            self.multiply_rows(rhs, 0, &mut out.data);
+            return Some(out);
+        }
+        // Chunks are whole rows, so a chunk's first row is its index times the size.
+        let chunk = rows.div_ceil(threads);
+        std::thread::scope(|scope| {
+            for (index, chunk_out) in out.data.chunks_mut(chunk * m).enumerate() {
+                let row_start = index * chunk;
+                scope.spawn(move || self.multiply_rows(rhs, row_start, chunk_out));
+            }
+        });
+        Some(out)
+    }
+
+    /// Accumulates the `self * rhs` rows starting at `row_start` into `out`, one row per
+    /// `rhs.cols` elements. The kernel the serial and threaded paths share, so the two
+    /// cannot drift apart.
+    fn multiply_rows(&self, rhs: &Matrix, row_start: usize, out: &mut [f64]) {
+        let m = rhs.cols as usize;
+        if m == 0 {
+            return;
+        }
+        let k = self.cols as usize;
+        for (local_row, row_out) in out.chunks_mut(m).enumerate() {
+            let i = row_start + local_row;
             for p in 0..k {
                 let a = self.data[i * k + p];
                 if a == 0.0 {
                     continue;
                 }
+                let rhs_row = &rhs.data[p * m..p * m + m];
                 for j in 0..m {
-                    out.data[i * m + j] += a * rhs.data[p * m + j];
+                    row_out[j] += a * rhs_row[j];
                 }
             }
         }
-        Some(out)
     }
 
     /// Order-sensitive sum, used as the cross-node correctness check.
@@ -139,6 +179,37 @@ mod tests {
         let other = Matrix::seeded(8, 8, 43);
         assert_eq!(first, second);
         assert_ne!(first.checksum(), other.checksum());
+    }
+
+    #[test]
+    fn threading_the_product_does_not_change_it() {
+        // The split is by rows and each row keeps its accumulation order, so every thread
+        // count must give the identical product — checksum comparison across nodes
+        // depends on it. Sizes chosen to leave a partial last chunk.
+        let a = Matrix::seeded(37, 11, 5);
+        let b = Matrix::seeded(11, 29, 6);
+        let serial = a.multiply(&b).expect("shapes align");
+        for threads in [2, 3, 4, 8, 64] {
+            let threaded = a.multiply_with_threads(&b, threads).expect("shapes align");
+            assert_eq!(threaded, serial, "threads={threads} changed the product");
+        }
+    }
+
+    #[test]
+    fn zero_threads_means_one_thread() {
+        let a = Matrix::seeded(8, 8, 11);
+        let b = Matrix::seeded(8, 8, 12);
+        assert_eq!(
+            a.multiply_with_threads(&b, 0).expect("shapes align"),
+            a.multiply(&b).expect("shapes align")
+        );
+    }
+
+    #[test]
+    fn threaded_path_still_rejects_mismatched_shapes() {
+        let a = from_rows(&[&[1.0, 2.0, 3.0]]);
+        let b = from_rows(&[&[1.0, 2.0]]);
+        assert!(a.multiply_with_threads(&b, 4).is_none());
     }
 
     #[test]

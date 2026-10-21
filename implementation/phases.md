@@ -15,7 +15,8 @@ Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 - [x] estado do cluster em memória;
 - [ ] event bus — hoje é um ring buffer de eventos (`events.rs`), não um bus;
 - [x] node registry;
-- [ ] scheduler interface — dispatch é primeiro-que-pergunta;
+- [x] scheduler interface — o dispatch escolhe por custo (`placement`), com
+  `AI_CLUSTER_PLACEMENT=off` para voltar ao primeiro-que-pergunta;
 
 ### Worker core
 - [x] heartbeat;

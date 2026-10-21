@@ -21,7 +21,7 @@ Legenda: `[x]` implementado e validado · `[~]` parcial · `[ ]` não iniciado.
 - Health/Capacity/Trust separados. `[~]` — health e capacity reportados; trust é placeholder.
 - Controller + Worker Runtime. `[x]`
 - Work Unit como unidade de execução. `[x]`
-- Execution Graph + Placement Plan. `[~]` — DAG com dependências e retries validado; modelo de custo de placement em aberto.
+- Execution Graph + Placement Plan. `[~]` — DAG com dependências e retries validado; modelo de custo de placement implementado (`placement.rs`), sem locality nem térmico.
 - Pipeline/Tensor/Hybrid parallelism. `[ ]`
 - Edge optimization antes da inferência pesada. `[ ]`
 - Graph engine para relações e retrieval. `[ ]`

@@ -260,7 +260,11 @@ primeiro-que-pergunta. Evidência: `bash code/tests/phase-g-placement.sh`.
 
 ### G4 Local scheduler
 
-Resource queues. — [ ] não iniciado.
+Resource queues. — [~] o scheduler local concede os cores (`min` das threads reportadas e
+do host, nunca zero) e o worker executa a unidade nesse número de threads, em
+`worker::core_budget` e `Matrix::multiply_with_threads`. Filas de recursos, prioridades e
+GPU/NPU não. Evidência: `bash code/tests/phase-g-cores.sh` (~7x menos compute com 4 cores
+que com 1, mesmo checksum).
 
 ### G5 Rebalancing
 

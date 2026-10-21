@@ -51,8 +51,12 @@ Entregar:
 
 - [x] Work Unit;
 - [x] Execution Graph;
-- [~] placement — filtro por capability (`min_cpu_threads`) existe; cost model não;
-- [ ] global/local scheduler — dispatch é primeiro-que-pergunta, não escolha;
+- [x] placement — filtro por capability (`min_cpu_threads`) e por memória (footprint da
+  unidade), com a escolha feita pelo modelo de custo; locality e térmico não
+  (`phase-2/placement.md`);
+- [~] global/local scheduler — o global escolhe por custo (`AI_CLUSTER_PLACEMENT=off` volta
+  ao primeiro-que-pergunta) e o local concede os cores, que o worker usa
+  (`phase-2/local-scheduler.md`); filas de recursos, rebalanceamento e reservas não;
 - [~] transport abstraction — gRPC direto, sem camada de abstração;
 - [x] retries.
 
