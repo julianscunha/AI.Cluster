@@ -156,7 +156,13 @@ Baseline + current + confidence.
 
 Thermal, memory pressure, storage health, network degradation.
 
-- [~] liveness (heartbeat/grace); os demais sinais não.
+- [x] liveness (heartbeat/grace) e o score de saúde com pressão de memória, swap e térmica
+  (`health-model.md`). O placement já usava o score como penalidade, então o escalonador
+  passou a evitar nó quente sem mudança no modelo de custo. Evidência:
+  `bash code/tests/phase-c4-health.sh` (dois nós de capability idêntica, só a temperatura
+  diferente; a unidade vai para o frio).
+- [ ] storage health e degradação de rede — nenhum dos dois tem baseline de dispositivo para
+  comparar (o análogo do `capability-benchmark.md`).
 
 Critério de saída: adicionar node produz capability profile reproduzível.
 

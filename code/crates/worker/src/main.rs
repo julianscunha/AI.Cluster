@@ -583,12 +583,31 @@ fn node_load(now: Instant) -> (f64, f64) {
     load
 }
 
+/// Temperature where thermal pressure starts to count against the health score.
+///
+/// A generic stand-in. `docs/06` asks for a baseline specific to the hardware — a laptop core
+/// and a server core tolerate different limits — and the worker has no way to know one yet.
+const THERMAL_WARN_C: f64 = 80.0;
+/// Temperature at which thermal pressure saturates and the node scores the floor.
+const THERMAL_CRITICAL_C: f64 = 100.0;
+/// Lowest score a measured node can report.
+///
+/// Zero is not free here: the placement model reads a health score of exactly 0 as "not
+/// reported" and skips the penalty, so a node with the worst possible readings would look
+/// like a node with no readings at all and pay nothing. Dead nodes are excluded by state.
+const MIN_HEALTH_SCORE: f64 = 0.05;
+
 /// Package temperature in Celsius, when the kernel exposes a thermal zone.
 ///
 /// Absent in most containers, so 0 means "no sensor visible", not "0 °C" — the same
 /// convention as an unmeasured compute score. Scans a few zones because zone0 is not
-/// always the CPU one.
+/// always the CPU one. `AI_CLUSTER_TEMPERATURE_C` overrides the sensor, the way the other
+/// overrides stand in for hardware: without it the thermal term cannot be exercised on a
+/// machine whose kernel exposes no thermal zone.
 fn temperature_c() -> f64 {
+    if let Ok(value) = std::env::var("AI_CLUSTER_TEMPERATURE_C") {
+        return value.trim().parse::<f64>().unwrap_or(0.0);
+    }
     for zone in 0..4 {
         let path = format!("/sys/class/thermal/thermal_zone{zone}/temp");
         if let Some(raw) = read_trimmed(&path).and_then(|value| value.parse::<f64>().ok()) {
@@ -601,6 +620,39 @@ fn temperature_c() -> f64 {
     0.0
 }
 
+/// How much the temperature counts against the node, 0..1.
+///
+/// Zero below the warning threshold and when no sensor is visible, ramping to 1 at the
+/// critical one. A node with no sensor is not a cool node, but it is also not a hot one, and
+/// the score cannot punish what it cannot see — the raw temperature stays in the report for
+/// whoever can tell the difference.
+fn thermal_pressure(temperature_c: f64) -> f64 {
+    if !temperature_c.is_finite() || temperature_c <= THERMAL_WARN_C {
+        return 0.0;
+    }
+    ((temperature_c - THERMAL_WARN_C) / (THERMAL_CRITICAL_C - THERMAL_WARN_C)).clamp(0.0, 1.0)
+}
+
+/// The node's health score from its measured signals, 0..1, where 1 is pristine.
+///
+/// The worst domain decides, instead of averaging: a node out of swap or running at 95 °C is
+/// in trouble even with half its memory free, and an average would hide the one domain that
+/// matters. Floored above zero for the reason in `MIN_HEALTH_SCORE`.
+///
+/// `docs/06` lists CPU as a health domain and this score leaves it out. Utilization measures
+/// load, not condition: a node that just finished a unit reads as busy at the exact moment it
+/// becomes the best place to send the next one. Placement already asks that question — it
+/// ranks idle candidates — so load belongs to the placement model, not here. Storage health
+/// and network degradation are also unmeasured: neither has a device baseline to compare
+/// against yet (`docs/18`, `docs/06`).
+fn health_score(memory_utilization: f64, swap_utilization: f64, temperature_c: f64) -> f64 {
+    let worst = memory_utilization
+        .max(swap_utilization)
+        .max(thermal_pressure(temperature_c))
+        .clamp(0.0, 1.0);
+    (1.0 - worst).max(MIN_HEALTH_SCORE)
+}
+
 /// Fraction of swap in use, 0..1. Zero when the node has no swap configured.
 fn swap_utilization() -> f64 {
     match (meminfo_kb("SwapTotal:"), meminfo_kb("SwapFree:")) {
@@ -611,25 +663,27 @@ fn swap_utilization() -> f64 {
     }
 }
 
-/// What the node reports about its own condition (Fase H1).
+/// What the node reports about its own condition (Fase H1, score from C4).
 ///
-/// `health_score` still reflects memory pressure alone — the CPU, thermal and swap signals
-/// are reported raw, and folding them into the score is the health engine's decision
-/// (`docs/06`), not a metrics slice. Reporting them is what H1 asked for.
+/// Every signal is reported raw so a consumer can judge for itself, and the score folds in
+/// the domains that are actually measured — memory pressure, swap pressure and thermal
+/// pressure. `health_score` carries the reasoning.
 fn health() -> HealthReport {
-    let utilization = match (meminfo_kb("MemTotal:"), meminfo_kb("MemAvailable:")) {
+    let memory_utilization = match (meminfo_kb("MemTotal:"), meminfo_kb("MemAvailable:")) {
         (Some(total), Some(available)) if total > 0 => {
             (1.0 - available as f64 / total as f64).clamp(0.0, 1.0)
         }
         _ => 0.0,
     };
     let (cpu_utilization, disk_io_ops) = node_load(Instant::now());
+    let temperature_c = temperature_c();
+    let swap_utilization = swap_utilization();
     HealthReport {
-        health_score: 1.0 - utilization,
-        memory_utilization: utilization,
+        health_score: health_score(memory_utilization, swap_utilization, temperature_c),
+        memory_utilization,
         cpu_utilization,
-        temperature_c: temperature_c(),
-        swap_utilization: swap_utilization(),
+        temperature_c,
+        swap_utilization,
         disk_io_ops,
         ..Default::default()
     }
@@ -763,5 +817,60 @@ mod tests {
         );
         // Nothing readable means "not measured", not "no storage".
         assert!(storage_classes_from(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn thermal_pressure_is_zero_below_the_warning_threshold() {
+        assert_eq!(thermal_pressure(0.0), 0.0);
+        assert_eq!(thermal_pressure(25.0), 0.0);
+        // The threshold itself is still free: the ramp starts above it.
+        assert_eq!(thermal_pressure(THERMAL_WARN_C), 0.0);
+    }
+
+    #[test]
+    fn thermal_pressure_ramps_to_one_at_the_critical_temperature() {
+        let mid = (THERMAL_WARN_C + THERMAL_CRITICAL_C) / 2.0;
+        assert!((thermal_pressure(mid) - 0.5).abs() < 1e-9);
+        assert_eq!(thermal_pressure(THERMAL_CRITICAL_C), 1.0);
+        // Past the critical point the penalty saturates instead of exceeding 1.
+        assert_eq!(thermal_pressure(120.0), 1.0);
+    }
+
+    #[test]
+    fn thermal_pressure_ignores_a_missing_or_broken_sensor() {
+        // 0 °C means "no sensor visible" in a container, not a cold node — and the score must
+        // not punish what it cannot see. The same for a value that failed to parse.
+        assert_eq!(thermal_pressure(0.0), 0.0);
+        assert_eq!(thermal_pressure(f64::NAN), 0.0);
+        assert_eq!(thermal_pressure(f64::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn the_worst_domain_decides_the_health_score() {
+        // Memory under pressure with everything else free.
+        assert!((health_score(0.9, 0.0, 40.0) - 0.1).abs() < 1e-9);
+        // Swap under pressure with memory free — an average would have hidden this one.
+        assert!((health_score(0.1, 0.9, 40.0) - 0.1).abs() < 1e-9);
+        // Thermal under pressure with memory and swap free.
+        assert!((health_score(0.1, 0.0, THERMAL_CRITICAL_C) - MIN_HEALTH_SCORE).abs() < 1e-9);
+        // A pristine node scores a full 1.0.
+        assert!((health_score(0.0, 0.0, 40.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_measured_node_never_scores_as_unreported() {
+        // Placement reads a score of exactly 0 as "not reported" and skips the penalty, so the
+        // worst possible readings must still land above it.
+        let worst = health_score(1.0, 1.0, THERMAL_CRITICAL_C);
+        assert!(worst > 0.0, "worst score was {worst}");
+        assert_eq!(worst, MIN_HEALTH_SCORE);
+        // Values past their ranges cannot push it through the floor either.
+        assert_eq!(health_score(1.5, 2.0, 200.0), MIN_HEALTH_SCORE);
+    }
+
+    #[test]
+    fn a_hot_node_scores_worse_than_a_cool_one_with_equal_memory() {
+        // The whole point of the thermal term: same memory, worse condition.
+        assert!(health_score(0.2, 0.0, 95.0) < health_score(0.2, 0.0, 45.0));
     }
 }

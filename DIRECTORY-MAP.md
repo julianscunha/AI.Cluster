@@ -107,6 +107,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 62. [implementation/reservations.md](implementation/reservations.md) — reserva de nó para execução futura (G6).
 63. [implementation/predictions.md](implementation/predictions.md) — previsto vs real: o erro do modelo de custo (H5).
 64. [implementation/storage-tiers.md](implementation/storage-tiers.md) — classificação HOT/WARM/COLD do armazenamento por nó (I2).
+65. [implementation/health-model.md](implementation/health-model.md) — score de saúde do nó: pressão de memória, swap e térmica (C4).
 
 ### Referência — decisões arquiteturais
 
