@@ -19,7 +19,7 @@ Entregar:
 - [x] esqueleto do protocolo;
 - [x] esqueleto do node agent;
 - [x] harness de benchmark;
-- [~] esquema de telemetria — eventos prontos; métricas agregadas (H1) pendentes;
+- [x] esquema de telemetria — eventos (`telemetry.md`) e métricas agregadas (`metrics.md`);
 - [x] workload de matriz local.
 
 Critério de saída: dois nós Linux trocam uma Work Unit e comparam compute vs transfer.
@@ -162,6 +162,7 @@ Entregar:
 ## Observabilidade (Fase H do EXECUTION-PLAN)
 
 - [x] H2 Events — `telemetry.md`, `ai-cluster events`;
-- [ ] H1 Metrics — agregados de nó, runtime e cluster;
+- [x] H1 Metrics — roll-up de nós, fila e tempos de compute/latência (`metrics.md`,
+  `ai-cluster metrics`); métricas de nó e exportador não;
 - [ ] H3 Trace correlation — ligar requisição do cliente às units que ela gerou;
 - [ ] H4/H5 — pendentes.

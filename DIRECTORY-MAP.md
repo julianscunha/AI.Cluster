@@ -94,6 +94,14 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 49. [code/os/README.md](code/os/README.md) — notas de OS do workspace.
 50. [implementation/phase-1/join-and-leave.md](implementation/phase-1/join-and-leave.md) — entrada e saída de nós.
 51. [implementation/phase-2/dependency-graph.md](implementation/phase-2/dependency-graph.md) — grafo de dependências.
+52. [implementation/telemetry.md](implementation/telemetry.md) — eventos de ciclo de vida e incidentes (H2).
+53. [implementation/metrics.md](implementation/metrics.md) — roll-up de métricas do cluster (H1).
+54. [implementation/persistence.md](implementation/persistence.md) — snapshot da fila e dos outputs.
+55. [implementation/phase-0/benchmark-sweep.md](implementation/phase-0/benchmark-sweep.md) — varredura 1/2/3 nós × tamanhos.
+56. [implementation/phase-2/placement.md](implementation/phase-2/placement.md) — filtro por capability/memória e escolha de nó.
+57. [implementation/phase-2/local-scheduler.md](implementation/phase-2/local-scheduler.md) — concessão de cores e execução paralela.
+58. [implementation/phase-2/fault-tolerance.md](implementation/phase-2/fault-tolerance.md) — retries e recuperação de nó.
+59. [implementation/phase-2/capability-benchmark.md](implementation/phase-2/capability-benchmark.md) — compute medido no worker (C2).
 
 ### Referência — decisões arquiteturais
 

@@ -171,6 +171,18 @@ impl Registry {
             .collect()
     }
 
+    /// Registered node count and how many of them are available for work, read in one
+    /// lock so the two numbers cannot come from different states of the world.
+    pub fn counts(&self) -> (u32, u32) {
+        let nodes = self.lock();
+        let total = nodes.len() as u32;
+        let available = nodes
+            .values()
+            .filter(|record| eligible(record.state))
+            .count() as u32;
+        (total, available)
+    }
+
     /// Marks nodes that missed `grace_ms` of controller-observed heartbeats as
     /// offline and returns the ids that transitioned.
     pub fn mark_stale_offline(&self, now: u64, grace_ms: u64) -> Vec<String> {

@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, EnqueueWorkRequest, ListEventsRequest, ListNodesRequest,
-    WorkReportRequest, WorkReportResponse,
+    EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest, ListEventsRequest,
+    ListNodesRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
@@ -28,6 +28,8 @@ struct Cli {
 enum Command {
     Status,
     Nodes,
+    /// Cluster-wide roll-up: node counts, queue depth and completed-unit timings.
+    Metrics,
     /// Recent lifecycle events, oldest first: joins, departures, offline reaps,
     /// work enqueued and work completed.
     Events {
@@ -64,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
+        Command::Metrics => print_metrics(&cli.controller).await?,
         Command::Events { limit } => print_events(&cli.controller, limit).await?,
         Command::Benchmark {
             size,
@@ -150,6 +153,33 @@ async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::err
             event.at_unix_ms, event.kind, event.detail
         );
     }
+    Ok(())
+}
+
+/// Prints the cluster-wide roll-up from the controller (Fase H1).
+///
+/// Emits `chave=valor` with ASCII keys rather than a column table: `metrics` is the one
+/// command a script or a scraper is likely to read, and positional parsing breaks whenever
+/// a label changes. The keys match the proto field names, so the output is stable.
+async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let metrics = client.get_metrics(GetMetricsRequest {}).await?.into_inner();
+    println!(
+        "nodes_total={} nodes_available={}",
+        metrics.nodes_total, metrics.nodes_available
+    );
+    println!(
+        "units_completed={} units_pending={} units_blocked={} units_failed={}",
+        metrics.units_completed, metrics.units_pending, metrics.units_blocked, metrics.units_failed
+    );
+    println!(
+        "total_compute_time_us={} avg_compute_time_us={}",
+        metrics.total_compute_time_us, metrics.avg_compute_time_us
+    );
+    println!(
+        "total_latency_us={} avg_latency_us={}",
+        metrics.total_latency_us, metrics.avg_latency_us
+    );
     Ok(())
 }
 

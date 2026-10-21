@@ -292,7 +292,10 @@ Critério de saída: o scheduler prova, por benchmark, que pode escolher placeme
 
 ### H1 Metrics
 
-Node, runtime e cluster. — [ ] não iniciado.
+Node, runtime e cluster. — [~] roll-up do cluster (`metrics.md`): `GetMetrics` devolve nós
+totais/disponíveis, fila (pendentes/bloqueadas/falhas) e tempos de compute e latência somados
+e médios, com `ai-cluster metrics` na CLI. Métricas de nó (CPU, temperatura, swap, IOPS),
+percentis e exportador ainda não.
 
 ### H2 Events
 
@@ -310,7 +313,7 @@ Dashboard em shell. — [ ] não iniciado.
 
 Expor prediction error. — [ ] não iniciado.
 
-Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [ ] não atendido.
+Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [~] as métricas de latência existem (`metrics.md`: latência vs compute por cluster), mas ligar uma requisição de cliente às unidades que ela gerou é o H3, ainda não iniciado.
 
 ## 10. Fase I — State Manager
 

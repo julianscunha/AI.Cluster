@@ -16,7 +16,7 @@ Aceite:
 - [x] dois nós Linux;
 - [x] descobertos pelo Controller;
 - [x] um envia uma operação de matriz para o outro;
-- [~] telemetria registrada — eventos prontos; métricas agregadas pendentes.
+- [x] telemetria registrada — eventos (`telemetry.md`) e métricas agregadas (`metrics.md`).
 
 Ressalva: validado com dois containers no mesmo host. Duas máquinas físicas ainda não
 foram rodadas (`phase-0/two-machine-validation.md`).

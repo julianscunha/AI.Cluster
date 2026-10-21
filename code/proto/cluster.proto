@@ -193,6 +193,34 @@ message ListEventsResponse {
   repeated Event events = 1;
 }
 
+/// Aggregate cluster metrics at the moment the controller answered (H1).
+///
+/// A point-in-time snapshot, not a time series: each read is computed from the current
+/// registry and work state, so two reads a second apart can differ. Node detail stays in
+/// `ListNodes`; this is the cluster-wide roll-up a dashboard or a `status` reads.
+message MetricsResponse {
+  uint32 nodes_total = 1;
+  /// Nodes the controller would hand new work to: registered and not draining, offline
+  /// or quarantined. This is the candidate set placement ranks over.
+  uint32 nodes_available = 2;
+  uint32 units_completed = 3;
+  uint32 units_pending = 4;
+  uint32 units_blocked = 5;
+  uint32 units_failed = 6;
+  /// Sum over completed units of the time the worker spent computing, as reported by the
+  /// worker. Excludes transfer and queueing, so it is a floor on the work actually done.
+  uint64 total_compute_time_us = 7;
+  /// Sum over completed units of dispatch-to-result latency as the controller observed it,
+  /// including transfer and any queue wait. The gap to `total_compute_time_us` is overhead.
+  uint64 total_latency_us = 8;
+  /// `total_compute_time_us / units_completed`, rounded down. Zero when nothing completed.
+  uint64 avg_compute_time_us = 9;
+  /// `total_latency_us / units_completed`, rounded down. Zero when nothing completed.
+  uint64 avg_latency_us = 10;
+}
+
+message GetMetricsRequest {}
+
 /// Estado do controller gravado em disco para que um restart não perca trabalho em fila.
 /// Não faz parte da superfície de requests: isto é o que o controller salva e recarrega,
 /// não algo que um cliente envia.
@@ -229,4 +257,5 @@ service ClusterControl {
   rpc EnqueueGraph(EnqueueGraphRequest) returns (EnqueueGraphResponse);
   rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
 }

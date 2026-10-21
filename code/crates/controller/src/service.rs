@@ -4,15 +4,16 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
-    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
-    ListNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest,
-    RequestWorkResponse, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
-    WorkReportRequest, WorkReportResponse, WorkUnit,
+    GetMetricsRequest, HealthStreamRequest, HealthStreamResponse, HeartbeatRequest,
+    HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse,
+    ListNodesRequest, ListNodesResponse, MetricsResponse, RegisterNodeRequest,
+    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
 use crate::events::EventLog;
+use crate::metrics;
 use crate::registry::{Registry, unix_ms};
 use crate::work::WorkStore;
 
@@ -446,6 +447,26 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(ListEventsResponse {
             events: self.events.recent(limit),
         }))
+    }
+
+    async fn get_metrics(
+        &self,
+        _request: Request<GetMetricsRequest>,
+    ) -> Result<Response<MetricsResponse>, Status> {
+        // Node counts come from one registry lock and work counts from the work store, so
+        // the read is a consistent-enough snapshot: a unit completing between the two calls
+        // can land in either bucket, never both. These are point-in-time metrics, not a
+        // transaction.
+        let (nodes_total, nodes_available) = self.registry.counts();
+        let completed = self.work.completed();
+        Ok(Response::new(metrics::summarize(
+            nodes_total,
+            nodes_available,
+            &completed,
+            self.work.pending() as u32,
+            self.work.blocked() as u32,
+            self.work.failed() as u32,
+        )))
     }
 }
 
@@ -939,5 +960,67 @@ mod tests {
         // A real value passes through untouched.
         assert_eq!(clamp_tolerance(Some(0.25)), 0.25);
         assert_eq!(clamp_tolerance(Some(0.0)), 0.0);
+    }
+
+    #[tokio::test]
+    async fn metrics_roll_up_nodes_and_completed_work() {
+        let (service, work_store) = service_with_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        // An idle cluster: a node is present, nothing has run, and the averages are zero
+        // rather than a division by zero.
+        let metrics = service
+            .get_metrics(Request::new(GetMetricsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(metrics.nodes_total, 1);
+        assert_eq!(metrics.nodes_available, 1);
+        assert_eq!(metrics.units_completed, 0);
+        assert_eq!(metrics.units_pending, 0);
+        assert_eq!(metrics.avg_compute_time_us, 0);
+
+        work_store.enqueue([unit("w1")]);
+        service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap();
+        service
+            .submit_work_result(Request::new(SubmitWorkResultRequest {
+                result: Some(WorkResult {
+                    work_id: "w1".to_string(),
+                    node_id: "node-a".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    matrix_c: vec![19.0, 22.0, 43.0, 50.0],
+                    checksum: 134.0,
+                    compute_time_us: 1_000,
+                }),
+            }))
+            .await
+            .unwrap();
+
+        // The unit moved from pending to completed and its compute time is summed. The
+        // latency total is not asserted: it comes from the controller clock while compute
+        // comes from the worker, so on a unit that finishes within one millisecond the
+        // worker's self-report can exceed the observed wall time. That is a measurement
+        // artifact of an instant test, not a bug — in production a unit takes milliseconds.
+        let metrics = service
+            .get_metrics(Request::new(GetMetricsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(metrics.units_completed, 1);
+        assert_eq!(metrics.units_pending, 0);
+        assert_eq!(metrics.total_compute_time_us, 1_000);
+        assert_eq!(metrics.avg_compute_time_us, 1_000);
     }
 }
