@@ -90,7 +90,9 @@ Entregar:
 - [x] state directory — `AI_CLUSTER_STATE` nomeia o snapshot; dono das unidades em voo e uma
   cópia ao lado sobrevivem ao restart (`persistence.md`, I1). Diretório de referências
   lógicas e réplica em outro nó não existem;
-- [~] checkpoint — snapshot da fila e dos outputs, não de unidade em execução;
+- [x] checkpoint — a poda dentro de `save_locked` deixou de gravar toda matriz concluída
+  (`persistence.md`, I3). Segue sendo snapshot, não journal de deltas; unidade em execução
+  continua sendo salva só como fila ou posse, não no meio do compute;
 - [~] recovery — reload no startup do controller;
 - [~] warm/cold tiers — as camadas são detectadas por nó; alocar espaço por camada não existe;
 

@@ -373,7 +373,14 @@ latência nem de capacidade, então NVMe e SATA SSD ficam juntos em WARM. Evidê
 
 ### I3 Checkpoint
 
-Incremental. — [~] snapshot completo da fila, não incremental.
+Incremental. — [x] (`persistence.md`): o checkpoint deixou de carregar toda matriz já
+concluída. A poda roda dentro de `save_locked`, o único ponto por onde toda mutação passa, e
+segura só o resultado que uma unidade não terminada ainda pode ler — pelos dois caminhos de
+leitura, `ready` e `take_locked`. Medido em 8 unidades de 256³ sem dependências: o snapshot
+final caiu de 4.194.410 bytes (8 matrizes de saída, uma por unidade) para 2 bytes. O custo
+passou a ser proporcional ao trabalho que falta, não ao trabalho já feito. Ainda não é um
+journal de deltas — o conjunto vivo continua sendo reescrito inteiro, e duas vezes por causa
+da cópia. Evidência: `bash code/tests/phase-i-checkpoint.sh`.
 
 ### I4 Recovery
 

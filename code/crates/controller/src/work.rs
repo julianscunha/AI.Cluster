@@ -3,7 +3,7 @@
 //! The comparison this enables: total round trip observed by the controller
 //! minus the compute time reported by the worker is the transfer overhead.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -145,6 +145,39 @@ fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
         .iter()
         .all(|src| src.is_empty() || outputs.contains_key(*src));
     deps_done && inputs_available
+}
+
+/// Drops every intermediate result no unfinished unit can read.
+///
+/// An output is read in exactly two places: `ready` asks whether a dependency's output is
+/// there, and `take_locked` substitutes a bound input from it. Both read it on behalf of a
+/// unit that has not settled — queued now, or in flight and possibly handed back by
+/// `requeue_for_node` — so those are the only units that pin an output. Anything else is a
+/// matrix held for nobody, and it is the bulk of what the snapshot rewrites on every save.
+///
+/// Run from `save_locked`, the one choke point every mutation passes through, so the
+/// invariant cannot be forgotten at a call site. Also a memory bound: the map used to grow
+/// with all work ever completed.
+///
+/// ponytail: the live set is still rewritten whole per mutation, so the checkpoint costs
+/// O(work not yet done) instead of O(all work ever). A delta journal is the next step if even
+/// that gets expensive; at 8 units of 256³ the snapshot went from 4.19 MB to nothing.
+fn drop_unreferenced_outputs(inner: &mut Inner) {
+    let mut needed: HashSet<String> = HashSet::new();
+    for unit in inner
+        .queue
+        .iter()
+        .chain(inner.dispatched.values().map(|record| &record.unit))
+    {
+        needed.extend(unit.depends_on.iter().cloned());
+        if !unit.matrix_a_from.is_empty() {
+            needed.insert(unit.matrix_a_from.clone());
+        }
+        if !unit.matrix_b_from.is_empty() {
+            needed.insert(unit.matrix_b_from.clone());
+        }
+    }
+    inner.outputs.retain(|work_id, _| needed.contains(work_id));
 }
 
 /// Fails `work_id` and every queued unit that depends on it, directly or through
@@ -338,11 +371,19 @@ impl WorkStore {
     /// poll. The cost is that such a unit loses its owner — the same double dispatch the
     /// old code did for every in-flight unit.
     ///
-    /// ponytail: the whole state is rewritten on every mutation, and now twice — the copy
-    /// doubles the write cost to buy redundancy. Fine at benchmark scale; move to an
-    /// append-only log or a periodic snapshot when the queue gets large or mutations get
-    /// frequent.
-    fn save_locked(&self, inner: &Inner) {
+    /// Also drops the intermediate results nobody will read (`drop_unreferenced_outputs`),
+    /// which is what keeps the snapshot proportional to the work still to do. It used to carry
+    /// every matrix ever completed and rewrite them all on every mutation — quadratic in
+    /// finished work. Measured: 8 units of 256³ left a 4.19 MB snapshot before, nothing now.
+    ///
+    /// ponytail: the live set is still rewritten whole on every mutation, and twice — the copy
+    /// doubles the write cost to buy redundancy. Fine at benchmark scale; a delta journal or a
+    /// periodic snapshot when the live set gets large or mutations get frequent.
+    fn save_locked(&self, inner: &mut Inner) {
+        // The checkpoint is what a restart comes back to, so it carries no matrix nobody can
+        // read. Done before the early return: a memory-only store has the same ceiling, and
+        // this is what keeps the map from growing with all work ever completed.
+        drop_unreferenced_outputs(inner);
         let Some(path) = &self.path else {
             return;
         };
@@ -421,7 +462,7 @@ impl WorkStore {
             inner.queue.push_back(unit);
             count += 1;
         }
-        self.save_locked(&inner);
+        self.save_locked(&mut inner);
         count
     }
 
@@ -622,7 +663,7 @@ impl WorkStore {
             .insert(result.work_id.clone(), result.matrix_c);
         // The unit is settled, so its retry budget no longer matters.
         inner.attempts.remove(&result.work_id);
-        self.save_locked(&inner);
+        self.save_locked(&mut inner);
         Some(completed)
     }
 
@@ -645,6 +686,14 @@ impl WorkStore {
             .iter()
             .filter(|unit| !ready(unit, &inner.outputs))
             .count()
+    }
+
+    /// Intermediate results still held for units that have not settled.
+    ///
+    /// Zero once a graph drains: an output is dropped as soon as nothing queued or in flight
+    /// can read it (`drop_unreferenced_outputs`).
+    pub fn outputs_held(&self) -> usize {
+        self.lock().outputs.len()
     }
 
     /// Hands in-flight units belonging to `node_id` back to the queue and reports
@@ -677,7 +726,7 @@ impl WorkStore {
                 outcome.requeued += 1;
             }
         }
-        self.save_locked(&inner);
+        self.save_locked(&mut inner);
         outcome
     }
 
@@ -1632,6 +1681,75 @@ mod tests {
             store.unknown_owners(&["node-b".to_string()]),
             Vec::<String>::new()
         );
+    }
+
+    /// A matrix nobody reads is neither checkpointed nor kept in memory. The map used to hold
+    /// every output for the process lifetime, and the snapshot rewrote them on every save.
+    #[test]
+    fn an_output_is_dropped_once_nothing_can_read_it() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), unit("w2")]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        store
+            .complete(result("w1", 250), 2_000)
+            .expect("w1 was dispatched");
+        // w2 is independent, so w1's output is a matrix kept for nobody.
+        assert_eq!(store.outputs_held(), 0);
+
+        store
+            .claim("node-b", &capability(8, 0.0), 3_000)
+            .expect("w2 is ready");
+        let mut w2_result = result("w2", 250);
+        w2_result.node_id = "node-b".to_string();
+        store.complete(w2_result, 4_000).expect("w2 was dispatched");
+        assert_eq!(store.outputs_held(), 0);
+    }
+
+    /// Both ways an output is read — a dependency reference and a bound input — pin it while an
+    /// unfinished unit still needs it. Dropping either would block the graph forever.
+    #[test]
+    fn an_output_an_unfinished_unit_still_reads_is_kept() {
+        // A dependency reference: w2 waits on w1's output to become ready.
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        store
+            .complete(result("w1", 250), 2_000)
+            .expect("w1 was dispatched");
+        assert_eq!(store.outputs_held(), 1);
+        assert_eq!(store.blocked(), 0, "w2 readies off w1's output");
+        assert_eq!(
+            store
+                .claim("node-b", &capability(8, 0.0), 3_000)
+                .expect("w2 is ready")
+                .work_id,
+            "w2"
+        );
+        let mut w2_result = result("w2", 250);
+        w2_result.node_id = "node-b".to_string();
+        store.complete(w2_result, 4_000).expect("w2 was dispatched");
+        assert_eq!(
+            store.outputs_held(),
+            0,
+            "the graph is done, so nothing reads either output"
+        );
+
+        // A bound input: w3 takes its A matrix from w1 without depending on it.
+        let store = WorkStore::new();
+        let mut bound = unit("w3");
+        bound.matrix_a_from = "w1".to_string();
+        store.enqueue([unit("w1"), bound]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        store
+            .complete(result("w1", 250), 2_000)
+            .expect("w1 was dispatched");
+        assert_eq!(store.outputs_held(), 1);
     }
 
     /// A unit under a given client request, so a reservation can be matched to it (G6).
