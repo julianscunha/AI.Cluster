@@ -380,6 +380,75 @@ fn normalize_compute_score(gflops: f64, reference: f64) -> f64 {
     gflops / reference
 }
 
+/// Classes de armazenamento em bloco do nó, da mais quente para a mais fria.
+///
+/// `/sys/block/*/queue/rotational` diz 0 para estado sólido e 1 para disco giratório, mas
+/// NVMe e SSD respondem 0 igualmente. O nome do dispositivo é a única pista que o kernel
+/// dá sem abrir o dispositivo, então `nvme` vem do prefixo. Loop, ram e device-mapper ficam
+/// de fora: existem em qualquer nó e não são armazenamento que o cluster possa usar.
+///
+/// A classificação é por dispositivo, não por tier: HDD é COLD, SSD/NVMe são WARM, e o HOT
+/// é RAM — que já vem em `memory_bytes`. Ver `docs/18-storage-intelligence.md`.
+fn storage_class(name: &str, rotational: &str) -> Option<&'static str> {
+    if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+        return None;
+    }
+    match rotational.trim() {
+        "0" => Some(if name.starts_with("nvme") {
+            "nvme"
+        } else {
+            "ssd"
+        }),
+        "1" => Some("hdd"),
+        _ => None,
+    }
+}
+
+/// Distinct storage classes from `(device, rotational)` pairs, hottest first.
+///
+/// Split from the directory read so the classification is testable without `/sys/block`.
+/// An unreadable rotational file drops the device: "not measured" is not "solid state".
+fn storage_classes_from(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
+    let mut classes: Vec<&'static str> = Vec::new();
+    for (name, rotational) in pairs {
+        if let Some(class) = storage_class(&name, &rotational)
+            && !classes.contains(&class)
+        {
+            classes.push(class);
+        }
+    }
+    classes.sort_by_key(|class| match *class {
+        "nvme" => 0,
+        "ssd" => 1,
+        _ => 2,
+    });
+    classes.into_iter().map(str::to_string).collect()
+}
+
+/// Detects the node's storage classes by reading `/sys/block`.
+///
+/// `AI_CLUSTER_STORAGE_CLASSES` overrides the detection, the way `AI_CLUSTER_CPU_THREADS`
+/// and `AI_CLUSTER_MEMORY_BYTES` override their capabilities: without it the answer depends
+/// on the host's disks, and a container sees the host's, not its own.
+fn storage_classes() -> Vec<String> {
+    if let Ok(value) = std::env::var("AI_CLUSTER_STORAGE_CLASSES") {
+        return value
+            .split(',')
+            .map(str::trim)
+            .filter(|class| !class.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    let Ok(entries) = std::fs::read_dir("/sys/block") else {
+        return Vec::new();
+    };
+    let pairs = entries.flatten().filter_map(|entry| {
+        let rotational = std::fs::read_to_string(entry.path().join("queue/rotational")).ok()?;
+        Some((entry.file_name().to_string_lossy().into_owned(), rotational))
+    });
+    storage_classes_from(pairs)
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -401,6 +470,7 @@ fn capability() -> CapabilityReport {
         cpu_threads,
         memory_bytes,
         compute_score: compute_score(),
+        storage_classes: storage_classes(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
     }
@@ -659,5 +729,39 @@ mod tests {
         // fallback. The exact rate is host-dependent, so only the sign is asserted.
         let score = measure_compute_score(32, 1, REFERENCE_CORE_GFLOPS);
         assert!(score.is_finite() && score > 0.0, "score was {score}");
+    }
+
+    #[test]
+    fn classifies_block_devices_by_rotation_and_name() {
+        // NVMe and SATA SSD both report rotational=0, so the name is the only split.
+        assert_eq!(storage_class("nvme0n1", "0"), Some("nvme"));
+        assert_eq!(storage_class("sda", "0"), Some("ssd"));
+        assert_eq!(storage_class("sdb", "1"), Some("hdd"));
+        // The trailing newline the kernel appends must not turn a disk into "not measured".
+        assert_eq!(storage_class("sdc", "1\n"), Some("hdd"));
+        // Loop, ram and device-mapper exist on every node and are not usable storage.
+        assert_eq!(storage_class("loop0", "1"), None);
+        assert_eq!(storage_class("ram0", "0"), None);
+        assert_eq!(storage_class("dm-0", "0"), None);
+        // An unreadable value is "not measured", never a class.
+        assert_eq!(storage_class("sdd", ""), None);
+        assert_eq!(storage_class("sde", "2"), None);
+    }
+
+    #[test]
+    fn storage_classes_are_distinct_and_hottest_first() {
+        let pairs = vec![
+            ("sdb".to_string(), "1".to_string()),
+            ("sda".to_string(), "0".to_string()),
+            ("loop0".to_string(), "1".to_string()),
+            ("nvme0n1".to_string(), "0".to_string()),
+            ("sdc".to_string(), "1".to_string()),
+        ];
+        assert_eq!(
+            storage_classes_from(pairs),
+            vec!["nvme".to_string(), "ssd".to_string(), "hdd".to_string()]
+        );
+        // Nothing readable means "not measured", not "no storage".
+        assert!(storage_classes_from(Vec::new()).is_empty());
     }
 }

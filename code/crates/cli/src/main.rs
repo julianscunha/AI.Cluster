@@ -257,15 +257,32 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7}",
-        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C", "SWAP_%"
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<12}",
+        "NÓ",
+        "ESTADO",
+        "ARQ",
+        "THREADS",
+        "RAM_GB",
+        "COMPUTE",
+        "SAÚDE",
+        "CPU_%",
+        "TEMP_C",
+        "SWAP_%",
+        "ARMAZ"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
         let capability = node.capability.unwrap_or_default();
         let health = node.health.unwrap_or_default();
+        // Empty means "not measured" — a node whose /sys/block could not be read — so it
+        // must not look like a node with no storage.
+        let storage = if capability.storage_classes.is_empty() {
+            "-".to_string()
+        } else {
+            capability.storage_classes.join(",")
+        };
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<12}",
             identity.node_id,
             node.state,
             identity.architecture,
@@ -276,6 +293,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             health.cpu_utilization * 100.0,
             health.temperature_c,
             health.swap_utilization * 100.0,
+            storage,
         );
     }
     Ok(())

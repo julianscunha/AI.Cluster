@@ -358,7 +358,12 @@ IDs, ownership, replicas.
 
 ### I2 HOT/WARM/COLD
 
-RAM/VRAM, SSD/NVMe, persistent storage. — [ ] não iniciado.
+RAM/VRAM, SSD/NVMe, persistent storage. — [x] (`storage-tiers.md`): cada nó classifica suas
+classes de armazenamento em bloco lendo `/sys/block` — NVMe/SSD viram WARM, HDD vira COLD —
+e reporta em `CapabilityReport.storage_classes`; HOT é a RAM, já em `memory_bytes`. A coluna
+`ARMAZ` em `ai-cluster nodes` mostra o resultado e `-` é "não medido". Não há medida de
+latência nem de capacidade, então NVMe e SATA SSD ficam juntos em WARM. Evidência:
+`bash code/tests/phase-i-storage.sh`.
 
 ### I3 Checkpoint
 

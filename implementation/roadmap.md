@@ -85,12 +85,12 @@ Critério de saída: máquina limpa vira worker automaticamente. — não inicia
 
 Entregar:
 
-- [ ] storage detection;
+- [x] storage detection — `/sys/block`: NVMe/SSD/HDD por nó (`storage-tiers.md`, I2);
 - [ ] swap/cache policies;
 - [~] state directory — `AI_CLUSTER_STATE` aponta um arquivo; não é diretório de estado;
 - [~] checkpoint — snapshot da fila e dos outputs, não de unidade em execução;
 - [~] recovery — reload no startup do controller;
-- [ ] warm/cold tiers.
+- [~] warm/cold tiers — as camadas são detectadas por nó; alocar espaço por camada não existe;
 
 Critério de saída: perda de nó não apaga estado recuperável de execução.
 

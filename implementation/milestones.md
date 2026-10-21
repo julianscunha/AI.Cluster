@@ -46,11 +46,11 @@ Aceite:
 
 Aceite:
 
-- [ ] HDD/SSD/NVMe diferenciados;
+- [x] HDD/SSD/NVMe diferenciados — classes em bloco por nó (`storage-tiers.md`, I2);
 - [ ] políticas aplicadas dinamicamente;
 - [ ] dashboard mostra saúde do storage.
 
-— não iniciado (Fase 4 do roadmap; `persistence.md` é só o começo).
+— parcialmente iniciado (Fase 4 do roadmap; `persistence.md` e `storage-tiers.md` são o começo).
 
 ## M4 — Protótipo LLM em CPU
 
