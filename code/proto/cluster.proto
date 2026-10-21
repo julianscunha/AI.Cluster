@@ -187,6 +187,46 @@ message GetTraceResponse {
   repeated TraceEntry units = 2;
 }
 
+/// Uma reserva de nó para execução futura (G6). O nó fica retido para um `request_id`
+/// antes de o trabalho existir: enquanto a reserva durar, unidades de outras requisições
+/// não são colocadas nesse nó, e a requisição dona da reserva tem o nó só para si.
+message Reservation {
+  string node_id = 1;
+  string request_id = 2;
+  /// Unix ms em que a reserva expira sozinha, para um cliente que reservou e sumiu não
+  /// segurar o nó para sempre.
+  uint64 expires_at_unix_ms = 3;
+}
+
+message ReserveRequest {
+  string node_id = 1;
+  /// Requisição para quem o nó é retido.
+  string request_id = 2;
+  /// Quanto tempo a reserva vale, a partir de agora. 0 usa o padrão do controller.
+  uint64 ttl_ms = 3;
+}
+
+message ReserveResponse {
+  bool granted = 1;
+  uint64 expires_at_unix_ms = 2;
+  string message = 3;
+}
+
+message ListReservationsRequest {}
+
+message ListReservationsResponse {
+  repeated Reservation reservations = 1;
+}
+
+/// Liberar é por nó: um nó tem no máximo uma reserva, então o nó identifica qual soltar.
+message ReleaseReservationRequest {
+  string node_id = 1;
+}
+
+message ReleaseReservationResponse {
+  bool released = 1;
+}
+
 message WorkReportRequest {}
 
 message WorkReportEntry {
@@ -298,4 +338,7 @@ service ClusterControl {
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
   rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
   rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
 }

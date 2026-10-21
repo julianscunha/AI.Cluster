@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest,
-    ListNodesRequest, WorkReportRequest, WorkReportResponse,
+    ListNodesRequest, ListReservationsRequest, ReleaseReservationRequest, ReserveRequest,
+    WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
@@ -57,12 +58,33 @@ enum Command {
         /// 0 means no requirement.
         #[arg(long, default_value_t = 0)]
         min_threads: u32,
+        /// Enqueue under this request id instead of letting the controller mint one.
+        /// Pass a reservation's request id so its units land on the held node (G6).
+        #[arg(long, default_value = "")]
+        request_id: String,
     },
     /// Dispatch a dependency graph (diamond) and watch the branches gate.
     Graph {
         /// Square matrix edge length for every unit in the graph.
         #[arg(long, default_value_t = 128)]
         size: u32,
+    },
+    /// Retém um nó para uma requisição futura (G6).
+    Reserve {
+        /// Nó a reter.
+        node: String,
+        /// Requisição para quem o nó fica retido.
+        request_id: String,
+        /// Quanto tempo a reserva vale, em ms. 0 usa o padrão do controller.
+        #[arg(long, default_value_t = 0)]
+        ttl_ms: u64,
+    },
+    /// Reservas ativas: nó, requisição dona e vencimento.
+    Reservations,
+    /// Libera a reserva de um nó antes do vencimento.
+    Release {
+        /// Nó a liberar.
+        node: String,
     },
 }
 
@@ -93,8 +115,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             repetitions,
             local,
             min_threads,
-        } => run_benchmark(&cli.controller, size, repetitions, local, min_threads).await?,
+            request_id,
+        } => {
+            run_benchmark(
+                &cli.controller,
+                size,
+                repetitions,
+                local,
+                min_threads,
+                &request_id,
+            )
+            .await?
+        }
         Command::Graph { size } => run_graph(&cli.controller, size).await?,
+        Command::Reserve {
+            node,
+            request_id,
+            ttl_ms,
+        } => run_reserve(&cli.controller, &node, &request_id, ttl_ms).await?,
+        Command::Reservations => print_reservations(&cli.controller).await?,
+        Command::Release { node } => release_reservation(&cli.controller, &node).await?,
     }
     Ok(())
 }
@@ -128,6 +168,76 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
         }
     };
     print_report(&report);
+    Ok(())
+}
+
+/// Retém um nó para uma requisição futura (G6).
+///
+/// A reserva é criada antes de o trabalho existir: o cliente diz "este nó é meu para a
+/// requisição X" e depois enfileira a requisição X com esse mesmo id. Um `granted=false`
+/// significa que o nó não está disponível para reserva — normalmente porque saiu ou está
+/// drenando — e é reportado sem erro, porque não reservar não é uma falha de transporte.
+async fn run_reserve(
+    endpoint: &str,
+    node: &str,
+    request_id: &str,
+    ttl_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let response = client
+        .reserve(ReserveRequest {
+            node_id: node.to_string(),
+            request_id: request_id.to_string(),
+            ttl_ms,
+        })
+        .await?
+        .into_inner();
+    if response.granted {
+        println!(
+            "RESERVA concedida no={} requisicao={} expira_em_unix_ms={}",
+            node, request_id, response.expires_at_unix_ms
+        );
+    } else {
+        println!("RESERVA recusada no={node} motivo={}", response.message);
+        return Err(format!("nó {node} não está disponível para reserva").into());
+    }
+    Ok(())
+}
+
+/// Lista as reservas ativas: nó, requisição dona e vencimento.
+async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let reservations = client
+        .list_reservations(ListReservationsRequest {})
+        .await?
+        .into_inner()
+        .reservations;
+    println!("RESERVAS {}", reservations.len());
+    println!("{:<20} {:<16} {:>14}", "NÓ", "REQUISIÇÃO", "EXPIRA_EM_MS");
+    for reservation in reservations {
+        println!(
+            "{:<20} {:<16} {:>14}",
+            reservation.node_id, reservation.request_id, reservation.expires_at_unix_ms
+        );
+    }
+    Ok(())
+}
+
+/// Libera a reserva de um nó antes do vencimento. Um nó sem reserva não é erro.
+async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let released = client
+        .release_reservation(ReleaseReservationRequest {
+            node_id: node.to_string(),
+        })
+        .await?
+        .into_inner()
+        .released;
+    if released {
+        println!("RESERVA liberada no={node}");
+    } else {
+        println!("RESERVA não encontrada no={node}");
+    }
     Ok(())
 }
 
@@ -271,6 +381,7 @@ async fn run_benchmark(
     repetitions: u32,
     local: bool,
     min_threads: u32,
+    request_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Version and parameters travel with the output so two runs are comparable.
     println!(
@@ -290,7 +401,7 @@ async fn run_benchmark(
             seed: 42,
             repetitions,
             min_cpu_threads: min_threads,
-            request_id: String::new(),
+            request_id: request_id.to_string(),
         })
         .await?
         .into_inner();

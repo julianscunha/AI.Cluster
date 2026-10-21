@@ -57,7 +57,7 @@ Entregar:
 - [~] global/local scheduler — o global escolhe por custo, com banda de histerese
   (`AI_CLUSTER_PLACEMENT=off` volta ao primeiro-que-pergunta) e o local concede os cores,
   que o worker usa (`phase-2/placement.md`, `phase-2/local-scheduler.md`); filas de recursos
-  e reservas não;
+  não, reservas sim (`reservations.md`);
 - [~] transport abstraction — gRPC direto, sem camada de abstração;
 - [x] retries.
 

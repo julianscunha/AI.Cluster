@@ -6,8 +6,10 @@ use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
     GetMetricsRequest, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
     HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
-    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse, MetricsResponse,
-    RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse,
+    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse,
+    ListReservationsRequest, ListReservationsResponse, MetricsResponse, RegisterNodeRequest,
+    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
+    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
     SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
     WorkReportResponse, WorkUnit,
 };
@@ -493,6 +495,81 @@ impl ClusterControl for ClusterControlService {
             units: self.work.trace(&request_id),
             request_id,
         }))
+    }
+
+    /// Retém um nó para uma requisição futura (G6).
+    ///
+    /// O nó precisa existir e estar disponível: reservar um nó que o controller não
+    /// entregaria trabalho nenhum não protege nada, então isso é recusado em vez de
+    /// aceito e ignorado. Uma reserva nova sobre o mesmo nó substitui a anterior.
+    async fn reserve(
+        &self,
+        request: Request<ReserveRequest>,
+    ) -> Result<Response<ReserveResponse>, Status> {
+        let request = request.into_inner();
+        if request.node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        if request.request_id.trim().is_empty() {
+            return Err(Status::invalid_argument("request_id é obrigatório"));
+        }
+        if !self.registry.is_available(&request.node_id) {
+            return Ok(Response::new(ReserveResponse {
+                granted: false,
+                expires_at_unix_ms: 0,
+                message: format!("nó {} não está disponível para reserva", request.node_id),
+            }));
+        }
+        let now = unix_ms();
+        let reservation =
+            self.work
+                .reserve(&request.node_id, &request.request_id, request.ttl_ms, now);
+        self.events.record(
+            now,
+            "node_reserved",
+            format!(
+                "{} retido para {} até {}",
+                request.node_id, request.request_id, reservation.expires_at_unix_ms
+            ),
+        );
+        Ok(Response::new(ReserveResponse {
+            granted: true,
+            expires_at_unix_ms: reservation.expires_at_unix_ms,
+            message: String::new(),
+        }))
+    }
+
+    async fn list_reservations(
+        &self,
+        _request: Request<ListReservationsRequest>,
+    ) -> Result<Response<ListReservationsResponse>, Status> {
+        let reservations = self
+            .work
+            .reservations(unix_ms())
+            .into_iter()
+            .map(|(node_id, reservation)| Reservation {
+                node_id,
+                request_id: reservation.request_id,
+                expires_at_unix_ms: reservation.expires_at_unix_ms,
+            })
+            .collect();
+        Ok(Response::new(ListReservationsResponse { reservations }))
+    }
+
+    async fn release_reservation(
+        &self,
+        request: Request<ReleaseReservationRequest>,
+    ) -> Result<Response<ReleaseReservationResponse>, Status> {
+        let node_id = request.into_inner().node_id;
+        if node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        let released = self.work.release_reservation(&node_id);
+        if released {
+            self.events
+                .record(unix_ms(), "reservation_released", node_id.clone());
+        }
+        Ok(Response::new(ReleaseReservationResponse { released }))
     }
 }
 
@@ -1138,5 +1215,142 @@ mod tests {
         assert_eq!(trace.units[0].status, "completed");
         assert_eq!(trace.units[0].node_id, "node-a");
         assert_eq!(trace.units[0].compute_time_us, 1_000);
+    }
+
+    /// A unit under a given client request, so a reservation can be matched to it (G6).
+    fn unit_for(work_id: &str, request_id: &str) -> WorkUnit {
+        WorkUnit {
+            request_id: request_id.to_string(),
+            ..unit(work_id)
+        }
+    }
+
+    async fn register(service: &ClusterControlService, node_id: &str, threads: u32) {
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity(node_id)),
+                capability: Some(CapabilityReport {
+                    cpu_threads: threads,
+                    ..Default::default()
+                }),
+            }))
+            .await
+            .unwrap();
+    }
+
+    fn reserve_request(node_id: &str, request_id: &str, ttl_ms: u64) -> Request<ReserveRequest> {
+        Request::new(ReserveRequest {
+            node_id: node_id.to_string(),
+            request_id: request_id.to_string(),
+            ttl_ms,
+        })
+    }
+
+    #[tokio::test]
+    async fn reserve_holds_a_registered_node_and_lists_the_hold() {
+        let (service, _work) = service_with_work();
+        register(&service, "node-a", 8).await;
+
+        let granted = service
+            .reserve(reserve_request("node-a", "req-x", 5_000))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(granted.granted);
+        assert!(granted.expires_at_unix_ms > 0);
+
+        let listed = service
+            .list_reservations(Request::new(ListReservationsRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .reservations;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].node_id, "node-a");
+        assert_eq!(listed[0].request_id, "req-x");
+    }
+
+    #[tokio::test]
+    async fn a_reserved_node_stops_taking_another_requests_work() {
+        let (service, _registry, work_store) = service_with_registry_and_work();
+        // Only node-a exists, so if it refuses the unit nothing else can take it and the
+        // refusal is unambiguously the hold, not the cost ranking.
+        register(&service, "node-a", 8).await;
+        work_store.enqueue([unit_for("w1", "req-x")]);
+        service
+            .reserve(reserve_request("node-a", "req-other", 5_000))
+            .await
+            .unwrap();
+
+        let refused = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!refused.has_work);
+        assert_eq!(work_store.pending(), 1);
+    }
+
+    #[tokio::test]
+    async fn reserve_refuses_an_unknown_node_without_an_error() {
+        let (service, _work) = service_with_work();
+
+        // Not reserving is a valid answer, not a transport failure: the client gets
+        // granted=false and a reason it can print.
+        let refused = service
+            .reserve(reserve_request("ghost", "req-x", 0))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!refused.granted);
+        assert!(refused.message.contains("ghost"));
+    }
+
+    #[tokio::test]
+    async fn reserve_requires_a_node_and_a_request_id() {
+        let (service, _work) = service_with_work();
+
+        let missing_node = service
+            .reserve(reserve_request("  ", "req-x", 0))
+            .await
+            .unwrap_err();
+        assert_eq!(missing_node.code(), tonic::Code::InvalidArgument);
+
+        let missing_request = service
+            .reserve(reserve_request("node-a", "", 0))
+            .await
+            .unwrap_err();
+        assert_eq!(missing_request.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn release_reservation_frees_the_hold() {
+        let (service, _work) = service_with_work();
+        register(&service, "node-a", 8).await;
+        service
+            .reserve(reserve_request("node-a", "req-x", 5_000))
+            .await
+            .unwrap();
+
+        let released = service
+            .release_reservation(Request::new(ReleaseReservationRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(released.released);
+
+        // Releasing a node nobody holds is not an error, just false.
+        let again = service
+            .release_reservation(Request::new(ReleaseReservationRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!again.released);
     }
 }

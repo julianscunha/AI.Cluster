@@ -14,6 +14,7 @@ use ai_cluster_protocol::cluster::{
 use prost::Message;
 
 use crate::placement::{Candidate, fits, placement_cost};
+use crate::reservations::{Reservation, Reservations};
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
 ///
@@ -115,6 +116,9 @@ pub struct WorkStore {
     /// so handing out a request id does not shift the work-id numbering that tests and
     /// scripts read.
     request_sequence: AtomicU64,
+    /// Nós retidos para requisições futuras (G6). Lido dentro de `claim_placed`, então mora
+    /// aqui junto da decisão de placement, e não no registry, que só conhece estado dos nós.
+    reservations: Reservations,
     /// Where the snapshot is written. `None` means memory only, which is what the
     /// tests and the benchmark runs use.
     path: Option<PathBuf>,
@@ -320,6 +324,22 @@ impl WorkStore {
         )
     }
 
+    /// Retém um nó para uma requisição futura (G6) até `ttl_ms` a partir de `now`.
+    /// TTL zero usa o padrão de [`crate::reservations::DEFAULT_TTL_MS`].
+    pub fn reserve(&self, node_id: &str, request_id: &str, ttl_ms: u64, now: u64) -> Reservation {
+        self.reservations.reserve(node_id, request_id, ttl_ms, now)
+    }
+
+    /// Libera a reserva de um nó. False quando não havia reserva ativa.
+    pub fn release_reservation(&self, node_id: &str) -> bool {
+        self.reservations.release(node_id)
+    }
+
+    /// Reservas ativas em `now`, ordenadas por nó. As vencidas são descartadas na leitura.
+    pub fn reservations(&self, now: u64) -> Vec<(String, Reservation)> {
+        self.reservations.list(now)
+    }
+
     pub fn enqueue(&self, units: impl IntoIterator<Item = WorkUnit>) -> usize {
         let mut inner = self.lock();
         let mut count = 0;
@@ -351,12 +371,19 @@ impl WorkStore {
         now_unix_ms: u64,
     ) -> Option<WorkUnit> {
         let mut inner = self.lock();
+        // G6: a node held for a request takes only that request's units, even on this
+        // ungated path. The hold is a property of the node, not of the placement policy,
+        // so it must survive `AI_CLUSTER_PLACEMENT=off`.
+        let held = self.reservations.held_for(node_id, now_unix_ms);
         let index = {
             let outputs = &inner.outputs;
-            inner
-                .queue
-                .iter()
-                .position(|unit| ready(unit, outputs) && fits(unit, capability))?
+            inner.queue.iter().position(|unit| {
+                ready(unit, outputs)
+                    && fits(unit, capability)
+                    && held
+                        .as_deref()
+                        .is_none_or(|request| request == unit.request_id)
+            })?
         };
         Some(take_locked(&mut inner, index, node_id, now_unix_ms))
     }
@@ -378,6 +405,12 @@ impl WorkStore {
     /// near-equal nodes no longer refuse each other, so a unit cannot be stranded
     /// between them. A zero band means "strictly cheapest".
     ///
+    /// Reservations (G6): a node held for a request is the only home for that request's
+    /// units, and it takes no other request's units. The hold outranks the cost ranking —
+    /// the client held the node precisely so the work lands there — so a reserved unit
+    /// yields to the held node instead of going to a cheaper stranger. If the held node
+    /// never polls, the TTL releases the hold and normal placement resumes.
+    ///
     /// ponytail: a registered but idle node that stops polling can hold a unit
     /// indefinitely — it keeps heartbeating, so it is never declared offline. The
     /// window is small because an idle node polls every 200ms; revisit with a
@@ -391,15 +424,24 @@ impl WorkStore {
         tolerance: f64,
     ) -> Option<WorkUnit> {
         let mut inner = self.lock();
+        // G6: a node held for a request takes only that request's units.
+        let held = self.reservations.held_for(node_id, now_unix_ms);
         let index = {
             let outputs = &inner.outputs;
-            inner
-                .queue
-                .iter()
-                .position(|unit| ready(unit, outputs) && fits(unit, capability))?
+            inner.queue.iter().position(|unit| {
+                ready(unit, outputs)
+                    && fits(unit, capability)
+                    && held
+                        .as_deref()
+                        .is_none_or(|request| request == unit.request_id.as_str())
+            })?
         };
         let mut best: Option<f64> = None;
         let mut asking: Option<f64> = None;
+        // G6: whether some idle fit is held for this unit's request, and whether the asking
+        // node is one of them. Decided before the cost ranking: a hold outranks cost.
+        let mut held_somewhere = false;
+        let mut held_here = false;
         {
             let unit = &inner.queue[index];
             for (id, capability, health) in candidates {
@@ -410,6 +452,15 @@ impl WorkStore {
                     .count() as u32;
                 if in_flight > 0 || !fits(unit, capability) {
                     continue;
+                }
+                // G6: a node held for another request is not a candidate for this unit.
+                match self.reservations.held_for(id, now_unix_ms).as_deref() {
+                    Some(request) if request != unit.request_id.as_str() => continue,
+                    Some(_) => {
+                        held_somewhere = true;
+                        held_here |= id.as_str() == node_id;
+                    }
+                    None => {}
                 }
                 let cost = placement_cost(
                     unit,
@@ -428,6 +479,12 @@ impl WorkStore {
                     _ => {}
                 }
             }
+        }
+        // G6: a unit whose request holds a node belongs to that node — the hold is a promise
+        // that this work lands there, so no other node may take it. The unit waits for the
+        // held node to poll; if it never does, the TTL releases the hold and placement resumes.
+        if held_somewhere {
+            return held_here.then(|| take_locked(&mut inner, index, node_id, now_unix_ms));
         }
         let best = best?;
         // The asking node takes the unit when it is the cheapest idle fit, or close
@@ -1347,5 +1404,141 @@ mod tests {
         assert_eq!(reloaded.next_work_id(), "w-1");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A unit under a given client request, so a reservation can be matched to it (G6).
+    fn unit_for(work_id: &str, request_id: &str) -> WorkUnit {
+        WorkUnit {
+            request_id: request_id.to_string(),
+            ..unit(work_id)
+        }
+    }
+
+    #[test]
+    fn a_reserved_node_takes_its_requests_unit_instead_of_a_cheaper_stranger() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("w1", "req-x")]);
+        store.reserve("node-weak", "req-x", 0, 1_000);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // The hold outranks cost: the cheaper node yields so the unit can land on the
+        // node its request reserved, which is what reserving one is for.
+        assert!(
+            store
+                .claim_placed("node-strong", &capability(8, 0.0), 1_001, &candidates, 0.0)
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .claim_placed("node-weak", &capability(2, 0.0), 1_002, &candidates, 0.0)
+                .expect("the held node takes its request's unit")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn a_node_reserved_for_another_request_takes_no_work() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("w1", "req-x")]);
+        store.reserve("node-a", "req-other", 0, 1_000);
+        let candidates = [("node-a".to_string(), capability(8, 0.0), healthy())];
+
+        // node-a is the only candidate, but it is held for someone else: the unit waits
+        // instead of being placed on a node another request is holding.
+        assert!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 1_001, &candidates, 0.0)
+                .is_none()
+        );
+        assert_eq!(store.pending(), 1);
+    }
+
+    #[test]
+    fn an_expired_reservation_stops_holding_the_node() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("w1", "req-x")]);
+        store.reserve("node-a", "req-other", 5_000, 1_000);
+        let candidates = [("node-a".to_string(), capability(8, 0.0), healthy())];
+
+        // Inside the window the hold blocks the unit...
+        assert!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 2_000, &candidates, 0.0)
+                .is_none()
+        );
+        // ...and once it lapses the node is a normal candidate again, with no timer.
+        assert_eq!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 6_000, &candidates, 0.0)
+                .expect("the hold lapsed")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn an_ungated_claim_honours_a_reservation_too() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("w1", "req-x"), unit_for("w2", "req-other")]);
+        store.reserve("node-a", "req-other", 0, 1_000);
+
+        // `claim` is the first-come-first-served path, but a hold is a property of the
+        // node, not of the placement policy, so it must survive AI_CLUSTER_PLACEMENT=off:
+        // the held node skips the unit it does not own and takes its own.
+        assert_eq!(
+            store
+                .claim("node-a", &capability(8, 0.0), 1_001)
+                .expect("the held node takes its own request's unit")
+                .work_id,
+            "w2"
+        );
+        // w1 belongs to another request and is still queued: the held node may not take
+        // it, but a node nobody holds can.
+        assert_eq!(
+            store
+                .claim("node-b", &capability(8, 0.0), 1_002)
+                .expect("w1 is ready for a node that is not held")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn releasing_a_reservation_frees_the_node_for_other_requests() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("w1", "req-x")]);
+        store.reserve("node-a", "req-other", 0, 1_000);
+        let candidates = [("node-a".to_string(), capability(8, 0.0), healthy())];
+
+        assert!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 1_001, &candidates, 0.0)
+                .is_none()
+        );
+        assert!(store.release_reservation("node-a"));
+        assert_eq!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 1_002, &candidates, 0.0)
+                .expect("the node is free again")
+                .work_id,
+            "w1"
+        );
+    }
+
+    #[test]
+    fn reservations_lists_active_holds_and_drops_expired_ones() {
+        let store = WorkStore::new();
+        store.reserve("node-b", "req-x", 5_000, 1_000);
+        store.reserve("node-a", "req-y", 500, 1_000);
+
+        // node-a's hold lapsed at 1_500, so only node-b is still held at 2_000.
+        let listed = store.reservations(2_000);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "node-b");
+        assert_eq!(listed[0].1.request_id, "req-x");
     }
 }

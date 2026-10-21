@@ -284,7 +284,16 @@ unidade de um nó sobrecarregado) não existe — as unidades são curtas e volt
 
 ### G6 Reservations
 
-Recursos futuros. — [ ] não iniciado.
+Recursos futuros. — [x] (`reservations.md`): `Reserve`/`ListReservations`/`ReleaseReservation`
+retêm um nó para uma requisição futura. A unidade da requisição dona roda no nó retido mesmo
+que ele seja o nó pior pelo cost model, e o nó retido recusa unidades de outras requisições
+— nos dois caminhos de despacho, inclusive com `AI_CLUSTER_PLACEMENT=off`, porque a retenção
+é propriedade do nó e não da política. Um nó, uma reserva; TTL vencendo libera, e o
+vencimento é aplicado na leitura, não por timer. Não persiste além de um restart e retém o
+nó inteiro, não uma fração da capacidade. Na CLI: `ai-cluster reserve|reservations|release` e
+`ai-cluster benchmark --request-id` para enfileirar sob o id reservado. Evidência:
+`bash code/tests/phase-g-reservations.sh` (nó fraco retido roda o trabalho do dono; nó forte
+retido derruba a unidade de outra requisição para o fraco).
 
 Critério de saída: o scheduler prova, por benchmark, que pode escolher placement melhor que round-robin para workloads testados. — [x] atendido: em `bash code/tests/phase-g-placement.sh` a mesma unidade roda no nó fraco sob primeiro-que-pergunta (2.020.000us) e no nó capaz sob placement (18.000us).
 
