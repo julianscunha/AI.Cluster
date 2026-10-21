@@ -317,7 +317,7 @@ Dashboard em shell. — [ ] não iniciado.
 
 Expor prediction error. — [ ] não iniciado.
 
-Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [~] as métricas de latência existem (`metrics.md`: latência vs compute por cluster), mas ligar uma requisição de cliente às unidades que ela gerou é o H3, ainda não iniciado.
+Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; métricas de nó e percentis ainda não.
 
 ## 10. Fase I — State Manager
 
