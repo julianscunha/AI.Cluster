@@ -74,6 +74,55 @@ else
   exit 1
 fi
 
+echo "=== C) percentis ==="
+P50=$(echo "$AFTER" | field p50_latency_us)
+P95=$(echo "$AFTER" | field p95_latency_us)
+# A média escondia a cauda; os percentis têm que existir e ser ordenados.
+if [ -n "$P50" ] && [ -n "$P95" ] && [ "$P50" -le "$P95" ] 2>/dev/null; then
+  echo "OK: p50_latency_us=$P50 <= p95_latency_us=$P95"
+else
+  echo "FALHA: esperado p50 <= p95, veio p50=$P50 p95=$P95"
+  teardown
+  exit 1
+fi
+
+echo "=== D) métricas de nó ==="
+NODES_OUT=$(run "$R/ai-cluster nodes")
+echo "$NODES_OUT"
+if echo "$NODES_OUT" | grep -q "CPU_%"; then
+  echo "OK: a tabela de nós traz as colunas de métricas de nó"
+else
+  echo "FALHA: a tabela de nós deveria ter CPU_%/TEMP_C/SWAP_%"
+  teardown
+  exit 1
+fi
+if echo "$NODES_OUT" | grep -q "node-m"; then
+  echo "OK: o nó aparece com suas métricas"
+else
+  echo "FALHA: o nó node-m deveria estar listado"
+  teardown
+  exit 1
+fi
+
+echo "=== E) exportador Prometheus ==="
+EXPORT=$(run "curl -sf http://aic-controller:9101/metrics")
+if [ -z "$EXPORT" ]; then
+  echo "FALHA: o exportador não respondeu em /metrics"
+  teardown
+  exit 1
+fi
+echo "$EXPORT" | head -8
+for metric in ai_cluster_nodes_total ai_cluster_units_completed \
+              ai_cluster_p95_latency_us ai_cluster_node_cpu_utilization; do
+  if echo "$EXPORT" | grep -q "^$metric"; then
+    echo "OK: $metric presente"
+  else
+    echo "FALHA: $metric ausente no /metrics"
+    teardown
+    exit 1
+  fi
+done
+
 teardown
 docker network rm "$NET" >/dev/null 2>&1
 echo "=== fim ==="

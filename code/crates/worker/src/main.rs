@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
@@ -405,7 +406,146 @@ fn capability() -> CapabilityReport {
     }
 }
 
-// ponytail: health covers memory pressure only; CPU/thermal signals arrive with the benchmark phase.
+/// Previous /proc sample, for the node metrics that are rates rather than gauges.
+///
+/// A static because one worker process is one node: there is no second node to confuse the
+/// sample with, and the heartbeat task is the only reader.
+#[derive(Clone, Copy)]
+struct ProcSample {
+    cpu_total: u64,
+    cpu_idle: u64,
+    io_ops: u64,
+    at: Instant,
+}
+
+static PREVIOUS_SAMPLE: Mutex<Option<ProcSample>> = Mutex::new(None);
+
+/// Total and idle CPU jiffies from the aggregate `cpu` line of /proc/stat.
+///
+/// Fields are user, nice, system, idle, iowait, irq, softirq, steal. Idle counts iowait
+/// too: a core blocked on disk is not doing CPU work. Split from the file read so the
+/// parsing is testable without /proc.
+fn parse_cpu_times(content: &str) -> Option<(u64, u64)> {
+    // The trailing space keeps this off the per-core `cpu0`, `cpu1` lines.
+    let line = content.lines().find(|line| line.starts_with("cpu "))?;
+    let values: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect();
+    if values.len() < 4 {
+        return None;
+    }
+    let total: u64 = values.iter().sum();
+    let idle = values[3] + values.get(4).copied().unwrap_or(0);
+    Some((total, idle))
+}
+
+/// Read and write operations completed, summed over /proc/diskstats.
+///
+/// Reads and writes together, which is what "IOPS" means to someone watching a node.
+/// Sectors are not counted: those measure bytes, not operations.
+fn parse_disk_ops(content: &str) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut seen = false;
+    for line in content.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // major, minor, name, reads_completed, reads_merged, sectors_read, ms_reading,
+        // writes_completed — so writes_completed is index 7.
+        if fields.len() < 8 {
+            continue;
+        }
+        if let (Ok(reads), Ok(writes)) = (fields[3].parse::<u64>(), fields[7].parse::<u64>()) {
+            total = total.saturating_add(reads).saturating_add(writes);
+            seen = true;
+        }
+    }
+    seen.then_some(total)
+}
+
+/// CPU utilization (0..1) and disk IOPS between two samples.
+///
+/// Pure, so the delta arithmetic is testable without a live /proc. Both counters are
+/// monotonic since boot, so the ratio of two readings is the load over that interval.
+fn load_between(before: ProcSample, now: ProcSample) -> (f64, f64) {
+    let cpu_delta = now.cpu_total.saturating_sub(before.cpu_total);
+    let idle_delta = now.cpu_idle.saturating_sub(before.cpu_idle);
+    let cpu_utilization = if cpu_delta == 0 {
+        0.0
+    } else {
+        (1.0 - idle_delta as f64 / cpu_delta as f64).clamp(0.0, 1.0)
+    };
+    let seconds = now.at.saturating_duration_since(before.at).as_secs_f64();
+    let io_ops = if seconds <= 0.0 {
+        0.0
+    } else {
+        now.io_ops.saturating_sub(before.io_ops) as f64 / seconds
+    };
+    (cpu_utilization, io_ops)
+}
+
+/// CPU utilization and disk IOPS since the previous report.
+///
+/// The first call has nothing to difference against and reports zero for both, which reads
+/// as "not measured" rather than as an idle node — the same convention as an unreported
+/// compute score.
+fn node_load(now: Instant) -> (f64, f64) {
+    let cpu = std::fs::read_to_string("/proc/stat")
+        .ok()
+        .and_then(|content| parse_cpu_times(&content));
+    let io = std::fs::read_to_string("/proc/diskstats")
+        .ok()
+        .and_then(|content| parse_disk_ops(&content));
+    let sample = ProcSample {
+        cpu_total: cpu.map_or(0, |(total, _)| total),
+        cpu_idle: cpu.map_or(0, |(_, idle)| idle),
+        io_ops: io.unwrap_or(0),
+        at: now,
+    };
+    let mut previous = PREVIOUS_SAMPLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let load = match (*previous, cpu.is_some()) {
+        (Some(before), true) => load_between(before, sample),
+        _ => (0.0, 0.0),
+    };
+    *previous = Some(sample);
+    load
+}
+
+/// Package temperature in Celsius, when the kernel exposes a thermal zone.
+///
+/// Absent in most containers, so 0 means "no sensor visible", not "0 °C" — the same
+/// convention as an unmeasured compute score. Scans a few zones because zone0 is not
+/// always the CPU one.
+fn temperature_c() -> f64 {
+    for zone in 0..4 {
+        let path = format!("/sys/class/thermal/thermal_zone{zone}/temp");
+        if let Some(raw) = read_trimmed(&path).and_then(|value| value.parse::<f64>().ok()) {
+            // Millidegrees on every kernel that exposes this file.
+            if raw.is_finite() && raw > 0.0 {
+                return raw / 1000.0;
+            }
+        }
+    }
+    0.0
+}
+
+/// Fraction of swap in use, 0..1. Zero when the node has no swap configured.
+fn swap_utilization() -> f64 {
+    match (meminfo_kb("SwapTotal:"), meminfo_kb("SwapFree:")) {
+        (Some(total), Some(free)) if total > 0 => {
+            (1.0 - free as f64 / total as f64).clamp(0.0, 1.0)
+        }
+        _ => 0.0,
+    }
+}
+
+/// What the node reports about its own condition (Fase H1).
+///
+/// `health_score` still reflects memory pressure alone — the CPU, thermal and swap signals
+/// are reported raw, and folding them into the score is the health engine's decision
+/// (`docs/06`), not a metrics slice. Reporting them is what H1 asked for.
 fn health() -> HealthReport {
     let utilization = match (meminfo_kb("MemTotal:"), meminfo_kb("MemAvailable:")) {
         (Some(total), Some(available)) if total > 0 => {
@@ -413,9 +553,14 @@ fn health() -> HealthReport {
         }
         _ => 0.0,
     };
+    let (cpu_utilization, disk_io_ops) = node_load(Instant::now());
     HealthReport {
         health_score: 1.0 - utilization,
         memory_utilization: utilization,
+        cpu_utilization,
+        temperature_c: temperature_c(),
+        swap_utilization: swap_utilization(),
+        disk_io_ops,
         ..Default::default()
     }
 }

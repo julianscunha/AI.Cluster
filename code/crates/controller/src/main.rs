@@ -61,6 +61,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Prometheus exporter (H1): the same roll-up pushed to whoever scrapes, so watching the
+    // cluster does not require a client that speaks gRPC. A failure here is reported and
+    // never fatal — losing the exporter must not take the control plane down with it.
+    let exporter_registry = registry.clone();
+    let exporter_work = work.clone();
+    tokio::spawn(async move {
+        let metrics_addr =
+            std::env::var("AI_CLUSTER_METRICS_ADDR").unwrap_or_else(|_| "0.0.0.0:9101".to_string());
+        println!("exportador de métricas em http://{metrics_addr}/metrics");
+        if let Err(err) =
+            ai_cluster_controller::exporter::serve(metrics_addr, exporter_registry, exporter_work)
+                .await
+        {
+            println!("exportador de métricas parou: {err}");
+        }
+    });
+
     // The generated `with_interceptor` builds its own server without the size limits, so
     // the limits are set on the server first and the interceptor is attached afterwards.
     let server = ClusterControlServer::new(service)

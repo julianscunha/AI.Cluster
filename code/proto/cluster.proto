@@ -29,6 +29,13 @@ message HealthReport {
   double storage_health = 5;
   double network_latency_ms = 6;
   bool thermal_throttling = 7;
+  /// Fraction of swap in use, 0..1. Zero when the node has no swap configured, which is
+  /// also what an idle node with swap reports — the two are not distinguished.
+  double swap_utilization = 8;
+  /// Disk operations completed per second since the previous report. Zero on the first
+  /// report, which has no previous sample to difference against. Sums every entry the
+  /// kernel lists, so partitions of the same disk are counted twice.
+  double disk_io_ops = 9;
 }
 
 message NodeSnapshot {
@@ -300,6 +307,14 @@ message MetricsResponse {
   uint64 avg_compute_time_us = 9;
   /// `total_latency_us / units_completed`, rounded down. Zero when nothing completed.
   uint64 avg_latency_us = 10;
+  /// Percentis sobre as unidades concluídas que o controller ainda retém. `p50` é a
+  /// mediana; `p95` mostra a cauda, que a média esconde. Zero quando nada concluiu.
+  /// O índice é `ceil(p * n) - 1` sobre a lista ordenada, então com uma unidade só os
+  /// quatro percentis são o mesmo número.
+  uint64 p50_compute_time_us = 11;
+  uint64 p95_compute_time_us = 12;
+  uint64 p50_latency_us = 13;
+  uint64 p95_latency_us = 14;
 }
 
 message GetMetricsRequest {}

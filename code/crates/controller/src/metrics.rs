@@ -9,6 +9,24 @@ use ai_cluster_protocol::cluster::MetricsResponse;
 
 use crate::work::CompletedWork;
 
+/// Nearest-rank percentile of `values`: the smallest value at or above rank `ceil(p * n)`.
+///
+/// A percentile, not an interpolation: the answer is always a value that actually happened,
+/// which is what an operator wants to read off a latency tail. An empty slice reports zero
+/// rather than panicking, so an idle cluster needs no separate guard.
+///
+/// ponytail: sorts a copy per call, so this is O(n log n) over the units the controller
+/// still retains. Fine while that ring is small; keep a running histogram if it grows.
+fn percentile(values: &[u64], p: f64) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let rank = (p * sorted.len() as f64).ceil().max(1.0) as usize;
+    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
+}
+
 /// Rolls registry and work state up into the `GetMetrics` response.
 ///
 /// Pure: takes the counts and the completed records, returns the message. The service does
@@ -41,6 +59,17 @@ pub fn summarize(
     let avg_compute_time_us = total_compute_time_us.checked_div(count).unwrap_or(0);
     let avg_latency_us = total_latency_us.checked_div(count).unwrap_or(0);
 
+    // Percentiles need the individual times, not the sum: an average hides the tail, and
+    // the tail is what a client waiting on one request feels.
+    let compute_times: Vec<u64> = completed
+        .iter()
+        .map(|record| record.compute_time_us)
+        .collect();
+    let latencies: Vec<u64> = completed
+        .iter()
+        .map(|record| record.total_latency_us)
+        .collect();
+
     MetricsResponse {
         nodes_total,
         nodes_available,
@@ -52,6 +81,10 @@ pub fn summarize(
         total_latency_us,
         avg_compute_time_us,
         avg_latency_us,
+        p50_compute_time_us: percentile(&compute_times, 0.50),
+        p95_compute_time_us: percentile(&compute_times, 0.95),
+        p50_latency_us: percentile(&latencies, 0.50),
+        p95_latency_us: percentile(&latencies, 0.95),
     }
 }
 
@@ -98,6 +131,42 @@ mod tests {
         assert_eq!(metrics.units_completed, 0);
         assert_eq!(metrics.avg_compute_time_us, 0);
         assert_eq!(metrics.avg_latency_us, 0);
+        assert_eq!(metrics.p50_compute_time_us, 0);
+        assert_eq!(metrics.p95_latency_us, 0);
+    }
+
+    #[test]
+    fn percentiles_use_the_nearest_rank() {
+        assert_eq!(percentile(&[], 0.50), 0);
+        // One value: every percentile is that value.
+        assert_eq!(percentile(&[7], 0.50), 7);
+        assert_eq!(percentile(&[7], 0.95), 7);
+        // 1..=10: p50 is rank ceil(5) = 5, so the 5th smallest; p95 is rank ceil(9.5) = 10.
+        let values: Vec<u64> = (1..=10).collect();
+        assert_eq!(percentile(&values, 0.50), 5);
+        assert_eq!(percentile(&values, 0.95), 10);
+        // The answer is always a value that actually happened, never an interpolation.
+        assert_eq!(percentile(&[10, 20], 0.50), 10);
+        assert_eq!(percentile(&[10, 20], 0.95), 20);
+        // Input order is irrelevant: the copy is sorted, the caller's slice is untouched.
+        assert_eq!(percentile(&[30, 10, 20], 0.50), 20);
+    }
+
+    #[test]
+    fn summarize_reports_percentiles_beside_the_average() {
+        // Latency spread wider than compute, so the two tails are distinguishable.
+        let records = [
+            completed(100, 100),
+            completed(200, 200),
+            completed(300, 900),
+        ];
+        let metrics = summarize(1, 1, &records, 0, 0, 0);
+
+        assert_eq!(metrics.avg_compute_time_us, 200);
+        assert_eq!(metrics.p50_compute_time_us, 200);
+        assert_eq!(metrics.p95_compute_time_us, 300);
+        assert_eq!(metrics.p50_latency_us, 200);
+        assert_eq!(metrics.p95_latency_us, 900);
     }
 
     #[test]

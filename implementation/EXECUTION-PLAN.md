@@ -301,10 +301,14 @@ Critério de saída: o scheduler prova, por benchmark, que pode escolher placeme
 
 ### H1 Metrics
 
-Node, runtime e cluster. — [~] roll-up do cluster (`metrics.md`): `GetMetrics` devolve nós
-totais/disponíveis, fila (pendentes/bloqueadas/falhas) e tempos de compute e latência somados
-e médios, com `ai-cluster metrics` na CLI. Métricas de nó (CPU, temperatura, swap, IOPS),
-percentis e exportador ainda não.
+Node, runtime e cluster. — [x] (`metrics.md`): `GetMetrics` devolve nós totais/disponíveis,
+fila (pendentes/bloqueadas/falhas), tempos de compute e latência somados e médios **e** os
+percentis p50/p95 dos dois, com `ai-cluster metrics`. O worker passou a reportar CPU, swap,
+temperatura e IOPS no `HealthReport` (antes só pressão de memória) e `ai-cluster nodes` mostra
+as colunas — zero ali é "não medido", não "zero". O exportador Prometheus serve o mesmo roll-up
+mais uma série por nó em `GET /metrics` (`AI_CLUSTER_METRICS_ADDR`, padrão `0.0.0.0:9101`), com
+o tipo declarado uma vez por métrica. Rede, storage score e métricas de LLM não. Evidência:
+`bash code/tests/phase-h-metrics.sh` (ocioso → 2 unidades → percentis → nós → `/metrics`).
 
 ### H2 Events
 

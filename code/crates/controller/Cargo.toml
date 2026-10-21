@@ -11,3 +11,7 @@ tonic = "0.14"
 # Reuses the generated message types for the on-disk snapshot; already in the
 # tree through ai-cluster-protocol, so this adds no new crate.
 prost = "0.14"
+# The Prometheus exporter's HTTP surface (H1). axum is already in the tree as a
+# tonic dependency, so this adds no new crate; the features are trimmed to the
+# ones the exporter actually uses.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

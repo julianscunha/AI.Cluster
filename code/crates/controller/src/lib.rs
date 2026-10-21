@@ -1,4 +1,5 @@
 pub mod events;
+pub mod exporter;
 pub mod metrics;
 pub mod placement;
 pub mod registry;

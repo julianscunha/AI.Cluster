@@ -162,8 +162,9 @@ Entregar:
 ## Observabilidade (Fase H do EXECUTION-PLAN)
 
 - [x] H2 Events — `telemetry.md`, `ai-cluster events`;
-- [x] H1 Metrics — roll-up de nós, fila e tempos de compute/latência (`metrics.md`,
-  `ai-cluster metrics`); métricas de nó e exportador não;
+- [x] H1 Metrics — roll-up de nós, fila, tempos de compute/latência, percentis p50/p95 e os
+  sinais de nó (CPU, swap, temperatura, IOPS) em `metrics.md` / `ai-cluster metrics|nodes`,
+  mais o exportador Prometheus em `GET /metrics`; rede e storage score não;
 - [x] H3 Trace correlation — ligar requisição do cliente às units que ela gerou (`traces.md`,
   `ai-cluster request trace <id>`);
 - [x] H4 Dashboard — painel de uma tela sobre as chamadas que já existem (`dashboard.md`,

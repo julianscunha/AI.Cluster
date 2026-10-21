@@ -257,15 +257,15 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8}",
-        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE"
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7}",
+        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C", "SWAP_%"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
         let capability = node.capability.unwrap_or_default();
         let health = node.health.unwrap_or_default();
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2}",
             identity.node_id,
             node.state,
             identity.architecture,
@@ -273,6 +273,9 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.memory_bytes as f64 / 1_073_741_824.0,
             capability.compute_score,
             health.health_score,
+            health.cpu_utilization * 100.0,
+            health.temperature_c,
+            health.swap_utilization * 100.0,
         );
     }
     Ok(())
@@ -321,6 +324,15 @@ async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>>
         "total_latency_us={} avg_latency_us={}",
         metrics.total_latency_us, metrics.avg_latency_us
     );
+    // H1: a média esconde a cauda. p50 é a mediana; p95 mostra o que a cauda sente.
+    println!(
+        "p50_compute_time_us={} p95_compute_time_us={}",
+        metrics.p50_compute_time_us, metrics.p95_compute_time_us
+    );
+    println!(
+        "p50_latency_us={} p95_latency_us={}",
+        metrics.p50_latency_us, metrics.p95_latency_us
+    );
     Ok(())
 }
 
@@ -362,21 +374,23 @@ async fn print_dashboard(
         );
         println!();
         println!(
-            "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8}",
-            "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE"
+            "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8} {:>7} {:>7}",
+            "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C"
         );
         for node in nodes {
             let identity = node.identity.unwrap_or_default();
             let capability = node.capability.unwrap_or_default();
             let health = node.health.unwrap_or_default();
             println!(
-                "{:<20} {:<12} {:>7} {:>9.2} {:>8.2} {:>8.2}",
+                "{:<20} {:<12} {:>7} {:>9.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2}",
                 identity.node_id,
                 node.state,
                 capability.cpu_threads,
                 capability.memory_bytes as f64 / 1_073_741_824.0,
                 capability.compute_score,
                 health.health_score,
+                health.cpu_utilization * 100.0,
+                health.temperature_c,
             );
         }
         println!();
