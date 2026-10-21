@@ -3,13 +3,13 @@
 //! The comparison this enables: total round trip observed by the controller
 //! minus the compute time reported by the worker is the transfer overhead.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ai_cluster_protocol::cluster::{
-    CapabilityReport, HealthReport, WorkOutput, WorkResult, WorkSnapshot, WorkUnit,
+    CapabilityReport, HealthReport, TraceEntry, WorkOutput, WorkResult, WorkSnapshot, WorkUnit,
 };
 use prost::Message;
 
@@ -27,6 +27,9 @@ const MAX_ATTEMPTS: u32 = 3;
 pub struct CompletedWork {
     pub work_id: String,
     pub node_id: String,
+    /// The client request this unit was enqueued under (H3), copied from the unit at
+    /// dispatch. Lets a trace find a request's completed units and their timings.
+    pub request_id: String,
     pub compute_time_us: u64,
     pub total_latency_us: u64,
     pub transfer_time_us: u64,
@@ -59,8 +62,39 @@ struct Inner {
     /// read when a unit is handed back, dropped once the unit is settled.
     attempts: HashMap<String, u32>,
     /// Units that will never complete: their retry budget ran out. Their
-    /// dependents are failed with them so the graph terminates.
-    failed: HashSet<String>,
+    /// dependents are failed with them so the graph terminates. Mapped to the request
+    /// that produced them, so a trace can list a request's failed units (H3).
+    ///
+    /// ponytail: only the ids survive a reload, so a failed unit's request id is empty
+    /// after a restart. The same ceiling as completed units, which are not persisted at
+    /// all; persist the correlation when traces need to outlive a restart.
+    failed: HashMap<String, String>,
+}
+
+/// One row of a request trace (H3). A unit only has timings once it has completed; the
+/// other states report zero, so a trace shows cost where there is cost and nothing where
+/// there is not, instead of a misleading zero.
+fn trace_row(
+    work_id: &str,
+    node_id: &str,
+    status: &str,
+    times: Option<&CompletedWork>,
+) -> TraceEntry {
+    let (compute_time_us, transfer_time_us, total_latency_us) = times.map_or((0, 0, 0), |record| {
+        (
+            record.compute_time_us,
+            record.transfer_time_us,
+            record.total_latency_us,
+        )
+    });
+    TraceEntry {
+        work_id: work_id.to_string(),
+        node_id: node_id.to_string(),
+        status: status.to_string(),
+        compute_time_us,
+        transfer_time_us,
+        total_latency_us,
+    }
 }
 
 /// What a requeue pass did. A unit either goes back to the queue for another
@@ -77,6 +111,10 @@ pub struct RequeueOutcome {
 pub struct WorkStore {
     inner: Mutex<Inner>,
     sequence: AtomicU64,
+    /// Separate sequence for client request ids (H3). Kept apart from the work-id sequence
+    /// so handing out a request id does not shift the work-id numbering that tests and
+    /// scripts read.
+    request_sequence: AtomicU64,
     /// Where the snapshot is written. `None` means memory only, which is what the
     /// tests and the benchmark runs use.
     path: Option<PathBuf>,
@@ -104,12 +142,17 @@ fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
 ///
 /// Dependents are always still queued when this runs: `ready` withholds a unit until
 /// its dependencies have produced output, so nothing downstream of a failure can be
-/// in flight yet.
-fn fail_cascade(inner: &mut Inner, work_id: &str) -> usize {
+/// in flight yet. They inherit the head unit's request id, since a graph's units are
+/// all enqueued under one request — so a trace can attribute the whole cascade to it.
+fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
     let mut failed = 0;
     let mut pending = vec![work_id.to_string()];
     while let Some(id) = pending.pop() {
-        if !inner.failed.insert(id.clone()) {
+        if inner
+            .failed
+            .insert(id.clone(), request_id.to_string())
+            .is_some()
+        {
             continue;
         }
         inner.attempts.remove(&id);
@@ -197,7 +240,11 @@ impl WorkStore {
                         .map(|output| (output.work_id, output.matrix))
                         .collect();
                     inner.attempts = snapshot.attempts.into_iter().collect();
-                    inner.failed = snapshot.failed.into_iter().collect();
+                    inner.failed = snapshot
+                        .failed
+                        .into_iter()
+                        .map(|id| (id, String::new()))
+                        .collect();
                     inner.queue.len()
                 };
                 store.sequence.store(snapshot.sequence, Ordering::Relaxed);
@@ -249,7 +296,7 @@ impl WorkStore {
                 })
                 .collect(),
             attempts: inner.attempts.clone(),
-            failed: inner.failed.iter().cloned().collect(),
+            failed: inner.failed.keys().cloned().collect(),
             sequence: self.sequence.load(Ordering::Relaxed),
         };
         let temp = path.with_extension("tmp");
@@ -263,6 +310,14 @@ impl WorkStore {
     /// Monotonic id for controller-generated work units.
     pub fn next_work_id(&self) -> String {
         format!("w-{}", self.sequence.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Monotonic id for a client request (H3), used when the client did not supply one.
+    pub fn next_request_id(&self) -> String {
+        format!(
+            "req-{}",
+            self.request_sequence.fetch_add(1, Ordering::Relaxed)
+        )
     }
 
     pub fn enqueue(&self, units: impl IntoIterator<Item = WorkUnit>) -> usize {
@@ -406,6 +461,7 @@ impl WorkStore {
         let completed = CompletedWork {
             work_id: result.work_id.clone(),
             node_id: result.node_id.clone(),
+            request_id: dispatched.unit.request_id.clone(),
             compute_time_us: result.compute_time_us,
             total_latency_us,
             transfer_time_us: total_latency_us.saturating_sub(result.compute_time_us),
@@ -468,7 +524,7 @@ impl WorkStore {
                 continue;
             };
             if inner.attempts.get(&work_id).copied().unwrap_or(0) >= MAX_ATTEMPTS {
-                outcome.failed += fail_cascade(&mut inner, &work_id);
+                outcome.failed += fail_cascade(&mut inner, &work_id, &record.unit.request_id);
             } else {
                 inner.queue.push_back(record.unit);
                 outcome.requeued += 1;
@@ -481,13 +537,62 @@ impl WorkStore {
     /// Ids of units that will never complete, in stable order. Includes the units
     /// failed for spending their retry budget and the dependents failed with them.
     pub fn failed_units(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.lock().failed.iter().cloned().collect();
+        let mut ids: Vec<String> = self.lock().failed.keys().cloned().collect();
         ids.sort();
         ids
     }
 
     pub fn failed(&self) -> usize {
         self.lock().failed.len()
+    }
+
+    /// The path a client request took: every unit it produced, where each one is in its
+    /// life, and what it cost (H3).
+    ///
+    /// Units come grouped by state — queued, dispatched, completed, failed — in the order
+    /// the controller moved them within each group. For a graph, whose units are enqueued
+    /// in execution order and settle in that order, the completed group reads as the
+    /// execution path. An unknown id yields an empty trace rather than an error: a trace
+    /// lost to a restart is not a client mistake.
+    ///
+    /// ponytail: completed units are not persisted and a failed unit's request id is lost
+    /// on reload, so a trace only covers the current run. Enough to explain a request's
+    /// latency while it is in flight or just finished, which is the point; persist the
+    /// correlation when traces need to outlive a restart.
+    pub fn trace(&self, request_id: &str) -> Vec<TraceEntry> {
+        let inner = self.lock();
+        let mut units = Vec::new();
+        for unit in &inner.queue {
+            if unit.request_id == request_id {
+                units.push(trace_row(&unit.work_id, "", "queued", None));
+            }
+        }
+        for record in inner.dispatched.values() {
+            if record.unit.request_id == request_id {
+                units.push(trace_row(
+                    &record.unit.work_id,
+                    &record.node_id,
+                    "dispatched",
+                    None,
+                ));
+            }
+        }
+        for record in &inner.completed {
+            if record.request_id == request_id {
+                units.push(trace_row(
+                    &record.work_id,
+                    &record.node_id,
+                    "completed",
+                    Some(record),
+                ));
+            }
+        }
+        for (work_id, failed_request) in &inner.failed {
+            if failed_request == request_id {
+                units.push(trace_row(work_id, "", "failed", None));
+            }
+        }
+        units
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -520,6 +625,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: "req-test".to_string(),
         }
     }
 
@@ -535,6 +641,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: "req-test".to_string(),
         }
     }
 
@@ -877,6 +984,87 @@ mod tests {
                 .work_id,
             "w3"
         );
+    }
+
+    #[test]
+    fn a_trace_follows_a_unit_from_queue_to_completion() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+
+        // Queued: the unit is there, owned by no node, with no timings yet.
+        let queued = store.trace("req-test");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].work_id, "w1");
+        assert_eq!(queued[0].status, "queued");
+        assert_eq!(queued[0].node_id, "");
+        assert_eq!(queued[0].compute_time_us, 0);
+
+        // Dispatched: the node is named, still no timings.
+        store.claim("node-a", &capability(8, 0.0), 1_000);
+        let dispatched = store.trace("req-test");
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(dispatched[0].status, "dispatched");
+        assert_eq!(dispatched[0].node_id, "node-a");
+        assert_eq!(dispatched[0].total_latency_us, 0);
+
+        // Completed: the round trip splits into compute and transfer.
+        store.complete(result("w1", 250_000), 1_500);
+        let completed = store.trace("req-test");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].status, "completed");
+        assert_eq!(completed[0].node_id, "node-a");
+        assert_eq!(completed[0].compute_time_us, 250_000);
+        assert_eq!(completed[0].transfer_time_us, 250_000);
+        assert_eq!(completed[0].total_latency_us, 500_000);
+    }
+
+    #[test]
+    fn a_trace_lists_every_unit_a_request_produced() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1"), dependent("w2", &["w1"])]);
+
+        // Both units belong to the request, even though only w1 can run so far.
+        let trace = store.trace("req-test");
+        assert_eq!(trace.len(), 2);
+        let w2 = trace.iter().find(|u| u.work_id == "w2").unwrap();
+        // A unit waiting on its dependency reads as queued, with no cost to report yet.
+        assert_eq!(w2.status, "queued");
+        assert_eq!(w2.total_latency_us, 0);
+    }
+
+    #[test]
+    fn a_trace_shows_a_failed_unit() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        for _ in 0..MAX_ATTEMPTS {
+            store.claim("node-a", &capability(8, 0.0), 1_000);
+            store.requeue_for_node("node-a");
+        }
+
+        let trace = store.trace("req-test");
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].work_id, "w1");
+        assert_eq!(trace[0].status, "failed");
+        assert_eq!(trace[0].node_id, "");
+    }
+
+    #[test]
+    fn a_trace_keeps_other_requests_out() {
+        let store = WorkStore::new();
+        let mut other = unit("w2");
+        other.request_id = "req-outro".to_string();
+        store.enqueue([unit("w1"), other]);
+
+        let trace = store.trace("req-test");
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].work_id, "w1");
+    }
+
+    #[test]
+    fn a_trace_of_an_unknown_request_is_empty() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        assert!(store.trace("nao-existe").is_empty());
     }
 
     #[test]

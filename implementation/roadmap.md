@@ -164,5 +164,6 @@ Entregar:
 - [x] H2 Events — `telemetry.md`, `ai-cluster events`;
 - [x] H1 Metrics — roll-up de nós, fila e tempos de compute/latência (`metrics.md`,
   `ai-cluster metrics`); métricas de nó e exportador não;
-- [ ] H3 Trace correlation — ligar requisição do cliente às units que ela gerou;
+- [x] H3 Trace correlation — ligar requisição do cliente às units que ela gerou (`traces.md`,
+  `ai-cluster request trace <id>`);
 - [ ] H4/H5 — pendentes.

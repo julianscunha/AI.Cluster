@@ -38,7 +38,7 @@ Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 - [ ] network measurements;
 - [ ] transfer protocol;
 - [x] retries;
-- [ ] trace correlation.
+- [x] trace correlation — H3, ver `traces.md`.
 
 ## Pacotes de trabalho da Fase 3
 

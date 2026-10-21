@@ -4,11 +4,12 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
-    GetMetricsRequest, HealthStreamRequest, HealthStreamResponse, HeartbeatRequest,
-    HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse,
-    ListNodesRequest, ListNodesResponse, MetricsResponse, RegisterNodeRequest,
-    RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    GetMetricsRequest, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
+    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
+    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse, MetricsResponse,
+    RegisterNodeRequest, RegisterNodeResponse, RequestWorkRequest, RequestWorkResponse,
+    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
+    WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -291,6 +292,11 @@ impl ClusterControl for ClusterControlService {
             ));
         }
         let repetitions = request.repetitions.max(1);
+        let request_id = if request.request_id.is_empty() {
+            self.work.next_request_id()
+        } else {
+            request.request_id.clone()
+        };
         let units = (0..repetitions).map(|index| {
             let seed = request.seed.wrapping_add(u64::from(index));
             // A and B get different seeds so the product is not a square of one matrix.
@@ -307,6 +313,7 @@ impl ClusterControl for ClusterControlService {
                 matrix_a_from: String::new(),
                 matrix_b_from: String::new(),
                 min_cpu_threads: request.min_cpu_threads,
+                request_id: request_id.clone(),
             }
         });
         let enqueued = self.work.enqueue(units);
@@ -314,12 +321,13 @@ impl ClusterControl for ClusterControlService {
             unix_ms(),
             "work_enqueued",
             format!(
-                "{} unidades {}x{}x{}",
+                "{} unidades {}x{}x{} req={request_id}",
                 enqueued, request.rows, request.shared, request.cols
             ),
         );
         Ok(Response::new(EnqueueWorkResponse {
             enqueued: enqueued as u32,
+            request_id,
         }))
     }
 
@@ -341,6 +349,11 @@ impl ClusterControl for ClusterControlService {
             ));
         }
         let size = request.size;
+        let request_id = if request.request_id.is_empty() {
+            self.work.next_request_id()
+        } else {
+            request.request_id.clone()
+        };
         let first = self.work.next_work_id();
         let left = self.work.next_work_id();
         let right = self.work.next_work_id();
@@ -374,6 +387,7 @@ impl ClusterControl for ClusterControlService {
                 matrix_b_from: b_from,
                 // Graph units carry no requirement; size is the same for all of them.
                 min_cpu_threads: 0,
+                request_id: request_id.clone(),
             }
         };
         let units = vec![
@@ -407,11 +421,12 @@ impl ClusterControl for ClusterControlService {
         self.events.record(
             unix_ms(),
             "graph_enqueued",
-            format!("{enqueued} unidades tamanho={size}"),
+            format!("{enqueued} unidades tamanho={size} req={request_id}"),
         );
         Ok(Response::new(EnqueueGraphResponse {
             enqueued: enqueued as u32,
             blocked: self.work.blocked() as u32,
+            request_id,
         }))
     }
 
@@ -467,6 +482,17 @@ impl ClusterControl for ClusterControlService {
             self.work.blocked() as u32,
             self.work.failed() as u32,
         )))
+    }
+
+    async fn get_trace(
+        &self,
+        request: Request<GetTraceRequest>,
+    ) -> Result<Response<GetTraceResponse>, Status> {
+        let request_id = request.into_inner().request_id;
+        Ok(Response::new(GetTraceResponse {
+            units: self.work.trace(&request_id),
+            request_id,
+        }))
     }
 }
 
@@ -526,6 +552,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: "req-test".to_string(),
         }
     }
 
@@ -541,6 +568,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: "req-test".to_string(),
         }
     }
 
@@ -725,6 +753,7 @@ mod tests {
                 seed: 7,
                 repetitions: 2,
                 min_cpu_threads: 0,
+                request_id: String::new(),
             }))
             .await
             .unwrap()
@@ -755,6 +784,7 @@ mod tests {
                 seed: 1,
                 repetitions: 1,
                 min_cpu_threads: 0,
+                request_id: String::new(),
             }))
             .await
             .unwrap_err();
@@ -848,7 +878,11 @@ mod tests {
     async fn enqueue_graph_builds_a_diamond_with_blocked_branches() {
         let (service, work_store) = service_with_work();
         let response = service
-            .enqueue_graph(Request::new(EnqueueGraphRequest { size: 2, seed: 7 }))
+            .enqueue_graph(Request::new(EnqueueGraphRequest {
+                size: 2,
+                seed: 7,
+                request_id: String::new(),
+            }))
             .await
             .unwrap()
             .into_inner();
@@ -860,7 +894,11 @@ mod tests {
 
         // A size of zero is a client error.
         let invalid = service
-            .enqueue_graph(Request::new(EnqueueGraphRequest { size: 0, seed: 7 }))
+            .enqueue_graph(Request::new(EnqueueGraphRequest {
+                size: 0,
+                seed: 7,
+                request_id: String::new(),
+            }))
             .await
             .unwrap_err();
         assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
@@ -1022,5 +1060,83 @@ mod tests {
         assert_eq!(metrics.units_pending, 0);
         assert_eq!(metrics.total_compute_time_us, 1_000);
         assert_eq!(metrics.avg_compute_time_us, 1_000);
+    }
+
+    #[tokio::test]
+    async fn get_trace_follows_a_requests_units_through_the_service() {
+        let (service, _work_store) = service_with_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+            }))
+            .await
+            .unwrap();
+
+        // The service mints a request id when the client does not supply one.
+        let enqueued = service
+            .enqueue_work(Request::new(EnqueueWorkRequest {
+                rows: 2,
+                shared: 2,
+                cols: 2,
+                seed: 7,
+                repetitions: 1,
+                min_cpu_threads: 0,
+                request_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!enqueued.request_id.is_empty());
+
+        // Before dispatch the unit is queued and carries no cost.
+        let trace = service
+            .get_trace(Request::new(GetTraceRequest {
+                request_id: enqueued.request_id.clone(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(trace.units.len(), 1);
+        assert_eq!(trace.units[0].status, "queued");
+
+        // Run the unit end to end: dispatch, compute, submit.
+        let claimed = service
+            .request_work(Request::new(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .work
+            .expect("work unit present");
+        service
+            .submit_work_result(Request::new(SubmitWorkResultRequest {
+                result: Some(WorkResult {
+                    work_id: claimed.work_id.clone(),
+                    node_id: "node-a".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    matrix_c: vec![19.0, 22.0, 43.0, 50.0],
+                    checksum: 134.0,
+                    compute_time_us: 1_000,
+                }),
+            }))
+            .await
+            .unwrap();
+
+        // The same request id now resolves to the completed unit and its timings.
+        let trace = service
+            .get_trace(Request::new(GetTraceRequest {
+                request_id: enqueued.request_id,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(trace.units.len(), 1);
+        assert_eq!(trace.units[0].work_id, claimed.work_id);
+        assert_eq!(trace.units[0].status, "completed");
+        assert_eq!(trace.units[0].node_id, "node-a");
+        assert_eq!(trace.units[0].compute_time_us, 1_000);
     }
 }

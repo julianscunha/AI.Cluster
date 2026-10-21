@@ -125,6 +125,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: "req-test".to_string(),
         }
     }
 

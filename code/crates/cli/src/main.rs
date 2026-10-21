@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest, ListEventsRequest,
+    EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest,
     ListNodesRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
@@ -37,6 +37,11 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Follow a client request through the cluster (H3).
+    Request {
+        #[command(subcommand)]
+        action: RequestAction,
+    },
     /// Dispatch matrix work units and compare compute against transfer cost.
     Benchmark {
         /// Square matrix edge length.
@@ -61,6 +66,16 @@ enum Command {
     },
 }
 
+/// The `request` subcommands, matching the `request trace <id>` surface in the spec.
+#[derive(Subcommand, Debug)]
+enum RequestAction {
+    /// The units a request produced, where each is in its life, and what it cost.
+    Trace {
+        /// Request id, as printed by `benchmark` or `graph`.
+        request_id: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -68,6 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
         Command::Metrics => print_metrics(&cli.controller).await?,
         Command::Events { limit } => print_events(&cli.controller, limit).await?,
+        Command::Request { action } => match action {
+            RequestAction::Trace { request_id } => {
+                print_trace(&cli.controller, &request_id).await?
+            }
+        },
         Command::Benchmark {
             size,
             repetitions,
@@ -87,12 +107,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_controller(endpoint.to_string()).await?;
     let response = client
-        .enqueue_graph(EnqueueGraphRequest { size, seed: 42 })
+        .enqueue_graph(EnqueueGraphRequest {
+            size,
+            seed: 42,
+            request_id: String::new(),
+        })
         .await?
         .into_inner();
     println!(
-        "grafo enfileirado={} bloqueados={} tamanho={size}",
-        response.enqueued, response.blocked
+        "grafo enfileirado={} bloqueados={} tamanho={size} requisicao={}",
+        response.enqueued, response.blocked, response.request_id
     );
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
@@ -183,6 +207,64 @@ async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// Prints the units a client request produced and what each one cost (H3).
+///
+/// The command that answers "why did this request take so long": every unit's latency is
+/// split into the time the worker spent computing and the time spent getting the matrices
+/// there and back. A unit still in flight or failed has no timings yet, so it shows zero —
+/// its row is there to say the unit exists and where it is, not to report a cost.
+async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let response = client
+        .get_trace(GetTraceRequest {
+            request_id: request_id.to_string(),
+        })
+        .await?
+        .into_inner();
+    println!(
+        "REQUISIÇÃO {} UNIDADES {}",
+        response.request_id,
+        response.units.len()
+    );
+    if response.units.is_empty() {
+        println!("(nenhuma unidade: id desconhecido ou trace perdido por restart)");
+        return Ok(());
+    }
+    println!(
+        "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12}",
+        "TRABALHO", "NÓ", "ESTADO", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
+    );
+    let mut compute_total = 0_u64;
+    let mut transfer_total = 0_u64;
+    let mut latency_total = 0_u64;
+    for unit in &response.units {
+        compute_total += unit.compute_time_us;
+        transfer_total += unit.transfer_time_us;
+        latency_total += unit.total_latency_us;
+        println!(
+            "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12}",
+            unit.work_id,
+            if unit.node_id.is_empty() {
+                "-"
+            } else {
+                unit.node_id.as_str()
+            },
+            unit.status,
+            unit.compute_time_us,
+            unit.transfer_time_us,
+            unit.total_latency_us,
+        );
+    }
+    println!(
+        "unidades={} compute_somado_us={} transfer_somado_us={} latencia_somada_us={}",
+        response.units.len(),
+        compute_total,
+        transfer_total,
+        latency_total,
+    );
+    Ok(())
+}
+
 async fn run_benchmark(
     endpoint: &str,
     size: u32,
@@ -200,7 +282,7 @@ async fn run_benchmark(
         return run_local_baseline(size, repetitions);
     }
     let mut client = connect_controller(endpoint.to_string()).await?;
-    let enqueued = client
+    let response = client
         .enqueue_work(EnqueueWorkRequest {
             rows: size,
             shared: size,
@@ -208,11 +290,14 @@ async fn run_benchmark(
             seed: 42,
             repetitions,
             min_cpu_threads: min_threads,
+            request_id: String::new(),
         })
         .await?
-        .into_inner()
-        .enqueued;
-    println!("enfileiradas {enqueued} unidades de trabalho de {size}x{size}");
+        .into_inner();
+    println!(
+        "enfileiradas {} unidades de trabalho de {size}x{size} requisicao={}",
+        response.enqueued, response.request_id
+    );
 
     // Poll until the queue drains. The deadline keeps a stuck worker from hanging the CLI.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);

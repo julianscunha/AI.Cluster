@@ -1,6 +1,9 @@
 # Rust build artifacts
 **/target/
 
+# Build/test logs written to the repo root during local runs
+/*.log
+
 # Local agent state
 .hermes/
 

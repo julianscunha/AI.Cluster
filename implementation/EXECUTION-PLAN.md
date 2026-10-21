@@ -303,7 +303,11 @@ Lifecycle e incidentes. — [x] (`telemetry.md`, `ai-cluster events`)
 
 ### H3 Traces
 
-Request → Work Unit → transfer → compute. — [ ] não iniciado.
+Request → Work Unit → transfer → compute. — [x] (`traces.md`): o `request_id` liga a
+requisição do cliente às unidades que ela gerou, `GetTrace` devolve estado, nó e tempos de
+cada uma, e `ai-cluster request trace <id>` mostra a divisão de cada unidade entre compute e
+transferência. Cobre a execução atual; persistir a correlação além de um restart fica junto da
+persistência do work store.
 
 ### H4 TUI
 

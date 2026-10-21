@@ -92,6 +92,10 @@ message WorkUnit {
   /// Filtro de candidatos: o controller não entregará esta unidade a um nó que
   /// reporte menos cpu_threads que isto. 0 significa sem requisito.
   uint32 min_cpu_threads = 10;
+  /// Requisição de cliente que gerou esta unidade (H3). Todas as unidades enfileiradas
+  /// numa mesma chamada carregam o mesmo id, então um trace reconstrói o caminho
+  /// requisição → unidades sem guardar a relação em paralelo.
+  string request_id = 11;
 }
 
 message WorkResult {
@@ -130,22 +134,57 @@ message EnqueueWorkRequest {
   uint32 repetitions = 5;
   /// Mínimo de cpu_threads para cada unidade enfileirada. 0 significa sem requisito.
   uint32 min_cpu_threads = 6;
+  /// Id de requisição que agrupa as unidades desta chamada (H3). Vazio faz o controller
+  /// gerar um, que volta na resposta.
+  string request_id = 7;
 }
 
 message EnqueueWorkResponse {
   uint32 enqueued = 1;
+  /// O id que agrupa as unidades desta chamada; use em `GetTrace`.
+  string request_id = 2;
 }
 
 message EnqueueGraphRequest {
   /// Comprimento da aresta de cada matriz quadrada no grafo.
   uint32 size = 1;
   uint64 seed = 2;
+  /// Id de requisição que agrupa as unidades do grafo (H3). Vazio faz o controller gerar.
+  string request_id = 3;
 }
 
 message EnqueueGraphResponse {
   uint32 enqueued = 1;
   /// Unidades retidas até que suas dependências completem.
   uint32 blocked = 2;
+  /// O id que agrupa as unidades deste grafo; use em `GetTrace`.
+  string request_id = 3;
+}
+
+/// Uma unidade dentro do trace de uma requisição (H3): onde ela está no seu ciclo de
+/// vida e quanto custou. Só uma unidade concluída tem tempos; as demais vêm com zero.
+message TraceEntry {
+  string work_id = 1;
+  /// Vazio enquanto a unidade não foi despachada, ou se falhou sem despacho registrado.
+  string node_id = 2;
+  /// queued | dispatched | completed | failed.
+  string status = 3;
+  uint64 compute_time_us = 4;
+  uint64 transfer_time_us = 5;
+  uint64 total_latency_us = 6;
+}
+
+message GetTraceRequest {
+  string request_id = 1;
+}
+
+/// Caminho requisição → unidades. Vazio (sem erro) quando o id é desconhecido: um trace
+/// perdido por restart não é um erro do cliente. As unidades vêm agrupadas por estado —
+/// enfileiradas, em voo, concluídas, falhas — e dentro de um estado na ordem em que o
+/// controller as moveu, que para um grafo é a ordem de execução.
+message GetTraceResponse {
+  string request_id = 1;
+  repeated TraceEntry units = 2;
 }
 
 message WorkReportRequest {}
@@ -258,4 +297,5 @@ service ClusterControl {
   rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
   rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
+  rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
 }

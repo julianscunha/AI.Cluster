@@ -445,6 +445,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: String::new(),
         };
         let result = execute_work(&unit, "node-a", 4).expect("shapes match");
         assert_eq!(result.work_id, "w1");
@@ -468,6 +469,7 @@ mod tests {
             matrix_a_from: String::new(),
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
+            request_id: String::new(),
         };
         assert!(execute_work(&unit, "node-a", 1).is_none());
     }

@@ -63,6 +63,7 @@ mod tests {
         CompletedWork {
             work_id: "w".to_string(),
             node_id: "n".to_string(),
+            request_id: "req-test".to_string(),
             compute_time_us,
             total_latency_us,
             transfer_time_us: total_latency_us.saturating_sub(compute_time_us),
