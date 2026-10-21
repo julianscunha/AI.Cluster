@@ -1,13 +1,13 @@
 ---
-title: "Data Model — Entities"
+title: "Modelo de dados — entidades"
 type: data-model
 status: draft
 tags: [data-model, entities]
 ---
 
-# Data Model — Entities
+# Modelo de dados — entidades
 
-## Core entities
+## Entidades centrais
 
 - Cluster
 - Node
@@ -31,11 +31,11 @@ tags: [data-model, entities]
 - GraphEntity
 - GraphRelation
 
-## Identity rules
+## Regras de identidade
 
-Use stable string/UUID-like identifiers independent of relational primary keys.
+Usar identificadores estáveis em string/tipo-UUID, independentes de chaves primárias relacionais.
 
-## Separation
+## Separação
 
 Node != Device.
 
