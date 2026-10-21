@@ -83,5 +83,6 @@ da fase C2/C3.
 fazem uma execução real de 4 threads ficar um pouco abaixo de 4× a de 1 thread. A estimativa
 é otimista em nós grandes. Revisitar com uma varredura multithread se o placement pender para eles.
 
-**Confiança não modelada.** docs/05 pede uma medida de confiança derivada do histórico;
-não existe — o score é uma leitura instantânea.
+**Confiança não modelada no baseline.** O score do registro é uma leitura instantânea e viaja
+sem medida de confiança própria: não dá para dizer se o baseline do nó A foi mais limpo que o
+do nó B. A confiança existe para a remedida (`capability-current.md`, C3), não para o baseline.

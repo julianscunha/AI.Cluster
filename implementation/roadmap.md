@@ -36,7 +36,8 @@ Entregar:
 - [x] Worker;
 - [x] registration;
 - [x] heartbeat;
-- [x] capabilities;
+- [x] capabilities — compute medido no registro (baseline) e remedido com o nó ocioso, com
+  confiança sobre a remedida (`phase-2/capability-benchmark.md`, `capability-current.md`);
 - [x] health — liveness por heartbeat e o score de saúde com pressão de memória, swap e
   térmica (`health-model.md`, C4);
 - [x] CLI status.

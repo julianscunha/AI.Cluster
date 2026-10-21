@@ -115,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .report_health(HealthStreamRequest {
                         node_id: node_id.clone(),
                         health: Some(health()),
+                        capability: Some(capability_with_current(&capability)),
                     })
                     .await
                 {
@@ -170,7 +171,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             None => {
-                // Nothing ready: wait before asking again, but wake at once on shutdown.
+                // Nothing ready: use the idle time to refresh the current-compute estimate,
+                // then wait before asking again (Fase C3).
+                refresh_current_compute();
+                // Wait before asking again, but wake at once on shutdown.
                 tokio::select! {
                     _ = time::sleep(Duration::from_millis(WORK_POLL_IDLE_MS)) => {}
                     _ = &mut shutdown => break,
@@ -333,14 +337,30 @@ fn grant_cores(reported_threads: u32, available: usize) -> usize {
 /// 4-thread run is usually a bit under 4x the 1-thread rate, so the model is optimistic
 /// on big nodes. Revisit with a multithreaded sweep if placement skews to them.
 fn compute_score() -> f64 {
-    if let Some(forced) = std::env::var("AI_CLUSTER_COMPUTE_SCORE")
+    if let Some(forced) = pinned_compute_score() {
+        return forced;
+    }
+    measure_compute(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS).score
+}
+
+/// The score `AI_CLUSTER_COMPUTE_SCORE` pins, when set and sensible. Unset, unparsable or
+/// non-positive means "not pinned", so the caller measures instead.
+///
+/// One place reads the override so the baseline and the idle remeasurement agree on what a
+/// pinned node means: the operator chose the number, so nothing remeasures it.
+fn pinned_compute_score() -> Option<f64> {
+    std::env::var("AI_CLUSTER_COMPUTE_SCORE")
         .ok()
         .and_then(|value| value.trim().parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value > 0.0)
-    {
-        return forced;
-    }
-    measure_compute_score(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS)
+}
+
+/// Result of one compute benchmark: the normalised score and how much the timed runs
+/// agreed with each other.
+#[derive(Debug, Clone, Copy)]
+struct ComputeMeasurement {
+    score: f64,
+    confidence: f64,
 }
 
 /// Times `iters` serial multiplies of a `size`-cubed matmul and normalises the rate.
@@ -350,21 +370,58 @@ fn compute_score() -> f64 {
 /// disturbed and the most reproducible. Averaging drags the rate down whenever the host is
 /// shared, which would make the same node look slower from one poll to the next. The cold
 /// first run is discarded by the same mechanism, so no separate warm-up pass is needed.
-fn measure_compute_score(size: u32, iters: u32, reference: f64) -> f64 {
+///
+/// Returns the confidence beside the score so the caller can report both (C3).
+fn measure_compute(size: u32, iters: u32, reference: f64) -> ComputeMeasurement {
     let a = Matrix::seeded(size, size, 1);
     let b = Matrix::seeded(size, size, 2);
     if a.multiply(&b).is_none() {
-        return 0.0;
+        return ComputeMeasurement {
+            score: 0.0,
+            confidence: 0.0,
+        };
     }
-    let mut best = f64::INFINITY;
+    let mut times = Vec::with_capacity(iters.max(1) as usize);
     for _ in 0..iters.max(1) {
         let started = Instant::now();
         if a.multiply(&b).is_none() {
-            return 0.0;
+            return ComputeMeasurement {
+                score: 0.0,
+                confidence: 0.0,
+            };
         }
-        best = best.min(started.elapsed().as_secs_f64());
+        times.push(started.elapsed().as_secs_f64());
     }
-    normalize_compute_score(flops(size, size, size) / best / 1e9, reference)
+    let best = times.iter().copied().fold(f64::INFINITY, f64::min);
+    ComputeMeasurement {
+        score: normalize_compute_score(flops(size, size, size) / best / 1e9, reference),
+        confidence: measurement_confidence(&times),
+    }
+}
+
+/// How much the timed runs agreed, 0..1, for the confidence a measurement carries (C3).
+///
+/// Best over median. Every disturbance — another tenant, a background task, a frequency
+/// dip — only ever makes a run slower, so the fastest run is the trustworthy one and the
+/// gap up to the median is exactly how much disturbance there was. Expressed as a fraction
+/// of the best so a slow node and a fast node are judged by the same yardstick. One run
+/// cannot disagree with itself, so a single iteration counts as certain; no runs at all
+/// counts as no confidence. A best that is zero or not finite reads as no confidence at
+/// all, never as a perfect one.
+fn measurement_confidence(times: &[f64]) -> f64 {
+    if times.is_empty() {
+        return 0.0;
+    }
+    if times.len() == 1 {
+        return 1.0;
+    }
+    let mut sorted = times.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let best = sorted[0];
+    if !best.is_finite() || best <= 0.0 {
+        return 0.0;
+    }
+    (best / sorted[sorted.len() / 2]).clamp(0.0, 1.0)
 }
 
 /// Normalises a measured GFLOP/s rate to the placement model's per-core score.
@@ -474,6 +531,96 @@ fn capability() -> CapabilityReport {
         precisions: vec!["fp32".to_string()],
         ..Default::default()
     }
+}
+
+/// Last compute remeasurement taken while the node was idle (Fase C3).
+///
+/// The registration measurement is the baseline — what this node could do when it was new.
+/// This is the same kernel re-run while idle, so a node that got slower after joining (a
+/// noisy neighbour on a shared host, a power cap) shows up even when no temperature sensor
+/// denounces it. The heartbeat reports it beside the baseline so a time prediction can use
+/// what the node will really do now, not what it could do at registration.
+///
+/// A static because one worker process is one node. Only the work loop writes it, and only
+/// while idle, so the benchmark never steals cores from a unit in flight or corrupts that
+/// unit's measured compute time.
+static CURRENT_COMPUTE: Mutex<Option<(ComputeMeasurement, Instant)>> = Mutex::new(None);
+
+/// How long between idle remeasurements. The benchmark is heavy enough to disturb a unit in
+/// flight, so it only runs when there is nothing to compute; this cadence keeps the
+/// steady-state cost near zero without letting the estimate go stale. A test overrides it so
+/// it does not have to wait a full interval to see the current score appear.
+const RECOMPUTE_INTERVAL_SECS: u64 = 60;
+
+/// Remeasures compute while the node is idle, at most once per `RECOMPUTE_INTERVAL_SECS`.
+///
+/// Called from the idle branch of the work loop, where the cores are free. A no-op while the
+/// last measurement is still fresh. `AI_CLUSTER_RECOMPUTE_INTERVAL_SECS` overrides the
+/// cadence; 0 remeasures on every idle pass, which only a test wants.
+fn refresh_current_compute() {
+    // A pinned score means the operator chose the number — a remeasurement would contradict
+    // it and make a determinism knob non-deterministic. A pinned node reports no current
+    // estimate, and prediction keeps using the baseline, which is what the pin asked for.
+    if pinned_compute_score().is_some() {
+        return;
+    }
+    let interval = recompute_interval();
+    let stale = {
+        let guard = CURRENT_COMPUTE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match *guard {
+            Some((_, at)) => interval == 0 || at.elapsed().as_secs() >= interval,
+            None => true,
+        }
+    };
+    if !stale {
+        return;
+    }
+    let measurement = measure_compute(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS);
+    let mut guard = CURRENT_COMPUTE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some((measurement, Instant::now()));
+}
+
+/// The idle remeasurement cadence in seconds. Unset or unparsable means the default.
+fn recompute_interval() -> u64 {
+    std::env::var("AI_CLUSTER_RECOMPUTE_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(RECOMPUTE_INTERVAL_SECS)
+}
+
+/// The registered capability with the latest idle remeasurement folded in (Fase C3).
+///
+/// `compute_score` stays the baseline — what the node measured when it registered — so
+/// placement keeps ranking on what a node can do rather than on a noisy instant. The current
+/// estimate and its confidence travel beside it for time prediction. Before the first idle
+/// remeasurement both current fields stay zero, which every reader treats as "not remeasured"
+/// and falls back to the baseline.
+fn capability_with_current(baseline: &CapabilityReport) -> CapabilityReport {
+    let current = *CURRENT_COMPUTE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    apply_current(baseline, current)
+}
+
+/// The fold itself, split from the static so the two-field update is testable without one.
+///
+/// `None` leaves both fields at zero — the "not remeasured" state every reader falls back
+/// from — rather than copying the baseline into them, which would make a stale node look
+/// freshly measured.
+fn apply_current(
+    baseline: &CapabilityReport,
+    current: Option<(ComputeMeasurement, Instant)>,
+) -> CapabilityReport {
+    let mut capability = baseline.clone();
+    if let Some((measurement, _)) = current {
+        capability.current_compute_score = measurement.score;
+        capability.compute_confidence = measurement.confidence;
+    }
+    capability
 }
 
 /// Previous /proc sample, for the node metrics that are rates rather than gauges.
@@ -781,8 +928,70 @@ mod tests {
         // Runs the real kernel on a small matrix so the test stays fast. Catches a shape
         // or loop bug that would silently return 0.0 and leave every node on the thread
         // fallback. The exact rate is host-dependent, so only the sign is asserted.
-        let score = measure_compute_score(32, 1, REFERENCE_CORE_GFLOPS);
+        let score = measure_compute(32, 1, REFERENCE_CORE_GFLOPS).score;
         assert!(score.is_finite() && score > 0.0, "score was {score}");
+    }
+
+    #[test]
+    fn confidence_is_full_when_the_runs_agree() {
+        // Three identical timings: nothing disturbed the runs.
+        assert_eq!(measurement_confidence(&[1.0, 1.0, 1.0]), 1.0);
+        // The best run is the fastest and the median sits above it, so the fraction is < 1.
+        assert!(measurement_confidence(&[1.0, 1.2, 1.4]) < 1.0);
+    }
+
+    #[test]
+    fn confidence_falls_as_the_runs_disagree() {
+        let steady = measurement_confidence(&[1.0, 1.0, 1.0]);
+        let noisy = measurement_confidence(&[1.0, 2.0, 2.0]);
+        assert!(noisy < steady, "noisy={noisy} steady={steady}");
+        // A badly disturbed set clamps near zero instead of going negative or NaN.
+        let worst = measurement_confidence(&[1.0, 100.0, 100.0]);
+        assert!(worst > 0.0 && worst < 0.1, "worst={worst}");
+    }
+
+    #[test]
+    fn a_single_run_cannot_disagree_with_itself() {
+        assert_eq!(measurement_confidence(&[1.0]), 1.0);
+        // No runs at all is no confidence, not a perfect one.
+        assert_eq!(measurement_confidence(&[]), 0.0);
+    }
+
+    #[test]
+    fn a_broken_measurement_carries_no_confidence() {
+        // A zero or non-finite best reads as "not measured", never as a perfect measurement.
+        assert_eq!(measurement_confidence(&[0.0, 0.0]), 0.0);
+        assert_eq!(measurement_confidence(&[f64::NAN, 1.0]), 0.0);
+        assert_eq!(measurement_confidence(&[f64::INFINITY, 1.0]), 0.0);
+    }
+
+    #[test]
+    fn a_remeasured_capability_carries_the_current_numbers_beside_the_baseline() {
+        let baseline = CapabilityReport {
+            cpu_threads: 4,
+            compute_score: 2.0,
+            ..Default::default()
+        };
+        // Not remeasured yet: both current fields stay zero, so readers fall back to the
+        // baseline instead of reading a copied baseline as a fresh measurement.
+        let fresh = apply_current(&baseline, None);
+        assert_eq!(fresh.compute_score, 2.0);
+        assert_eq!(fresh.current_compute_score, 0.0);
+        assert_eq!(fresh.compute_confidence, 0.0);
+        // Remeasured: the baseline survives and the current numbers travel beside it.
+        let measured = apply_current(
+            &baseline,
+            Some((
+                ComputeMeasurement {
+                    score: 1.5,
+                    confidence: 0.8,
+                },
+                Instant::now(),
+            )),
+        );
+        assert_eq!(measured.compute_score, 2.0);
+        assert_eq!(measured.current_compute_score, 1.5);
+        assert_eq!(measured.compute_confidence, 0.8);
     }
 
     #[test]

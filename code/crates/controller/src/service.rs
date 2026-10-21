@@ -134,9 +134,11 @@ impl ClusterControl for ClusterControlService {
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
-        let accepted = self
-            .registry
-            .report_health(&request.node_id, request.health.unwrap_or_default());
+        let accepted = self.registry.report_health(
+            &request.node_id,
+            request.health.unwrap_or_default(),
+            request.capability,
+        );
         Ok(Response::new(HealthStreamResponse { accepted }))
     }
 
@@ -683,6 +685,7 @@ mod tests {
                     health_score: 0.9,
                     ..Default::default()
                 }),
+                capability: None,
             }))
             .await
             .unwrap()

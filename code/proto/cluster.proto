@@ -24,6 +24,18 @@ message CapabilityReport {
   /// que não expõe `/sys/block` reporta vazio. O tier HOT (RAM/VRAM) não aparece aqui:
   /// `memory_bytes` é a medida dele. Ver docs/18-storage-intelligence.md.
   repeated string storage_classes = 9;
+  /// Compute remedido depois do registro, na mesma escala de `compute_score`.
+  ///
+  /// `compute_score` é a medida do registro — o baseline. Esta é a última medida tirada
+  /// com o nó ocioso, para pegar o que o baseline não vê: um nó que ficou mais lento
+  /// depois de entrar (vizinho barulhento no host, limite de energia) sem sensor de
+  /// temperatura que denuncie. Zero significa "não remedido desde o registro", nunca
+  /// "compute zero": um nó sem essa medida vale o baseline.
+  double current_compute_score = 10;
+  /// Quanto confiar em `current_compute_score`, 0..1, a partir de quanto as repetições
+  /// da medida concordaram entre si. Uma passada sob contenção varia muito; uma ociosa
+  /// varia pouco. Zero junto com `current_compute_score` zero.
+  double compute_confidence = 11;
 }
 
 message HealthReport {
@@ -75,6 +87,11 @@ message HeartbeatResponse {
 message HealthStreamRequest {
   string node_id = 1;
   HealthReport health = 2;
+  /// Perfil de capacidade corrente. Opcional: um worker que não remede manda só o
+  /// health, e o controlador mantém o perfil do registro. Quando vem, substitui o
+  /// perfil guardado — `compute_score` continua sendo o baseline, e
+  /// `current_compute_score` carrega a medida mais recente (C3).
+  CapabilityReport capability = 3;
 }
 
 message HealthStreamResponse {

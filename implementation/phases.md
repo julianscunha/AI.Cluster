@@ -21,7 +21,9 @@ Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 ### Worker core
 - [x] heartbeat;
 - [x] capability report;
-- [ ] CPU benchmark — a capability reporta threads, não mede desempenho;
+- [x] CPU benchmark — o worker mede o matmul no próprio kernel e reporta `compute_score`
+  (`phase-2/capability-benchmark.md`); a remedida com o nó ocioso e a confiança sobre ela são o
+  C3 (`capability-current.md`);
 - [x] Work Unit runner.
 
 ### CLI
@@ -34,7 +36,8 @@ Legenda: `[x]` executado e validado · `[~]` parcial · `[ ]` não iniciado.
 
 - [x] dependency DAG;
 - [x] queue;
-- [~] placement — filtro por capability; sem cost model;
+- [x] placement — filtro por capability (`min_cpu_threads`) e por memória (footprint), escolha
+  por custo e histerese (`phase-2/placement.md`);
 - [ ] network measurements;
 - [ ] transfer protocol;
 - [x] retries;

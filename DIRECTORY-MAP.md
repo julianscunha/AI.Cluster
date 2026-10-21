@@ -108,6 +108,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 63. [implementation/predictions.md](implementation/predictions.md) — previsto vs real: o erro do modelo de custo (H5).
 64. [implementation/storage-tiers.md](implementation/storage-tiers.md) — classificação HOT/WARM/COLD do armazenamento por nó (I2).
 65. [implementation/health-model.md](implementation/health-model.md) — score de saúde do nó: pressão de memória, swap e térmica (C4).
+66. [implementation/capability-current.md](implementation/capability-current.md) — capability baseline + current + confiança, via health stream (C3).
 
 ### Referência — decisões arquiteturais
 

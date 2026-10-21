@@ -46,6 +46,24 @@ fn compute_rate(capability: &CapabilityReport) -> f64 {
     threads * per_thread
 }
 
+/// Per-thread rate for a time prediction: the node's current measurement when it has one,
+/// the registration baseline otherwise, then the thread fallback.
+///
+/// Placement ranking deliberately stays on `compute_rate` — the baseline — so a noisy
+/// instant cannot reshuffle the candidate order. The prediction uses what the node is doing
+/// now, which is what the trace compares against the real time (Fase C3): a node that got
+/// slower after registering predicts a longer unit without waiting for a health report to
+/// blame memory or temperature.
+fn per_thread_compute_current(capability: &CapabilityReport) -> f64 {
+    if capability.current_compute_score > 0.0 {
+        capability.current_compute_score
+    } else if capability.compute_score > 0.0 {
+        capability.compute_score
+    } else {
+        1.0
+    }
+}
+
 /// Effective transfer rate. Falls back to 1.0 when unmeasured.
 fn transfer_rate(capability: &CapabilityReport) -> f64 {
     if capability.network_score > 0.0 {
@@ -112,10 +130,16 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
 
 /// Predicted time the worker will spend computing `unit`, in microseconds (H5).
 ///
-/// Zero when the node has not reported a compute score: an unmeasured node has no rate
-/// to predict from, and zero reads as "not predicted" rather than as "instant" — the same
-/// convention as an unreported health score. A caller comparing against actual time must
-/// skip the zero rows rather than read them as a perfect prediction.
+/// Zero when the node has neither a baseline nor a current compute score: an unmeasured node
+/// has no rate to predict from, and zero reads as "not predicted" rather than as "instant" —
+/// the same convention as an unreported health score. A caller comparing against actual time
+/// must skip the zero rows rather than read them as a perfect prediction.
+///
+/// Uses the node's **current** measurement when it has one (C3) and the registration baseline
+/// otherwise, so the prediction follows a node that got slower after joining instead of
+/// reporting what it could do on day one. Placement ranking still uses the baseline, so the
+/// prediction and the ranking answer different questions: "how long will this take now?" and
+/// "which node is the best home for it?".
 ///
 /// The cost model's compute term is `flops / compute_rate`, whose unit is only meaningful
 /// up to the reference core's rate. Inverting the worker's normalisation — a core scoring
@@ -124,12 +148,14 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
 ///
 /// Known ceiling: assumes compute scales linearly with thread count, the same assumption
 /// the worker's benchmark makes. Turbo and SMT mean a real multithreaded run is a little
-/// under the linear estimate, so the prediction runs optimistic on wide nodes.
+/// under the linear estimate, so the prediction runs optimistic on wide nodes. Confidence
+/// is not weighted in yet: a low-confidence current score predicts the same as a certain one.
 pub fn predicted_compute_us(unit: &WorkUnit, capability: &CapabilityReport) -> u64 {
-    if capability.compute_score <= 0.0 {
+    if capability.compute_score <= 0.0 && capability.current_compute_score <= 0.0 {
         return 0;
     }
-    let gflops = compute_rate(capability) * REFERENCE_CORE_GFLOPS;
+    let threads = f64::from(capability.cpu_threads).max(1.0);
+    let gflops = threads * per_thread_compute_current(capability) * REFERENCE_CORE_GFLOPS;
     let flops = 2.0 * f64::from(unit.rows) * f64::from(unit.shared) * f64::from(unit.cols);
     (flops / (gflops * 1e3)).round() as u64
 }
@@ -297,5 +323,39 @@ mod tests {
         // Zero reads as "not predicted", never as a zero-microsecond prediction.
         let u = unit(64, 64, 64);
         assert_eq!(predicted_compute_us(&u, &capability(4, 0.0, 0.0)), 0);
+    }
+
+    #[test]
+    fn a_current_score_overrides_the_baseline_in_the_prediction() {
+        // Baseline 1.0, current 2.0: the node is twice as fast as when it registered, so the
+        // prediction has to halve. The ranking still reads the baseline — this is only the
+        // time estimate following what the node is doing now (C3).
+        let u = unit(64, 64, 64);
+        let mut cap = capability(1, 1.0, 0.0);
+        assert_eq!(predicted_compute_us(&u, &cap), 87);
+        cap.current_compute_score = 2.0;
+        assert_eq!(predicted_compute_us(&u, &cap), 44);
+    }
+
+    #[test]
+    fn a_decayed_node_predicts_more_than_its_baseline_suggests() {
+        // Baseline 2.0, current 0.5: the node got slower after joining. A time estimate that
+        // kept reporting day-one speed would under-predict the run by 4x.
+        let u = unit(64, 64, 64);
+        let mut cap = capability(1, 2.0, 0.0);
+        assert_eq!(predicted_compute_us(&u, &cap), 44);
+        cap.current_compute_score = 0.5;
+        assert_eq!(predicted_compute_us(&u, &cap), 175);
+    }
+
+    #[test]
+    fn a_current_score_alone_still_predicts() {
+        // The registration benchmark failed (baseline 0) but the idle remeasurement succeeded.
+        // A node must not lose its prediction because the first measurement failed.
+        let u = unit(64, 64, 64);
+        let mut cap = capability(1, 0.0, 0.0);
+        assert_eq!(predicted_compute_us(&u, &cap), 0);
+        cap.current_compute_score = 1.0;
+        assert_eq!(predicted_compute_us(&u, &cap), 87);
     }
 }

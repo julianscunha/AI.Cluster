@@ -151,7 +151,16 @@ Benchmarks controlados para compute, memory, storage, network.
 
 Baseline + current + confidence.
 
-- [~] baseline apenas; current e confidence não.
+- [x] baseline + current + confidence (`capability-current.md`): `compute_score` continua sendo
+  o baseline do registro, e `current_compute_score` / `compute_confidence` carregam a última
+  remedida — tirada no ramo **ocioso** do laço de trabalho, porque o benchmark de 256³
+  disputaria CPU com uma unidade em voo e inflaria o compute que o H5 compara. O perfil passou
+  a viajar no `HealthStreamRequest.capability`, então o controller vê o nó mudar sem
+  re-registro. O ranking do placement segue no baseline e só `predicted_compute_us` lê o
+  current: prever tempo e escolher nó são perguntas diferentes. Zero é "não remedido" (nunca
+  "compute zero") e a confiança é concordância entre as execuções da passada (melhor sobre a
+  mediana), não histórico. Evidência: `bash code/tests/phase-c-current.sh` (baseline 1.18 /
+  current 1.08 / confiança 0.95; com o score fixado, current fica `-`).
 
 ### C4 Health model
 

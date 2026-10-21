@@ -376,6 +376,17 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         "  threads={} memoria_bytes={} compute_score={:.4}",
         capability.cpu_threads, capability.memory_bytes, capability.compute_score
     );
+    // Zero means "not remeasured", never "compute zero" — the same convention the ARMAZ
+    // column uses for "not measured". A pinned node never remeasures, so it stays `-`.
+    let (current, confidence) = if capability.current_compute_score > 0.0 {
+        (
+            format!("{:.4}", capability.current_compute_score),
+            format!("{:.2}", capability.compute_confidence),
+        )
+    } else {
+        ("-".to_string(), "-".to_string())
+    };
+    println!("  current_compute_score={current} compute_confidence={confidence}");
     println!(
         "  armazenamento={} precisoes={} aceleradores={}",
         list_or_dash(&capability.storage_classes),

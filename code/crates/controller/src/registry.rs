@@ -98,11 +98,23 @@ impl Registry {
         }
     }
 
-    pub fn report_health(&self, node_id: &str, health: HealthReport) -> bool {
+    /// Records a health report. An optional capability profile travels beside it: when the
+    /// node remeasured its compute while idle it sends a fresh profile, and the registry
+    /// takes the new numbers while keeping the registration identity and timestamp (Fase C3).
+    /// A capability of `None` means the node only reported health.
+    pub fn report_health(
+        &self,
+        node_id: &str,
+        health: HealthReport,
+        capability: Option<CapabilityReport>,
+    ) -> bool {
         let mut nodes = self.lock();
         match nodes.get_mut(node_id) {
             Some(record) => {
                 record.health = health;
+                if let Some(capability) = capability {
+                    record.capability = capability;
+                }
                 true
             }
             None => false,
@@ -246,7 +258,7 @@ mod tests {
             health_score: 0.75,
             ..Default::default()
         };
-        assert!(registry.report_health("node-a", health));
+        assert!(registry.report_health("node-a", health, None));
         assert_eq!(
             registry.list()[0].health.as_ref().unwrap().health_score,
             0.75
@@ -257,8 +269,50 @@ mod tests {
     fn unknown_node_is_rejected_without_registering() {
         let registry = Registry::new();
         assert!(!registry.heartbeat("ghost", 1_000));
-        assert!(!registry.report_health("ghost", HealthReport::default()));
+        assert!(!registry.report_health("ghost", HealthReport::default(), None));
         assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn a_health_report_can_refresh_the_capability() {
+        let registry = Registry::new();
+        registry.register(
+            identity("node-a"),
+            CapabilityReport {
+                cpu_threads: 4,
+                compute_score: 2.0,
+                ..Default::default()
+            },
+            1_000,
+        );
+
+        // Health only: the registered profile survives untouched.
+        assert!(registry.report_health("node-a", HealthReport::default(), None));
+        assert_eq!(
+            registry.list()[0]
+                .capability
+                .as_ref()
+                .unwrap()
+                .compute_score,
+            2.0
+        );
+
+        // With a profile: the current numbers land in the registry while the baseline and
+        // the registration identity stay put (Fase C3).
+        let refreshed = CapabilityReport {
+            cpu_threads: 4,
+            compute_score: 2.0,
+            current_compute_score: 1.5,
+            compute_confidence: 0.8,
+            ..Default::default()
+        };
+        assert!(registry.report_health("node-a", HealthReport::default(), Some(refreshed)));
+        let stored = registry.list()[0].capability.clone().unwrap();
+        assert_eq!(stored.compute_score, 2.0);
+        assert_eq!(stored.current_compute_score, 1.5);
+        assert_eq!(stored.compute_confidence, 0.8);
+        // The refresh must not look like a re-registration.
+        assert_eq!(registry.list()[0].registered_at_unix_ms, 1_000);
     }
 
     #[test]
