@@ -402,9 +402,17 @@ da cópia. Evidência: `bash code/tests/phase-i-checkpoint.sh`.
 
 Node loss, replica promotion, recomputation.
 
-- [~] restart do controller recarrega a fila; promoção de réplica não existe.
+- [x] recuperação de nó perdido e de interrupção abrupta **com unidade em voo** (`recovery.md`):
+  dois relógios — grace de heartbeat para o nó que ficou mudo com o controller de pé, e grace
+  desde o start para o dono que não voltou depois do restart — e os dois desembocam em
+  `requeue_for_node`. A posse restaurada do disco é o que permite esperar o grace antes de
+  reoferecer, em vez de a unidade rodar duas vezes enquanto o dono ainda pode estar voltando.
+  Evidência: `bash code/tests/phase-i4-recovery.sh` (o restart traz `1 em voo`; passado o
+  grace, `node-old` é dado como ausente e `node-new` conclui a unidade recuperada).
+- [ ] promoção de réplica — nada é replicado para outro nó, e não há estado por chave para
+  promover (o `state://…` do `docs/13`). É a fatia seguinte.
 
-Critério de saída: execução distribuída recupera-se de falha planejada e de interrupção abrupta em um ambiente controlado. — [~] (`persistence.md` cobre interrupção do controller; falha de nó é requeue)
+Critério de saída: execução distribuída recupera-se de falha planejada e de interrupção abrupta em um ambiente controlado. — [x] falha planejada de worker (`phase-2-failure.sh`, controller vivo) e interrupção abrupta do controller com unidade em voo (`phase-i4-recovery.sh`).
 
 ## 11. Fase J — AI Cluster OS
 

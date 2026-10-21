@@ -70,7 +70,8 @@ Deliberadamente **não** salva no `claim`. Uma unidade reivindicada e ainda não
 `pending` do snapshot anterior, então volta sem uma escrita por poll. Salvar a cada claim poria
 o estado inteiro em disco na frequência do poll — com o poll ocioso de 200ms, uma escrita por
 worker por poll — sem segurança adicional. O custo é que essa unidade perde o dono e pode rodar
-duas vezes; para uma multiplicação de matrizes determinística, é a mesma resposta.
+duas vezes; para uma multiplicação de matrizes determinística, é a mesma resposta. O caminho
+completo da recuperação, e o que essa escolha custa nele, está em `recovery.md` (I4).
 
 Cada arquivo é escrito primeiro num irmão e depois renomeado para o lugar. Um crash no meio da
 escrita deixa a gravação anterior intacta em vez de um arquivo truncado. Uma escrita que falha
