@@ -135,14 +135,16 @@ Critério de saída: cluster de 2–4 máquinas Linux funciona sem operação ma
 
 CPU, RAM, storage, network, accelerators.
 
-- [~] CPU threads e RAM reportados (`capability()` no worker);
+- [~] CPU threads, RAM e compute medido (`capability()` no worker);
 - [ ] storage, network e accelerators.
 
 ### C2 Benchmark engine
 
 Benchmarks controlados para compute, memory, storage, network.
 
-- [~] benchmark de matriz existe; benchmarks controlados por recurso, não.
+- [~] compute medido no worker (`phase-2/capability-benchmark.md`): o worker cronometra o
+  matmul no próprio kernel das unidades e reporta a taxa por core em `compute_score`, que o
+  modelo de custo já lia; memory, storage e network não.
 
 ### C3 Capability model
 
@@ -158,7 +160,8 @@ Thermal, memory pressure, storage health, network degradation.
 
 Critério de saída: adicionar node produz capability profile reproduzível.
 
-- [~] perfil é reportado e visível, mas não é reproduzível por benchmark.
+- [~] o compute do perfil é reproduzível por benchmark (`phase-2/capability-benchmark.md`);
+  memory, storage, network e kernels de acelerador ainda não são medidos.
 
 ## 5. Fase D — Work Unit Runtime
 

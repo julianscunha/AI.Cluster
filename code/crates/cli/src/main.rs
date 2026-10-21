@@ -113,20 +113,21 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>8}",
-        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "SAÚDE"
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8}",
+        "NÓ", "ESTADO", "ARQ", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
         let capability = node.capability.unwrap_or_default();
         let health = node.health.unwrap_or_default();
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>8.2}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2}",
             identity.node_id,
             node.state,
             identity.architecture,
             capability.cpu_threads,
             capability.memory_bytes as f64 / 1_073_741_824.0,
+            capability.compute_score,
             health.health_score,
         );
     }

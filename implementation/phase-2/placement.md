@@ -132,9 +132,12 @@ testável sem cluster.
 
 Custo = compute + transferência + fila, tudo escalado por saúde. Menor é melhor.
 
-- **compute** — flops da unidade (2 por elemento de saída) sobre a taxa do nó. Usa
-  `compute_score` quando o worker reportou um; cai para a contagem de threads enquanto isso,
-  porque o worker deixa `compute_score` em 0 até o benchmark de capability rodar.
+- **compute** — flops da unidade (2 por elemento de saída) sobre a taxa do nó
+  (`threads × compute_score`). O `compute_score` vem do benchmark de capability
+  (`phase-2/capability-benchmark.md`): é a taxa por core que o worker mediu no próprio kernel
+  das unidades. Um nó que ainda não mediu cai para 1.0 por core — exatamente o que o fallback
+  de contagem de threads sempre assumiu — então ligar o benchmark não reordena um cluster onde
+  ninguém mediu.
 - **transferência** — bytes movidos (A e B lidos, C escrito) sobre a taxa de rede do nó. Cai
   para 1.0 quando não medida.
 - **fila** — peso por unidade já em voo para o nó; uma unidade enfileirada espera. É o termo
@@ -142,10 +145,11 @@ Custo = compute + transferência + fila, tudo escalado por saúde. Menor é melh
 - **saúde** — multiplica o total. Um nó degradado perde empates contra um saudável de igual
   capability. `health_score = 0` significa "não reportado" e é ignorado, não lido como péssimo.
 
-A pontuação é relativa, não um tempo. As constantes são placeholders até o benchmark reportar
-taxas reais; só a *ordem* entre nós é significativa hoje. Os testes unitários do módulo cobrem
-as direções: mais threads custa menos, unidade maior custa mais, nó com fila custa mais, saúde
-degradada custa mais, e saúde não reportada não penaliza.
+A pontuação é relativa, não um tempo. O termo de compute já usa a taxa que o benchmark de
+capability mediu; os pesos (compute, transferência, fila, saúde) e a taxa de rede continuam
+placeholders — só a *ordem* entre nós é significativa hoje. Os testes unitários do módulo
+cobrem as direções: mais threads custa menos, unidade maior custa mais, nó com fila custa
+mais, saúde degradada custa mais, e saúde não reportada não penaliza.
 
 ## Scheduler global (G3)
 

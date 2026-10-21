@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ai_cluster_common::matrix::Matrix;
+use ai_cluster_common::matrix::{Matrix, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
     NodeIdentity, RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult,
@@ -15,6 +15,19 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 5;
 /// short: a unit enqueued just after a poll should be picked up almost at once.
 /// A worker that just finished a unit asks again immediately, without waiting.
 const WORK_POLL_IDLE_MS: u64 = 200;
+
+/// Reference per-core matmul throughput for the capability benchmark. A core that
+/// measures `REFERENCE_CORE_GFLOPS` scores 1.0, which is exactly what the placement
+/// model assumed before a score existed — so enabling the benchmark leaves a cluster
+/// of ordinary nodes ranked as it was, while slower and faster cores sort correctly
+/// against each other.
+const REFERENCE_CORE_GFLOPS: f64 = 6.0;
+/// Matmul edge length for the compute benchmark. Large enough for the O(n^3) kernel to
+/// dominate per-call overhead, small enough to keep startup in the tens of milliseconds.
+const BENCH_SIZE: u32 = 256;
+/// Timed repetitions. The score is the best of these runs, so a few extra iterations buy a
+/// less-disturbed sample at a few milliseconds of startup each.
+const BENCH_ITERS: u32 = 5;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -304,6 +317,68 @@ fn grant_cores(reported_threads: u32, available: usize) -> usize {
     (reported_threads.max(1) as usize).min(available.max(1))
 }
 
+/// Per-core compute score for the placement model, from a real measurement (Fase C2).
+///
+/// Single-threaded on purpose: the placement model multiplies the score by the reported
+/// thread count, so a multithreaded measurement would count the cores twice. Uses the
+/// same matmul kernel the worker runs on real units, so the rate is directly comparable
+/// to the workload it predicts.
+///
+/// Set `AI_CLUSTER_COMPUTE_SCORE` to pin the score instead of measuring, so a placement
+/// test does not depend on how fast the host happens to be. Unset or unparsable means
+/// measure.
+///
+/// ponytail: assumes compute scales linearly with threads; turbo and SMT mean a real
+/// 4-thread run is usually a bit under 4x the 1-thread rate, so the model is optimistic
+/// on big nodes. Revisit with a multithreaded sweep if placement skews to them.
+fn compute_score() -> f64 {
+    if let Some(forced) = std::env::var("AI_CLUSTER_COMPUTE_SCORE")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        return forced;
+    }
+    measure_compute_score(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS)
+}
+
+/// Times `iters` serial multiplies of a `size`-cubed matmul and normalises the rate.
+///
+/// Reports the best of the timed runs, not the mean: contention from another container or
+/// a noisy neighbour only ever makes a run slower, so the fastest run is the least
+/// disturbed and the most reproducible. Averaging drags the rate down whenever the host is
+/// shared, which would make the same node look slower from one poll to the next. The cold
+/// first run is discarded by the same mechanism, so no separate warm-up pass is needed.
+fn measure_compute_score(size: u32, iters: u32, reference: f64) -> f64 {
+    let a = Matrix::seeded(size, size, 1);
+    let b = Matrix::seeded(size, size, 2);
+    if a.multiply(&b).is_none() {
+        return 0.0;
+    }
+    let mut best = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let started = Instant::now();
+        if a.multiply(&b).is_none() {
+            return 0.0;
+        }
+        best = best.min(started.elapsed().as_secs_f64());
+    }
+    normalize_compute_score(flops(size, size, size) / best / 1e9, reference)
+}
+
+/// Normalises a measured GFLOP/s rate to the placement model's per-core score.
+///
+/// A core at `reference` GFLOP/s scores 1.0 — the value the thread fallback used — so a
+/// homogeneous cluster is not re-ranked by turning the benchmark on. A rate that is zero
+/// or nonsensical scores 0.0, which the placement model reads as "not measured" and
+/// replaces with the fallback; a broken benchmark must not look like a fast node.
+fn normalize_compute_score(gflops: f64, reference: f64) -> f64 {
+    if !gflops.is_finite() || gflops <= 0.0 || !reference.is_finite() || reference <= 0.0 {
+        return 0.0;
+    }
+    gflops / reference
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -324,6 +399,7 @@ fn capability() -> CapabilityReport {
     CapabilityReport {
         cpu_threads,
         memory_bytes,
+        compute_score: compute_score(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
     }
@@ -407,5 +483,34 @@ mod tests {
     fn never_grants_zero_cores() {
         assert_eq!(grant_cores(0, 4), 1);
         assert_eq!(grant_cores(8, 0), 1);
+    }
+
+    #[test]
+    fn a_reference_speed_core_scores_one() {
+        assert_eq!(normalize_compute_score(6.0, 6.0), 1.0);
+        assert_eq!(normalize_compute_score(12.0, 6.0), 2.0);
+        assert_eq!(normalize_compute_score(3.0, 6.0), 0.5);
+    }
+
+    #[test]
+    fn a_nonsensical_rate_falls_back_instead_of_scoring_high() {
+        // 0.0 means "not measured" to the placement model. A negative, NaN or infinite
+        // rate must not sneak through as a real score, or a broken benchmark would skew
+        // placement toward whichever node failed to measure.
+        assert_eq!(normalize_compute_score(0.0, 6.0), 0.0);
+        assert_eq!(normalize_compute_score(-1.0, 6.0), 0.0);
+        assert_eq!(normalize_compute_score(f64::NAN, 6.0), 0.0);
+        assert_eq!(normalize_compute_score(f64::INFINITY, 6.0), 0.0);
+        assert_eq!(normalize_compute_score(6.0, 0.0), 0.0);
+        assert_eq!(normalize_compute_score(6.0, f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn the_compute_benchmark_reports_a_positive_rate() {
+        // Runs the real kernel on a small matrix so the test stays fast. Catches a shape
+        // or loop bug that would silently return 0.0 and leave every node on the thread
+        // fallback. The exact rate is host-dependent, so only the sign is asserted.
+        let score = measure_compute_score(32, 1, REFERENCE_CORE_GFLOPS);
+        assert!(score.is_finite() && score > 0.0, "score was {score}");
     }
 }
