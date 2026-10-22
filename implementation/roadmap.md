@@ -37,7 +37,8 @@ Entregar:
 - [x] registration;
 - [x] heartbeat;
 - [x] capabilities — compute medido no registro (baseline) e remedido com o nó ocioso, com
-  confiança sobre a remedida (`phase-2/capability-benchmark.md`, `capability-current.md`);
+  confiança sobre a remedida e a distribuição do registro (mediana + desvio) que calibra a
+  previsão (`phase-2/capability-benchmark.md`, `capability-current.md`, `benchmark-stability.md`);
 - [x] health — liveness por heartbeat e o score de saúde com pressão de memória, swap e
   térmica (`health-model.md`, C4);
 - [x] CLI status.
@@ -178,4 +179,6 @@ Entregar:
   fontes que ainda não existem; previsto vs real sim — o `GetMetrics` soma a previsão
   (`total_predicted_compute_us`) e a linha `TEMPO` mostra `previsto_total_us`;
 - [x] H5 Previsto vs real — o modelo de custo prevê tempo, não só ordena; o trace mostra a
-  previsão ao lado da medição e o erro entre as duas (`predictions.md`);
+  previsão ao lado da medição e o erro entre as duas, e a previsão usa a taxa típica do
+  benchmark de registro (com o desvio como guarda) mais o setup por unidade — o erro caiu de
+  ~32× para poucos por cento (`predictions.md`, `benchmark-stability.md`);

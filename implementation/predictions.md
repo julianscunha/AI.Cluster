@@ -18,7 +18,17 @@ previsão, para o modelo de custo ter como ser calibrado em vez de ajustado no e
 - `predicted_compute_us` no `TraceEntry` (`code/proto/cluster.proto`): o tempo de compute
   que o modelo previu para a unidade, no nó que a recebeu.
 - `placement::predicted_compute_us` (`code/crates/controller/src/placement.rs`): a função
-  que vira a previsão de tempo. Zero quando o nó não reportou compute score.
+  que vira a previsão de tempo. Zero quando o nó não reportou compute score. Duas correções
+  sobre o `flops / rate` puro, as duas vindas do benchmark de registro (C3):
+  - **a taxa é a típica, não a melhor.** `typical_ratio` multiplica a taxa por
+    `compute_median_score / compute_score`, porque o melhor caso é um extremo que a máquina
+    raramente repete. Fica de fora quando o próprio benchmark discordou demais
+    (`compute_deviation` acima de `DEVIATION_TRUST_LIMIT`) — aí a razão é ruído e o melhor
+    caso é usado como estava.
+  - **o setup por unidade entra somado.** `UNIT_SETUP_US` é o custo que não escala com o
+    tamanho — clonar operandos e criar threads — e que um termo de `flops / rate` não tem
+    como expressar. `AI_CLUSTER_UNIT_SETUP_US` ajusta o número sem rebuild, porque ele é uma
+    propriedade do host e não uma política.
 - `REFERENCE_CORE_GFLOPS` mudou de lugar: vivia só no worker (`worker/src/main.rs`), agora
   fica em `ai_cluster_common::matrix`, ao lado de `flops`. É o mesmo número dos dois lados —
   o worker normaliza o rate medido por ele, e o controlador **inverte** essa normalização
@@ -42,21 +52,28 @@ Saída real de `bash code/tests/phase-h-traces.sh` (nó sem score forçado):
 ```
 REQUISIÇÃO req-0 UNIDADES 2
 TRABALHO   NÓ             ESTADO        COMPUTE_US   PREDITO_US  TRANSFER_US     TOTAL_US
-w-0        node-t         completed            583           18         1417         2000
-w-1        node-t         completed            616           18          384         1000
-unidades=2 compute_somado_us=1199 transfer_somado_us=1801 latencia_somada_us=3000
-PREVISTO somado_us=36 erro_pct=3230.6
+w-0        node-t         completed            598          619         2402         3000
+w-1        node-t         completed            593          619         1407         2000
+unidades=2 compute_somado_us=1191 transfer_somado_us=3809 latencia_somada_us=5000
+PREVISTO somado_us=1238 erro_pct=-3.8
 ```
 
 - **`erro_pct` é a distância do real ao previsto**, positivo quando o real é maior (o modelo
-  subestimou). Aqui 3230.6% é a leitura honesta de "o modelo prevê ~18us e a máquina gasta
-  ~600us": o modelo de custo sempre foi uma **ordenação**, e a previsão em µs expõe o
-  tamanho real da distância entre a ordenação e o relógio. Trinta e poucas vezes é o erro
-  medido nesta máquina para unidades pequenas (64³), e é o teto de escalonamento linear
-  abaixo se manifestando — não uma surpresa.
+  subestimou) e negativo quando o modelo passou do relógio. Antes do termo de setup esta mesma
+  execução dava `erro_pct=3230.6`: o modelo previa ~18us e a máquina gastava ~600us. O modelo
+  de custo sempre foi uma **ordenação**, e a previsão em µs expõe o tamanho real da distância
+  entre a ordenação e o relógio — trinta e poucas vezes nesta máquina para unidades pequenas
+  (64³). Agora a distância é de poucos por cento, e o que sobra é ruído do host, não um termo
+  que falta no modelo.
 - **Zero em `PREDITO_US` é "não previsto", não "instantâneo".** Um nó sem compute score
   (benchmark desligado ou falho) reporta zero, e uma unidade não concluída também. A linha
   `PREVISTO` só aparece quando há pelo menos uma previsão na requisição.
+
+Para conferir a consistência da previsão sem o ruído do host, `bash code/tests/phase-h-predictions.sh`
+fixa o score do nó e pina a aritmética do modelo calibrado — taxa típica + setup — em números
+conhecidos: `PREVISTO somado_us=1244` em duas unidades de 64³ (622us cada) e `775` em uma de 128³.
+A saída acima é de um nó real, onde o resíduo é o host, não o modelo — e é
+`phase-h-predictions.sh` que confere a coluna `PREDITO_US` e o roll-up do `metrics`.
 
 ## Por que dá para prever agora
 
@@ -66,27 +83,33 @@ normalização do worker dá sentido físico a elas. O worker mede GFLOP/s por c
 é a vazão do nó em GFLOP/s, e 1 GFLOP/s é 1e3 flops por microssegundo:
 
 ```
-previsto_us = flops / (compute_rate * REFERENCE_CORE_GFLOPS * 1e3)
+previsto_us = setup_us + flops / (compute_rate * typical_ratio * REFERENCE_CORE_GFLOPS * 1e3)
 ```
 
-Com `flops = 2 * rows * shared * cols`, o mesmo cálculo que o worker usa no benchmark.
+Com `flops = 2 * rows * shared * cols`, o mesmo cálculo que o worker usa no benchmark. As
+duas correções vêm do benchmark de registro: `typical_ratio` tira o otimismo do melhor caso
+e `setup_us` põe de volta o custo por unidade que não escala com o tamanho.
 
 ## Teto conhecido
 
 - **Compute só.** A previsão cobre o tempo de compute, não a transferência nem a espera na
   fila — que o modelo de custo também pondera, mas que não têm uma medição simétrica do lado
   do worker. O `erro_pct` compara compute com compute de propósito.
-- **Assume compute linear em threads.** É a mesma suposição do benchmark do worker, e é a
-  origem do erro grande medido: o score é calibrado **single-core** num kernel de 256³ (33.5
-  MFLOP), onde o custo por chamada se dilui; uma unidade de 64³ é pequena o bastante para
-  clone de operandos e criação de threads dominarem. O modelo então extrapola 32 threads como
-  32× um core e prevê 18us onde a máquina gasta ~600us. Turbo e SMT contribuem, mas o efeito
-  principal é o tamanho do kernel de calibração. É exatamente o erro que esta fatia existe
-  para tornar visível; calibrar por faixa de tamanho é a próxima fatia, não esta. O número
-  estável que essa calibração precisa já existe: `compute_median_score` e `compute_deviation`
-  (`benchmark-stability.md`) reportam a distribuição do benchmark de registro, e o desvio
-  medido numa passada real (0.41) é a prova de que o melhor caso, sozinho, não serve para
-  calibrar — a mediana é o valor central contra o qual a previsão deve ser ajustada.
+- **Assume compute linear em threads.** É a mesma suposição do benchmark do worker. Turbo e
+  SMT continuam fazendo a previsão um pouco otimista em nós largos — é o teto que sobra depois
+  do termo de setup. O que antes era erro de 30× era outra coisa: o score é calibrado
+  **single-core** num kernel de 256³ (33.5 MFLOP), onde o custo por chamada se dilui, e uma
+  unidade de 64³ é pequena o bastante para clone de operandos e criação de threads dominarem.
+  Esse custo por unidade é o que `setup_us` põe de volta, e é o que levou o erro de ~3200% para
+  poucos por cento nesta máquina.
+- **O setup é uma constante, não uma banda.** Os três tamanhos medidos (64³/128³/256³) deram
+  626/433/313us de setup implícito — espalhados demais por ruído do host para sustentar mais de
+  um número; uma constante é o que o dado aguenta. Bandas por faixa de tamanho são o degrau
+  seguinte **quando** o desvio do benchmark mostrar que a medição estabilizou
+  (`benchmark-stability.md`). O número central que essa calibração usa já existe:
+  `compute_median_score` é a taxa típica contra a qual a previsão se ajusta, e
+  `compute_deviation` é a guarda — acima do limite de confiança a razão mediana/melhor é
+  descartada e o melhor caso volta a valer.
 - **Não persiste.** A previsão vive no dispatch, que não vai para o snapshot — depois de um
   restart ela é recalculada no próximo despacho. Coerente com as unidades concluídas, que
   também não sobrevivem a um restart.
@@ -98,16 +121,22 @@ Com `flops = 2 * rows * shared * cols`, o mesmo cálculo que o worker usa no ben
 ## Evidência
 
 E2E: `bash code/tests/phase-h-predictions.sh` — com o nó reportando um score fixo
-(`AI_CLUSTER_COMPUTE_SCORE=1.0`) em 4 threads a previsão vira aritmética conhecida e o script
-a pina: `PREVISTO somado_us=44` para duas unidades de 64³ (22us cada) e `175` para uma de 128³,
-com `erro_pct > 0`. É a mesma execução que valida a leitura de "não previsto" numa requisição
-desconhecida. `bash code/tests/phase-h-traces.sh` mostra a coluna `PREDITO_US` no trace de uma
-requisição real. O mesmo script fecha lendo `ai-cluster metrics`: `total_predicted_compute_us=219`
-(44 do A + 175 do B), que é o roll-up somando a previsão que o trace mostra por unidade.
+(`AI_CLUSTER_COMPUTE_SCORE=1.0`, que não roda benchmark e portanto não tem mediana) em 4
+threads a previsão vira aritmética conhecida e o script a pina: `PREVISTO somado_us=1244` para
+duas unidades de 64³ (622us cada) e `775` para uma de 128³, com `|erro_pct| < 1000`. Um score
+fixado não tem razão típica/melhor, então é o setup sozinho que entra. É a mesma execução que
+valida a leitura de "não previsto" numa requisição desconhecida. `bash code/tests/phase-h-traces.sh`
+mostra a coluna `PREDITO_US` no trace de uma requisição real — e é onde o erro calibrado
+aparece: `erro_pct=-3.8` contra `3230.6` antes do setup. O mesmo script fecha lendo
+`ai-cluster metrics`: `total_predicted_compute_us=2019` (1244 do A + 775 do B), que é o roll-up
+somando a previsão que o trace mostra por unidade.
 
 Testes unitários: em `placement.rs`, `the_prediction_matches_the_reference_rate` (pina a
-cadeia inteira: 64³ na taxa de referência = 87us), `more_threads_predicts_less_time`,
-`a_bigger_unit_predicts_more_time` e `an_unmeasured_node_predicts_nothing`; em `work.rs`,
+cadeia inteira: 64³ na taxa de referência = 87us de compute, mais o setup),
+`a_trustworthy_median_pulls_the_prediction_longer`, `an_untrustworthy_median_is_ignored`,
+`a_node_without_a_median_predicts_from_the_best_case`, `the_setup_clamps_to_something_sane`,
+`more_threads_predicts_less_time`, `a_bigger_unit_predicts_more_time` e
+`an_unmeasured_node_predicts_nothing`; em `work.rs`,
 `a_predicted_compute_time_flows_from_claim_to_trace` e
 `an_unmeasured_node_leaves_the_prediction_unset_in_the_trace`.
 

@@ -23,6 +23,20 @@ const HEALTH_WEIGHT: f64 = 1.0;
 /// Bytes per f64 element of a matrix.
 const BYTES_PER_ELEMENT: f64 = 8.0;
 
+/// Per-unit setup the pure compute model does not see, in microseconds.
+///
+/// Cloning the operands and spawning the threads costs roughly the same whatever the unit's
+/// size, so it dominates a small unit and disappears under a large one. Measured against a
+/// real 64³ unit: ~648us where pure compute predicts ~22us. A single constant, **not** a band
+/// per size — the three sizes measured (64³/128³/256³) gave 626/433/313us, spread by host
+/// noise far more than by size, so more than one number would be fitting the noise. Override
+/// with `AI_CLUSTER_UNIT_SETUP_US`; bands are the next rung once the measurement is stable.
+const UNIT_SETUP_US: f64 = 600.0;
+
+/// Above this relative deviation the benchmark's runs disagreed too much for its typical/best
+/// ratio to mean anything, so the ratio is dropped and the best case is used unchanged.
+const DEVIATION_TRUST_LIMIT: f64 = 0.25;
+
 /// The node side of the comparison. Borrowed so scoring does not clone registry
 /// state on every poll.
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +75,45 @@ fn per_thread_compute_current(capability: &CapabilityReport) -> f64 {
         capability.compute_score
     } else {
         1.0
+    }
+}
+
+/// The benchmark's typical-over-best ratio, applied to the rate a prediction uses (C3).
+///
+/// `compute_score` is the best of the runs — an extreme, and the machine rarely repeats it.
+/// The median is the typical run, so `median / best` is exactly how much optimism to take
+/// back out. Gated by `compute_deviation`: if the benchmark's own runs disagreed by more than
+/// the trust limit the ratio is noise, and the best case is used unchanged. No median (a
+/// pinned or never-benchmarked node) also means no ratio. Never above 1 — the median cannot
+/// beat the best.
+fn typical_ratio(capability: &CapabilityReport) -> f64 {
+    if capability.compute_deviation > DEVIATION_TRUST_LIMIT
+        || capability.compute_score <= 0.0
+        || capability.compute_median_score <= 0.0
+    {
+        return 1.0;
+    }
+    (capability.compute_median_score / capability.compute_score).clamp(0.0, 1.0)
+}
+
+/// The per-unit setup from `AI_CLUSTER_UNIT_SETUP_US`, else the measured constant.
+fn setup_us() -> f64 {
+    clamp_setup(
+        std::env::var("AI_CLUSTER_UNIT_SETUP_US")
+            .ok()
+            .and_then(|value| value.trim().parse::<f64>().ok()),
+    )
+}
+
+/// Clamped so a bad value cannot break the prediction.
+///
+/// A negative setup would predict less than the pure compute time, which no unit can beat;
+/// a non-finite one would poison the trace. Negative clamps to zero, non-finite or missing
+/// falls back to `UNIT_SETUP_US`. Split from the env lookup so the edges are tested exactly.
+fn clamp_setup(parsed: Option<f64>) -> f64 {
+    match parsed {
+        Some(value) if value.is_finite() => value.max(0.0),
+        _ => UNIT_SETUP_US,
     }
 }
 
@@ -148,16 +201,23 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
 ///
 /// Known ceiling: assumes compute scales linearly with thread count, the same assumption
 /// the worker's benchmark makes. Turbo and SMT mean a real multithreaded run is a little
-/// under the linear estimate, so the prediction runs optimistic on wide nodes. Confidence
-/// is not weighted in yet: a low-confidence current score predicts the same as a certain one.
+/// under the linear estimate, so the prediction runs optimistic on wide nodes.
+///
+/// Two corrections sit on top of the pure `flops / rate` (`predictions.md`): the rate is
+/// multiplied by the benchmark's typical/best ratio (`typical_ratio`), so the prediction uses
+/// the typical run instead of the luckiest one; and the per-unit setup (`setup_us`) is added,
+/// which the compute term has no constant for and which is what made a small unit's
+/// prediction an order of magnitude short. Zero still means "not measured" — a node without a
+/// score is not a zero-microsecond prediction.
 pub fn predicted_compute_us(unit: &WorkUnit, capability: &CapabilityReport) -> u64 {
     if capability.compute_score <= 0.0 && capability.current_compute_score <= 0.0 {
         return 0;
     }
     let threads = f64::from(capability.cpu_threads).max(1.0);
-    let gflops = threads * per_thread_compute_current(capability) * REFERENCE_CORE_GFLOPS;
+    let per_thread = per_thread_compute_current(capability) * typical_ratio(capability);
+    let gflops = threads * per_thread * REFERENCE_CORE_GFLOPS;
     let flops = 2.0 * f64::from(unit.rows) * f64::from(unit.shared) * f64::from(unit.cols);
-    (flops / (gflops * 1e3)).round() as u64
+    (flops / (gflops * 1e3) + setup_us()).round() as u64
 }
 
 #[cfg(test)]
@@ -294,10 +354,14 @@ mod tests {
     fn the_prediction_matches_the_reference_rate() {
         // 64x64x64 is 524_288 flops. One core at the reference rate (6 GFLOP/s, i.e.
         // 6_000 flops/us) needs 524_288 / 6_000 = 87us. A score of 1.0 on one thread is
-        // exactly that core, so the prediction has to land on 87 — this pins the whole
-        // normalisation-inversion chain, including the shared reference constant.
+        // exactly that core, so the compute term has to land on 87 — this pins the whole
+        // normalisation-inversion chain, including the shared reference constant — and the
+        // per-unit setup is added on top, which is what a bare compute term cannot express.
         let u = unit(64, 64, 64);
-        assert_eq!(predicted_compute_us(&u, &capability(1, 1.0, 0.0)), 87);
+        assert_eq!(
+            predicted_compute_us(&u, &capability(1, 1.0, 0.0)),
+            87 + UNIT_SETUP_US as u64
+        );
     }
 
     #[test]
@@ -332,9 +396,9 @@ mod tests {
         // time estimate following what the node is doing now (C3).
         let u = unit(64, 64, 64);
         let mut cap = capability(1, 1.0, 0.0);
-        assert_eq!(predicted_compute_us(&u, &cap), 87);
+        assert_eq!(predicted_compute_us(&u, &cap), 687);
         cap.current_compute_score = 2.0;
-        assert_eq!(predicted_compute_us(&u, &cap), 44);
+        assert_eq!(predicted_compute_us(&u, &cap), 644);
     }
 
     #[test]
@@ -343,9 +407,9 @@ mod tests {
         // kept reporting day-one speed would under-predict the run by 4x.
         let u = unit(64, 64, 64);
         let mut cap = capability(1, 2.0, 0.0);
-        assert_eq!(predicted_compute_us(&u, &cap), 44);
+        assert_eq!(predicted_compute_us(&u, &cap), 644);
         cap.current_compute_score = 0.5;
-        assert_eq!(predicted_compute_us(&u, &cap), 175);
+        assert_eq!(predicted_compute_us(&u, &cap), 775);
     }
 
     #[test]
@@ -356,6 +420,48 @@ mod tests {
         let mut cap = capability(1, 0.0, 0.0);
         assert_eq!(predicted_compute_us(&u, &cap), 0);
         cap.current_compute_score = 1.0;
-        assert_eq!(predicted_compute_us(&u, &cap), 87);
+        assert_eq!(predicted_compute_us(&u, &cap), 687);
+    }
+
+    #[test]
+    fn a_trustworthy_median_pulls_the_prediction_longer() {
+        // Best 1.0, median 0.5: the machine typically runs at half its luckiest rate, so the
+        // compute term doubles. 524_288 / (0.5 * 6_000) = 175us, plus the setup.
+        let u = unit(64, 64, 64);
+        let mut cap = capability(1, 1.0, 0.0);
+        cap.compute_median_score = 0.5;
+        cap.compute_deviation = 0.05;
+        assert_eq!(predicted_compute_us(&u, &cap), 175 + UNIT_SETUP_US as u64);
+    }
+
+    #[test]
+    fn an_untrustworthy_median_is_ignored() {
+        // Same median, but the runs disagreed past the trust limit: the ratio is noise, so
+        // the best case is used unchanged rather than a ratio the benchmark cannot support.
+        let u = unit(64, 64, 64);
+        let mut cap = capability(1, 1.0, 0.0);
+        cap.compute_median_score = 0.5;
+        cap.compute_deviation = DEVIATION_TRUST_LIMIT + 0.01;
+        assert_eq!(predicted_compute_us(&u, &cap), 87 + UNIT_SETUP_US as u64);
+    }
+
+    #[test]
+    fn a_node_without_a_median_predicts_from_the_best_case() {
+        // A pinned score runs no benchmark, so there is no median and therefore no ratio.
+        let u = unit(64, 64, 64);
+        let cap = capability(1, 1.0, 0.0);
+        assert_eq!(typical_ratio(&cap), 1.0);
+        assert_eq!(predicted_compute_us(&u, &cap), 87 + UNIT_SETUP_US as u64);
+    }
+
+    #[test]
+    fn the_setup_clamps_to_something_sane() {
+        // A negative setup would predict less than the pure compute time, which no unit can
+        // beat; a non-finite one would poison every trace.
+        assert_eq!(clamp_setup(None), UNIT_SETUP_US);
+        assert_eq!(clamp_setup(Some(f64::NAN)), UNIT_SETUP_US);
+        assert_eq!(clamp_setup(Some(f64::INFINITY)), UNIT_SETUP_US);
+        assert_eq!(clamp_setup(Some(-5.0)), 0.0);
+        assert_eq!(clamp_setup(Some(1_234.0)), 1_234.0);
     }
 }

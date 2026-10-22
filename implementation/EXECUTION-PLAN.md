@@ -160,8 +160,8 @@ Baseline + current + confidence.
   current: prever tempo e escolher nó são perguntas diferentes. Zero é "não remedido" (nunca
   "compute zero") e a confiança é concordância entre as execuções da passada (melhor sobre a
   mediana), não histórico. O benchmark reporta também a **distribuição do registro** —
-  `compute_median_score` (o valor central, contra o qual uma previsão de tempo deve ser
-  calibrada) e `compute_deviation` (o quanto as execuções discordaram) — porque calibrar contra
+  `compute_median_score` (o valor central, contra o qual a previsão de tempo é calibrada)
+  e `compute_deviation` (o quanto as execuções discordaram) — porque calibrar contra
   o melhor caso é ajustar contra um número que a máquina raramente repete
   (`benchmark-stability.md`). Evidência: `bash code/tests/phase-c-current.sh` (baseline 1.07 /
   mediana 0.46 / desvio 0.41 / current 0.72 / confiança 0.71; com o score fixado, current e
@@ -362,14 +362,20 @@ Expor prediction error. — [x] (`predictions.md`): `predicted_compute_us` no `T
 `REFERENCE_CORE_GFLOPS` passou a viver em `ai_cluster_common::matrix` para o controlador
 inverter a normalização do worker sem duas cópias do mesmo número. O trace mostra
 `PREDITO_US` por unidade e uma linha `PREVISTO somado_us=... erro_pct=...`; zero é lido como
-"não previsto", nunca como previsão de zero µs. O erro medido é grande e honesto: ~32× de
-subestimação em unidades pequenas (64³), porque o score é calibrado single-core num kernel
-de 256³. Evidência: `bash code/tests/phase-h-predictions.sh` (44us previstos para duas
-unidades de 64³, 175us para uma de 128³) e `bash code/tests/phase-h-traces.sh` (a coluna no
-trace de uma requisição real). O roll-up do cluster agora soma a previsão:
+"não previsto", nunca como previsão de zero µs. O erro medido era grande e honesto: ~32× de
+subestimação em unidades pequenas (64³), porque o score é calibrado single-core num kernel de
+256³ — e a fatia de estabilidade mostrou que parte do erro era o número que alimentava a
+previsão, não o modelo. Duas correções vieram daí: a previsão usa a **taxa típica**
+(`compute_median_score / compute_score`, guardada por `compute_deviation`) em vez do melhor caso,
+e soma o **setup por unidade** (`UNIT_SETUP_US`, ajustável por `AI_CLUSTER_UNIT_SETUP_US`). O
+`erro_pct` do trace caiu de ~3200% para poucos por cento (`erro_pct=-3.8` numa requisição real de
+64³); bandas por faixa de tamanho ficam para quando o desvio mostrar que a medição estabilizou.
+Evidência: `bash code/tests/phase-h-predictions.sh` (622us previstos por unidade de 64³, 775us
+para uma de 128³ — score fixado) e `bash code/tests/phase-h-traces.sh` (a coluna no trace de uma
+requisição real). O roll-up do cluster agora soma a previsão:
 `MetricsResponse.total_predicted_compute_us` (H1) e a linha `TEMPO ... previsto_total_us=` do
-painel (H4) leem o mesmo número — o mesmo script confere `total_predicted_compute_us=219`
-(44 + 175). O caminho "nó sem score" é coberto por teste unitário: não há ambiente para forçar
+painel (H4) leem o mesmo número — o mesmo script confere `total_predicted_compute_us=2019`
+(1244 + 775). O caminho "nó sem score" é coberto por teste unitário: não há ambiente para forçar
 score zero no worker.
 
 Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster, com percentis e sinais de nó) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; e o trace carrega o previsto ao lado do real (`predictions.md`, H5), que é a resposta a "quanto do que demorou o modelo já sabia" — agora também no roll-up do cluster (`total_predicted_compute_us`).

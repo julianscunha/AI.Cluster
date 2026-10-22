@@ -6,12 +6,14 @@
 # e zero ali é lido como "não previsto", não como "instantâneo".
 #
 # O nó reporta um compute score fixo (AI_CLUSTER_COMPUTE_SCORE=1.0) em 4 threads, então a
-# previsão é aritmética conhecida: previsto_us = 2*size^3 / (4 * 1.0 * 6.0 * 1e3), com o
-# 6.0 vindo de REFERENCE_CORE_GFLOPS. Para size=64 dá 22us por unidade; para size=128, 175us.
+# previsão é aritmética conhecida: previsto_us = 2*size^3 / (4 * 1.0 * 6.0 * 1e3) + setup,
+# com o 6.0 vindo de REFERENCE_CORE_GFLOPS e o setup sendo `AI_CLUSTER_UNIT_SETUP_US`
+# (UNIT_SETUP_US por padrão). Para size=64 dá 22 + 600 = 622us por unidade; para size=128,
+# 175 + 600 = 775us.
 #
 # Sequência:
-#   A) size=64: o trace mostra PREDITO_US=22 e PREVISTO somado_us=44, com erro_pct coerente.
-#   B) size=128: a previsão escala com o cubo do tamanho (175 ≈ 8 * 22).
+#   A) size=64: o trace mostra PREDITO_US=622 e PREVISTO somado_us=1244, com erro_pct coerente.
+#   B) size=128: a previsão escala com o cubo do tamanho (775 ≈ 8 * 22 + setup).
 #   C) uma requisição desconhecida não imprime linha PREVISTO (nada foi previsto).
 set -uo pipefail
 
@@ -43,7 +45,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-p --network "$NET" -v aic-tar
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== A) size=64 — previsão de 22us por unidade ==="
+echo "=== A) size=64 — previsão de 622us por unidade ==="
 OUT=$(run "$R/ai-cluster benchmark --size 64 --repetitions 2")
 echo "$OUT"
 REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
@@ -51,29 +53,32 @@ REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 TRACE=$(run "$R/ai-cluster request trace $REQ")
 echo "$TRACE"
 PREDITO=$(echo "$TRACE" | sed -n 's/^PREVISTO somado_us=\([0-9]*\).*/\1/p')
-if [ "$PREDITO" = "44" ]; then
-  echo "OK: PREVISTO somado_us=44 (2 unidades de 64³ a 22us cada)"
+if [ "$PREDITO" = "1244" ]; then
+  echo "OK: PREVISTO somado_us=1244 (2 unidades de 64³ a 622us cada)"
 else
-  echo "FALHA: PREVISTO somado_us esperado 44, veio '$PREDITO'"
+  echo "FALHA: PREVISTO somado_us esperado 1244, veio '$PREDITO'"
   teardown
   exit 1
 fi
 # Cada linha de unidade concluída carrega a previsão ao lado do real.
-PRED_ROWS=$(echo "$TRACE" | grep -c "         22 ")
+PRED_ROWS=$(echo "$TRACE" | grep -c "         622 ")
 if [ "$PRED_ROWS" = "2" ]; then
-  echo "OK: as 2 linhas mostram PREDITO_US=22"
+  echo "OK: as 2 linhas mostram PREDITO_US=622"
 else
-  echo "FALHA: esperado 2 linhas com PREDITO_US=22, veio $PRED_ROWS"
+  echo "FALHA: esperado 2 linhas com PREDITO_US=622, veio $PRED_ROWS"
   teardown
   exit 1
 fi
 # erro_pct = (real - previsto) / previsto * 100. O real é do relógio, então não dá para
-# fixar o valor; mas tem que ser positivo — o modelo prevê menos do que a máquina gasta.
+# fixar o valor. Antes do termo de setup o modelo era ~30x otimista (erro ~3000%); agora
+# ele pode errar para os dois lados — um nó ocupado faz o real ficar acima, um nó ocioso
+# abaixo — mas não por ordens de magnitude. Um teto de 1000% é o que ainda separa "modelo
+# calibrado" de "modelo otimista", com folga para o ruído do host compartilhado.
 ERR=$(echo "$TRACE" | sed -n 's/.*erro_pct=\(-\?[0-9.]*\).*/\1/p')
-if [ -n "$ERR" ] && awk "BEGIN{exit !($ERR > 0)}"; then
-  echo "OK: erro_pct=$ERR > 0 (o modelo subestima o compute, como esperado)"
+if [ -n "$ERR" ] && awk "BEGIN{exit !(($ERR < 0 ? -$ERR : $ERR) < 1000)}"; then
+  echo "OK: erro_pct=$ERR dentro do teto de 1000% (o modelo já não é otimista por 30x)"
 else
-  echo "FALHA: erro_pct deveria ser > 0, veio '$ERR'"
+  echo "FALHA: |erro_pct| deveria ser < 1000, veio '$ERR'"
   teardown
   exit 1
 fi
@@ -85,10 +90,10 @@ REQ2=$(echo "$OUT2" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 TRACE2=$(run "$R/ai-cluster request trace $REQ2")
 echo "$TRACE2"
 PREDITO2=$(echo "$TRACE2" | sed -n 's/^PREVISTO somado_us=\([0-9]*\).*/\1/p')
-if [ "$PREDITO2" = "175" ]; then
-  echo "OK: PREVISTO somado_us=175 (128³ é 8x o trabalho de 64³)"
+if [ "$PREDITO2" = "775" ]; then
+  echo "OK: PREVISTO somado_us=775 (128³ é 8x o compute de 64³, mais o setup)"
 else
-  echo "FALHA: PREVISTO somado_us esperado 175, veio '$PREDITO2'"
+  echo "FALHA: PREVISTO somado_us esperado 775, veio '$PREDITO2'"
   teardown
   exit 1
 fi
@@ -107,10 +112,10 @@ echo "=== D) roll-up do cluster — a previsão somada no metrics ==="
 METRICS=$(run "$R/ai-cluster metrics")
 echo "$METRICS"
 PRED_TOTAL=$(echo "$METRICS" | grep -o "total_predicted_compute_us=[0-9]*" | head -1 | cut -d= -f2)
-if [ "$PRED_TOTAL" = "219" ]; then
-  echo "OK: total_predicted_compute_us=219 (44 do A + 175 do B)"
+if [ "$PRED_TOTAL" = "2019" ]; then
+  echo "OK: total_predicted_compute_us=2019 (1244 do A + 775 do B)"
 else
-  echo "FALHA: esperado total_predicted_compute_us=219, veio '$PRED_TOTAL'"
+  echo "FALHA: esperado total_predicted_compute_us=2019, veio '$PRED_TOTAL'"
   teardown
   exit 1
 fi

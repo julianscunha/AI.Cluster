@@ -30,6 +30,9 @@ calibrar por faixa de tamanho — primeiro um número estável, depois as bandas
   distribuição inteira do registro. Um score fixado por `AI_CLUSTER_COMPUTE_SCORE` continua
   curto-circuitando o benchmark.
 - `ai-cluster node show <id>` mostra `compute_median_score` e `compute_deviation`.
+- `placement::typical_ratio` e `placement::UNIT_SETUP_US` consomem a distribuição: a previsão de
+  tempo usa a mediana como taxa típica — com `compute_deviation` como **guarda** — e soma o setup
+  por unidade que um termo de `flops / rate` não vê (`predictions.md`).
 
 Sem dependência nova: um `Vec`, um `sort` e uma divisão.
 
@@ -83,13 +86,21 @@ CAPABILITY
 
 **Uma passada, não um histórico.** As cinco execuções são de um instante. Não há série temporal:
 um nó ocioso vota com o que mediu naquela janela. Alargar a janela (mais execuções, mediana
-móvel) é o degrau seguinte **se** o desvio se mostrar grande o bastante para valer o custo — e
-0.41 sugere que vale, mas isso é decisão da fatia de calibração, não desta.
+móvel) é o degrau seguinte **se** o desvio se mostrar grande o bastante para valer o custo. A
+fatia de calibração decidiu não esperar: com 0.41, uma constante global (taxa típica + setup) já
+corta o erro do H5 para poucos por cento, e as bandas por faixa ficam para quando o desvio cair.
 
-**Reportar, ainda não calibrar.** Esta fatia expõe a distribuição; não muda o modelo de custo.
-`predicted_compute_us` continua invertendo `compute_score` (melhor caso), não a mediana.
-Calibrar por faixa de tamanho — usar a mediana e o desvio para escolher a taxa — é a próxima
-fatia, e agora tem número estável para mirar.
+**A distribuição já alimenta a previsão.** `predicted_compute_us` passou a usar a mediana como
+taxa típica — `typical_ratio = compute_median_score / compute_score` — mais um termo de setup por
+unidade, em vez do melhor caso puro (`predictions.md`). O `compute_deviation` virou a **guarda**
+dessa razão: acima de `DEVIATION_TRUST_LIMIT` a mediana e o melhor caso discordaram demais para a
+razão valer, e a previsão volta ao melhor caso em vez de confiar num número ruidoso. O 0.41 medido
+aqui está abaixo do limite, então a razão é usada — mas o limite existe porque um 0.41 de host
+compartilhado pode não ser o de um nó real.
+
+**Bandas por faixa de tamanho continuam a próxima fatia.** A taxa típica e o setup são constantes
+globais; uma banda por tamanho usaria o mesmo par mediana/desvio para escolher a taxa de cada
+faixa. Agora há número estável para mirar.
 
 **Só compute.** Mediana e desvio existem para o compute; memória, storage e rede continuam sem
 medida. É o mesmo teto do `capability-benchmark.md`.

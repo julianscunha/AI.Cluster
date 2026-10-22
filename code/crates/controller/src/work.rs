@@ -2011,7 +2011,8 @@ mod tests {
         let store = WorkStore::new();
         store.enqueue([big_unit("w1")]);
         // A measured compute score, so a prediction exists: 64x64x64 is 524_288 flops and
-        // the node runs 4 threads at the reference rate, so 524_288 / (4 * 6_000) = 22us.
+        // the node runs 4 threads at the reference rate, so 524_288 / (4 * 6_000) = 22us,
+        // plus the per-unit setup the compute term does not see.
         assert_eq!(
             store
                 .claim("node-a", &capability(4, 1.0), 1_000)
@@ -2024,11 +2025,11 @@ mod tests {
             .expect("w1 completes");
         // The prediction is captured at dispatch and survives to completion, where it sits
         // beside the worker's measurement so the error can be read off.
-        assert_eq!(completed.predicted_compute_us, 22);
+        assert_eq!(completed.predicted_compute_us, 622);
         assert_eq!(completed.compute_time_us, 900);
         let trace = store.trace("req-test");
         assert_eq!(trace.len(), 1);
-        assert_eq!(trace[0].predicted_compute_us, 22);
+        assert_eq!(trace[0].predicted_compute_us, 622);
         assert_eq!(trace[0].compute_time_us, 900);
     }
 
