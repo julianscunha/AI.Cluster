@@ -20,7 +20,7 @@ esse caminho fecha. Esta é a fatia I4.
 | --- | --- |
 | node lost | dois relógios distintos: **grace de heartbeat** (o nó ficou mudo com o controller de pé) e **grace desde o start** (a posse veio do disco e o dono não reapareceu) |
 | identify state | `WorkSnapshot.dispatched` + `WorkLease` — cada unidade em voo guarda dono e payload, para que um dono que não volta ainda tenha o que reoferecer |
-| promote replica / recompute | **recomputação**: `requeue_for_node` devolve a unidade à fila. Réplica não existe — ver teto |
+| promote replica / recompute | **recomputação** quando o dono não volta (`requeue_for_node`), e **promoção** quando o controller perde os próprios arquivos: a cópia que um nó guarda é a única fonte da fila — ver "A cópia num nó" |
 | restore | o resultado volta como o output de uma unidade concluída, no caminho normal |
 | regenerate placement | a unidade reenfileirada é reivindicada pelo próximo nó que perguntar, pelo mesmo `claim_placed` de sempre — não há caminho de placement separado para recuperação |
 | continue | o grafo segue; `failed` só aparece quando o orçamento de tentativas acaba e a cascata derruba os dependentes |
@@ -79,6 +79,61 @@ As outras partes do caminho têm prova própria: falha planejada de worker com o
 primário for ilegível (`phase-i-state.sh`), poda do checkpoint (`phase-i-checkpoint.sh`). O
 teste unitário do caso "dono volta" é `an_in_flight_unit_keeps_its_owner_across_a_restart`.
 
+## A cópia num nó
+
+O controller já escrevia dois arquivos, e os dois moram no mesmo volume: quando o volume morre,
+a fila morre com ele. É essa falha que esta parte da fatia cobre — a cópia fora do controller,
+num nó.
+
+- O controller entrega o snapshot numa batida de heartbeat, **só quando a época dele avançou
+  além da que o nó reporta**. Um nó em dia não recebe nada, então uma batida continua sendo uma
+  batida, e não um envio de estado a cada 5s.
+- O nó grava a cópia em `AI_CLUSTER_STATE_REPLICA`, com a mesma escrita atômica dos arquivos do
+  controller (irmão + rename). Sem essa variável o nó não guarda nada e o resto fica inerte.
+- No (re-)registro o nó oferece o que guardou. O controller **adota** quando não tem trabalho
+  nenhum em mãos e a cópia é mais nova que a dele; fora disso ignora. Adotar com trabalho em
+  mãos trocaria a fila sendo servida por uma fotografia antiga.
+- A adoção grava o estado de volta nos arquivos locais: a cópia volta para casa, e o restart
+  seguinte é um restart normal, sem perguntar nada a nó nenhum.
+
+O gatilho do re-registro é o de sempre: depois de um restart o registry está vazio, a batida do
+nó volta `acknowledged=false`, e o worker se registra de novo. É nessa hora que a cópia sobe.
+
+A **época** ordena tudo isso, e mora dentro do snapshot (`WorkSnapshot.epoch_unix_ms`)
+justamente para sobreviver ao restart: sem o campo, um controller que acabou de carregar um
+arquivo pareceria época zero e tomaria a cópia de um nó por mais nova — a fila andaria para
+trás. O avanço é `max(relógio, época anterior + 1)`, então um relógio que anda para trás não faz
+o estado vivo parecer mais velho que uma cópia que já está no campo.
+
+Uma cópia nunca é mais nova que o arquivo do controller em operação normal: a oferta a um nó
+vem **depois** da gravação local, então o arquivo está sempre à frente ou empatado. Adotar só
+acontece, na prática, quando os dois arquivos locais sumiram.
+
+### Evidência
+
+`bash code/tests/phase-i4-replica.sh`: o volume do controller morre — os dois arquivos apagados —
+e a fila volta da cópia de um nó.
+
+```text
+=== B) enfileira: a gravação leva a cópia até o nó ===
+OK: o nó guardou a cópia em /t/state-i4r/node-a.bin (196718 bytes)
+=== C) o controller morre; os dois arquivos locais vão com ele ===
+OK: o volume do controller morreu (primário e cópia local apagados)
+=== D) o controller volta vazio e o nó oferece a cópia ===
+estado restaurado da réplica de um nó: 3 pendente(s), 0 em voo, época 1792633188323
+OK: a cópia adotada foi gravada de volta em /t/state-i4r/state.bin
+=== E) o cluster drena o trabalho recuperado ===
+units_completed=3 units_pending=0 units_blocked=0 units_failed=0
+```
+
+O roteiro falha de propósito se o controller tiver carregado um arquivo local: sem essa guarda,
+"a fila voltou" não diria de onde veio. Os testes unitários do caminho são
+`a_controller_without_files_restores_the_copy_a_node_holds`,
+`a_reloaded_state_keeps_the_epoch_it_was_saved_with`,
+`a_copy_never_overwrites_work_already_in_hand`,
+`a_copy_no_newer_than_the_state_in_hand_is_refused` e
+`a_memory_only_store_keeps_and_takes_no_copy`.
+
 ## Teto conhecido
 
 **A posse é persistida de forma preguiçosa.** `claim` **não** grava o snapshot: quem grava é
@@ -99,10 +154,18 @@ O(conjunto vivo) a cada unidade. O degrau seguinte é persistir **só a tabela d
 (id → nó) num arquivo pequeno ao lado, que muda devagar e é barato de reescrever; ou uma
 tabela só de ids, se o payload parar de caber em RAM.
 
-**Sem promoção de réplica.** Nada é replicado para outro nó: não há KV cache, execution state
-nem model state no cluster — os únicos estados são a fila e os outputs, e o output de uma
-unidade concluída é reconstruível. Promover réplica é o degrau seguinte, e é o que dá sentido
-ao `state://…` do `docs/13`.
+**A cópia está no nó, não no cluster.** Cada nó com `AI_CLUSTER_STATE_REPLICA` definido guarda a
+cópia inteira, e o controller oferece o snapshot inteiro a cada gravação — não há fator de
+replicação escolhido nem lugar designado. Com um estado grande isso vira tráfego proporcional a
+nós × gravações; um portador designado, ou uma taxa de atualização em vez de uma oferta por
+gravação, é o degrau seguinte. Também não há identidade de cluster na cópia: um controller novo,
+apontado para nós que guardam a cópia de um cluster anterior, adotaria aquela fila. E o E2E roda
+num volume compartilhado, onde o arquivo do nó está no mesmo disco dos arquivos do controller —
+o que se prova ali é de onde a fila voltou, não a sobrevivência física do disco.
+
+**Só a fila e os outputs são replicados.** Não há estado por chave — KV cache, execution state,
+model state — no cluster, então não há o que promover além da fila e do que ela lê. É o que
+daria sentido ao `state://…` do `docs/13`, e é o degrau seguinte.
 
 **Recomputação é sempre do zero.** Não há estado parcial de uma unidade para retomar: uma
 unidade reoferecida recalcula o matmul inteiro. Recuperação incremental depende das classes de

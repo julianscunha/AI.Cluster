@@ -1,13 +1,15 @@
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
-    NodeIdentity, RegisterNodeRequest, RequestWorkRequest, SubmitWorkResultRequest, WorkResult,
-    WorkUnit,
+    NodeIdentity, RegisterNodeRequest, RequestWorkRequest, StateReplica, SubmitWorkResultRequest,
+    WorkResult, WorkUnit,
 };
 use ai_cluster_protocol::metadata::connect_controller;
+use prost::Message;
 use tokio::time;
 
 const DEFAULT_CONTROLLER: &str = "http://127.0.0.1:50051";
@@ -30,6 +32,109 @@ const BENCH_SIZE: u32 = 256;
 /// less-disturbed sample at a few milliseconds of startup each.
 const BENCH_ITERS: u32 = 5;
 
+/// The copy of the controller's state this node keeps, if it was asked to keep one (I4).
+///
+/// The controller hands its snapshot down on a heartbeat when the copy here is behind, and
+/// this node offers it back on (re-)registration. That is how a controller whose own volume
+/// died recovers the queue: the copy outlives the failure because it lives here, on a node.
+///
+/// A static because one worker process is one node — the same reason `CURRENT_COMPUTE` is.
+static STATE_REPLICA: Mutex<Option<StateReplica>> = Mutex::new(None);
+
+/// Where this node keeps its copy, from `AI_CLUSTER_STATE_REPLICA`. Unset means it keeps
+/// none: a plain compute node, with the controller's own files as the only copy of the state.
+fn state_replica_path() -> Option<PathBuf> {
+    std::env::var("AI_CLUSTER_STATE_REPLICA")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// Reads the copy a previous run of this node left behind.
+///
+/// A restarted node has to be able to offer a copy even though it lost its memory, so the
+/// file is read at startup. A missing one is the normal case for a node never handed a copy.
+/// An unreadable or undecodable one is reported and ignored: a corrupt copy must never be
+/// what a controller restores its queue from.
+fn load_state_replica(path: &Path) {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            println!("réplica de estado {} ilegível ({err})", path.display());
+            return;
+        }
+    };
+    let Ok(replica) = StateReplica::decode(bytes.as_slice()) else {
+        println!("réplica de estado {} não decodifica", path.display());
+        return;
+    };
+    println!(
+        "réplica de estado carregada de {}: época {} ({} bytes)",
+        path.display(),
+        replica.epoch_unix_ms,
+        replica.snapshot.len()
+    );
+    *STATE_REPLICA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(replica);
+}
+
+/// Writes the copy the controller just handed down, then remembers it.
+///
+/// Written to a sibling first and renamed into place, the same way the controller writes its
+/// own snapshot: a crash mid-write leaves the previous copy intact instead of a truncated one
+/// the next controller would refuse to restore from.
+///
+/// The epoch is remembered only once the write succeeded. A disk that keeps failing therefore
+/// keeps reporting the old epoch and the controller keeps offering the copy — visible noise,
+/// instead of a copy that silently stopped being refreshed while looking current.
+fn store_state_replica(replica: &StateReplica) {
+    let Some(path) = state_replica_path() else {
+        return;
+    };
+    let temp = path.with_extension("tmp");
+    if let Err(err) =
+        std::fs::write(&temp, replica.encode_to_vec()).and_then(|()| std::fs::rename(&temp, &path))
+    {
+        println!(
+            "guardar réplica de estado em {} falhou: {err}",
+            path.display()
+        );
+        return;
+    }
+    *STATE_REPLICA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(replica.clone());
+    println!(
+        "réplica de estado guardada em {}: época {} ({} bytes)",
+        path.display(),
+        replica.epoch_unix_ms,
+        replica.snapshot.len()
+    );
+}
+
+/// The copy this node holds, to offer on registration. `None` when it holds none.
+fn state_replica() -> Option<StateReplica> {
+    STATE_REPLICA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// Epoch of the copy this node holds, for the heartbeat request. Zero when it holds none.
+///
+/// The controller compares this against its own epoch and sends a copy only when its own is
+/// newer, so the whole snapshot travels only when the node is genuinely behind — not every
+/// beat. Reporting the epoch is also how the node acknowledges a copy it stored.
+fn state_replica_epoch() -> u64 {
+    STATE_REPLICA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map_or(0, |replica| replica.epoch_unix_ms)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint =
@@ -48,10 +153,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cores = core_budget(capability.cpu_threads);
 
     let mut client = connect_controller(endpoint.clone()).await?;
+    // A copy left by a previous run of this node is still worth offering: the controller may
+    // have lost its own files while this node was down (I4).
+    if let Some(path) = state_replica_path() {
+        load_state_replica(&path);
+    }
     let registered = client
         .register_node(RegisterNodeRequest {
             identity: Some(identity.clone()),
             capability: Some(capability.clone()),
+            replica: state_replica(),
         })
         .await?
         .into_inner();
@@ -92,16 +203,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .heartbeat(HeartbeatRequest {
                         node_id: node_id.clone(),
                         unix_ms: now_ms(),
+                        replica_epoch_unix_ms: state_replica_epoch(),
                     })
                     .await
                 {
                     Ok(beat) => {
-                        if !beat.into_inner().acknowledged {
+                        let beat = beat.into_inner();
+                        // The controller hands a copy of its state down when the one here is
+                        // behind (I4). Stored before the re-registration check: a node that
+                        // just came back is exactly the one that should keep the copy. A node
+                        // with no replica path configured ignores it.
+                        if let Some(replica) = beat.replica {
+                            store_state_replica(&replica);
+                        }
+                        if !beat.acknowledged {
                             println!("controller não conhece {node_id}; re-registrando");
                             if let Err(err) = client
                                 .register_node(RegisterNodeRequest {
                                     identity: Some(identity.clone()),
                                     capability: Some(capability.clone()),
+                                    replica: state_replica(),
                                 })
                                 .await
                             {

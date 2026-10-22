@@ -65,6 +65,7 @@ version = "0.1.0"
 dependencies = [
  "ai-cluster-common",
  "ai-cluster-protocol",
+ "prost",
  "tokio",
  "tonic",
 ]

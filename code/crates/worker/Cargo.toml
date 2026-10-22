@@ -8,3 +8,6 @@ ai-cluster-common = { path = "../common" }
 ai-cluster-protocol = { path = "../protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tonic = "0.14"
+# Encodes and decodes the copy of the controller state this node keeps on disk (I4).
+# Already in the tree through ai-cluster-protocol, so this adds no new crate.
+prost = "0.14"

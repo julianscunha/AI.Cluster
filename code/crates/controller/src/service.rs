@@ -103,6 +103,12 @@ impl ClusterControl for ClusterControlService {
         }
         let node_id = identity.node_id.clone();
         let now = unix_ms();
+        // A node offers the copy of the state it holds. A controller that lost its own files
+        // takes the newest one — a node keeping the copy is exactly what lets the queue come
+        // back after the volume dies (I4).
+        if let Some(replica) = request.replica {
+            self.work.restore(&replica);
+        }
         self.registry
             .register(identity, request.capability.unwrap_or_default(), now);
         self.events.record(now, "node_registered", node_id.clone());
@@ -123,7 +129,19 @@ impl ClusterControl for ClusterControlService {
         }
         // The node-supplied timestamp is advisory only; liveness uses controller time.
         let acknowledged = self.registry.heartbeat(&request.node_id, unix_ms());
-        Ok(Response::new(HeartbeatResponse { acknowledged }))
+        // A node that is behind gets the current copy; one that is level with it gets nothing,
+        // so a beat stays a beat (I4). The node acknowledges by reporting the epoch back on
+        // the next beat, so this needs no per-node bookkeeping — and a node that leaves leaves
+        // nothing behind.
+        let replica = self
+            .work
+            .state_replica()
+            .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms)
+            .map(|replica| (*replica).clone());
+        Ok(Response::new(HeartbeatResponse {
+            acknowledged,
+            replica,
+        }))
     }
 
     async fn report_health(
@@ -661,6 +679,7 @@ mod tests {
                     cpu_threads: 4,
                     ..Default::default()
                 }),
+                replica: None,
             }))
             .await
             .unwrap()
@@ -672,6 +691,7 @@ mod tests {
             .heartbeat(Request::new(HeartbeatRequest {
                 node_id: "node-a".to_string(),
                 unix_ms: 123,
+                replica_epoch_unix_ms: 0,
             }))
             .await
             .unwrap()
@@ -717,6 +737,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(NodeIdentity::default()),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap_err();
@@ -726,6 +747,7 @@ mod tests {
             .heartbeat(Request::new(HeartbeatRequest {
                 node_id: "ghost".to_string(),
                 unix_ms: 0,
+                replica_epoch_unix_ms: 0,
             }))
             .await
             .unwrap()
@@ -740,6 +762,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -821,6 +844,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -878,6 +902,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -940,6 +965,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -995,6 +1021,7 @@ mod tests {
                         cpu_threads: threads,
                         ..Default::default()
                     }),
+                    replica: None,
                 }))
                 .await
                 .unwrap();
@@ -1037,6 +1064,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -1087,6 +1115,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -1149,6 +1178,7 @@ mod tests {
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),
                 capability: None,
+                replica: None,
             }))
             .await
             .unwrap();
@@ -1236,6 +1266,7 @@ mod tests {
                     cpu_threads: threads,
                     ..Default::default()
                 }),
+                replica: None,
             }))
             .await
             .unwrap();

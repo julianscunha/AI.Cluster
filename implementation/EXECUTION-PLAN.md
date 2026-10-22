@@ -374,9 +374,11 @@ unidade em voo. As unidades despachadas vão em `WorkSnapshot.dispatched` e volt
 com o mesmo nó, então o resultado que aquele worker já estava calculando é aceito em vez de
 descartado; quem não volta é reoferecido quando o grace passa (`WorkStore::unknown_owners`).
 Cada gravação escreve dois arquivos, `path` e `path.replica`, e um primário ilegível ou de
-zero bytes leva à cópia. A cópia é local — não uma réplica em outro nó — e o diretório de
-referências lógicas (`state://…`) não existe: nenhuma das duas noções tem consumidor
-enquanto não houver estado por chave. Evidência: `bash code/tests/phase-i-state.sh`.
+zero bytes leva à cópia. Essa cópia é **local**, no mesmo volume: as duas morrem juntas quando
+o volume morre. A cópia que sobrevive a isso fica num nó (`AI_CLUSTER_STATE_REPLICA`), entregue
+na batida e oferecida de volta no registro — ver a fatia I4. O diretório de referências lógicas
+(`state://…`) não existe: não tem consumidor enquanto não houver estado por chave. Evidência:
+`bash code/tests/phase-i-state.sh` e `bash code/tests/phase-i4-replica.sh`.
 
 ### I2 HOT/WARM/COLD
 
@@ -409,10 +411,17 @@ Node loss, replica promotion, recomputation.
   reoferecer, em vez de a unidade rodar duas vezes enquanto o dono ainda pode estar voltando.
   Evidência: `bash code/tests/phase-i4-recovery.sh` (o restart traz `1 em voo`; passado o
   grace, `node-old` é dado como ausente e `node-new` conclui a unidade recuperada).
-- [ ] promoção de réplica — nada é replicado para outro nó, e não há estado por chave para
-  promover (o `state://…` do `docs/13`). É a fatia seguinte.
+- [x] promoção de réplica (`recovery.md`, "A cópia num nó"): o controller entrega o snapshot
+  numa batida quando a época dele avançou além da que o nó reporta, o nó guarda em
+  `AI_CLUSTER_STATE_REPLICA` e oferece de volta no (re-)registro. Um controller que perdeu os
+  dois arquivos locais adota a cópia mais nova e a grava de volta. Evidência:
+  `bash code/tests/phase-i4-replica.sh` (o volume do controller morre e a fila volta da cópia
+  de um nó; o roteiro falha se algum arquivo local tiver sido carregado).
+- [ ] o que ainda não é replicado: estado por chave — KV cache, execution state, model state.
+  Não existe no cluster, então não há o que promover além da fila e do que ela lê. É o degrau
+  seguinte.
 
-Critério de saída: execução distribuída recupera-se de falha planejada e de interrupção abrupta em um ambiente controlado. — [x] falha planejada de worker (`phase-2-failure.sh`, controller vivo) e interrupção abrupta do controller com unidade em voo (`phase-i4-recovery.sh`).
+Critério de saída: execução distribuída recupera-se de falha planejada e de interrupção abrupta em um ambiente controlado. — [x] falha planejada de worker (`phase-2-failure.sh`, controller vivo), interrupção abrupta do controller com unidade em voo (`phase-i4-recovery.sh`) e perda dos dois arquivos de estado com recuperação pela cópia de um nó (`phase-i4-replica.sh`).
 
 ## 11. Fase J — AI Cluster OS
 

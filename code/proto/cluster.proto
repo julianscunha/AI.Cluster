@@ -67,6 +67,10 @@ message NodeSnapshot {
 message RegisterNodeRequest {
   NodeIdentity identity = 1;
   CapabilityReport capability = 2;
+  /// Cópia do estado do controller que este nó guardou (I4). O nó oferece o que tem a cada
+  /// (re-)registro; um controller que perdeu os próprios arquivos adota a mais nova. Vazio
+  /// quando o nó não guarda cópia (`AI_CLUSTER_STATE_REPLICA` não definido).
+  StateReplica replica = 3;
 }
 
 message RegisterNodeResponse {
@@ -78,10 +82,30 @@ message RegisterNodeResponse {
 message HeartbeatRequest {
   string node_id = 1;
   uint64 unix_ms = 2;
+  /// Época da cópia de estado que este nó guarda (I4). Zero quando não guarda nenhuma. O
+  /// controller só manda uma cópia nova quando a dele é mais recente que esta — o nó
+  /// confirma o que recebeu reportando a época na batida seguinte, então a resposta não
+  /// precisa de estado por nó do lado do controller.
+  uint64 replica_epoch_unix_ms = 3;
 }
 
 message HeartbeatResponse {
   bool acknowledged = 1;
+  /// Cópia do estado do controller para o nó guardar (I4). Presente só quando a época do
+  /// controller avançou além da que o nó reportou; ausente na maioria das batidas.
+  StateReplica replica = 2;
+}
+
+/// Uma cópia do estado do controller guardada fora do volume dele (I4).
+///
+/// O controller já escreve dois arquivos locais, e eles morrem junto com o volume. A cópia
+/// num nó sobrevive a isso: um controller novo, sem nenhum arquivo, restaura daqui. A
+/// época data a cópia — o nó guarda a mais nova que viu, e o controller só oferece a sua
+/// quando ela é mais recente que a que o nó já tem.
+message StateReplica {
+  uint64 epoch_unix_ms = 1;
+  /// O `WorkSnapshot` codificado, exatamente os bytes que foram para os arquivos locais.
+  bytes snapshot = 2;
 }
 
 message HealthStreamRequest {
@@ -360,6 +384,10 @@ message WorkSnapshot {
   /// Unidades em voo, com o nó que as segura. É o registro de posse: um reload sabe quem
   /// era o dono, em vez de oferecer a unidade de novo e aceitar só o resultado do novo dono.
   repeated WorkLease dispatched = 6;
+  /// Época desta gravação (I4). Guardada dentro do arquivo porque é o arquivo que data o
+  /// estado: um controller que o recarrega sabe com que idade a sua cópia sai, e um nó
+  /// compara a cópia dele contra isso. Sem o campo aqui todo restart pareceria época zero.
+  uint64 epoch_unix_ms = 7;
 }
 
 /// Posse de uma unidade despachada: quem a segura e desde quando. `unit` viaja junto porque

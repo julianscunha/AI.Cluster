@@ -5,12 +5,12 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ai_cluster_protocol::cluster::{
-    CapabilityReport, HealthReport, TraceEntry, WorkLease, WorkOutput, WorkResult, WorkSnapshot,
-    WorkUnit,
+    CapabilityReport, HealthReport, StateReplica, TraceEntry, WorkLease, WorkOutput, WorkResult,
+    WorkSnapshot, WorkUnit,
 };
 use prost::Message;
 
@@ -133,6 +133,16 @@ pub struct WorkStore {
     /// Where the snapshot is written. `None` means memory only, which is what the
     /// tests and the benchmark runs use.
     path: Option<PathBuf>,
+    /// The snapshot exactly as last written, with the epoch that dates it (I4).
+    ///
+    /// Held so a heartbeat can hand a copy to a node without re-encoding the state, and so
+    /// this controller can tell its own copy from one a node offers back. `None` when the
+    /// store has no file: without a state path there is nothing to replicate, and nothing a
+    /// copy could restore — a memory-only controller is a benchmark, not a cluster.
+    ///
+    /// An `Arc` because the heartbeat reads it far more often than it changes: handing the
+    /// blob out clones a pointer, and only the node that is actually behind pays for a copy.
+    replica: Mutex<Option<Arc<StateReplica>>>,
 }
 
 /// A unit may be dispatched when every dependency has completed and every bound
@@ -306,41 +316,21 @@ impl WorkStore {
                 reported = true;
                 continue;
             };
+            let epoch = snapshot.epoch_unix_ms;
             let (pending, dispatched) = {
                 let mut inner = store.lock();
-                inner.queue = snapshot.pending.into_iter().collect();
-                inner.outputs = snapshot
-                    .outputs
-                    .into_iter()
-                    .map(|output| (output.work_id, output.matrix))
-                    .collect();
-                inner.attempts = snapshot.attempts.into_iter().collect();
-                inner.failed = snapshot
-                    .failed
-                    .into_iter()
-                    .map(|id| (id, String::new()))
-                    .collect();
-                // Posse restaurada do disco: a unidade em voo não volta para a fila, então o
-                // dono que sobreviveu ao restart tem seu resultado aceito em vez de recusado.
-                // Quem não volta é reoferecido quando o grace passa — ver `unknown_owners`.
-                inner.dispatched = snapshot
-                    .dispatched
-                    .into_iter()
-                    .filter_map(|lease| {
-                        Some((
-                            lease.work_id.clone(),
-                            Dispatched {
-                                node_id: lease.node_id,
-                                dispatched_at_unix_ms: lease.dispatched_at_unix_ms,
-                                predicted_compute_us: lease.predicted_compute_us,
-                                unit: lease.unit?,
-                            },
-                        ))
-                    })
-                    .collect();
-                (inner.queue.len(), inner.dispatched.len())
+                store.install_locked(&mut inner, snapshot)
             };
-            store.sequence.store(snapshot.sequence, Ordering::Relaxed);
+            // A cópia em memória sai do arquivo que carregou, com a época que ele traz: sem
+            // isso um controller que voltou de um reload pareceria época zero, e tomaria a
+            // cópia de um nó por mais nova que a sua.
+            *store
+                .replica
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(StateReplica {
+                epoch_unix_ms: epoch,
+                snapshot: bytes,
+            }));
             println!(
                 "estado carregado de {}: {pending} pendente(s), {dispatched} em voo",
                 candidate.display()
@@ -351,6 +341,46 @@ impl WorkStore {
             println!("nenhum estado carregado; iniciando vazio");
         }
         store
+    }
+
+    /// Copies a decoded snapshot into the store: queue, outputs, attempts, failed units and
+    /// the in-flight leases.
+    ///
+    /// Shared by the file loader in `with_state` and the copy adopted from a node (I4), so a
+    /// field added for one cannot be missed by the other. The in-flight units keep their owner
+    /// instead of going back to the queue, so the node that survived the restart has its
+    /// result accepted rather than refused; an owner that does not come back is handed back
+    /// once the grace passes — see `unknown_owners`.
+    fn install_locked(&self, inner: &mut Inner, snapshot: WorkSnapshot) -> (usize, usize) {
+        inner.queue = snapshot.pending.into_iter().collect();
+        inner.outputs = snapshot
+            .outputs
+            .into_iter()
+            .map(|output| (output.work_id, output.matrix))
+            .collect();
+        inner.attempts = snapshot.attempts.into_iter().collect();
+        inner.failed = snapshot
+            .failed
+            .into_iter()
+            .map(|id| (id, String::new()))
+            .collect();
+        inner.dispatched = snapshot
+            .dispatched
+            .into_iter()
+            .filter_map(|lease| {
+                Some((
+                    lease.work_id.clone(),
+                    Dispatched {
+                        node_id: lease.node_id,
+                        dispatched_at_unix_ms: lease.dispatched_at_unix_ms,
+                        predicted_compute_us: lease.predicted_compute_us,
+                        unit: lease.unit?,
+                    },
+                ))
+            })
+            .collect();
+        self.sequence.store(snapshot.sequence, Ordering::Relaxed);
+        (inner.queue.len(), inner.dispatched.len())
     }
 
     /// Writes the whole store to the snapshot path and its redundant copy, when it has one.
@@ -387,6 +417,7 @@ impl WorkStore {
         let Some(path) = &self.path else {
             return;
         };
+        let epoch = self.next_epoch();
         let snapshot = WorkSnapshot {
             pending: inner.queue.iter().cloned().collect(),
             outputs: inner
@@ -411,6 +442,7 @@ impl WorkStore {
                     unit: Some(record.unit.clone()),
                 })
                 .collect(),
+            epoch_unix_ms: epoch,
         };
         // Encoded once, written twice: serialisation is the expensive part and both files
         // hold the same bytes. Each rename is atomic on its own, so whichever write is
@@ -424,6 +456,92 @@ impl WorkStore {
                 println!("salvar estado em {} falhou: {err}", target.display());
             }
         }
+        // The very bytes the files just got, kept so a heartbeat can hand a node a copy
+        // without re-encoding the state (I4).
+        *self
+            .replica
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(StateReplica {
+            epoch_unix_ms: epoch,
+            snapshot: bytes,
+        }));
+    }
+
+    /// Epoch for the next save: the clock, but never at or below the last one written.
+    ///
+    /// A node compares the copy it holds against this number, so a clock that jumps backwards
+    /// — a VM restored from a snapshot — must not make the live state look older than a copy
+    /// already in the field. Bumping past the previous value keeps the comparison meaningful
+    /// under a skewed or rewound clock, which a bare timestamp does not.
+    fn next_epoch(&self) -> u64 {
+        let previous = self.replica_epoch();
+        crate::registry::unix_ms().max(previous.saturating_add(1))
+    }
+
+    /// Epoch of the copy in memory. Zero when there is none.
+    fn replica_epoch(&self) -> u64 {
+        self.replica
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map_or(0, |replica| replica.epoch_unix_ms)
+    }
+
+    /// The copy of the state this controller last wrote, for a node to keep beside its own
+    /// work (I4).
+    ///
+    /// `None` for a store with no snapshot file: without a state path there is nothing to
+    /// replicate, and nothing a copy could restore. The blob is behind an `Arc` because a
+    /// heartbeat asks for this on every beat and only the node that is actually behind pays
+    /// for a full copy.
+    pub fn state_replica(&self) -> Option<Arc<StateReplica>> {
+        self.replica
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Adopts a copy of the state a node held, and returns whether it was taken.
+    ///
+    /// This is the promotion path (I4): a controller that lost both files has no queue, and a
+    /// node that kept a copy is the only surviving source. A copy is taken only when this
+    /// controller holds no work at all and the copy is newer than its own — the point is to
+    /// recover a controller that lost its files, not to let a node overwrite a queue this one
+    /// is already serving. A memory-only store never takes one: without a state path there is
+    /// nothing to recover, and a run with no file is a benchmark, not a cluster.
+    ///
+    /// The adopted state is written to the local files straight away, so the copy comes home:
+    /// the next restart loads normally instead of having to ask a node again.
+    pub fn restore(&self, replica: &StateReplica) -> bool {
+        if self.path.is_none() {
+            return false;
+        }
+        let Ok(snapshot) = WorkSnapshot::decode(replica.snapshot.as_slice()) else {
+            println!("réplica de estado oferecida por um nó não decodifica; ignorada");
+            return false;
+        };
+        let mut inner = self.lock();
+        if !inner.queue.is_empty()
+            || !inner.dispatched.is_empty()
+            || !inner.outputs.is_empty()
+            || !inner.completed.is_empty()
+        {
+            return false;
+        }
+        if replica.epoch_unix_ms <= self.replica_epoch() {
+            return false;
+        }
+        let (pending, dispatched) = self.install_locked(&mut inner, snapshot);
+        *self
+            .replica
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(replica.clone()));
+        self.save_locked(&mut inner);
+        println!(
+            "estado restaurado da réplica de um nó: {pending} pendente(s), {dispatched} em voo, época {}",
+            replica.epoch_unix_ms
+        );
+        true
     }
 
     /// Monotonic id for controller-generated work units.
@@ -1929,5 +2047,162 @@ mod tests {
         let trace = store.trace("req-test");
         assert_eq!(trace[0].predicted_compute_us, 0);
         assert_eq!(trace[0].compute_time_us, 900);
+    }
+
+    /// A copy of the state to offer a controller, taken from a store that has a file.
+    fn state_copy(store: &WorkStore) -> StateReplica {
+        (*store
+            .state_replica()
+            .expect("a file-backed store keeps a copy"))
+        .clone()
+    }
+
+    /// The promotion path (I4): the controller's own files are gone and the only surviving
+    /// copy of the queue is the one a node kept. Without it the queue dies with the volume,
+    /// which is where the state lives and nowhere else.
+    #[test]
+    fn a_controller_without_files_restores_the_copy_a_node_holds() {
+        let dir = std::env::temp_dir().join(format!("aic-work-promote-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1"), unit("w2")]);
+        let copy = state_copy(&store);
+        assert!(copy.epoch_unix_ms > 0, "the copy is dated");
+        assert_eq!(
+            copy.snapshot.len(),
+            std::fs::metadata(&path).expect("snapshot").len() as usize,
+            "the copy is the very bytes the files got"
+        );
+
+        // The volume died: both of the controller's own files are gone with it.
+        std::fs::remove_file(&path).expect("remove the primary");
+        std::fs::remove_file(replica_path(&path)).expect("remove the local copy");
+        let recovered = WorkStore::with_state(&path);
+        assert_eq!(recovered.pending(), 0, "nothing left to load");
+        assert!(
+            recovered.state_replica().is_none(),
+            "and no copy of its own to hand out"
+        );
+
+        assert!(
+            recovered.restore(&copy),
+            "the copy a node holds is the only source left"
+        );
+        assert_eq!(recovered.pending(), 2, "the queue came back");
+        assert!(path.exists(), "and the copy came home to the local files");
+        // The next restart is a normal one: it loads the state just restored, not a copy
+        // from a node.
+        assert_eq!(WorkStore::with_state(&path).pending(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reload carries the epoch of the file it loaded. Without that, a controller that just
+    /// restarted would look like epoch zero and take a node's copy for the newer one — the
+    /// queue would roll back to whatever the node last held.
+    #[test]
+    fn a_reloaded_state_keeps_the_epoch_it_was_saved_with() {
+        let dir = std::env::temp_dir().join(format!("aic-work-epoch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1")]);
+        let saved = state_copy(&store).epoch_unix_ms;
+
+        let reloaded = WorkStore::with_state(&path);
+        assert_eq!(reloaded.pending(), 1);
+        assert_eq!(
+            state_copy(&reloaded).epoch_unix_ms,
+            saved,
+            "the reload kept the epoch instead of starting from zero"
+        );
+        // The next save moves past it, so a node that kept the old copy still gets an update.
+        reloaded.enqueue([unit("w2")]);
+        assert!(
+            state_copy(&reloaded).epoch_unix_ms > saved,
+            "the epoch advances on the next save"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A copy never replaces work already in hand. The promotion path recovers a controller
+    /// that lost its files; it does not let a node rewind a controller that is serving.
+    #[test]
+    fn a_copy_never_overwrites_work_already_in_hand() {
+        let dir = std::env::temp_dir().join(format!("aic-work-norewind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1")]);
+        let mut copy = state_copy(&store);
+        // Strictly newer than anything, so only the work in hand can refuse it.
+        copy.epoch_unix_ms = u64::MAX;
+        assert!(!store.restore(&copy), "work in hand is not replaced");
+        assert_eq!(store.pending(), 1, "the queue is the one being served");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A copy no newer than the state in hand is refused, so a node holding a copy from
+    /// before the last save cannot roll the queue back to it.
+    #[test]
+    fn a_copy_no_newer_than_the_state_in_hand_is_refused() {
+        let dir = std::env::temp_dir().join(format!("aic-work-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        // Work enqueued and completed leaves an empty snapshot with a real epoch, so the
+        // emptiness gate passes and only the epoch comparison can refuse the copy.
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1")]);
+        store.claim("node-a", &capability(8, 0.0), 1_000);
+        store.complete(result("w1", 250), 2_000).expect("w1 ran");
+        let reloaded = WorkStore::with_state(&path);
+        assert_eq!(reloaded.pending(), 0, "the file holds no work");
+
+        let copy = state_copy(&reloaded);
+        assert!(
+            !reloaded.restore(&copy),
+            "a copy level with the state is not newer"
+        );
+        let mut newer = copy.clone();
+        newer.epoch_unix_ms += 1;
+        assert!(reloaded.restore(&newer), "a genuinely newer copy is taken");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A memory-only store keeps no copy and takes none: without a state path there is
+    /// nothing to replicate and nothing a copy could restore. A run with no file is a
+    /// benchmark, not a cluster — it must not adopt a queue a node happens to be holding.
+    #[test]
+    fn a_memory_only_store_keeps_and_takes_no_copy() {
+        let dir = std::env::temp_dir().join(format!("aic-work-memonly-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let backed = WorkStore::with_state(&path);
+        backed.enqueue([unit("w1")]);
+        let copy = state_copy(&backed);
+
+        let memory = WorkStore::new();
+        assert!(memory.state_replica().is_none());
+        assert!(
+            !memory.restore(&copy),
+            "a store with no file has nothing to recover"
+        );
+        assert_eq!(memory.pending(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
