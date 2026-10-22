@@ -36,6 +36,19 @@ message CapabilityReport {
   /// da medida concordaram entre si. Uma passada sob contenção varia muito; uma ociosa
   /// varia pouco. Zero junto com `current_compute_score` zero.
   double compute_confidence = 11;
+  /// Score do benchmark de registro pela **mediana** das execuções, na mesma escala de
+  /// `compute_score`. `compute_score` é o melhor caso (a execução menos perturbada) e
+  /// serve para ordenar nós; a mediana é o valor central e serve para **calibrar** —
+  /// prever tempo com o melhor caso subestima sempre, porque a máquina raramente repete
+  /// a execução mais sortuda. Zero significa "não medido", nunca "compute zero".
+  double compute_median_score = 12;
+  /// Desvio relativo das execuções do benchmark de registro: `desvio-padrão / média`
+  /// dos tempos (coeficiente de variação). Zero é uma medida perfeitamente estável —
+  /// mas note que um nó com o score fixado (`AI_CLUSTER_COMPUTE_SCORE`) não mede nada, e
+  /// então reporta zero aqui junto com `compute_median_score` zero: zero é "não medido"
+  /// nesse caso, não "estável". É o desvio que diz se a mediana acima é um número em que
+  /// se pode confiar para calibrar.
+  double compute_deviation = 13;
 }
 
 message HealthReport {

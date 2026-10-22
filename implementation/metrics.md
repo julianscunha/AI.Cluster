@@ -28,7 +28,10 @@ agregadas" do M0.
   locks — recebe contagens e os registros concluídos e devolve a mensagem. Testável sem
   subir registry nem work store.
 - `exporter::render` e `exporter::serve` (`code/crates/controller/src/exporter.rs`): o mesmo
-  roll-up, mais os sinais de cada nó, em formato texto do Prometheus num `GET /metrics`.
+  roll-up, mais os sinais de cada nó, em formato texto do Prometheus num `GET /metrics`. Os
+  sinais de compute agora incluem a distribuição do benchmark —
+  `ai_cluster_node_compute_median_score` e `ai_cluster_node_compute_deviation`
+  (`benchmark-stability.md`), ao lado do melhor caso em `ai_cluster_node_compute_score`.
 - CLI: `ai-cluster metrics` (com percentis) e `ai-cluster nodes` (com as colunas de nó).
 
 ## Como ler

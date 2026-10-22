@@ -387,6 +387,18 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         ("-".to_string(), "-".to_string())
     };
     println!("  current_compute_score={current} compute_confidence={confidence}");
+    // The registration benchmark's distribution: the median is the typical run and the
+    // deviation how much the runs disagreed. Zero median means "not measured" (a pinned
+    // score runs no benchmark), never "compute zero".
+    let median = if capability.compute_median_score > 0.0 {
+        format!("{:.4}", capability.compute_median_score)
+    } else {
+        "-".to_string()
+    };
+    println!(
+        "  compute_median_score={median} compute_deviation={:.3}",
+        capability.compute_deviation
+    );
     println!(
         "  armazenamento={} precisoes={} aceleradores={}",
         list_or_dash(&capability.storage_classes),

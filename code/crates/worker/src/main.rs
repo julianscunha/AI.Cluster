@@ -443,25 +443,32 @@ fn grant_cores(reported_threads: u32, available: usize) -> usize {
     (reported_threads.max(1) as usize).min(available.max(1))
 }
 
-/// Per-core compute score for the placement model, from a real measurement (Fase C2).
+/// The registration benchmark as a whole distribution, not just its best case: the score
+/// that becomes the baseline capability, plus the median and relative deviation a time
+/// prediction needs to calibrate against (`predictions.md`).
 ///
 /// Single-threaded on purpose: the placement model multiplies the score by the reported
 /// thread count, so a multithreaded measurement would count the cores twice. Uses the
 /// same matmul kernel the worker runs on real units, so the rate is directly comparable
 /// to the workload it predicts.
 ///
-/// Set `AI_CLUSTER_COMPUTE_SCORE` to pin the score instead of measuring, so a placement
-/// test does not depend on how fast the host happens to be. Unset or unparsable means
-/// measure.
+/// A pinned score short-circuits the benchmark — the operator chose the number, so nothing
+/// runs and the median and deviation stay zero, the same "not measured" as an unmeasured
+/// score. Readers fall back to the pinned `compute_score`.
 ///
 /// ponytail: assumes compute scales linearly with threads; turbo and SMT mean a real
 /// 4-thread run is usually a bit under 4x the 1-thread rate, so the model is optimistic
 /// on big nodes. Revisit with a multithreaded sweep if placement skews to them.
-fn compute_score() -> f64 {
+fn baseline_measurement() -> ComputeMeasurement {
     if let Some(forced) = pinned_compute_score() {
-        return forced;
+        return ComputeMeasurement {
+            score: forced,
+            median_score: 0.0,
+            deviation: 0.0,
+            confidence: 0.0,
+        };
     }
-    measure_compute(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS).score
+    measure_compute(BENCH_SIZE, BENCH_ITERS, REFERENCE_CORE_GFLOPS)
 }
 
 /// The score `AI_CLUSTER_COMPUTE_SCORE` pins, when set and sensible. Unset, unparsable or
@@ -478,9 +485,17 @@ fn pinned_compute_score() -> Option<f64> {
 
 /// Result of one compute benchmark: the normalised score and how much the timed runs
 /// agreed with each other.
+///
+/// `score` é o melhor caso — a capability, o que o nó faz quando menos perturbado.
+/// `median_score` é a execução típica — o valor contra o qual uma previsão de tempo deve ser
+/// calibrada, porque a máquina raramente repete a execução mais sortuda. `confidence` (melhor
+/// sobre mediana) e `deviation` (desvio relativo) dizem os dois quanto as execuções
+/// discordaram; um benchmark estável tem confiança perto de 1 e desvio perto de 0.
 #[derive(Debug, Clone, Copy)]
 struct ComputeMeasurement {
     score: f64,
+    median_score: f64,
+    deviation: f64,
     confidence: f64,
 }
 
@@ -492,13 +507,21 @@ struct ComputeMeasurement {
 /// shared, which would make the same node look slower from one poll to the next. The cold
 /// first run is discarded by the same mechanism, so no separate warm-up pass is needed.
 ///
-/// Returns the confidence beside the score so the caller can report both (C3).
+/// The best case is the capability, but it is the wrong number to *calibrate a time
+/// prediction* against: the machine rarely repeats its luckiest run. So the same runs also
+/// yield the median score and the relative deviation beside the best-case score. A prediction
+/// that used the best case would understate the time of every unit that ran on a typical,
+/// slightly disturbed pass — which is most of them. See `predictions.md`.
+///
+/// Returns the whole distribution so the caller can report all of it (C3).
 fn measure_compute(size: u32, iters: u32, reference: f64) -> ComputeMeasurement {
     let a = Matrix::seeded(size, size, 1);
     let b = Matrix::seeded(size, size, 2);
     if a.multiply(&b).is_none() {
         return ComputeMeasurement {
             score: 0.0,
+            median_score: 0.0,
+            deviation: 0.0,
             confidence: 0.0,
         };
     }
@@ -508,16 +531,60 @@ fn measure_compute(size: u32, iters: u32, reference: f64) -> ComputeMeasurement 
         if a.multiply(&b).is_none() {
             return ComputeMeasurement {
                 score: 0.0,
+                median_score: 0.0,
+                deviation: 0.0,
                 confidence: 0.0,
             };
         }
         times.push(started.elapsed().as_secs_f64());
     }
     let best = times.iter().copied().fold(f64::INFINITY, f64::min);
+    let median = median_time(&times);
     ComputeMeasurement {
         score: normalize_compute_score(flops(size, size, size) / best / 1e9, reference),
+        median_score: normalize_compute_score(flops(size, size, size) / median / 1e9, reference),
+        deviation: relative_deviation(&times),
         confidence: measurement_confidence(&times),
     }
+}
+
+/// Median of the timed runs, or zero when there is none to take one from.
+///
+/// The central run rather than an average: one disturbed run drags a mean up but only moves
+/// the median by one place. An even count averages the two middle runs, so a pass always has
+/// a single representative value. Zero reads as "not measured", the same convention as an
+/// unmeasured score — never as "instantaneous".
+fn median_time(times: &[f64]) -> f64 {
+    if times.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = times.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let middle = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted[middle]
+    } else {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    }
+}
+
+/// Relative deviation of the timed runs: standard deviation over mean — the coefficient of
+/// variation. How much the runs disagreed, as a fraction of their own size, so a slow node
+/// and a fast node are judged by the same yardstick. Zero means every run took the same time;
+/// the larger it is, the more the measurement was disturbed, and the less the median beside
+/// it should be trusted. Fewer than two runs cannot disagree, so they report zero.
+fn relative_deviation(times: &[f64]) -> f64 {
+    let count = times.len();
+    if count < 2 {
+        return 0.0;
+    }
+    let n = count as f64;
+    let mean = times.iter().sum::<f64>() / n;
+    if !mean.is_finite() || mean <= 0.0 {
+        return 0.0;
+    }
+    let variance = times.iter().map(|time| (time - mean).powi(2)).sum::<f64>() / n;
+    variance.sqrt() / mean
 }
 
 /// How much the timed runs agreed, 0..1, for the confidence a measurement carries (C3).
@@ -644,10 +711,13 @@ fn capability() -> CapabilityReport {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or_else(|| meminfo_kb("MemTotal:").map(|kb| kb * 1024).unwrap_or(0));
+    let measurement = baseline_measurement();
     CapabilityReport {
         cpu_threads,
         memory_bytes,
-        compute_score: compute_score(),
+        compute_score: measurement.score,
+        compute_median_score: measurement.median_score,
+        compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
@@ -732,6 +802,13 @@ fn capability_with_current(baseline: &CapabilityReport) -> CapabilityReport {
 /// `None` leaves both fields at zero — the "not remeasured" state every reader falls back
 /// from — rather than copying the baseline into them, which would make a stale node look
 /// freshly measured.
+///
+/// `compute_median_score` and `compute_deviation` are **not** touched here. They describe the
+/// same registration benchmark that produced `compute_score`, so they belong to the baseline
+/// family: `apply_current` folds the current family in beside it. That is also why they stay
+/// put — the registration benchmark is the *stable* number a time prediction can be calibrated
+/// against, and a value that moved every heartbeat would be exactly what calibration must not
+/// chase (`predictions.md`).
 fn apply_current(
     baseline: &CapabilityReport,
     current: Option<(ComputeMeasurement, Instant)>,
@@ -1091,6 +1168,8 @@ mod tests {
         let baseline = CapabilityReport {
             cpu_threads: 4,
             compute_score: 2.0,
+            compute_median_score: 1.9,
+            compute_deviation: 0.05,
             ..Default::default()
         };
         // Not remeasured yet: both current fields stay zero, so readers fall back to the
@@ -1105,6 +1184,8 @@ mod tests {
             Some((
                 ComputeMeasurement {
                     score: 1.5,
+                    median_score: 1.4,
+                    deviation: 0.05,
                     confidence: 0.8,
                 },
                 Instant::now(),
@@ -1113,6 +1194,34 @@ mod tests {
         assert_eq!(measured.compute_score, 2.0);
         assert_eq!(measured.current_compute_score, 1.5);
         assert_eq!(measured.compute_confidence, 0.8);
+        // The registration distribution belongs to the baseline family, so folding the
+        // current measurement in must not move it: it is the stable number calibration uses.
+        assert_eq!(measured.compute_median_score, 1.9);
+        assert_eq!(measured.compute_deviation, 0.05);
+    }
+
+    #[test]
+    fn the_median_sits_between_the_runs_not_at_their_average() {
+        // Odd count: the middle run, not the mean (the 100.0 outlier would drag a mean up).
+        assert_eq!(median_time(&[3.0, 1.0, 100.0]), 3.0);
+        // Even count: the two middle runs averaged, so the pass still has one value.
+        assert_eq!(median_time(&[1.0, 2.0, 3.0, 4.0]), 2.5);
+        // One run is its own median; none at all is "not measured", never zero seconds.
+        assert_eq!(median_time(&[7.0]), 7.0);
+        assert_eq!(median_time(&[]), 0.0);
+    }
+
+    #[test]
+    fn the_deviation_is_zero_for_steady_runs_and_grows_with_the_spread() {
+        // Every run the same time: no disagreement to report.
+        assert_eq!(relative_deviation(&[2.0, 2.0, 2.0]), 0.0);
+        // One run cannot disagree with itself; zero runs have nothing to measure.
+        assert_eq!(relative_deviation(&[2.0]), 0.0);
+        assert_eq!(relative_deviation(&[]), 0.0);
+        // A wider spread is a larger fraction of the mean.
+        let tight = relative_deviation(&[1.0, 1.0, 1.1, 1.0]);
+        let loose = relative_deviation(&[1.0, 1.0, 3.0, 1.0]);
+        assert!(tight > 0.0 && tight < loose);
     }
 
     #[test]

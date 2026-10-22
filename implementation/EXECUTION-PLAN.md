@@ -159,8 +159,13 @@ Baseline + current + confidence.
   re-registro. O ranking do placement segue no baseline e só `predicted_compute_us` lê o
   current: prever tempo e escolher nó são perguntas diferentes. Zero é "não remedido" (nunca
   "compute zero") e a confiança é concordância entre as execuções da passada (melhor sobre a
-  mediana), não histórico. Evidência: `bash code/tests/phase-c-current.sh` (baseline 1.18 /
-  current 1.08 / confiança 0.95; com o score fixado, current fica `-`).
+  mediana), não histórico. O benchmark reporta também a **distribuição do registro** —
+  `compute_median_score` (o valor central, contra o qual uma previsão de tempo deve ser
+  calibrada) e `compute_deviation` (o quanto as execuções discordaram) — porque calibrar contra
+  o melhor caso é ajustar contra um número que a máquina raramente repete
+  (`benchmark-stability.md`). Evidência: `bash code/tests/phase-c-current.sh` (baseline 1.07 /
+  mediana 0.46 / desvio 0.41 / current 0.72 / confiança 0.71; com o score fixado, current e
+  mediana ficam `-`).
 
 ### C4 Health model
 

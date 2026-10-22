@@ -35,6 +35,9 @@ velocidade do primeiro dia. Esta é a fatia C3: *baseline + current + confidence
 - `controller::placement::predicted_compute_us` passa a preferir o current. O ranking do
   placement **continua** usando o baseline.
 - `ai-cluster node show <id>` ganhou `current_compute_score` e `compute_confidence`.
+- `CapabilityReport.compute_median_score` e `compute_deviation`: a distribuição do benchmark de
+  registro — o valor central, para calibrar uma previsão de tempo, e o quanto as execuções
+  discordaram. Ver `benchmark-stability.md`; é o número estável que faltava para calibrar.
 
 Sem dependência nova: um `Vec`, um `sort` e uma divisão.
 
@@ -72,26 +75,36 @@ determinismo. Um nó fixado reporta `current_compute_score=-` e a previsão usa 
 
 ```text
 === A) nó ocioso remede o compute enquanto espera trabalho ===
-  threads=4 memoria_bytes=4046016512 compute_score=1.1819
-  current_compute_score=1.0752 compute_confidence=0.95
-baseline=1.1819 current=1.0752 confidence=0.95
+  threads=4 memoria_bytes=4046016512 compute_score=1.0715
+  current_compute_score=0.7222 compute_confidence=0.71
+  compute_median_score=0.4612 compute_deviation=0.410
+baseline=1.0715 current=0.7222 confidence=0.71 median=0.4612 desvio=0.410
 OK: o baseline do registro está preenchido
 OK: o current foi remedido com o nó ocioso
-OK: a confiança está em (0,1] (veio '0.95')
+OK: a confiança está em (0,1] (veio '0.71')
+OK: a mediana do benchmark foi reportada (veio '0.4612')
+OK: a mediana (0.4612) não passa do melhor caso (1.0715)
+OK: o desvio é não-negativo (veio '0.410')
 === B) score fixado: o nó não remede, então current fica '-' ===
   threads=4 memoria_bytes=4046016512 compute_score=2.0000
   current_compute_score=- compute_confidence=-
+  compute_median_score=- compute_deviation=0.000
 OK: o baseline fixado foi reportado como veio
 OK: o pin impede a remedida, então current é 'não remedido'
+OK: sem benchmark, a mediana também é 'não medido'
 === C3 OK ===
 ```
 
-O passo A não fixa o score, então as duas leituras são reais e do mesmo host: 1.18 no registro
-e 1.08 na remedida. Que os dois números **difiram** é o ponto — o current é uma medida nova, não
-uma cópia do baseline. Os 0.95 de confiança dizem que naquela passada as execuções concordaram.
+O passo A não fixa o score, então as leituras são reais e do mesmo host. Que best case (1.07),
+mediana (0.46) e remedida (0.72) **difiram** é o ponto — cada um responde uma pergunta
+diferente e nenhum é cópia do outro. O desvio de 0.41 diz que aquela passada de registro foi
+muito perturbada; a mediana é o número que sobra para calibrar. Os detalhes são de
+`benchmark-stability.md`.
 
 Coberto por `confidence_is_full_when_the_runs_agree`, `confidence_falls_as_the_runs_disagree`,
-`a_single_run_cannot_disagree_with_itself`, `a_broken_measurement_carries_no_confidence` e
+`a_single_run_cannot_disagree_with_itself`, `a_broken_measurement_carries_no_confidence`,
+`the_median_sits_between_the_runs_not_at_their_average`,
+`the_deviation_is_zero_for_steady_runs_and_grows_with_the_spread` e
 `a_remeasured_capability_carries_the_current_numbers_beside_the_baseline` no worker;
 `a_current_score_overrides_the_baseline_in_the_prediction`, `a_decayed_node_predicts_more_than_its_baseline_suggests`
 e `a_current_score_alone_still_predicts` no placement; e `a_health_report_can_refresh_the_capability`
@@ -116,6 +129,6 @@ unidades longas passa o tempo computando e nunca entra no ramo ocioso: reporta s
 sem current e sem confiança. Carga já é tratada pelo termo de fila do modelo de custo, não por
 este campo.
 
-**Um baseline sem confiança.** O campo `compute_confidence` descreve o `current_compute_score`.
-O baseline do registro é medido com as mesmas N execuções mas não viaja com confiança própria,
-então não dá para dizer se o baseline do nó A foi mais limpo que o do nó B.
+**Uma passada, não um histórico.** `compute_deviation` descreve o espalhamento dentro de uma
+única janela de cinco execuções; não há série temporal. Alargar a janela é o degrau seguinte se
+o desvio se mostrar grande — ver `benchmark-stability.md`.

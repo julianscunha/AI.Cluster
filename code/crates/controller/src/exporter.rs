@@ -198,12 +198,34 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_compute_score",
-        "Compute por core medido no worker, relativo ao core de referência.",
+        "Compute por core medido no worker, relativo ao core de referência. Melhor caso do benchmark.",
         nodes,
         |node| {
             node.capability
                 .as_ref()
                 .map_or(0.0, |capability| capability.compute_score)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_compute_median_score",
+        "Mediana do benchmark de registro, na mesma escala de compute_score. Zero é não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.compute_median_score)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_compute_deviation",
+        "Desvio relativo (desvio-padrão sobre média) das execuções do benchmark. Zero é estável ou não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.compute_deviation)
         },
     );
     node_metric(

@@ -82,7 +82,11 @@ Com `flops = 2 * rows * shared * cols`, o mesmo cálculo que o worker usa no ben
   clone de operandos e criação de threads dominarem. O modelo então extrapola 32 threads como
   32× um core e prevê 18us onde a máquina gasta ~600us. Turbo e SMT contribuem, mas o efeito
   principal é o tamanho do kernel de calibração. É exatamente o erro que esta fatia existe
-  para tornar visível; calibrar por faixa de tamanho é a próxima fatia, não esta.
+  para tornar visível; calibrar por faixa de tamanho é a próxima fatia, não esta. O número
+  estável que essa calibração precisa já existe: `compute_median_score` e `compute_deviation`
+  (`benchmark-stability.md`) reportam a distribuição do benchmark de registro, e o desvio
+  medido numa passada real (0.41) é a prova de que o melhor caso, sozinho, não serve para
+  calibrar — a mediana é o valor central contra o qual a previsão deve ser ajustada.
 - **Não persiste.** A previsão vive no dispatch, que não vai para o snapshot — depois de um
   restart ela é recalculada no próximo despacho. Coerente com as unidades concluídas, que
   também não sobrevivem a um restart.

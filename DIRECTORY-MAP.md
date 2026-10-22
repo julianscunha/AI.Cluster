@@ -110,6 +110,7 @@ de `EXECUTION-PLAN.md` §1 e `implementation/roadmap.md`.
 65. [implementation/health-model.md](implementation/health-model.md) — score de saúde do nó: pressão de memória, swap e térmica (C4).
 66. [implementation/capability-current.md](implementation/capability-current.md) — capability baseline + current + confiança, via health stream (C3).
 67. [implementation/recovery.md](implementation/recovery.md) — a sequência de recuperação do `docs/13`: nó perdido e restart com unidade em voo (I4).
+68. [implementation/benchmark-stability.md](implementation/benchmark-stability.md) — mediana e desvio do benchmark de compute: a distribuição que a calibração precisa (C3).
 
 ### Referência — decisões arquiteturais
 
