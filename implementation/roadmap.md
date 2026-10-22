@@ -39,6 +39,7 @@ Entregar:
 - [x] capabilities — compute medido no registro (baseline) e remedido com o nó ocioso, com
   confiança sobre a remedida e a distribuição do registro (mediana + desvio) que calibra a
   previsão (`phase-2/capability-benchmark.md`, `capability-current.md`, `benchmark-stability.md`);
+  rede descoberta do link, nominal, sobre a referência de 1 GbE (`network-discovery.md`);
 - [x] health — liveness por heartbeat e o score de saúde com pressão de memória, swap e
   térmica (`health-model.md`, C4);
 - [x] CLI status.
@@ -171,7 +172,8 @@ Entregar:
 - [x] H2 Events — `telemetry.md`, `ai-cluster events`;
 - [x] H1 Metrics — roll-up de nós, fila, tempos de compute/latência, percentis p50/p95 e os
   sinais de nó (CPU, swap, temperatura, IOPS) em `metrics.md` / `ai-cluster metrics|nodes`,
-  mais o exportador Prometheus em `GET /metrics`; rede e storage score não;
+  mais o exportador Prometheus em `GET /metrics`; rede e storage score não;` — o
+  `network_score` aparece no detalhe do nó (`network-discovery.md`), não no exportador;
 - [x] H3 Trace correlation — ligar requisição do cliente às units que ela gerou (`traces.md`,
   `ai-cluster request trace <id>`);
 - [x] H4 Dashboard — painel de uma tela sobre as chamadas que já existem (`dashboard.md`,

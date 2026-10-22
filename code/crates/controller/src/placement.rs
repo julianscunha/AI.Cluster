@@ -118,6 +118,12 @@ fn clamp_setup(parsed: Option<f64>) -> f64 {
 }
 
 /// Effective transfer rate. Falls back to 1.0 when unmeasured.
+///
+/// A *relative* rate, not bytes per microsecond: the worker normalises the link speed against
+/// the reference link (1 GbE), so 1.0 means "a reference link" and the fallback for an
+/// unmeasured node is the same number — "not measured" reads as the reference, not as the
+/// worst link. The transfer term is therefore meaningful only up to that reference, the same
+/// "relative, not a time" caveat the module doc states for the compute term.
 fn transfer_rate(capability: &CapabilityReport) -> f64 {
     if capability.network_score > 0.0 {
         capability.network_score

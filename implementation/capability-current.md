@@ -122,7 +122,9 @@ de amostras com desvio-padrão é o degrau seguinte, se o número se mostrar ins
 current de baixa confiança — é uma mudança no modelo de custo e não tem dado para calibrar.
 
 **Só compute.** Current e confiança existem para o compute; memória, storage e rede não têm
-medida nem, portanto, medida corrente. É o mesmo teto do `capability-benchmark.md`.
+medida corrente — a rede é descoberta como velocidade nominal do link (`network-discovery.md`),
+que não se refaz como o current do compute se refaz. É o mesmo teto do
+`capability-benchmark.md`.
 
 **Medida em ocioso, não sob carga.** O current diz o que o nó faz quando está livre. Um nó com
 unidades longas passa o tempo computando e nunca entra no ramo ocioso: reporta só o baseline,

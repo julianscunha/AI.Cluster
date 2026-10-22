@@ -137,7 +137,10 @@ Critério de saída: cluster de 2–4 máquinas Linux funciona sem operação ma
 CPU, RAM, storage, network, accelerators.
 
 - [~] CPU threads, RAM e compute medido (`capability()` no worker);
-- [ ] storage, network e accelerators.
+- [~] storage por bloco — NVMe/SSD/HDD por nó (`storage-tiers.md`, I2);
+- [~] network — velocidade nominal do link sobre a referência de 1 GbE
+  (`network-discovery.md`);
+- [ ] accelerators — sem caminho de execução no worker, então nada a reportar (fase J).
 
 ### C2 Benchmark engine
 
@@ -145,7 +148,8 @@ Benchmarks controlados para compute, memory, storage, network.
 
 - [~] compute medido no worker (`phase-2/capability-benchmark.md`): o worker cronometra o
   matmul no próprio kernel das unidades e reporta a taxa por core em `compute_score`, que o
-  modelo de custo já lia; memory, storage e network não.
+  modelo de custo já lia; memory, storage e network não — a rede é descoberta como velocidade
+  nominal (`network-discovery.md`), mas nenhuma das três é medida sob carga.
 
 ### C3 Capability model
 

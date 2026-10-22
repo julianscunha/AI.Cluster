@@ -16,6 +16,10 @@ message CapabilityReport {
   double compute_score = 3;
   double memory_bandwidth_score = 4;
   double storage_score = 5;
+  // Velocidade do link relativa à referência (1 GbE): 1.0 é uma rede de 1 GbE, 10.0 uma de
+  // 10 GbE. É a velocidade *nominal* do link, não a taxa alcançada (Fase C1); medir a taxa
+  // sob carga é uma fatia de benchmark. Zero é "não medido", nunca "sem rede" — e o modelo de
+  // placement trata "não medido" como a rede de referência. Maior é melhor.
   double network_score = 6;
   repeated string precisions = 7;
   repeated string accelerators = 8;

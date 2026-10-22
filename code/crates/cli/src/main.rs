@@ -399,12 +399,21 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         "  compute_median_score={median} compute_deviation={:.3}",
         capability.compute_deviation
     );
+    // Zero means "not measured" — a container's veth has no negotiated link rate, and a
+    // pinned node is never read — never "no network", the same convention as the compute
+    // fields above. The number is the link relative to the 1 GbE reference.
+    let network = if capability.network_score > 0.0 {
+        format!("{:.2}", capability.network_score)
+    } else {
+        "-".to_string()
+    };
     println!(
         "  armazenamento={} precisoes={} aceleradores={}",
         list_or_dash(&capability.storage_classes),
         list_or_dash(&capability.precisions),
         list_or_dash(&capability.accelerators),
     );
+    println!("  rede_score={network}");
     println!("SAÚDE");
     println!("  score={:.2}", health.health_score);
     println!(

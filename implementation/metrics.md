@@ -180,9 +180,10 @@ existe.
 inclui as duas — o número é um teto, não um valor exato. Filtrar dispositivos por tipo é o
 caminho quando isso importar.
 
-**Rede não é medida.** `network_latency_ms`, `storage_health`, `network_score` e
-`memory_bandwidth_score` continuam sem preenchimento: exigem medição ativa, que é uma fatia
-própria.
+**Rede é nominal, não medida.** `network_score` é preenchido com a velocidade negociada do
+link sobre a referência de 1 GbE (`network-discovery.md`), que é um teto: a taxa alcançada sob
+carga não é. `network_latency_ms`, `storage_health` e `memory_bandwidth_score` continuam sem
+preenchimento — exigem medição ativa, que é uma fatia própria.
 
 **Métricas de LLM não.** Tokens, TTFT, ITL, KV cache — nada disso existe porque não há motor
 de inferência ainda. É a fase J.

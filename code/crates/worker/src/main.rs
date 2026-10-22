@@ -32,6 +32,15 @@ const BENCH_SIZE: u32 = 256;
 /// less-disturbed sample at a few milliseconds of startup each.
 const BENCH_ITERS: u32 = 5;
 
+/// Link rate the network score normalises against: 1 GbE, in Mbps (Fase C1).
+///
+/// Same shape as the compute score, which `REFERENCE_CORE_GFLOPS` normalises: a node on the
+/// reference link scores 1.0, so the placement model's transfer term stays on the scale its
+/// 1.0 fallback assumed. The fallback and the reference are the same number on purpose — a
+/// node that did not report a rate is treated as being on the reference link, not as having
+/// no network.
+const REFERENCE_LINK_MBPS: f64 = 1000.0;
+
 /// The copy of the controller's state this node keeps, if it was asked to keep one (I4).
 ///
 /// The controller hands its snapshot down on a heartbeat when the copy here is behind, and
@@ -694,6 +703,70 @@ fn storage_classes() -> Vec<String> {
     storage_classes_from(pairs)
 }
 
+/// Link speed of the node's fastest non-loopback interface, in Mbps (Fase C1).
+///
+/// `/sys/class/net/<iface>/speed` is the *negotiated* link rate: what the NIC and the switch
+/// agreed on, not what the link achieves under load. A virtual interface — veth in a
+/// container, a bridge, a bond member — has no negotiated rate and reports an error or a
+/// negative value, so those are skipped rather than read as "no link". An unreadable directory
+/// is "not measured", the same convention as an unreported health score. Zero means "not
+/// measured", never "no network".
+fn link_speed_mbps() -> f64 {
+    let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+        return 0.0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy() != "lo")
+        .filter_map(|entry| {
+            std::fs::read_to_string(entry.path().join("speed"))
+                .ok()?
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
+        .filter(|mbps| mbps.is_finite() && *mbps > 0.0)
+        .fold(0.0_f64, f64::max)
+}
+
+/// The node's network score for the placement model (Fase C1): the link rate relative to the
+/// reference link, the same normalisation the compute score uses against the reference core.
+///
+/// Nominal link speed, not achieved throughput — what the link *is*, not what it *does*. That
+/// makes the number honest about being a ceiling: a link shared with other traffic will do
+/// worse. Measuring the achieved rate and the latency is a benchmark's job (`docs/05`), which
+/// is the next rung, not this one.
+///
+/// Set `AI_CLUSTER_NETWORK_SCORE` to pin it instead of reading the interface, so a placement
+/// test can stand a slow-link node next to a fast-link one without two networks. Unset or
+/// unparsable means discover. Zero means "not measured".
+fn network_score() -> f64 {
+    match pinned_network_score() {
+        Some(forced) => forced,
+        None => normalize_network_score(link_speed_mbps()),
+    }
+}
+
+/// The score `AI_CLUSTER_NETWORK_SCORE` pins, when set and sensible — the same contract as
+/// `AI_CLUSTER_COMPUTE_SCORE`: unset, unparsable or non-positive means "not pinned", so the
+/// caller discovers instead. One place reads the override, so a pinned node stays pinned.
+fn pinned_network_score() -> Option<f64> {
+    std::env::var("AI_CLUSTER_NETWORK_SCORE")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+/// Link rate over the reference, split from the lookup so the arithmetic is tested exactly.
+/// A missing or nonsense rate is "not measured" (zero), never "no network" — and never an
+/// infinite score, which would make the node free to reach.
+fn normalize_network_score(mbps: f64) -> f64 {
+    if !mbps.is_finite() || mbps <= 0.0 {
+        return 0.0;
+    }
+    mbps / REFERENCE_LINK_MBPS
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -719,6 +792,7 @@ fn capability() -> CapabilityReport {
         compute_median_score: measurement.median_score,
         compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
+        network_score: network_score(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
     }
@@ -1256,6 +1330,27 @@ mod tests {
         );
         // Nothing readable means "not measured", not "no storage".
         assert!(storage_classes_from(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn network_score_is_the_link_over_the_reference() {
+        // The reference link is 1.0 by construction: a node that did not report a rate is
+        // read as being on the reference, which is where the cost model's fallback sits.
+        assert!((normalize_network_score(1000.0) - 1.0).abs() < 1e-9);
+        assert!((normalize_network_score(10_000.0) - 10.0).abs() < 1e-9);
+        assert!((normalize_network_score(100.0) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn network_score_reads_a_missing_rate_as_not_measured() {
+        // The kernel reports -1 for an interface without a negotiated rate (veth, bridge),
+        // and loopback has none at all: neither is "no network".
+        assert_eq!(normalize_network_score(-1.0), 0.0);
+        assert_eq!(normalize_network_score(0.0), 0.0);
+        // A nonsense rate must not become a free link: an infinite score would make the
+        // node cost nothing to reach and win every placement.
+        assert_eq!(normalize_network_score(f64::NAN), 0.0);
+        assert_eq!(normalize_network_score(f64::INFINITY), 0.0);
     }
 
     #[test]
