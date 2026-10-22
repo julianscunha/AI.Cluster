@@ -29,6 +29,11 @@ previsão, para o modelo de custo ter como ser calibrado em vez de ajustado no e
   o resultado volta.
 - `ai-cluster request trace <id>`: coluna `PREDITO_US` por unidade e uma linha `PREVISTO`
   com o somado e o erro percentual.
+- `MetricsResponse.total_predicted_compute_us` (`code/proto/cluster.proto`) e
+  `metrics::summarize`: o roll-up do cluster (H1) soma a previsão das unidades concluídas ao
+  lado do compute real. `ai-cluster metrics`, o exportador Prometheus
+  (`ai_cluster_predicted_compute_time_us_total`) e a linha `TEMPO ... previsto_total_us=` do
+  `dashboard` (H4) leem o mesmo número — "previsto vs real" deixou de existir só por requisição.
 
 ## Como ler
 
@@ -81,9 +86,10 @@ Com `flops = 2 * rows * shared * cols`, o mesmo cálculo que o worker usa no ben
 - **Não persiste.** A previsão vive no dispatch, que não vai para o snapshot — depois de um
   restart ela é recalculada no próximo despacho. Coerente com as unidades concluídas, que
   também não sobrevivem a um restart.
-- **O roll-up do cluster ainda não agrega previsto.** `GetMetrics` (H1) soma compute e
-  latência, não a previsão; o `dashboard` (H4) por isso ainda não mostra "expected vs actual".
-  Somar a previsão no `MetricsResponse` é a próxima fatia, não esta.
+- **Unidade sem previsão entra como zero no somado.** Um nó sem compute score não prevê nada
+  para suas unidades; elas somam ao `total_compute_time_us` real mas não ao
+  `total_predicted_compute_us`, então o agregado subestima a previsão quando parte do cluster
+  não tem score. É a mesma convenção de zero = "não previsto" do trace, um nível acima.
 
 ## Evidência
 
@@ -92,7 +98,8 @@ E2E: `bash code/tests/phase-h-predictions.sh` — com o nó reportando um score 
 a pina: `PREVISTO somado_us=44` para duas unidades de 64³ (22us cada) e `175` para uma de 128³,
 com `erro_pct > 0`. É a mesma execução que valida a leitura de "não previsto" numa requisição
 desconhecida. `bash code/tests/phase-h-traces.sh` mostra a coluna `PREDITO_US` no trace de uma
-requisição real.
+requisição real. O mesmo script fecha lendo `ai-cluster metrics`: `total_predicted_compute_us=219`
+(44 do A + 175 do B), que é o roll-up somando a previsão que o trace mostra por unidade.
 
 Testes unitários: em `placement.rs`, `the_prediction_matches_the_reference_rate` (pina a
 cadeia inteira: 64³ na taxa de referência = 87us), `more_threads_predicts_less_time`,

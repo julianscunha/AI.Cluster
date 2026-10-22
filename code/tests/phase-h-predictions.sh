@@ -103,6 +103,18 @@ if echo "$UNKNOWN" | grep -q "PREVISTO"; then
 fi
 echo "OK: sem linha PREVISTO quando não há previsão"
 
+echo "=== D) roll-up do cluster — a previsão somada no metrics ==="
+METRICS=$(run "$R/ai-cluster metrics")
+echo "$METRICS"
+PRED_TOTAL=$(echo "$METRICS" | grep -o "total_predicted_compute_us=[0-9]*" | head -1 | cut -d= -f2)
+if [ "$PRED_TOTAL" = "219" ]; then
+  echo "OK: total_predicted_compute_us=219 (44 do A + 175 do B)"
+else
+  echo "FALHA: esperado total_predicted_compute_us=219, veio '$PRED_TOTAL'"
+  teardown
+  exit 1
+fi
+
 teardown
 docker network rm "$NET" >/dev/null 2>&1
 echo "=== H5 OK ==="

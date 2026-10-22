@@ -142,6 +142,12 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     );
     gauge(
         &mut out,
+        "ai_cluster_predicted_compute_time_us_total",
+        "Soma do compute previsto pelo modelo de custo nas unidades concluídas, em microssegundos.",
+        summary.total_predicted_compute_us as f64,
+    );
+    gauge(
+        &mut out,
         "ai_cluster_p50_compute_time_us",
         "Mediana do compute das unidades concluídas, em microssegundos.",
         summary.p50_compute_time_us as f64,
@@ -311,6 +317,7 @@ mod tests {
             units_failed: 0,
             total_compute_time_us: 300,
             total_latency_us: 900,
+            total_predicted_compute_us: 40,
             avg_compute_time_us: 100,
             avg_latency_us: 300,
             p50_compute_time_us: 90,
@@ -327,6 +334,7 @@ mod tests {
         assert!(out.contains("ai_cluster_nodes_available 1\n"));
         assert!(out.contains("ai_cluster_units_completed 3\n"));
         assert!(out.contains("ai_cluster_compute_time_us_total 300\n"));
+        assert!(out.contains("ai_cluster_predicted_compute_time_us_total 40\n"));
         assert!(out.contains("ai_cluster_p95_latency_us 800\n"));
         // Every metric declares its type exactly once; a repeat makes a strict parser fail.
         assert_eq!(out.matches("# TYPE ai_cluster_nodes_total").count(), 1);

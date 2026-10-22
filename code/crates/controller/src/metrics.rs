@@ -45,12 +45,18 @@ pub fn summarize(
 ) -> MetricsResponse {
     let mut total_compute_time_us: u64 = 0;
     let mut total_latency_us: u64 = 0;
+    let mut total_predicted_compute_us: u64 = 0;
     for record in completed {
         // Saturating: a hostile or buggy worker could report a compute time near u64::MAX,
         // and a wrap would show a cluster that did almost no work as having done enormous
         // work. Clamping overstates the total instead, which is the safer direction.
         total_compute_time_us = total_compute_time_us.saturating_add(record.compute_time_us);
         total_latency_us = total_latency_us.saturating_add(record.total_latency_us);
+        // Zero predicted means "not predicted", so an unpredicted unit adds nothing here
+        // while its real time still counts above. The gap the two totals show is honest:
+        // the cluster-wide version of the per-unit `erro_pct` in the trace (H5).
+        total_predicted_compute_us =
+            total_predicted_compute_us.saturating_add(record.predicted_compute_us);
     }
 
     // `checked_div` returns None when nothing has completed, so the empty cluster reads as
@@ -79,6 +85,7 @@ pub fn summarize(
         units_failed,
         total_compute_time_us,
         total_latency_us,
+        total_predicted_compute_us,
         avg_compute_time_us,
         avg_latency_us,
         p50_compute_time_us: percentile(&compute_times, 0.50),
@@ -122,6 +129,22 @@ mod tests {
         assert_eq!(metrics.total_latency_us, 800);
         assert_eq!(metrics.avg_compute_time_us, 200);
         assert_eq!(metrics.avg_latency_us, 400);
+    }
+
+    #[test]
+    fn sums_the_prediction_beside_the_measurement() {
+        // A predicted unit contributes to the predicted total; an unpredicted one (zero)
+        // does not, while its measured time still counts — the two totals answer "what the
+        // model expected" and "what happened" over the same set of completed units.
+        let predicted = CompletedWork {
+            predicted_compute_us: 30,
+            ..completed(100, 250)
+        };
+        let records = [predicted, completed(300, 550)];
+        let metrics = summarize(2, 2, &records, 0, 0, 0);
+
+        assert_eq!(metrics.total_compute_time_us, 400);
+        assert_eq!(metrics.total_predicted_compute_us, 30);
     }
 
     #[test]

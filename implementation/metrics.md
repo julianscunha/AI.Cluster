@@ -17,6 +17,9 @@ agregadas" do M0.
 
 - `MetricsResponse` e `GetMetrics` no proto: uma chamada devolve o roll-up, agora com os
   **percentis** p50/p95 de compute e de latência ao lado das médias.
+- `MetricsResponse.total_predicted_compute_us`: a previsão do modelo de custo somada sobre as
+  unidades concluídas, ao lado do compute real. É o "previsto vs real" no nível do cluster
+  (`predictions.md`, H5) — o trace dá o mesmo número por requisição.
 - `HealthReport` ganhou `swap_utilization` e `disk_io_ops`, e o worker passou a preencher
   `cpu_utilization` e `temperature_c`, que existiam no wire e ficavam sempre em zero.
 - `Registry::counts`: total de nós e quantos estão disponíveis, **num só lock**, para os dois
@@ -33,7 +36,7 @@ agregadas" do M0.
 ```text
 nodes_total=1 nodes_available=1
 units_completed=2 units_pending=0 units_blocked=0 units_failed=0
-total_compute_time_us=1217 avg_compute_time_us=608
+total_compute_time_us=1217 avg_compute_time_us=608 total_predicted_compute_us=36
 total_latency_us=3000 avg_latency_us=1500
 p50_compute_time_us=538 p95_compute_time_us=679
 p50_latency_us=1000 p95_latency_us=2000
@@ -53,6 +56,10 @@ demorou" que o critério de saída da fase H pede.
 - `units_failed` são as que nunca vão completar: orçamento de retry esgotado.
 - `nodes_available` é o conjunto que o placement enxerga — registrado e não drenando,
   offline ou em quarentena.
+- `total_predicted_compute_us` é o que o modelo de custo esperava somar nessas unidades; a
+  distância para `total_compute_time_us` é o erro do modelo no cluster inteiro
+  (`predictions.md`, H5). Zero quando nenhuma unidade concluída teve previsão — "não previsto",
+  não "instantâneo".
 
 ## Percentis
 
@@ -151,6 +158,7 @@ OK: ai_cluster_node_cpu_utilization presente
 ```
 
 Coberto por `sums_and_averages_over_completed_units`,
+`sums_the_prediction_beside_the_measurement`,
 `an_empty_cluster_reports_zero_instead_of_dividing_by_zero`,
 `averages_round_down_rather_than_up`, `a_nonsensical_timing_saturates_instead_of_wrapping`,
 `percentiles_use_the_nearest_rank` e `summarize_reports_percentiles_beside_the_average` em

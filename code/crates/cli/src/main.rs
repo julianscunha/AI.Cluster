@@ -464,8 +464,10 @@ async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>>
         metrics.units_completed, metrics.units_pending, metrics.units_blocked, metrics.units_failed
     );
     println!(
-        "total_compute_time_us={} avg_compute_time_us={}",
-        metrics.total_compute_time_us, metrics.avg_compute_time_us
+        "total_compute_time_us={} avg_compute_time_us={} total_predicted_compute_us={}",
+        metrics.total_compute_time_us,
+        metrics.avg_compute_time_us,
+        metrics.total_predicted_compute_us
     );
     println!(
         "total_latency_us={} avg_latency_us={}",
@@ -549,11 +551,12 @@ async fn print_dashboard(
             metrics.units_failed
         );
         println!(
-            "TEMPO compute_total_us={} compute_media_us={} latencia_total_us={} latencia_media_us={}",
+            "TEMPO compute_total_us={} compute_media_us={} latencia_total_us={} latencia_media_us={} previsto_total_us={}",
             metrics.total_compute_time_us,
             metrics.avg_compute_time_us,
             metrics.total_latency_us,
-            metrics.avg_latency_us
+            metrics.avg_latency_us,
+            metrics.total_predicted_compute_us
         );
         println!();
         println!("RESERVAS {}", reservations.len());

@@ -29,7 +29,7 @@ NÓ                   ESTADO       THREADS    RAM_GB  COMPUTE    SAÚDE
 node-d               READY              4      3.77     1.23     0.76
 
 TRABALHO concluídas=2 pendentes=0 bloqueadas=0 falhas=0
-TEMPO compute_total_us=3533 compute_media_us=1766 latencia_total_us=10000 latencia_media_us=5000
+TEMPO compute_total_us=3533 compute_media_us=1766 latencia_total_us=10000 latencia_media_us=5000 previsto_total_us=36
 
 RESERVAS 0
 ```
@@ -46,10 +46,13 @@ RESERVAS 0
 ## Por que não aparece tudo que a spec pede
 
 O painel da spec (`docs/22-cli-tui.md`) lista TTFT, ITL, tokens/s, tokens evitados, KV cache e
-previsto vs real. Nenhum deles tem fonte hoje: TTFT/ITL/tokens são do motor de inferência (Fase
-L/M), e previsto vs real é o H5, que precisa de uma previsão para comparar. Um campo sem fonte
-fica de fora em vez de aparecer zerado — zero é um valor, e "não medido" não é zero. Quando as
-fontes existirem, cada uma entra como uma seção a mais, sem mexer nas que já estão aqui.
+previsto vs real. Os de inferência ainda não têm fonte: TTFT/ITL/tokens são do motor de
+inferência (Fase L/M). "Previsto vs real" deixou de ser um deles: o `GetMetrics` (H1) passou a
+somar a previsão (`total_predicted_compute_us`), então a linha `TEMPO` traz `previsto_total_us`
+ao lado de `compute_total_us` — a leitura de cluster do que o `request trace` (H5) dá por
+requisição. Um campo sem fonte fica de fora em vez de aparecer zerado — zero é um valor, e
+"não medido" não é zero. Quando as fontes de inferência existirem, cada uma entra como uma
+seção a mais, sem mexer nas que já estão aqui.
 
 ## Teto conhecido
 
@@ -68,5 +71,6 @@ fontes existirem, cada uma entra como uma seção a mais, sem mexer nas que já 
 `bash code/tests/phase-h-dashboard.sh`, com um controlador e um worker:
 
 - A) cluster ocioso: `nós_disponíveis=1/1`, `node-d` listado, `concluídas=0`, `RESERVAS 0`;
-- B) depois de duas unidades: `concluídas=2` e `compute_total_us > 0`;
+- B) depois de duas unidades: `concluídas=2` e `compute_total_us > 0`, com `previsto_total_us`
+  na mesma linha `TEMPO`;
 - C) com `reserve node-d req-panel`: `RESERVAS 1` com a requisição dona na tela.

@@ -66,6 +66,7 @@ PANEL=$(run "$R/ai-cluster dashboard")
 echo "$PANEL"
 expect_contains "concluídas somam" "TRABALHO concluídas=2" "$PANEL"
 expect_contains "tempo registrado" "TEMPO compute_total_us=" "$PANEL"
+expect_contains "previsto no painel" "previsto_total_us=" "$PANEL"
 
 echo "=== C) reserva ativa ==="
 run "$R/ai-cluster reserve node-d req-panel --ttl-ms 60000" >/dev/null

@@ -174,8 +174,8 @@ Entregar:
 - [x] H3 Trace correlation — ligar requisição do cliente às units que ela gerou (`traces.md`,
   `ai-cluster request trace <id>`);
 - [x] H4 Dashboard — painel de uma tela sobre as chamadas que já existem (`dashboard.md`,
-  `ai-cluster dashboard [--watch N]`); TTFT, ITL, tokens/s, KV cache e previsto vs real não,
-  porque dependem de fontes que ainda não existem ou não são agregadas (previsto vs real
-  existe no trace, `predictions.md`, mas o `GetMetrics` ainda não soma a previsão);
+  `ai-cluster dashboard [--watch N]`); TTFT, ITL, tokens/s e KV cache não, porque dependem de
+  fontes que ainda não existem; previsto vs real sim — o `GetMetrics` soma a previsão
+  (`total_predicted_compute_us`) e a linha `TEMPO` mostra `previsto_total_us`;
 - [x] H5 Previsto vs real — o modelo de custo prevê tempo, não só ordena; o trace mostra a
   previsão ao lado da medição e o erro entre as duas (`predictions.md`);

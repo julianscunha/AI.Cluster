@@ -361,6 +361,11 @@ message MetricsResponse {
   uint64 p95_compute_time_us = 12;
   uint64 p50_latency_us = 13;
   uint64 p95_latency_us = 14;
+  /// Soma, sobre as unidades concluídas, do compute que o modelo de custo previu (H5).
+  /// Lida ao lado de `total_compute_time_us`, é o erro do modelo no cluster inteiro:
+  /// a distância entre o que o placement esperava custar e o que a máquina gastou.
+  /// Zero quando nenhuma unidade concluída teve previsão — "não previsto", não "instantâneo".
+  uint64 total_predicted_compute_us = 15;
 }
 
 message GetMetricsRequest {}

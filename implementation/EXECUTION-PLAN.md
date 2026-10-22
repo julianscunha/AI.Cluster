@@ -345,8 +345,10 @@ e `ListReservations` e imprime numa vista só os nós (estado, threads, RAM, com
 fila de trabalho (concluídas/pendentes/bloqueadas/falhas e tempos) e as reservas ativas. Sem
 `--watch` imprime uma vez e sai, para um script poder ler; com `--watch N` repinta a cada N
 segundos até Ctrl-C. Os campos do painel da spec sem fonte ainda — TTFT, ITL, tokens/s, tokens
-evitados, KV cache, previsto vs real — não aparecem: zerá-los diria que valem zero. Evidência:
-`bash code/tests/phase-h-dashboard.sh` (ocioso → 2 unidades → reserva ativa).
+evitados e KV cache — não aparecem: zerá-los diria que valem zero. "Previsto vs real" passou a
+ter fonte: o `GetMetrics` soma a previsão (H1) e a linha `TEMPO` mostra `previsto_total_us` ao
+lado do compute real. Evidência: `bash code/tests/phase-h-dashboard.sh` (ocioso → 2 unidades →
+reserva ativa).
 
 ### H5 Previsto vs real
 
@@ -359,10 +361,13 @@ inverter a normalização do worker sem duas cópias do mesmo número. O trace m
 subestimação em unidades pequenas (64³), porque o score é calibrado single-core num kernel
 de 256³. Evidência: `bash code/tests/phase-h-predictions.sh` (44us previstos para duas
 unidades de 64³, 175us para uma de 128³) e `bash code/tests/phase-h-traces.sh` (a coluna no
-trace de uma requisição real). O caminho "nó sem score" é coberto por teste unitário: não há
-ambiente para forçar score zero no worker.
+trace de uma requisição real). O roll-up do cluster agora soma a previsão:
+`MetricsResponse.total_predicted_compute_us` (H1) e a linha `TEMPO ... previsto_total_us=` do
+painel (H4) leem o mesmo número — o mesmo script confere `total_predicted_compute_us=219`
+(44 + 175). O caminho "nó sem score" é coberto por teste unitário: não há ambiente para forçar
+score zero no worker.
 
-Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; e o trace agora carrega o previsto ao lado do real (`predictions.md`, H5), que é a resposta a "quanto do que demorou o modelo já sabia". Métricas de nó e percentis ainda não.
+Critério de saída: qualquer requisição de teste possui trace completo e métricas suficientes para explicar sua latência. — [x] as métricas de latência existem (`metrics.md`: latência vs compute por cluster, com percentis e sinais de nó) e o trace por requisição existe (`traces.md`, H3), que é a resposta a "por que essa requisição demorou?"; e o trace carrega o previsto ao lado do real (`predictions.md`, H5), que é a resposta a "quanto do que demorou o modelo já sabia" — agora também no roll-up do cluster (`total_predicted_compute_us`).
 
 ## 10. Fase I — State Manager
 
