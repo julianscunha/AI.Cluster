@@ -110,6 +110,13 @@ e `setup_us` põe de volta o custo por unidade que não escala com o tamanho.
   `compute_median_score` é a taxa típica contra a qual a previsão se ajusta, e
   `compute_deviation` é a guarda — acima do limite de confiança a razão mediana/melhor é
   descartada e o melhor caso volta a valer.
+- **A taxa típica fica dormente num host barulhento.** A guarda (`DEVIATION_TRUST_LIMIT`, 0.25)
+  desliga a razão mediana/melhor quando o próprio benchmark discordou demais, e num host
+  compartilhado o desvio medido (0.41) passa do limite. Ou seja: o ganho medido no
+  `phase-h-traces.sh` acima — `-3.8%` — vem do **setup**, não da razão. O caminho da razão é
+  coberto por teste unitário (`a_trustworthy_median_pulls_the_prediction_longer`), não por E2E:
+  não há ambiente aqui para forçar um desvio baixo. Num nó dedicado o desvio cai abaixo do limite
+  e a razão entra.
 - **Não persiste.** A previsão vive no dispatch, que não vai para o snapshot — depois de um
   restart ela é recalculada no próximo despacho. Coerente com as unidades concluídas, que
   também não sobrevivem a um restart.
