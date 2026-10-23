@@ -104,6 +104,12 @@ impl Registry {
         nodes
             .entry(identity.node_id.clone())
             .and_modify(|record| {
+                // The same node_id from a different device is not the node that was approved:
+                // it earns trust again instead of inheriting it (S2). A reimaged or replaced
+                // machine is re-approved, which is the safe direction to fail.
+                if record.identity.device_id != identity.device_id {
+                    record.trusted = trusted;
+                }
                 record.identity = identity.clone();
                 record.capability = capability.clone();
                 record.state = NodeState::Ready;
@@ -299,6 +305,19 @@ mod tests {
         // Re-registering (a restart, a lost heartbeat) must not revoke the approval.
         registry.register(identity("node-a"), CapabilityReport::default(), 2_000);
         assert!(registry.is_available("node-a"));
+    }
+
+    #[test]
+    fn the_same_node_id_from_another_device_does_not_inherit_trust() {
+        let registry = Registry::requiring_approval();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        registry.approve("node-a");
+
+        let mut impostor = identity("node-a");
+        impostor.device_id = "another-machine".to_string();
+        let record = registry.register(impostor, CapabilityReport::default(), 2_000);
+        assert!(!record.trusted);
+        assert!(!registry.is_available("node-a"));
     }
 
     #[test]
