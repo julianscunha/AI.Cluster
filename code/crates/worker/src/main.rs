@@ -44,6 +44,10 @@ const REFERENCE_LINK_MBPS: f64 = 1000.0;
 /// leave a slow link usable, large enough that the RPC fixed cost does not dominate.
 const PROBE_BYTES: usize = 2 * 1024 * 1024;
 const PROBE_RUNS: usize = 3;
+/// Disk probe (K2): 16 MiB written and fsynced, best of `PROBE_RUNS`. The reference is a SATA
+/// SSD, the same "1.0 is a reference device" scale as the compute and network scores.
+const STORAGE_PROBE_BYTES: usize = 16 * 1024 * 1024;
+const REFERENCE_STORAGE_MBPS: f64 = 500.0;
 
 /// The copy of the controller's state this node keeps, if it was asked to keep one (I4).
 ///
@@ -800,6 +804,30 @@ async fn probe_link(client: &mut MetadataClient) -> f64 {
     normalize_network_score(best)
 }
 
+/// Sequential write rate of the disk under the temp dir over the reference, or zero when the
+/// probe could not write. The fsync is what makes it a disk number: without it the page cache
+/// answers and every node looks like RAM. Write only; read-back would hit the cache again.
+/// shortcut: measures the temp dir's device, not every device in `storage_classes`, upgrade
+/// when placement needs a rate per tier.
+fn storage_score() -> f64 {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("ai-cluster-probe-{}", std::process::id()));
+    let block = vec![0u8; STORAGE_PROBE_BYTES];
+    let mut best = 0.0f64;
+    for _ in 0..PROBE_RUNS {
+        let started = Instant::now();
+        let written = std::fs::File::create(&path)
+            .and_then(|mut file| file.write_all(&block).and_then(|_| file.sync_all()));
+        if written.is_err() {
+            break;
+        }
+        // Bytes over seconds is MB/s once the megabit factor is taken back out.
+        best = best.max(achieved_mbps(STORAGE_PROBE_BYTES, started.elapsed()) / 8.0);
+    }
+    let _ = std::fs::remove_file(&path);
+    best / REFERENCE_STORAGE_MBPS
+}
+
 fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
@@ -829,6 +857,7 @@ fn capability() -> CapabilityReport {
         compute_median_score: measurement.median_score,
         compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
+        storage_score: storage_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
@@ -1412,6 +1441,14 @@ mod tests {
         assert!((normalize_network_score(1000.0) - 1.0).abs() < 1e-9);
         assert!((normalize_network_score(10_000.0) - 10.0).abs() < 1e-9);
         assert!((normalize_network_score(100.0) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn storage_probe_measures_the_temp_dir_and_cleans_up() {
+        assert!(storage_score() > 0.0);
+        let leftover =
+            std::env::temp_dir().join(format!("ai-cluster-probe-{}", std::process::id()));
+        assert!(!leftover.exists());
     }
 
     #[test]

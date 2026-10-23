@@ -15,6 +15,9 @@ message CapabilityReport {
   uint64 memory_bytes = 2;
   double compute_score = 3;
   double memory_bandwidth_score = 4;
+  // Taxa de escrita sequencial com fsync do disco onde o worker roda, relativa à referência
+  // de 500 MB/s (um SATA SSD): 1.0 é isso, 0.2 um HDD, 6.0 um NVMe (Fase K2). Zero é "não
+  // medido" (sonda falhou), nunca "disco lento". Maior é melhor.
   double storage_score = 5;
   // Velocidade do link relativa à referência (1 GbE): 1.0 é uma rede de 1 GbE, 10.0 uma de
   // 10 GbE. É a velocidade *nominal* do link, não a taxa alcançada (Fase C1); medir a taxa

@@ -87,6 +87,14 @@ else
   exit 1
 fi
 
+ARMAZ=$(echo "$DETAIL" | field armaz_score)
+if awk -v s="$ARMAZ" 'BEGIN { exit !(s+0 > 0) }'; then
+  echo "OK: o benchmark de disco mediu armaz_score=$ARMAZ"
+else
+  echo "FALHA: armaz_score deveria ser > 0, veio '$ARMAZ'"
+  teardown
+  exit 1
+fi
 ATUAL=$(echo "$DETAIL" | field rede_atual)
 echo "rede_atual=$ATUAL"
 ALCANCADA=$(echo "$DETAIL" | field rede_alcancada)

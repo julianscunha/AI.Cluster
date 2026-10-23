@@ -49,6 +49,18 @@ ali diria que o valor é zero, que é diferente de não existir.
 comum vê `/sys/block` do host, não o dele — que é exatamente por que o E2E precisa de um
 nó com classes fixadas para provar o caminho.
 
+## Benchmark de escrita (Fase K2)
+
+O worker escreve 16 MiB com `fsync` (melhor de 3) no diretório temporário e reporta a taxa em
+`storage_score`, relativa a 500 MB/s (um SATA SSD): 1.0 é isso, ~0.2 um HDD, ~6 um NVMe. O
+`fsync` é o que faz o número ser do disco; sem ele o page cache responde. O detalhe do nó
+mostra `armaz_score=`; `-` é "não medido". Evidência: `phase-c-network.sh` A) `armaz_score=0.06`
+(overlay do Docker Desktop, que não representa o disco do host).
+
+Tetos: mede o dispositivo do diretório temporário, não um por classe de `storage_classes`;
+só escrita, sem latência; nenhum consumidor ainda (o placement não tem termo de storage), e
+sem pin de determinismo. A heurística de nome (`nvme`) segue valendo até o score ser lido.
+
 ## Evidência
 
 Três nós, um com classes fixadas, um sem override e um com override vazio:

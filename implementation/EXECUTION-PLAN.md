@@ -152,7 +152,9 @@ Benchmarks controlados para compute, memory, storage, network.
 - [~] rede medida: sonda `ProbeLink` de upload ao controller no registro, em
   `network_achieved_score`; o placement usa o menor entre ela e o nominal
   (`network-discovery.md`). Só upload, uma vez, sem latência;
-- [ ] memory e storage não são medidos sob carga.
+- [~] storage: escrita sequencial com fsync em `storage_score` (`storage-tiers.md`, K2); só o
+  dispositivo do tmp, sem consumidor;
+- [ ] memory não é medida sob carga.
 
 ### C3 Capability model
 
@@ -483,7 +485,7 @@ HDD/SATA SSD/NVMe. — [ ] não iniciado.
 
 ### K2 Benchmark
 
-Throughput/latency. — [ ] não iniciado.
+Throughput/latency. — [~] throughput de escrita (`storage-tiers.md`); latência não.
 
 ### K3 Health
 
