@@ -28,7 +28,7 @@ STRONG_THREADS=${STRONG_THREADS:-8}
 WEAK_DELAY_MS=${WEAK_DELAY_MS:-2000}
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -41,9 +41,9 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 echo "=== A) baseline primeiro-a-chegar: apenas o nó fraco ($WEAK_THREADS threads, ${WEAK_DELAY_MS}ms de atraso) ==="
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_PLACEMENT=off "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-worker-weak --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-weak --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-weak \
   -e AI_CLUSTER_CPU_THREADS="$WEAK_THREADS" -e AI_CLUSTER_WORK_DELAY_MS="$WEAK_DELAY_MS" \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
@@ -60,7 +60,7 @@ fi
 
 teardown
 echo "=== B) placement: nó fraco + nó forte ($STRONG_THREADS threads), ambos ociosos ==="
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 for name in weak strong; do
   if [ "$name" = weak ]; then
@@ -71,7 +71,7 @@ for name in weak strong; do
     delay=""
   fi
   # shellcheck disable=SC2086
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name "aic-worker-$name" --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name "aic-worker-$name" --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID="node-$name" \
     -e AI_CLUSTER_CPU_THREADS="$threads" $delay \
     "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null

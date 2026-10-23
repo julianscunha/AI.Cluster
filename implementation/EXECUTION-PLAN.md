@@ -282,8 +282,9 @@ Capabilities, memory, trust, health.
   nó reporta, decidido em `placement::fits`. Evidência: `bash code/tests/phase-g-memory.sh`.
 - [~] trust: exclusão por estado (`registry::eligible` recusa QUARANTINED/FAILED/OFFLINE) e,
   desde a S1, autenticação por token de join em toda RPC (`join-token.md`): o controller não
-  sobe sem token e recusa quem não o apresenta. Sem identidade por nó, sem TLS, sem níveis de
-  trust do docs/06 (S2: aprovação de nó novo).
+  sobe sem token e recusa quem não o apresenta. Sem identidade por nó, sem TLS, aprovação manual de nó
+  novo desde a S2 (`node-approval.md`: nó pendente não recebe trabalho nem escreve estado até
+  `ai-cluster approve`); sem os níveis intermediários de trust do docs/06.
 
 ### G2 Cost model
 

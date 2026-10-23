@@ -100,6 +100,17 @@ message NodeSnapshot {
   string state = 4;
   uint64 registered_at_unix_ms = 5;
   uint64 last_heartbeat_unix_ms = 6;
+  // Confiança (Fase S2): um nó novo nasce não confiável e só recebe trabalho depois de aprovado.
+  bool trusted = 7;
+}
+
+message ApproveNodeRequest {
+  string node_id = 1;
+}
+
+message ApproveNodeResponse {
+  // Falso quando o nó é desconhecido; aprovar de novo um nó já aprovado continua verdadeiro.
+  bool approved = 1;
 }
 
 message RegisterNodeRequest {
@@ -456,6 +467,7 @@ service LinkProbe {
 
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

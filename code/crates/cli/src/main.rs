@@ -2,9 +2,9 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest,
-    ListNodesRequest, ListReservationsRequest, ReleaseReservationRequest, ReserveRequest,
-    WorkReportRequest, WorkReportResponse,
+    ApproveNodeRequest, EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest,
+    GetTraceRequest, ListEventsRequest, ListNodesRequest, ListReservationsRequest,
+    ReleaseReservationRequest, ReserveRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_controller;
 use clap::{Parser, Subcommand};
@@ -86,6 +86,11 @@ enum Command {
     },
     /// Reservas ativas: nó, requisição dona e vencimento.
     Reservations,
+    /// Aprova um nó novo para que ele receba trabalho (S2).
+    Approve {
+        /// Nó a aprovar.
+        node: String,
+    },
     /// Libera a reserva de um nó antes do vencimento.
     Release {
         /// Nó a liberar.
@@ -158,6 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ttl_ms,
         } => run_reserve(&cli.controller, &node, &request_id, ttl_ms).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
+        Command::Approve { node } => approve_node(&cli.controller, &node).await?,
         Command::Release { node } => release_reservation(&cli.controller, &node).await?,
         Command::Dashboard { watch } => print_dashboard(&cli.controller, watch).await?,
     }
@@ -249,6 +255,23 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
 }
 
 /// Libera a reserva de um nó antes do vencimento. Um nó sem reserva não é erro.
+async fn approve_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_controller(endpoint.to_string()).await?;
+    let approved = client
+        .approve_node(ApproveNodeRequest {
+            node_id: node.to_string(),
+        })
+        .await?
+        .into_inner()
+        .approved;
+    if approved {
+        println!("NÓ aprovado no={node}");
+    } else {
+        println!("NÓ não encontrado no={node}");
+    }
+    Ok(())
+}
+
 async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_controller(endpoint.to_string()).await?;
     let released = client
@@ -275,7 +298,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<12} {:>11}",
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11}",
         "NÓ",
         "ESTADO",
         "ARQ",
@@ -286,6 +309,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "CPU_%",
         "TEMP_C",
         "SWAP_%",
+        "CONFIANÇA",
         "ARMAZ",
         "ARMAZ_SCORE"
     );
@@ -301,7 +325,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<12} {:>11}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11}",
             identity.node_id,
             node.state,
             identity.architecture,
@@ -312,6 +336,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             health.cpu_utilization * 100.0,
             health.temperature_c,
             health.swap_utilization * 100.0,
+            if node.trusted { "aprovado" } else { "pendente" },
             storage,
             // Zero is "not measured" (the probe could not write), never a slow disk.
             if capability.storage_score > 0.0 {
@@ -367,8 +392,10 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
 
     println!("NÓ {}", identity.node_id);
     println!(
-        "  estado={} arquitetura={}",
-        node.state, identity.architecture
+        "  estado={} arquitetura={} confianca={}",
+        node.state,
+        identity.architecture,
+        if node.trusted { "aprovado" } else { "pendente" }
     );
     println!(
         "  dispositivo={} so={} runtime={}",

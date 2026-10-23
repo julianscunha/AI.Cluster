@@ -13,13 +13,14 @@ pub fn unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Whether the controller may hand new work to a node in this state. A node that
-/// is leaving or believed dead is not a candidate, so it never wins a unit.
-fn eligible(state: NodeState) -> bool {
-    !matches!(
-        state,
-        NodeState::Draining | NodeState::Quarantined | NodeState::Failed | NodeState::Offline
-    )
+/// Whether the controller may hand new work to a node. A node that is leaving or believed dead
+/// is not a candidate, so it never wins a unit; neither is one nobody approved yet (S2).
+fn eligible(record: &NodeRecord) -> bool {
+    record.trusted
+        && !matches!(
+            record.state,
+            NodeState::Draining | NodeState::Quarantined | NodeState::Failed | NodeState::Offline
+        )
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +29,9 @@ pub struct NodeRecord {
     pub capability: CapabilityReport,
     pub health: HealthReport,
     pub state: NodeState,
+    /// False until someone approves the node (S2). Liveness and health still flow for an
+    /// untrusted node so an operator can see it; it just never receives work or state.
+    pub trusted: bool,
     pub registered_at_unix_ms: u64,
     pub last_heartbeat_unix_ms: u64,
 }
@@ -41,18 +45,50 @@ impl NodeRecord {
             state: self.state.as_str().to_string(),
             registered_at_unix_ms: self.registered_at_unix_ms,
             last_heartbeat_unix_ms: self.last_heartbeat_unix_ms,
+            trusted: self.trusted,
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Registry {
     nodes: Mutex<HashMap<String, NodeRecord>>,
+    /// Whether a node that registers for the first time is trusted at once.
+    auto_approve: bool,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Registry {
+    /// A registry that trusts every node on registration — the behaviour before S2.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            nodes: Mutex::new(HashMap::new()),
+            auto_approve: true,
+        }
+    }
+
+    /// A registry where a new node is untrusted until `approve` is called (S2).
+    pub fn requiring_approval() -> Self {
+        Self {
+            auto_approve: false,
+            ..Self::new()
+        }
+    }
+
+    /// Trusts a registered node. False when the node is unknown. Approving twice is fine.
+    pub fn approve(&self, node_id: &str) -> bool {
+        match self.lock().get_mut(node_id) {
+            Some(record) => {
+                record.trusted = true;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Upserts a node. Re-registration refreshes capability and liveness but
@@ -63,6 +99,7 @@ impl Registry {
         capability: CapabilityReport,
         now: u64,
     ) -> NodeRecord {
+        let trusted = self.auto_approve;
         let mut nodes = self.lock();
         nodes
             .entry(identity.node_id.clone())
@@ -77,6 +114,8 @@ impl Registry {
                 capability: capability.clone(),
                 health: HealthReport::default(),
                 state: NodeState::Ready,
+                // Re-registration keeps the trust a node already earned (and_modify above).
+                trusted,
                 registered_at_unix_ms: now,
                 last_heartbeat_unix_ms: now,
             })
@@ -137,9 +176,18 @@ impl Registry {
     /// nodes leaving or believed dead are not eligible.
     pub fn is_available(&self, node_id: &str) -> bool {
         match self.lock().get(node_id) {
-            Some(record) => eligible(record.state),
+            Some(record) => eligible(record),
             None => false,
         }
+    }
+
+    /// Whether the node is registered but not yet approved (S2). Such a node is alive and polls
+    /// for work; it is told there is none, not that it is unavailable, so its worker keeps
+    /// running until someone approves it.
+    pub fn awaiting_approval(&self, node_id: &str) -> bool {
+        self.lock()
+            .get(node_id)
+            .is_some_and(|record| !record.trusted)
     }
 
     /// Marks a known node as draining so no further work is dispatched to it.
@@ -175,7 +223,7 @@ impl Registry {
         let mut ids: Vec<&String> = nodes.keys().collect();
         ids.sort();
         ids.into_iter()
-            .filter(|id| eligible(nodes[*id].state))
+            .filter(|id| eligible(&nodes[*id]))
             .map(|id| {
                 let record = &nodes[id];
                 (id.clone(), record.capability.clone(), record.health)
@@ -188,10 +236,7 @@ impl Registry {
     pub fn counts(&self) -> (u32, u32) {
         let nodes = self.lock();
         let total = nodes.len() as u32;
-        let available = nodes
-            .values()
-            .filter(|record| eligible(record.state))
-            .count() as u32;
+        let available = nodes.values().filter(|record| eligible(record)).count() as u32;
         (total, available)
     }
 
@@ -232,6 +277,37 @@ mod tests {
             os_version: "linux".to_string(),
             runtime_version: "0.1.0".to_string(),
         }
+    }
+
+    #[test]
+    fn a_new_node_waits_for_approval_and_keeps_it_across_re_registration() {
+        let registry = Registry::requiring_approval();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        // Untrusted: alive and visible, but never a candidate or counted as available.
+        assert!(registry.knows("node-a"));
+        assert!(!registry.is_available("node-a"));
+        assert!(registry.awaiting_approval("node-a"));
+        assert!(!registry.awaiting_approval("ghost"));
+        assert!(registry.candidates().is_empty());
+        assert_eq!(registry.counts(), (1, 0));
+        assert!(!registry.list()[0].trusted);
+
+        assert!(registry.approve("node-a"));
+        assert!(registry.is_available("node-a"));
+        assert_eq!(registry.counts(), (1, 1));
+
+        // Re-registering (a restart, a lost heartbeat) must not revoke the approval.
+        registry.register(identity("node-a"), CapabilityReport::default(), 2_000);
+        assert!(registry.is_available("node-a"));
+    }
+
+    #[test]
+    fn approving_an_unknown_node_is_false_and_the_default_registry_trusts_everyone() {
+        let registry = Registry::requiring_approval();
+        assert!(!registry.approve("ghost"));
+        let open = Registry::new();
+        open.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        assert!(open.is_available("node-a"));
     }
 
     #[test]

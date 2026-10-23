@@ -33,7 +33,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let auth = ServerMetadata::new(&token);
 
-    let registry = Arc::new(Registry::new());
+    // S2: a new node waits for `ai-cluster approve` unless the operator opts out, which is
+    // what a closed lab network or the E2E scripts do.
+    let auto_approve = std::env::var("AI_CLUSTER_AUTO_APPROVE")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true"));
+    let registry = Arc::new(if auto_approve {
+        Registry::new()
+    } else {
+        Registry::requiring_approval()
+    });
     // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
     // the benchmark runs use; point it at a mounted volume so a restart keeps the
     // queue instead of losing it with the container.

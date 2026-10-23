@@ -4,15 +4,15 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
-    GetMetricsRequest, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
-    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
-    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse,
-    ListReservationsRequest, ListReservationsResponse, MetricsResponse, ProbeLinkRequest,
-    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
-    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, SubmitWorkResultRequest, SubmitWorkResultResponse,
-    WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    ApproveNodeRequest, ApproveNodeResponse, EnqueueGraphRequest, EnqueueGraphResponse,
+    EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetTraceRequest, GetTraceResponse,
+    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
+    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
+    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
+    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
+    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
+    Reservation, ReserveRequest, ReserveResponse, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -111,17 +111,40 @@ impl ClusterControl for ClusterControlService {
         // A node offers the copy of the state it holds. A controller that lost its own files
         // takes the newest one — a node keeping the copy is exactly what lets the queue come
         // back after the volume dies (I4).
-        if let Some(replica) = request.replica {
+        let record = self
+            .registry
+            .register(identity, request.capability.unwrap_or_default(), now);
+        // S2: an unapproved node must not be able to write controller state, so its copy is
+        // ignored until it is trusted. A node that comes back after approval offers it again.
+        if let Some(replica) = request.replica.filter(|_| record.trusted) {
             self.work.restore(&replica);
         }
-        self.registry
-            .register(identity, request.capability.unwrap_or_default(), now);
         self.events.record(now, "node_registered", node_id.clone());
         Ok(Response::new(RegisterNodeResponse {
             accepted: true,
             cluster_id: self.cluster_id.clone(),
-            message: format!("nó {node_id} registrado"),
+            message: if record.trusted {
+                format!("nó {node_id} registrado")
+            } else {
+                format!("nó {node_id} registrado, aguardando aprovação")
+            },
         }))
+    }
+
+    /// Trusts a node so it can receive work (S2). Unknown nodes answer `approved: false`.
+    async fn approve_node(
+        &self,
+        request: Request<ApproveNodeRequest>,
+    ) -> Result<Response<ApproveNodeResponse>, Status> {
+        let node_id = request.into_inner().node_id;
+        if node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        let approved = self.registry.approve(&node_id);
+        if approved {
+            self.events.record(unix_ms(), "node_approved", node_id);
+        }
+        Ok(Response::new(ApproveNodeResponse { approved }))
     }
 
     async fn heartbeat(
@@ -220,6 +243,9 @@ impl ClusterControl for ClusterControlService {
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        if self.registry.awaiting_approval(&request.node_id) {
+            return Ok(Response::new(RequestWorkResponse::default()));
         }
         // Unknown, leaving or dead nodes get no work.
         if !self.registry.is_available(&request.node_id) {
