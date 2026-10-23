@@ -275,7 +275,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<12}",
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<12} {:>11}",
         "NÓ",
         "ESTADO",
         "ARQ",
@@ -286,7 +286,8 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "CPU_%",
         "TEMP_C",
         "SWAP_%",
-        "ARMAZ"
+        "ARMAZ",
+        "ARMAZ_SCORE"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -300,7 +301,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<12}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<12} {:>11}",
             identity.node_id,
             node.state,
             identity.architecture,
@@ -312,6 +313,12 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             health.temperature_c,
             health.swap_utilization * 100.0,
             storage,
+            // Zero is "not measured" (the probe could not write), never a slow disk.
+            if capability.storage_score > 0.0 {
+                format!("{:.2}", capability.storage_score)
+            } else {
+                "-".to_string()
+            },
         );
     }
     Ok(())

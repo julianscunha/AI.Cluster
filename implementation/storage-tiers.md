@@ -57,8 +57,10 @@ O worker escreve 16 MiB com `fsync` (melhor de 3) no diretório temporário e re
 mostra `armaz_score=`; `-` é "não medido". Evidência: `phase-c-network.sh` A) `armaz_score=0.06`
 (overlay do Docker Desktop, que não representa o disco do host).
 
+`ai-cluster nodes` ganhou a coluna `ARMAZ_SCORE` (`-` é não medido), depois de `ARMAZ`.
+
 Tetos: mede o dispositivo do diretório temporário, não um por classe de `storage_classes`;
-só escrita, sem latência; nenhum consumidor ainda (o placement não tem termo de storage), e
+só escrita, sem latência; o único consumidor é a coluna da CLI: nenhuma unidade de trabalho toca disco (os operandos passam pelo controller e a réplica vai a todo nó atrasado), então um termo de placement seria sempre zero ou inventado, e
 sem pin de determinismo. A heurística de nome (`nvme`) segue valendo até o score ser lido.
 
 ## Evidência

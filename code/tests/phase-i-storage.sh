@@ -33,7 +33,7 @@ teardown() {
 # Reads the storage column of one node's row from the `nodes` table. The class list is the
 # last column, so the last field of the matching row is what the client actually rendered.
 storage_of() {
-  echo "$1" | awk -v node="$2" '$1 == node { print $NF }'
+  echo "$1" | awk -v node="$2" '$1 == node { print $(NF-1) }'
 }
 
 teardown
