@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
+use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
     GetMetricsRequest, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
@@ -15,9 +16,9 @@ use ai_cluster_protocol::cluster::{
 };
 use tonic::{Request, Response, Status};
 
-/// Ceiling for a `ProbeLink` payload: the real probe sends 2 MiB, and the transport limit
-/// (64 MiB) is sized for work data, not for a throwaway measurement.
-const MAX_PROBE_BYTES: usize = 4 * 1024 * 1024;
+/// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
+/// buffered: the real probe sends 2 MiB, and the 64 MiB data limit is sized for work units.
+pub const MAX_PROBE_BYTES: usize = 4 * 1024 * 1024;
 
 use crate::events::EventLog;
 use crate::metrics;
@@ -170,20 +171,6 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<ListNodesResponse>, Status> {
         Ok(Response::new(ListNodesResponse {
             nodes: self.registry.list(),
-        }))
-    }
-
-    /// Throughput probe (C2): the worker times the upload, so the answer is only the byte count.
-    async fn probe_link(
-        &self,
-        request: Request<ProbeLinkRequest>,
-    ) -> Result<Response<ProbeLinkResponse>, Status> {
-        let received = request.into_inner().payload.len();
-        if received > MAX_PROBE_BYTES {
-            return Err(Status::invalid_argument("payload da sonda acima de 4 MiB"));
-        }
-        Ok(Response::new(ProbeLinkResponse {
-            received_bytes: received as u64,
         }))
     }
 
@@ -608,6 +595,22 @@ impl ClusterControl for ClusterControlService {
                 .record(unix_ms(), "reservation_released", node_id.clone());
         }
         Ok(Response::new(ReleaseReservationResponse { released }))
+    }
+}
+
+/// Throughput probe (C2): the worker times the upload, so the answer is only the byte count.
+#[derive(Debug, Default)]
+pub struct LinkProbeService;
+
+#[tonic::async_trait]
+impl LinkProbe for LinkProbeService {
+    async fn probe_link(
+        &self,
+        request: Request<ProbeLinkRequest>,
+    ) -> Result<Response<ProbeLinkResponse>, Status> {
+        Ok(Response::new(ProbeLinkResponse {
+            received_bytes: request.into_inner().payload.len() as u64,
+        }))
     }
 }
 

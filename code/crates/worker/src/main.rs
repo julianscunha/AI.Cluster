@@ -8,7 +8,7 @@ use ai_cluster_protocol::cluster::{
     NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, RequestWorkRequest, StateReplica,
     SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
-use ai_cluster_protocol::metadata::{MetadataClient, connect_controller};
+use ai_cluster_protocol::metadata::{ProbeClient, connect_controller, connect_probe};
 use prost::Message;
 use tokio::time;
 
@@ -172,8 +172,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut client = connect_controller(endpoint.clone()).await?;
     // A pinned node measures nothing, the same contract as the pinned compute score.
-    if pinned_network_score().is_none() {
-        capability.network_achieved_score = probe_link(&mut client).await;
+    // The probe has its own connection; if it cannot open, the node simply reports no rate.
+    let mut probe_client = match pinned_network_score() {
+        Some(_) => None,
+        None => connect_probe(endpoint.clone()).await.ok(),
+    };
+    if let Some(probe) = probe_client.as_mut() {
+        capability.network_achieved_score = probe_link(probe).await;
     }
     // A copy left by a previous run of this node is still worth offering: the controller may
     // have lost its own files while this node was down (I4).
@@ -317,7 +322,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Nothing ready: use the idle time to refresh the current-compute estimate,
                 // then wait before asking again (Fase C3).
                 refresh_current_compute();
-                refresh_current_network(&mut client).await;
+                if let Some(probe) = probe_client.as_mut() {
+                    refresh_current_network(probe).await;
+                }
                 // Wait before asking again, but wake at once on shutdown.
                 tokio::select! {
                     _ = time::sleep(Duration::from_millis(WORK_POLL_IDLE_MS)) => {}
@@ -786,7 +793,7 @@ fn normalize_network_score(mbps: f64) -> f64 {
 /// real ability, the same reasoning as the compute benchmark's best case.
 /// shortcut: upload only and the controller path only, add a download leg when a unit's
 /// result transfer needs it.
-async fn probe_link(client: &mut MetadataClient) -> f64 {
+async fn probe_link(client: &mut ProbeClient) -> f64 {
     let payload = vec![0u8; PROBE_BYTES];
     let mut best = 0.0f64;
     for _ in 0..PROBE_RUNS {
@@ -814,7 +821,9 @@ async fn probe_link(client: &mut MetadataClient) -> f64 {
 /// when placement needs a rate per tier.
 fn storage_score() -> f64 {
     use std::io::{Seek, Write};
-    let path = std::env::temp_dir().join(format!("ai-cluster-probe-{}", std::process::id()));
+    static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("ai-cluster-probe-{}-{seq}", std::process::id()));
     let block = vec![0u8; STORAGE_PROBE_BYTES];
     // create_new refuses a pre-planted path or symlink in a shared temp dir; the one handle
     // is rewritten from the start on each run.
@@ -935,7 +944,7 @@ static CURRENT_NETWORK: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
 /// Re-runs the link probe while idle, on the same cadence as the compute remeasurement.
 /// A pinned node does not probe, for the same reason as at registration. A failed probe
 /// (zero) keeps the previous estimate rather than reporting a dead link.
-async fn refresh_current_network(client: &mut MetadataClient) {
+async fn refresh_current_network(client: &mut ProbeClient) {
     if pinned_network_score().is_some() {
         return;
     }
@@ -1462,9 +1471,17 @@ mod tests {
     #[test]
     fn storage_probe_measures_the_temp_dir_and_cleans_up() {
         assert!(storage_score() > 0.0);
-        let leftover =
-            std::env::temp_dir().join(format!("ai-cluster-probe-{}", std::process::id()));
-        assert!(!leftover.exists());
+        let leftovers = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("ai-cluster-probe-")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
     }
 
     #[test]

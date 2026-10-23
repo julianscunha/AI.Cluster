@@ -448,9 +448,14 @@ message WorkOutput {
   repeated double matrix = 2;
 }
 
+// Serviço próprio para que o servidor imponha um teto de mensagem de 4 MiB só aqui, sem
+// tocar o limite de 64 MiB do tráfego de dados do ClusterControl.
+service LinkProbe {
+  rpc ProbeLink(ProbeLinkRequest) returns (ProbeLinkResponse);
+}
+
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
-  rpc ProbeLink(ProbeLinkRequest) returns (ProbeLinkResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

@@ -16,6 +16,7 @@ use tonic::service::Interceptor;
 use tonic::{Request, Status};
 
 use crate::cluster::cluster_control_client::ClusterControlClient;
+use crate::cluster::link_probe_client::LinkProbeClient;
 
 pub const PROTOCOL_VERSION: &str = "v1";
 pub const VERSION_HEADER: &str = "x-ai-cluster-protocol-version";
@@ -59,6 +60,12 @@ fn next_correlation_id() -> String {
 
 /// A controller client whose calls carry the required protocol metadata.
 pub type MetadataClient = ClusterControlClient<
+    tonic::service::interceptor::InterceptedService<tonic::transport::Channel, ClientMetadata>,
+>;
+
+/// Client of the throughput-probe service (C2), a separate service so the server can cap its
+/// messages without lowering the limit work units need.
+pub type ProbeClient = LinkProbeClient<
     tonic::service::interceptor::InterceptedService<tonic::transport::Channel, ClientMetadata>,
 >;
 
@@ -116,6 +123,16 @@ pub async fn connect_controller(
             .max_decoding_message_size(MAX_MESSAGE_BYTES)
             .max_encoding_message_size(MAX_MESSAGE_BYTES),
     )
+}
+
+/// Connects the probe client to the same controller address.
+pub async fn connect_probe(
+    dst: impl Into<String>,
+) -> Result<ProbeClient, Box<dyn std::error::Error>> {
+    let channel = tonic::transport::Endpoint::from_shared(dst.into())?
+        .connect()
+        .await?;
+    Ok(LinkProbeClient::with_interceptor(channel, ClientMetadata))
 }
 
 #[cfg(test)]

@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use ai_cluster_controller::events::EventLog;
 use ai_cluster_controller::registry::{Registry, unix_ms};
-use ai_cluster_controller::service::ClusterControlService;
+use ai_cluster_controller::service::{ClusterControlService, LinkProbeService, MAX_PROBE_BYTES};
 use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
+use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{MAX_MESSAGE_BYTES, ServerMetadata};
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
@@ -114,9 +115,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = ClusterControlServer::new(service)
         .max_decoding_message_size(MAX_MESSAGE_BYTES)
         .max_encoding_message_size(MAX_MESSAGE_BYTES);
+    // Messages a little over the probe payload (protobuf framing), still far under the data limit.
+    let probe =
+        LinkProbeServer::new(LinkProbeService).max_decoding_message_size(MAX_PROBE_BYTES + 1024);
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     Server::builder()
-        .add_service(InterceptedService::new(server, ServerMetadata))
+        .add_service(InterceptedService::new(server, ServerMetadata.clone()))
+        .add_service(InterceptedService::new(probe, ServerMetadata))
         .serve(addr)
         .await?;
     Ok(())
