@@ -183,8 +183,9 @@ Thermal, memory pressure, storage health, network degradation.
   passou a evitar nó quente sem mudança no modelo de custo. Evidência:
   `bash code/tests/phase-c4-health.sh` (dois nós de capability idêntica, só a temperatura
   diferente; a unidade vai para o frio).
-- [ ] storage health e degradação de rede — a rede já tem baseline (`network_achieved_score`),
-  falta remedir e comparar; storage não tem baseline de dispositivo (o análogo do `capability-benchmark.md`).
+- [~] degradação de rede: a sonda é repetida com o nó ocioso (`current_network_score`) e o
+  placement lê a atual no lugar do baseline (`network-discovery.md`). Sem E2E que degrade o link;
+- [ ] storage health — sem baseline de dispositivo (o análogo do `capability-benchmark.md`).
 
 Critério de saída: adicionar node produz capability profile reproduzível.
 

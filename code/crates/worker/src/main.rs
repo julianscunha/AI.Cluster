@@ -312,6 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Nothing ready: use the idle time to refresh the current-compute estimate,
                 // then wait before asking again (Fase C3).
                 refresh_current_compute();
+                refresh_current_network(&mut client).await;
                 // Wait before asking again, but wake at once on shutdown.
                 tokio::select! {
                     _ = time::sleep(Duration::from_millis(WORK_POLL_IDLE_MS)) => {}
@@ -885,6 +886,35 @@ fn refresh_current_compute() {
     *guard = Some((measurement, Instant::now()));
 }
 
+/// Latest idle remeasurement of the achieved link rate (Fase C4), with when it was taken.
+static CURRENT_NETWORK: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
+
+/// Re-runs the link probe while idle, on the same cadence as the compute remeasurement.
+/// A pinned node does not probe, for the same reason as at registration. A failed probe
+/// (zero) keeps the previous estimate rather than reporting a dead link.
+async fn refresh_current_network(client: &mut MetadataClient) {
+    if pinned_network_score().is_some() {
+        return;
+    }
+    let interval = recompute_interval();
+    let stale = match *CURRENT_NETWORK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    {
+        Some((_, at)) => interval == 0 || at.elapsed().as_secs() >= interval,
+        None => true,
+    };
+    if !stale {
+        return;
+    }
+    let score = probe_link(client).await;
+    if score > 0.0 {
+        *CURRENT_NETWORK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((score, Instant::now()));
+    }
+}
+
 /// The idle remeasurement cadence in seconds. Unset or unparsable means the default.
 fn recompute_interval() -> u64 {
     std::env::var("AI_CLUSTER_RECOMPUTE_INTERVAL_SECS")
@@ -904,7 +934,14 @@ fn capability_with_current(baseline: &CapabilityReport) -> CapabilityReport {
     let current = *CURRENT_COMPUTE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    apply_current(baseline, current)
+    let mut capability = apply_current(baseline, current);
+    if let Some((score, _)) = *CURRENT_NETWORK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    {
+        capability.current_network_score = score;
+    }
+    capability
 }
 
 /// The fold itself, split from the static so the two-field update is testable without one.

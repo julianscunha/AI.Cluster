@@ -126,8 +126,15 @@ fn clamp_setup(parsed: Option<f64>) -> f64 {
 /// "relative, not a time" caveat the module doc states for the compute term.
 fn transfer_rate(capability: &CapabilityReport) -> f64 {
     // The nominal link is the ceiling and the probe is what it delivered (C2): the smaller
-    // wins. Each zero means "not measured" and drops out, so one measure alone still counts.
-    [capability.network_score, capability.network_achieved_score]
+    // wins. The idle remeasurement (C4) replaces the registration probe once it exists, so a
+    // link that degraded after joining costs what it does now. Each zero means "not measured"
+    // and drops out, so one measure alone still counts.
+    let achieved = if capability.current_network_score > 0.0 {
+        capability.current_network_score
+    } else {
+        capability.network_achieved_score
+    };
+    [capability.network_score, achieved]
         .into_iter()
         .filter(|rate| *rate > 0.0)
         .fold(None, |best: Option<f64>, rate| {
@@ -273,6 +280,18 @@ mod tests {
         assert_eq!(rate(0.0, 3.0), 3.0);
         assert_eq!(rate(4.0, 0.0), 4.0);
         assert_eq!(rate(0.0, 0.0), 1.0);
+        // The remeasurement wins over the registration probe, even when it is higher.
+        let with_current = |achieved, current| {
+            transfer_rate(&CapabilityReport {
+                network_score: 10.0,
+                network_achieved_score: achieved,
+                current_network_score: current,
+                ..Default::default()
+            })
+        };
+        assert_eq!(with_current(5.0, 1.5), 1.5);
+        assert_eq!(with_current(2.0, 6.0), 6.0);
+        assert_eq!(with_current(5.0, 0.0), 5.0);
     }
 
     fn health(health_score: f64) -> HealthReport {

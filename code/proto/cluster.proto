@@ -58,6 +58,10 @@ message CapabilityReport {
   /// o `network_score` nominal: o link é o teto, a medida é o que ele entregou. Zero é "não
   /// medido" — nó com `AI_CLUSTER_NETWORK_SCORE` fixado, ou sonda que falhou — nunca "sem rede".
   double network_achieved_score = 14;
+  /// Última remedida da taxa alcançada, tirada com o nó ocioso (Fase C4), na mesma escala de
+  /// `network_achieved_score`. Se cair abaixo do baseline do registro, o link degradou, e o
+  /// placement passa a ler esta no lugar do baseline. Zero é "não remedido", nunca "link zero".
+  double current_network_score = 15;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.

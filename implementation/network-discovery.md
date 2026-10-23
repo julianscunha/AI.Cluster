@@ -79,5 +79,17 @@ a medida é o que ele entregou. Zero em qualquer um é "não medido" e sai da co
 Evidência: `phase-c-network.sh` A) nó real `rede_score=10.00 rede_alcancada=2.74`; B) pin,
 `rede_alcancada=-`.
 
-Teto: só upload, e só até o controller; medido uma vez, no registro, não remedido como o
-compute (C3). Worker e controller no mesmo host medem loopback; o teto nominal contém isso.
+## Remedida e degradação (Fase C4)
+
+O ramo ocioso do laço de trabalho repete a sonda na cadência do compute
+(`AI_CLUSTER_RECOMPUTE_INTERVAL_SECS`, 60 s por padrão) e o resultado viaja no perfil como
+`current_network_score` (`rede_atual=` no detalhe). Uma sonda que falha mantém a estimativa
+anterior em vez de reportar link morto. Se a atual cai abaixo do baseline, o link degradou
+depois de entrar; o placement lê a atual no lugar do baseline do registro, então o custo de
+transferência acompanha o que o link entrega agora. Nó fixado não sonda.
+
+Evidência: `phase-c-network.sh` A) `rede_alcancada=2.73 rede_atual=2.34`, com a atual
+preenchida pelo nó ocioso. Que a degradação *muda a decisão* está só no teste unitário de
+`transfer_rate`; não há E2E que degrade um link de verdade.
+
+Teto: só upload, e só até o controller. Worker e controller no mesmo host medem loopback; o teto nominal contém isso.

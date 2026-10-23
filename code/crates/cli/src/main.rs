@@ -418,7 +418,12 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
     } else {
         "-".to_string()
     };
-    println!("  rede_score={network} rede_alcancada={achieved}");
+    let current_network = if capability.current_network_score > 0.0 {
+        format!("{:.2}", capability.current_network_score)
+    } else {
+        "-".to_string()
+    };
+    println!("  rede_score={network} rede_alcancada={achieved} rede_atual={current_network}");
     println!("SAÚDE");
     println!("  score={:.2}", health.health_score);
     println!(

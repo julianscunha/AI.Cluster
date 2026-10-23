@@ -66,8 +66,8 @@ docker network create "$NET" >/dev/null
 
 echo "=== A) nó real: a rede sai do link, não de um pin ==="
 start_controller
-start_worker aic-worker-net node-net
-sleep 8
+start_worker aic-worker-net node-net -e AI_CLUSTER_RECOMPUTE_INTERVAL_SECS=0
+sleep 12
 
 DETAIL=$(run "$R/ai-cluster node show node-net")
 echo "$DETAIL"
@@ -87,9 +87,11 @@ else
   exit 1
 fi
 
+ATUAL=$(echo "$DETAIL" | field rede_atual)
+echo "rede_atual=$ATUAL"
 ALCANCADA=$(echo "$DETAIL" | field rede_alcancada)
-if awk -v s="$ALCANCADA" 'BEGIN { exit !(s+0 > 0) }'; then
-  echo "OK: a sonda ProbeLink mediu a taxa alcançada: rede_alcancada=$ALCANCADA"
+if awk -v s="$ALCANCADA" -v c="$ATUAL" 'BEGIN { exit !(s+0 > 0 && c+0 > 0) }'; then
+  echo "OK: a sonda ProbeLink mediu a taxa alcançada: rede_alcancada=$ALCANCADA, remedida rede_atual=$ATUAL"
 else
   echo "FALHA: rede_alcancada deveria ser > 0, veio '$ALCANCADA'"
   teardown
