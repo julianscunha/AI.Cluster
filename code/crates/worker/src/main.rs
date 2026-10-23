@@ -44,6 +44,7 @@ const REFERENCE_LINK_MBPS: f64 = 1000.0;
 /// leave a slow link usable, large enough that the RPC fixed cost does not dominate.
 const PROBE_BYTES: usize = 2 * 1024 * 1024;
 const PROBE_RUNS: usize = 3;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Disk probe (K2): 16 MiB written and fsynced, best of `PROBE_RUNS`. The reference is a SATA
 /// SSD, the same "1.0 is a reference device" scale as the compute and network scores.
 const STORAGE_PROBE_BYTES: usize = 16 * 1024 * 1024;
@@ -790,13 +791,15 @@ async fn probe_link(client: &mut MetadataClient) -> f64 {
     let mut best = 0.0f64;
     for _ in 0..PROBE_RUNS {
         let started = Instant::now();
-        if client
-            .probe_link(ProbeLinkRequest {
+        // A stuck controller must not freeze the work loop that calls this while idle.
+        let sent = time::timeout(
+            PROBE_TIMEOUT,
+            client.probe_link(ProbeLinkRequest {
                 payload: payload.clone(),
-            })
-            .await
-            .is_err()
-        {
+            }),
+        )
+        .await;
+        if !matches!(sent, Ok(Ok(_))) {
             break;
         }
         best = best.max(achieved_mbps(PROBE_BYTES, started.elapsed()));
@@ -810,14 +813,25 @@ async fn probe_link(client: &mut MetadataClient) -> f64 {
 /// shortcut: measures the temp dir's device, not every device in `storage_classes`, upgrade
 /// when placement needs a rate per tier.
 fn storage_score() -> f64 {
-    use std::io::Write;
+    use std::io::{Seek, Write};
     let path = std::env::temp_dir().join(format!("ai-cluster-probe-{}", std::process::id()));
     let block = vec![0u8; STORAGE_PROBE_BYTES];
+    // create_new refuses a pre-planted path or symlink in a shared temp dir; the one handle
+    // is rewritten from the start on each run.
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    else {
+        return 0.0;
+    };
     let mut best = 0.0f64;
     for _ in 0..PROBE_RUNS {
         let started = Instant::now();
-        let written = std::fs::File::create(&path)
-            .and_then(|mut file| file.write_all(&block).and_then(|_| file.sync_all()));
+        let written = file
+            .seek(std::io::SeekFrom::Start(0))
+            .and_then(|_| file.write_all(&block))
+            .and_then(|_| file.sync_all());
         if written.is_err() {
             break;
         }
@@ -937,11 +951,13 @@ async fn refresh_current_network(client: &mut MetadataClient) {
         return;
     }
     let score = probe_link(client).await;
-    if score > 0.0 {
-        *CURRENT_NETWORK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((score, Instant::now()));
-    }
+    // The attempt is stamped even when it failed, so a flaky controller is retried on the
+    // interval and not on every idle poll; the last good estimate stays.
+    let mut guard = CURRENT_NETWORK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let kept = guard.map_or(0.0, |(previous, _)| previous);
+    *guard = Some((if score > 0.0 { score } else { kept }, Instant::now()));
 }
 
 /// The idle remeasurement cadence in seconds. Unset or unparsable means the default.

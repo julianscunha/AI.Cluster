@@ -15,6 +15,10 @@ use ai_cluster_protocol::cluster::{
 };
 use tonic::{Request, Response, Status};
 
+/// Ceiling for a `ProbeLink` payload: the real probe sends 2 MiB, and the transport limit
+/// (64 MiB) is sized for work data, not for a throwaway measurement.
+const MAX_PROBE_BYTES: usize = 4 * 1024 * 1024;
+
 use crate::events::EventLog;
 use crate::metrics;
 use crate::registry::{Registry, unix_ms};
@@ -174,8 +178,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ProbeLinkRequest>,
     ) -> Result<Response<ProbeLinkResponse>, Status> {
+        let received = request.into_inner().payload.len();
+        if received > MAX_PROBE_BYTES {
+            return Err(Status::invalid_argument("payload da sonda acima de 4 MiB"));
+        }
         Ok(Response::new(ProbeLinkResponse {
-            received_bytes: request.into_inner().payload.len() as u64,
+            received_bytes: received as u64,
         }))
     }
 
