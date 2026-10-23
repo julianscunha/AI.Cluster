@@ -14,7 +14,7 @@ use ai_cluster_protocol::cluster::{
 };
 use prost::Message;
 
-use crate::placement::{Candidate, fits, placement_cost, predicted_compute_us};
+use crate::placement::{decide, fits, predicted_compute_us};
 use crate::reservations::{Reservation, Reservations};
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
@@ -676,76 +676,22 @@ impl WorkStore {
                         .is_none_or(|request| request == unit.request_id.as_str())
             })?
         };
-        let mut best: Option<f64> = None;
-        let mut asking: Option<f64> = None;
-        // G6: whether some idle fit is held for this unit's request, and whether the asking
-        // node is one of them. Decided before the cost ranking: a hold outranks cost.
-        let mut held_somewhere = false;
-        let mut held_here = false;
-        {
-            let unit = &inner.queue[index];
-            for (id, capability, health) in candidates {
-                let in_flight = inner
+        let predicted = predicted_compute_us(&inner.queue[index], capability);
+        let takes = decide(
+            &inner.queue[index],
+            node_id,
+            candidates,
+            |id| {
+                inner
                     .dispatched
                     .values()
-                    .filter(|record| record.node_id.as_str() == id.as_str())
-                    .count() as u32;
-                if in_flight > 0 || !fits(unit, capability) {
-                    continue;
-                }
-                // G6: a node held for another request is not a candidate for this unit.
-                match self.reservations.held_for(id, now_unix_ms).as_deref() {
-                    Some(request) if request != unit.request_id.as_str() => continue,
-                    Some(_) => {
-                        held_somewhere = true;
-                        held_here |= id.as_str() == node_id;
-                    }
-                    None => {}
-                }
-                let cost = placement_cost(
-                    unit,
-                    &Candidate {
-                        capability,
-                        health,
-                        in_flight,
-                    },
-                );
-                if id.as_str() == node_id {
-                    asking = Some(cost);
-                }
-                match best {
-                    None => best = Some(cost),
-                    Some(current) if cost < current => best = Some(cost),
-                    _ => {}
-                }
-            }
-        }
-        // G6: a unit whose request holds a node belongs to that node — the hold is a promise
-        // that this work lands there, so no other node may take it. The unit waits for the
-        // held node to poll; if it never does, the TTL releases the hold and placement resumes.
-        let predicted = predicted_compute_us(&inner.queue[index], capability);
-        if held_somewhere {
-            return held_here
-                .then(|| take_locked(&mut inner, index, node_id, now_unix_ms, predicted));
-        }
-        let best = best?;
-        // The asking node takes the unit when it is the cheapest idle fit, or close
-        // enough to it that yielding would cost more than the saving is worth. Only a
-        // meaningfully cheaper candidate makes it yield.
-        let within_band = match asking {
-            Some(cost) => cost <= best * (1.0 + tolerance),
-            None => false,
-        };
-        if !within_band {
-            return None;
-        }
-        Some(take_locked(
-            &mut inner,
-            index,
-            node_id,
-            now_unix_ms,
-            predicted,
-        ))
+                    .filter(|record| record.node_id.as_str() == id)
+                    .count() as u32
+            },
+            |id| self.reservations.held_for(id, now_unix_ms),
+            tolerance,
+        );
+        takes.then(|| take_locked(&mut inner, index, node_id, now_unix_ms, predicted))
     }
 
     /// Returns the record only when the unit was dispatched to the same node.

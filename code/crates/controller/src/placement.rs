@@ -143,6 +143,64 @@ fn transfer_rate(capability: &CapabilityReport) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// Whether `asking` should take `unit` now, or yield it to a better-placed node (G3/G5/G6).
+///
+/// Pure policy, split out of `WorkStore::claim_placed` so the ranking is testable without a
+/// store. The store keeps the lock, the queue and the dispatch; it hands in two lookups:
+/// `in_flight` (units a node already runs) and `held` (the request a node is reserved for).
+///
+/// A reservation outranks cost: a node held for another request is no candidate, and a unit
+/// whose request holds a node belongs to that node alone — the hold is a promise that the work
+/// lands there. Otherwise the asking node takes the unit when it is the cheapest idle fit, or
+/// within `tolerance` of it (the hysteresis band): yielding costs up to a poll interval, so a
+/// rounding-level saving is not worth it. A zero band means "strictly cheapest".
+pub fn decide(
+    unit: &WorkUnit,
+    asking: &str,
+    candidates: &[(String, CapabilityReport, HealthReport)],
+    in_flight: impl Fn(&str) -> u32,
+    held: impl Fn(&str) -> Option<String>,
+    tolerance: f64,
+) -> bool {
+    let mut best: Option<f64> = None;
+    let mut asking_cost: Option<f64> = None;
+    let mut held_somewhere = false;
+    let mut held_here = false;
+    for (id, capability, health) in candidates {
+        let in_flight = in_flight(id);
+        if in_flight > 0 || !fits(unit, capability) {
+            continue;
+        }
+        match held(id).as_deref() {
+            Some(request) if request != unit.request_id.as_str() => continue,
+            Some(_) => {
+                held_somewhere = true;
+                held_here |= id == asking;
+            }
+            None => {}
+        }
+        let cost = placement_cost(
+            unit,
+            &Candidate {
+                capability,
+                health,
+                in_flight,
+            },
+        );
+        if id == asking {
+            asking_cost = Some(cost);
+        }
+        best = Some(best.map_or(cost, |current| current.min(cost)));
+    }
+    if held_somewhere {
+        return held_here;
+    }
+    match (asking_cost, best) {
+        (Some(cost), Some(best)) => cost <= best * (1.0 + tolerance),
+        _ => false,
+    }
+}
+
 /// Bytes a unit needs resident to run: two operands read in and one result written
 /// back, at `BYTES_PER_ELEMENT` each. Saturating, so an absurd shape cannot wrap.
 pub fn unit_footprint_bytes(unit: &WorkUnit) -> u64 {
@@ -292,6 +350,54 @@ mod tests {
         assert_eq!(with_current(5.0, 1.5), 1.5);
         assert_eq!(with_current(2.0, 6.0), 6.0);
         assert_eq!(with_current(5.0, 0.0), 5.0);
+    }
+
+    fn pool() -> Vec<(String, CapabilityReport, HealthReport)> {
+        vec![
+            ("slow".to_string(), capability(4, 1.0, 1.0), health(1.0)),
+            ("fast".to_string(), capability(4, 4.0, 1.0), health(1.0)),
+        ]
+    }
+
+    #[test]
+    fn decide_lets_the_cheapest_node_take_the_unit_and_makes_a_worse_one_yield() {
+        let unit = unit(64, 64, 64);
+        let idle = |_: &str| 0;
+        let none = |_: &str| None;
+        assert!(decide(&unit, "fast", &pool(), idle, none, 0.1));
+        assert!(!decide(&unit, "slow", &pool(), idle, none, 0.1));
+        // A band wide enough to cover the gap lets the worse node take it.
+        assert!(decide(&unit, "slow", &pool(), idle, none, 10.0));
+    }
+
+    #[test]
+    fn decide_ignores_busy_nodes_as_candidates() {
+        let unit = unit(64, 64, 64);
+        let busy_fast = |id: &str| u32::from(id == "fast");
+        // The fast node is busy, so the slow one is the best idle fit.
+        assert!(decide(
+            &unit,
+            "slow",
+            &pool(),
+            busy_fast,
+            |_: &str| None,
+            0.1
+        ));
+    }
+
+    #[test]
+    fn decide_gives_a_held_unit_only_to_the_held_node() {
+        let mut unit = unit(64, 64, 64);
+        unit.request_id = "req-a".to_string();
+        let idle = |_: &str| 0;
+        let held_slow = |id: &str| (id == "slow").then(|| "req-a".to_string());
+        // The hold outranks cost: the cheaper node must yield to the held one.
+        assert!(decide(&unit, "slow", &pool(), idle, held_slow, 0.1));
+        assert!(!decide(&unit, "fast", &pool(), idle, held_slow, 0.1));
+        // A node held for another request is no candidate for this unit.
+        let held_other = |id: &str| (id == "fast").then(|| "req-b".to_string());
+        assert!(!decide(&unit, "fast", &pool(), idle, held_other, 0.1));
+        assert!(decide(&unit, "slow", &pool(), idle, held_other, 0.1));
     }
 
     fn health(health_score: f64) -> HealthReport {

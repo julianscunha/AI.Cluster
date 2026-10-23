@@ -257,8 +257,12 @@ Executar branches em paralelo. — [x]
 
 Separar graph de placement.
 
-- [~] o filtro `min_cpu_threads` é uma decisão de placement, mas está dentro do `claim`
-  do store; a abstração não existe.
+- [x] a política de ranking saiu do `WorkStore::claim_placed` para `placement::decide`, uma
+  função pura (candidatos ociosos, reserva que supera custo, banda de histerese). O store
+  mantém o lock, a fila e o despacho e passa duas consultas (`in_flight`, `held`), então a
+  decisão atômica não mudou. `fits` (incl. `min_cpu_threads`) já vivia em `placement.rs`.
+  Sem trait de política: há uma só. Coberto por 3 testes unitários de `decide`; os de
+  `work.rs` e `phase-g-placement`/`phase-g-reservations` passam sem alteração.
 
 ### F4 Retry / recovery
 
