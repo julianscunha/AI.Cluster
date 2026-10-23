@@ -148,8 +148,11 @@ Benchmarks controlados para compute, memory, storage, network.
 
 - [~] compute medido no worker (`phase-2/capability-benchmark.md`): o worker cronometra o
   matmul no próprio kernel das unidades e reporta a taxa por core em `compute_score`, que o
-  modelo de custo já lia; memory, storage e network não — a rede é descoberta como velocidade
-  nominal (`network-discovery.md`), mas nenhuma das três é medida sob carga.
+  modelo de custo já lia;
+- [~] rede medida: sonda `ProbeLink` de upload ao controller no registro, em
+  `network_achieved_score`; o placement usa o menor entre ela e o nominal
+  (`network-discovery.md`). Só upload, uma vez, sem latência;
+- [ ] memory e storage não são medidos sob carga.
 
 ### C3 Capability model
 
@@ -180,8 +183,8 @@ Thermal, memory pressure, storage health, network degradation.
   passou a evitar nó quente sem mudança no modelo de custo. Evidência:
   `bash code/tests/phase-c4-health.sh` (dois nós de capability idêntica, só a temperatura
   diferente; a unidade vai para o frio).
-- [ ] storage health e degradação de rede — nenhum dos dois tem baseline de dispositivo para
-  comparar (o análogo do `capability-benchmark.md`).
+- [ ] storage health e degradação de rede — a rede já tem baseline (`network_achieved_score`),
+  falta remedir e comparar; storage não tem baseline de dispositivo (o análogo do `capability-benchmark.md`).
 
 Critério de saída: adicionar node produz capability profile reproduzível.
 

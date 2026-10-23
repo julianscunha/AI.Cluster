@@ -125,11 +125,15 @@ fn clamp_setup(parsed: Option<f64>) -> f64 {
 /// worst link. The transfer term is therefore meaningful only up to that reference, the same
 /// "relative, not a time" caveat the module doc states for the compute term.
 fn transfer_rate(capability: &CapabilityReport) -> f64 {
-    if capability.network_score > 0.0 {
-        capability.network_score
-    } else {
-        1.0
-    }
+    // The nominal link is the ceiling and the probe is what it delivered (C2): the smaller
+    // wins. Each zero means "not measured" and drops out, so one measure alone still counts.
+    [capability.network_score, capability.network_achieved_score]
+        .into_iter()
+        .filter(|rate| *rate > 0.0)
+        .fold(None, |best: Option<f64>, rate| {
+            Some(best.map_or(rate, |b| b.min(rate)))
+        })
+        .unwrap_or(1.0)
 }
 
 /// Bytes a unit needs resident to run: two operands read in and one result written
@@ -253,6 +257,22 @@ mod tests {
             network_score,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn transfer_rate_is_the_smaller_of_nominal_and_achieved() {
+        let rate = |nominal, achieved| {
+            transfer_rate(&CapabilityReport {
+                network_score: nominal,
+                network_achieved_score: achieved,
+                ..Default::default()
+            })
+        };
+        assert_eq!(rate(10.0, 2.0), 2.0);
+        assert_eq!(rate(1.0, 5.0), 1.0);
+        assert_eq!(rate(0.0, 3.0), 3.0);
+        assert_eq!(rate(4.0, 0.0), 4.0);
+        assert_eq!(rate(0.0, 0.0), 1.0);
     }
 
     fn health(health_score: f64) -> HealthReport {

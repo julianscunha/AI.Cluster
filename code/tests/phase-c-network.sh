@@ -87,6 +87,15 @@ else
   exit 1
 fi
 
+ALCANCADA=$(echo "$DETAIL" | field rede_alcancada)
+if awk -v s="$ALCANCADA" 'BEGIN { exit !(s+0 > 0) }'; then
+  echo "OK: a sonda ProbeLink mediu a taxa alcançada: rede_alcancada=$ALCANCADA"
+else
+  echo "FALHA: rede_alcancada deveria ser > 0, veio '$ALCANCADA'"
+  teardown
+  exit 1
+fi
+
 teardown
 echo "=== B) AI_CLUSTER_NETWORK_SCORE fixado: o pin manda no número ==="
 start_controller
@@ -96,8 +105,9 @@ sleep 8
 PINNED=$(run "$R/ai-cluster node show node-net")
 echo "$PINNED"
 REDE=$(echo "$PINNED" | field rede_score)
-if [ "$REDE" = "4.00" ]; then
-  echo "OK: o score pinado foi reportado como veio, sem ler interface"
+ALCANCADA=$(echo "$PINNED" | field rede_alcancada)
+if [ "$REDE" = "4.00" ] && [ "$ALCANCADA" = "-" ]; then
+  echo "OK: o score pinado foi reportado como veio, sem ler interface e sem sondar"
 else
   echo "FALHA: esperado 4.00, veio '$REDE'"
   teardown

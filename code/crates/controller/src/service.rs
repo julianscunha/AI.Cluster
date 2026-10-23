@@ -7,11 +7,11 @@ use ai_cluster_protocol::cluster::{
     GetMetricsRequest, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
     HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
     ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse,
-    ListReservationsRequest, ListReservationsResponse, MetricsResponse, RegisterNodeRequest,
-    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
-    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
-    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
-    WorkReportResponse, WorkUnit,
+    ListReservationsRequest, ListReservationsResponse, MetricsResponse, ProbeLinkRequest,
+    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
+    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
+    ReserveRequest, ReserveResponse, SubmitWorkResultRequest, SubmitWorkResultResponse,
+    WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use tonic::{Request, Response, Status};
 
@@ -166,6 +166,16 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<ListNodesResponse>, Status> {
         Ok(Response::new(ListNodesResponse {
             nodes: self.registry.list(),
+        }))
+    }
+
+    /// Throughput probe (C2): the worker times the upload, so the answer is only the byte count.
+    async fn probe_link(
+        &self,
+        request: Request<ProbeLinkRequest>,
+    ) -> Result<Response<ProbeLinkResponse>, Status> {
+        Ok(Response::new(ProbeLinkResponse {
+            received_bytes: request.into_inner().payload.len() as u64,
         }))
     }
 

@@ -413,7 +413,12 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         list_or_dash(&capability.precisions),
         list_or_dash(&capability.accelerators),
     );
-    println!("  rede_score={network}");
+    let achieved = if capability.network_achieved_score > 0.0 {
+        format!("{:.2}", capability.network_achieved_score)
+    } else {
+        "-".to_string()
+    };
+    println!("  rede_score={network} rede_alcancada={achieved}");
     println!("SAÚDE");
     println!("  score={:.2}", health.health_score);
     println!(

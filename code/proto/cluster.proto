@@ -53,6 +53,20 @@ message CapabilityReport {
   /// nesse caso, não "estável". É o desvio que diz se a mediana acima é um número em que
   /// se pode confiar para calibrar.
   double compute_deviation = 13;
+  /// Taxa de upload alcançada até o controller, na mesma escala de `network_score` (1.0 =
+  /// 1 GbE), medida por `ProbeLink` no registro (Fase C2). O placement lê o menor entre ela e
+  /// o `network_score` nominal: o link é o teto, a medida é o que ele entregou. Zero é "não
+  /// medido" — nó com `AI_CLUSTER_NETWORK_SCORE` fixado, ou sonda que falhou — nunca "sem rede".
+  double network_achieved_score = 14;
+}
+
+// Sonda de throughput: o worker sobe `payload` e cronometra o RPC.
+message ProbeLinkRequest {
+  bytes payload = 1;
+}
+
+message ProbeLinkResponse {
+  uint64 received_bytes = 1;
 }
 
 message HealthReport {
@@ -429,6 +443,7 @@ message WorkOutput {
 
 service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc ProbeLink(ProbeLinkRequest) returns (ProbeLinkResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

@@ -57,12 +57,27 @@ acaso, não custo.
 
 ## Teto conhecido
 
-**Velocidade nominal, não taxa alcançada.** É o que o link *é*, não o que ele *faz* sob carga:
-um link compartilhado com outro tráfego entrega menos. O número é honesto como teto. Medir a
-taxa alcançada é a fatia de benchmark de rede (C2), ainda aberta.
+**`network_score` é a velocidade nominal**: o que o link *é*, não o que ele *faz* sob carga.
+A taxa alcançada é a sonda do C2, abaixo.
 
 **Latência não é medida.** `network_latency_ms` continua sem preenchimento e sem consumidor.
 Só passa a valer quando houver um segundo transporte ou uma política que a use.
 
 **Aceleradores não.** GPU/NPU não são detectados porque não há caminho de execução para eles:
 reportá-los seria anunciar hardware que o worker não usa. É a fase J.
+
+## Taxa alcançada (Fase C2)
+
+No registro o worker chama `ProbeLink`: sobe 3 payloads de 2 MiB ao controller, cronometra cada
+RPC e fica com a **melhor** corrida (contenção só atrasa, então a mais rápida é a capacidade
+real do link, o mesmo raciocínio do benchmark de compute). O resultado vai em
+`network_achieved_score`, na mesma escala (1.0 = 1 GbE), e o detalhe do nó mostra
+`rede_alcancada=`. O placement usa o **menor** entre o nominal e o alcançado: o link é o teto,
+a medida é o que ele entregou. Zero em qualquer um é "não medido" e sai da conta. Um nó com
+`AI_CLUSTER_NETWORK_SCORE` fixado não sonda (`rede_alcancada=-`).
+
+Evidência: `phase-c-network.sh` A) nó real `rede_score=10.00 rede_alcancada=2.74`; B) pin,
+`rede_alcancada=-`.
+
+Teto: só upload, e só até o controller; medido uma vez, no registro, não remedido como o
+compute (C3). Worker e controller no mesmo host medem loopback; o teto nominal contém isso.

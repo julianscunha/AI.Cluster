@@ -5,10 +5,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
-    NodeIdentity, RegisterNodeRequest, RequestWorkRequest, StateReplica, SubmitWorkResultRequest,
-    WorkResult, WorkUnit,
+    NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, RequestWorkRequest, StateReplica,
+    SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
-use ai_cluster_protocol::metadata::connect_controller;
+use ai_cluster_protocol::metadata::{MetadataClient, connect_controller};
 use prost::Message;
 use tokio::time;
 
@@ -40,6 +40,10 @@ const BENCH_ITERS: u32 = 5;
 /// node that did not report a rate is treated as being on the reference link, not as having
 /// no network.
 const REFERENCE_LINK_MBPS: f64 = 1000.0;
+/// Upload probe (C2): `PROBE_RUNS` payloads of `PROBE_BYTES`, best run kept. Small enough to
+/// leave a slow link usable, large enough that the RPC fixed cost does not dominate.
+const PROBE_BYTES: usize = 2 * 1024 * 1024;
+const PROBE_RUNS: usize = 3;
 
 /// The copy of the controller's state this node keeps, if it was asked to keep one (I4).
 ///
@@ -156,12 +160,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         os_version: os_version(),
         runtime_version: env!("CARGO_PKG_VERSION").to_string(),
     };
-    let capability = capability();
+    let mut capability = capability();
     // Fase G4: the local scheduler decides how many cores this unit gets. One unit runs
     // at a time here, so the unit gets the whole budget the node reports.
     let cores = core_budget(capability.cpu_threads);
 
     let mut client = connect_controller(endpoint.clone()).await?;
+    // A pinned node measures nothing, the same contract as the pinned compute score.
+    if pinned_network_score().is_none() {
+        capability.network_achieved_score = probe_link(&mut client).await;
+    }
     // A copy left by a previous run of this node is still worth offering: the controller may
     // have lost its own files while this node was down (I4).
     if let Some(path) = state_replica_path() {
@@ -767,6 +775,34 @@ fn normalize_network_score(mbps: f64) -> f64 {
     mbps / REFERENCE_LINK_MBPS
 }
 
+/// Achieved upload rate to the controller over the 1 GbE reference, or zero when the probe
+/// failed. Best of a few runs: contention only ever slows a run, so the fastest is the link's
+/// real ability, the same reasoning as the compute benchmark's best case.
+/// shortcut: upload only and the controller path only, add a download leg when a unit's
+/// result transfer needs it.
+async fn probe_link(client: &mut MetadataClient) -> f64 {
+    let payload = vec![0u8; PROBE_BYTES];
+    let mut best = 0.0f64;
+    for _ in 0..PROBE_RUNS {
+        let started = Instant::now();
+        if client
+            .probe_link(ProbeLinkRequest {
+                payload: payload.clone(),
+            })
+            .await
+            .is_err()
+        {
+            break;
+        }
+        best = best.max(achieved_mbps(PROBE_BYTES, started.elapsed()));
+    }
+    normalize_network_score(best)
+}
+
+fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
+    bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -1339,6 +1375,12 @@ mod tests {
         assert!((normalize_network_score(1000.0) - 1.0).abs() < 1e-9);
         assert!((normalize_network_score(10_000.0) - 10.0).abs() < 1e-9);
         assert!((normalize_network_score(100.0) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn achieved_rate_is_megabits_per_second() {
+        // 125 MB in one second is 1000 Mbps — the 1 GbE reference.
+        assert!((achieved_mbps(125_000_000, Duration::from_secs(1)) - 1000.0).abs() < 1e-6);
     }
 
     #[test]
