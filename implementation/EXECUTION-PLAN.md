@@ -280,9 +280,10 @@ Capabilities, memory, trust, health.
 - [x] capabilities (cpu_threads) e health (heartbeat);
 - [x] memory: footprint da unidade (`placement::unit_footprint_bytes`) contra a memória que o
   nó reporta, decidido em `placement::fits`. Evidência: `bash code/tests/phase-g-memory.sh`.
-- [~] trust: hoje é a exclusão por estado (`registry::eligible` recusa QUARANTINED/FAILED/
-  OFFLINE); os níveis de trust do docs/06 dependem do fluxo de enrollment do docs/19, que ainda
-  não existe.
+- [~] trust: exclusão por estado (`registry::eligible` recusa QUARANTINED/FAILED/OFFLINE) e,
+  desde a S1, autenticação por token de join em toda RPC (`join-token.md`): o controller não
+  sobe sem token e recusa quem não o apresenta. Sem identidade por nó, sem TLS, sem níveis de
+  trust do docs/06 (S2: aprovação de nó novo).
 
 ### G2 Cost model
 

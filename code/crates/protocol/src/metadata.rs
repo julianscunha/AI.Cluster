@@ -37,11 +37,21 @@ pub const AUTH_HEADER: &str = "x-ai-cluster-auth";
 /// chunk the operands when units grow past what a node can hold in RAM anyway.
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
-/// Placeholder auth context.
+/// Environment variable holding the shared join token (Fase S1). The controller refuses to
+/// start without it, and every worker and CLI call carries it in [`AUTH_HEADER`].
 ///
-/// ponytail: no authentication exists yet; the real token arrives with the
-/// security/trust phase. The header is emitted now so callers can rely on it.
-pub const AUTH_CONTEXT: &str = "anonymous";
+/// ponytail: one shared secret, sent in clear until TLS exists. It closes "anyone on the network
+/// can register a node or inject state"; it does not give a node its own identity, and it can
+/// be captured on the wire. Per-node credentials and mTLS (docs/19) are the next rungs.
+pub const JOIN_TOKEN_ENV: &str = "AI_CLUSTER_JOIN_TOKEN";
+
+/// The join token from the environment; unset or blank is "none".
+pub fn join_token() -> Option<String> {
+    std::env::var(JOIN_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
 
 static CORRELATION_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -72,7 +82,23 @@ pub type ProbeClient = LinkProbeClient<
 /// Stamps every outgoing call with the protocol version, a fresh correlation id
 /// and the auth context.
 #[derive(Clone, Debug, Default)]
-pub struct ClientMetadata;
+pub struct ClientMetadata {
+    token: String,
+}
+
+impl ClientMetadata {
+    /// Reads the join token once. Without one the header goes out empty and the controller
+    /// answers `Unauthenticated`, which is the honest error for a node that was never given it.
+    pub fn from_env() -> Self {
+        Self::with_token(join_token().unwrap_or_default())
+    }
+
+    pub fn with_token(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
+}
 
 impl Interceptor for ClientMetadata {
     fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
@@ -82,17 +108,50 @@ impl Interceptor for ClientMetadata {
             CORRELATION_HEADER,
             next_correlation_id().parse().expect("ascii"),
         );
-        metadata.insert(AUTH_HEADER, AUTH_CONTEXT.parse().expect("ascii"));
+        // A token that is not a valid header value cannot be sent; the call then goes out
+        // without it and is refused, rather than panicking the client.
+        if let Ok(value) = self.token.parse() {
+            metadata.insert(AUTH_HEADER, value);
+        }
         Ok(request)
     }
 }
 
-/// Rejects calls that do not announce the protocol version this build speaks.
-#[derive(Clone, Debug, Default)]
-pub struct ServerMetadata;
+/// Rejects calls that lack the join token or do not announce the protocol version this build
+/// speaks. The token check comes first, so an unauthenticated caller learns nothing else.
+#[derive(Clone, Debug)]
+pub struct ServerMetadata {
+    token: std::sync::Arc<str>,
+}
+
+impl ServerMetadata {
+    pub fn new(token: &str) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
+}
+
+/// Equal-length byte comparison without an early exit, so timing does not reveal how much of
+/// a guess matched. The length itself is not secret.
+fn same_token(expected: &[u8], given: &[u8]) -> bool {
+    expected.len() == given.len()
+        && expected
+            .iter()
+            .zip(given)
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
 
 impl Interceptor for ServerMetadata {
     fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
+        let given = request
+            .metadata()
+            .get(AUTH_HEADER)
+            .map_or(&b""[..], |value| value.as_bytes());
+        if self.token.is_empty() || !same_token(self.token.as_bytes(), given) {
+            return Err(Status::unauthenticated("token de join ausente ou inválido"));
+        }
         let version = request
             .metadata()
             .get(VERSION_HEADER)
@@ -119,7 +178,7 @@ pub async fn connect_controller(
         .connect()
         .await?;
     Ok(
-        ClusterControlClient::with_interceptor(channel, ClientMetadata)
+        ClusterControlClient::with_interceptor(channel, ClientMetadata::from_env())
             .max_decoding_message_size(MAX_MESSAGE_BYTES)
             .max_encoding_message_size(MAX_MESSAGE_BYTES),
     )
@@ -132,7 +191,10 @@ pub async fn connect_probe(
     let channel = tonic::transport::Endpoint::from_shared(dst.into())?
         .connect()
         .await?;
-    Ok(LinkProbeClient::with_interceptor(channel, ClientMetadata))
+    Ok(LinkProbeClient::with_interceptor(
+        channel,
+        ClientMetadata::from_env(),
+    ))
 }
 
 #[cfg(test)]
@@ -141,7 +203,7 @@ mod tests {
 
     #[test]
     fn client_stamps_required_metadata() {
-        let mut interceptor = ClientMetadata;
+        let mut interceptor = ClientMetadata::with_token("secret");
         let request = interceptor
             .call(Request::new(()))
             .expect("stamping succeeds");
@@ -152,7 +214,7 @@ mod tests {
         );
         assert_eq!(
             metadata.get(AUTH_HEADER).unwrap().to_str().unwrap(),
-            AUTH_CONTEXT
+            "secret"
         );
         assert!(
             metadata
@@ -166,7 +228,7 @@ mod tests {
 
     #[test]
     fn correlation_ids_differ_between_calls() {
-        let mut interceptor = ClientMetadata;
+        let mut interceptor = ClientMetadata::with_token("secret");
         let first = interceptor.call(Request::new(())).unwrap();
         let second = interceptor.call(Request::new(())).unwrap();
         assert_ne!(
@@ -177,20 +239,47 @@ mod tests {
 
     #[test]
     fn server_accepts_matching_version_and_rejects_others() {
-        let mut stamp = ClientMetadata;
+        let mut stamp = ClientMetadata::with_token("secret");
+        let mut server = ServerMetadata::new("secret");
         let stamped = stamp.call(Request::new(())).unwrap();
-        assert!(ServerMetadata.call(stamped).is_ok());
+        assert!(server.call(stamped).is_ok());
 
         let mut wrong = Request::new(());
         wrong
             .metadata_mut()
             .insert(VERSION_HEADER, "v0".parse().unwrap());
+        wrong
+            .metadata_mut()
+            .insert(AUTH_HEADER, "secret".parse().unwrap());
         assert_eq!(
-            ServerMetadata.call(wrong).unwrap_err().code(),
+            server.call(wrong).unwrap_err().code(),
             tonic::Code::FailedPrecondition
         );
 
         // Missing header is rejected too.
-        assert!(ServerMetadata.call(Request::new(())).is_err());
+        assert!(server.call(Request::new(())).is_err());
+    }
+
+    #[test]
+    fn server_refuses_a_missing_wrong_or_empty_token() {
+        let mut server = ServerMetadata::new("secret");
+        let with = |token: &str| {
+            ClientMetadata::with_token(token)
+                .call(Request::new(()))
+                .unwrap()
+        };
+        for bad in ["wrong", "secre", "secrets", ""] {
+            assert_eq!(
+                server.call(with(bad)).unwrap_err().code(),
+                tonic::Code::Unauthenticated,
+                "token {bad:?}"
+            );
+        }
+        // A server built with an empty token accepts nobody, not everybody.
+        let mut open = ServerMetadata::new("");
+        assert_eq!(
+            open.call(with("")).unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
     }
 }

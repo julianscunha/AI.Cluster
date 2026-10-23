@@ -25,13 +25,13 @@ STATE=$STATE_DIR/state.bin
 REPLICA=$STATE.replica
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
 # Runs a command against the shared volume without joining the cluster network.
 in_vol() {
-  MSYS_NO_PATHCONV=1 docker run --rm -v aic-target:/t "$IMG" sh -c "$1"
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm -v aic-target:/t "$IMG" sh -c "$1"
 }
 
 teardown() {
@@ -50,12 +50,12 @@ docker network create "$NET" >/dev/null
 in_vol "rm -rf $STATE_DIR && mkdir -p $STATE_DIR"
 
 echo "=== A) enfileirar um grafo sem worker ==="
-MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_STATE=$STATE "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 4
 # O cliente do grafo espera a fila drenar, e não há worker — é cortado assim que as unidades
 # entram. O que importa é o enfileiramento, que é o que grava o snapshot.
-timeout 8 env MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
+timeout 8 env MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
   sh -c "$R/ai-cluster graph --size 128" >/dev/null 2>&1 || true
 
@@ -74,7 +74,7 @@ echo "OK: controller morto sem shutdown limpo"
 
 echo "=== C) zerar o primário; a cópia tem de carregar ==="
 in_vol ": > $STATE"
-MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_STATE=$STATE "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 4
 LOADED=$(docker logs aic-controller 2>&1 | grep "estado carregado" | head -1)
@@ -96,7 +96,7 @@ else
 fi
 
 echo "=== D) um worker drena a fila restaurada ==="
-MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-i1 --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-worker-i1 --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-i1 \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 PEND=""; DONE=""

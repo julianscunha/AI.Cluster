@@ -25,7 +25,7 @@ SCORE=1.0
 THREADS=4
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -37,9 +37,9 @@ teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" -v aic-target:/t \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
-MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-p --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-worker-p --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-p \
   -e AI_CLUSTER_COMPUTE_SCORE=$SCORE -e AI_CLUSTER_CPU_THREADS=$THREADS \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
@@ -75,7 +75,7 @@ fi
 # abaixo — mas não por ordens de magnitude. Um teto de 1000% é o que ainda separa "modelo
 # calibrado" de "modelo otimista", com folga para o ruído do host compartilhado.
 ERR=$(echo "$TRACE" | sed -n 's/.*erro_pct=\(-\?[0-9.]*\).*/\1/p')
-if [ -n "$ERR" ] && awk "BEGIN{exit !(($ERR < 0 ? -$ERR : $ERR) < 1000)}"; then
+if [ -n "$ERR" ] && awk -v e="$ERR" 'BEGIN{exit !((e < 0 ? -e : e) < 1000)}'; then
   echo "OK: erro_pct=$ERR dentro do teto de 1000% (o modelo já não é otimista por 30x)"
 else
   echo "FALHA: |erro_pct| deveria ser < 1000, veio '$ERR'"

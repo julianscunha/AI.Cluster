@@ -20,7 +20,7 @@ SIZES=${SIZES:-"32 64 128 256"}
 REPS=${REPS:-6}
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -36,10 +36,10 @@ docker network create "$NET" >/dev/null
 for nodes in $NODES; do
   teardown
   echo "=== cluster: controller + $nodes worker(s) ==="
-  MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name aic-controller --network "$NET" \
     -v aic-target:/t "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
   for n in $(seq 1 "$nodes"); do
-    MSYS_NO_PATHCONV=1 docker run -d --name "aic-worker-$n" --network "$NET" \
+    MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -d --name "aic-worker-$n" --network "$NET" \
       -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID="node-$n" \
       "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
   done

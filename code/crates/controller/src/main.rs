@@ -7,7 +7,9 @@ use ai_cluster_controller::service::{ClusterControlService, LinkProbeService, MA
 use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
-use ai_cluster_protocol::metadata::{MAX_MESSAGE_BYTES, ServerMetadata};
+use ai_cluster_protocol::metadata::{
+    JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, ServerMetadata, join_token,
+};
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Server;
@@ -21,6 +23,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(15_000);
+
+    // Fail closed: a controller with no token would accept any client, including one that
+    // injects state through RegisterNode, so it does not start.
+    let Some(token) = join_token() else {
+        return Err(
+            format!("{JOIN_TOKEN_ENV} é obrigatório; o controller não sobe sem token").into(),
+        );
+    };
+    let auth = ServerMetadata::new(&token);
 
     let registry = Arc::new(Registry::new());
     // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
@@ -120,8 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         LinkProbeServer::new(LinkProbeService).max_decoding_message_size(MAX_PROBE_BYTES + 1024);
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     Server::builder()
-        .add_service(InterceptedService::new(server, ServerMetadata.clone()))
-        .add_service(InterceptedService::new(probe, ServerMetadata))
+        .add_service(InterceptedService::new(server, auth.clone()))
+        .add_service(InterceptedService::new(probe, auth))
         .serve(addr)
         .await?;
     Ok(())
