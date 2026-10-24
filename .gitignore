@@ -14,3 +14,5 @@
 
 # Obsidian local app state
 .obsidian/
+# Pesos de modelos baixados para os testes de paridade
+/code/models/

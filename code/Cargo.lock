@@ -44,6 +44,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-cluster-engine"
+version = "0.1.0"
+dependencies = [
+ "ai-cluster-common",
+ "serde_json",
+]
+
+[[package]]
 name = "ai-cluster-gateway"
 version = "0.1.0"
 dependencies = [
