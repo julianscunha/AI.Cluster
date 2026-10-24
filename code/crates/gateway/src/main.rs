@@ -9,8 +9,9 @@
 //! mistakes it for a real model. A real model replaces this by changing what `run_graph` asks
 //! the controller for; the HTTP contract, auth and limits stay.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ai_cluster_common::matrix::Matrix;
@@ -21,8 +22,8 @@ use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, GetOutputRequest, GetTraceRequest, ShardMatmulRequest, ShardOp,
 };
 use ai_cluster_protocol::metadata::{
-    INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV, connect_operator,
-    insecure_allowed, join_token, operator_token, same_token,
+    FAILED_NODE_HEADER, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV,
+    connect_operator, insecure_allowed, join_token, operator_token, same_token,
 };
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
@@ -73,6 +74,64 @@ struct RemoteStats {
     wall_us: AtomicU64,
     /// The slowest worker's own compute per call, summed: the part that is not transport.
     compute_us: AtomicU64,
+    /// Calls that had to be redone on other nodes after one failed.
+    retries: AtomicU64,
+}
+
+/// How long a node that failed is left out before it is tried again.
+const BENCH: Duration = Duration::from_secs(30);
+
+/// The nodes a model's slices may run on. A node that fails is set aside for [`BENCH`] and its
+/// bands go to the others: a worker dying costs a retry, not the request. Any worker can compute
+/// any band (it reads it from its own disk), so nothing is copied when bands move.
+struct Roster {
+    nodes: Vec<String>,
+    benched: Mutex<HashMap<String, std::time::Instant>>,
+}
+
+impl Roster {
+    fn new(nodes: Vec<String>) -> Self {
+        Self {
+            nodes,
+            benched: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn live(&self) -> Vec<&str> {
+        let mut benched = self.benched.lock().unwrap_or_else(|p| p.into_inner());
+        benched.retain(|_, since| since.elapsed() < BENCH);
+        self.nodes
+            .iter()
+            .map(String::as_str)
+            .filter(|node| !benched.contains_key(*node))
+            .collect()
+    }
+
+    fn bench(&self, node: &str) {
+        self.benched
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(node.to_string(), std::time::Instant::now());
+    }
+
+    /// `slices` with every band of a benched node handed to a live one.
+    fn assign(&self, slices: &[Slice]) -> Result<Vec<Slice>, String> {
+        let live = self.live();
+        if live.is_empty() {
+            return Err("fatias: nenhum worker disponível".into());
+        }
+        Ok(slices
+            .iter()
+            .enumerate()
+            .map(|(i, slice)| {
+                let mut slice = slice.clone();
+                if !live.contains(&slice.node.as_str()) {
+                    slice.node = live[i % live.len()].to_string();
+                }
+                slice
+            })
+            .collect())
+    }
 }
 
 /// Sends projections to the workers through the controller's resident channels.
@@ -81,6 +140,7 @@ struct GrpcExecutor {
     runtime: tokio::runtime::Handle,
     subdir: String,
     stats: Arc<RemoteStats>,
+    roster: Roster,
 }
 
 /// The node ids listed (comma-separated) in the environment variable `var`.
@@ -97,6 +157,7 @@ fn grpc_executor(
     client: &MetadataClient,
     subdir_var: &str,
     default_subdir: &str,
+    nodes: Vec<String>,
 ) -> (Arc<GrpcExecutor>, Arc<RemoteStats>) {
     let stats = Arc::new(RemoteStats::default());
     let executor = Arc::new(GrpcExecutor {
@@ -104,6 +165,7 @@ fn grpc_executor(
         runtime: tokio::runtime::Handle::current(),
         subdir: std::env::var(subdir_var).unwrap_or_else(|_| default_subdir.to_string()),
         stats: stats.clone(),
+        roster: Roster::new(nodes),
     });
     (executor, stats)
 }
@@ -111,30 +173,59 @@ fn grpc_executor(
 impl Executor for GrpcExecutor {
     fn matmul(&self, x: &Matrix, slices: &[Slice]) -> Result<Vec<Matrix>, String> {
         let started = std::time::Instant::now();
-        let request = ShardMatmulRequest {
-            rows: x.rows,
-            k: x.cols,
-            x: x.data.clone(),
-            ops: slices
-                .iter()
-                .map(|s| ShardOp {
-                    node_id: s.node.clone(),
-                    model_subdir: self.subdir.clone(),
-                    tensor: s.tensor.clone(),
-                    row_start: s.row_start,
-                    row_end: s.row_end,
-                    by_columns: s.by_columns,
-                })
-                .collect(),
-        };
         let mut client = self.client.clone();
-        // Called from a blocking thread (generation runs in `spawn_blocking`), so blocking on the
-        // runtime handle is safe.
-        let response = self
-            .runtime
-            .block_on(client.shard_matmul(request))
-            .map_err(|status| format!("fatias: {}", status.message()))?
-            .into_inner();
+        let mut attempts = 0;
+        let response = loop {
+            let request = ShardMatmulRequest {
+                rows: x.rows,
+                k: x.cols,
+                x: x.data.clone(),
+                ops: self
+                    .roster
+                    .assign(slices)?
+                    .into_iter()
+                    .map(|s| ShardOp {
+                        node_id: s.node,
+                        model_subdir: self.subdir.clone(),
+                        tensor: s.tensor,
+                        row_start: s.row_start,
+                        row_end: s.row_end,
+                        by_columns: s.by_columns,
+                    })
+                    .collect(),
+            };
+            // Called from a blocking thread (generation runs in `spawn_blocking`), so blocking on
+            // the runtime handle is safe.
+            match self.runtime.block_on(client.shard_matmul(request)) {
+                Ok(response) => break response.into_inner(),
+                Err(status) => {
+                    let blamed = status
+                        .metadata()
+                        .get(FAILED_NODE_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    let retryable = matches!(
+                        status.code(),
+                        tonic::Code::Unavailable
+                            | tonic::Code::DeadlineExceeded
+                            | tonic::Code::FailedPrecondition
+                    );
+                    match blamed {
+                        // Every retry benches one more node, so this ends after the last of them.
+                        Some(node) if retryable && attempts < self.roster.nodes.len() => {
+                            eprintln!(
+                                "worker {node} falhou ({}); refazendo nos demais",
+                                status.message()
+                            );
+                            self.roster.bench(&node);
+                            self.stats.retries.fetch_add(1, Ordering::Relaxed);
+                            attempts += 1;
+                        }
+                        _ => return Err(format!("fatias: {}", status.message())),
+                    }
+                }
+            }
+        };
         self.stats.calls.fetch_add(1, Ordering::Relaxed);
         self.stats
             .wall_us
@@ -547,8 +638,9 @@ async fn chat_completions(
         let calls = stats.calls.swap(0, Ordering::Relaxed);
         let wall = stats.wall_us.swap(0, Ordering::Relaxed);
         let compute = stats.compute_us.swap(0, Ordering::Relaxed);
+        let retries = stats.retries.swap(0, Ordering::Relaxed);
         eprintln!(
-            "remoto: {} tokens, {calls} chamadas, {} ms nas chamadas ({} us cada), {} ms de cálculo nos workers",
+            "remoto: {} tokens, {calls} chamadas, {} ms nas chamadas ({} us cada), {} ms de cálculo nos workers, {retries} refeitas",
             generated.len(),
             wall / 1000,
             wall.checked_div(calls).unwrap_or(0),
@@ -643,7 +735,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None,
             )
         } else {
-            let (executor, stats) = grpc_executor(&client, "AI_CLUSTER_GPT2_SUBDIR", "gpt2");
+            let (executor, stats) =
+                grpc_executor(&client, "AI_CLUSTER_GPT2_SUBDIR", "gpt2", shards.clone());
             (
                 Box::new(
                     Gpt2::load_remote(&dir, executor, shards)
@@ -673,7 +766,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None,
             )
         } else {
-            let (executor, stats) = grpc_executor(&client, "AI_CLUSTER_SMOLLM2_SUBDIR", "smollm2");
+            let (executor, stats) = grpc_executor(
+                &client,
+                "AI_CLUSTER_SMOLLM2_SUBDIR",
+                "smollm2",
+                shards.clone(),
+            );
             (
                 Box::new(
                     Llama::load_remote(&dir, executor, shards)
@@ -715,6 +813,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_benched_node_hands_its_bands_to_the_live_ones() {
+        let band = |node: &str, start: u32| Slice {
+            node: node.into(),
+            tensor: "t".into(),
+            row_start: start,
+            row_end: start + 1,
+            by_columns: false,
+        };
+        let roster = Roster::new(vec!["a".into(), "b".into(), "c".into()]);
+        let slices = [band("a", 0), band("b", 1), band("c", 2)];
+        let nodes = |s: Vec<Slice>| s.into_iter().map(|s| s.node).collect::<Vec<_>>();
+        assert_eq!(nodes(roster.assign(&slices).unwrap()), ["a", "b", "c"]);
+
+        roster.bench("b");
+        // b's band moves to a live node (chosen by position); a and c keep theirs.
+        let moved = nodes(roster.assign(&slices).unwrap());
+        assert_eq!((moved[0].as_str(), moved[2].as_str()), ("a", "c"));
+        assert!(moved[1] == "a" || moved[1] == "c");
+        // The band itself does not change, only who computes it.
+        assert_eq!(roster.assign(&slices).unwrap()[1].row_start, 1);
+
+        roster.bench("a");
+        roster.bench("c");
+        assert!(roster.assign(&slices).is_err(), "sem nós vivos");
+    }
 
     #[test]
     fn the_seed_is_stable_and_depends_on_the_whole_input() {

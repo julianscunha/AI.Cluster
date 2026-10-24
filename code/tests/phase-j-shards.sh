@@ -95,15 +95,27 @@ echo "$SECOND" | grep -q "\"content\":\"$EXPECT\"" || fail "segunda chamada dive
 docker logs aic-gateway 2>&1 | grep "remoto:" | tail -2
 echo "OK: a continuação com as projeções nos workers é idêntica à local"
 
-echo "=== B) um worker some: o pedido falha rápido, sem pendurar ==="
+echo "=== B) um worker morre no meio da geração: as faixas dele vão para o outro ==="
+OUT=$(mktemp)
+chat 15 >"$OUT" &
+sleep 1
 docker rm -f aic-worker-2 >/dev/null 2>&1
+wait
+cat "$OUT"; echo
+grep -q "\"content\":\"$EXPECT" "$OUT" || { rm -f "$OUT"; fail "a geração deveria seguir igual com um worker só"; }
+rm -f "$OUT"
+docker logs aic-gateway 2>&1 | grep -q "refazendo nos demais" || fail "o gateway deveria ter refeito a chamada"
+echo "OK: a geração terminou com a continuação idêntica depois de perder worker-2"
+
+echo "=== C) o último worker some: o pedido falha rápido, sem pendurar ==="
+docker rm -f aic-worker-1 >/dev/null 2>&1
 sleep 2
 CODE=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" --max-time 120 \
   -d "{\"model\":\"$ID\",\"max_tokens\":3,\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}" \
   $GATEWAY/v1/chat/completions)
-[ "$CODE" = 503 ] || fail "sem um worker o pedido deveria dar 503, deu: $CODE"
-echo "OK: 503 sem um dos workers"
+[ "$CODE" = 503 ] || fail "sem nenhum worker o pedido deveria dar 503, deu: $CODE"
+echo "OK: 503 sem nenhum worker"
 
 teardown
 echo "=== J5 canal residente OK ==="

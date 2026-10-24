@@ -148,6 +148,16 @@ mensagem `ShardOp`/`ShardCompute` ganhou `by_columns`. `AI_CLUSTER_GPT2_SHARDS`/
 modo; `tests/phase-j-shards.sh gpt2` e `sharded_projections_match_the_local_forward` (GPT-2) provam
 logits idênticos e a mesma continuação.
 
+### Tolerância a falha de worker
+
+Qualquer worker computa qualquer faixa (lê do próprio disco), então mover uma faixa não copia
+nada. Quando um `ShardMatmul` falha por um nó (sem canal, indisponível, prazo, erro de cálculo), o
+controller devolve o erro com o cabeçalho `x-ai-cluster-failed-node`; o `GrpcExecutor` do gateway
+põe esse nó de lado por 30 s (`Roster`), entrega as faixas dele aos vivos e **refaz a chamada** (é
+pura; o KV cache está no gateway, então a geração continua do mesmo ponto). Cada tentativa tira mais
+um nó, então o laço termina; sem nenhum vivo o pedido dá 503. `phase-j-shards.sh` mata um worker no
+meio da geração: a continuação sai idêntica e o log do gateway mostra as chamadas refeitas.
+
 ### Custo medido (contêineres numa máquina, rede Docker local)
 
 SmolLM2-135M, 2 workers, 120 chamadas por token, depois do aquecimento: **~2,5 ms por chamada**, dos
@@ -159,8 +169,9 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
 
 - O gateway tem o papel de operador e comanda a carga de arquivos nos workers: um papel "inferência"
   separado seria o passo seguinte.
-- Sem tolerância a falha: se um worker cai no meio de um token, a requisição inteira falha (503).
-  Sem réplica de fatias, sem rebalanceamento, sem redistribuir quando entra um nó.
+- Tolerância a falha só por reatribuição (abaixo): sem réplica de fatias pré-carregada, então o nó
+  que herda uma faixa a lê do disco na primeira vez (segundos de aquecimento); sem rebalanceamento
+  proativo quando entra um nó (a faixa volta ao dono quando o castigo de 30 s acaba).
 - Quarentena e drain não derrubam a sessão (só `revoke`/`leave`); as operações a nós indisponíveis
   são recusadas pelo `ShardMatmul`.
 - Divisão só por linhas de saída, entrada replicada: sem all-reduce, sem pipeline entre camadas.

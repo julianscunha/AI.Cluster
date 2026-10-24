@@ -127,6 +127,16 @@ fn authorize_node<T>(
     }
 }
 
+/// Marks `status` with the node that caused it (see `FAILED_NODE_HEADER`).
+fn blame(mut status: Status, node: &str) -> Status {
+    if let Ok(value) = node.parse() {
+        status
+            .metadata_mut()
+            .insert(ai_cluster_protocol::metadata::FAILED_NODE_HEADER, value);
+    }
+    status
+}
+
 /// Forgets the operations of a `ShardMatmul` when the call ends, for any reason.
 struct ShardGuard<'a> {
     hub: &'a ShardHub,
@@ -711,10 +721,10 @@ impl ClusterControl for ClusterControlService {
             .iter()
             .find(|op| !self.registry.is_available(&op.node_id))
         {
-            return Err(Status::failed_precondition(format!(
-                "nó {} indisponível",
-                op.node_id
-            )));
+            return Err(blame(
+                Status::failed_precondition(format!("nó {} indisponível", op.node_id)),
+                &op.node_id,
+            ));
         }
 
         // Operations still waiting are forgotten however this call ends: an answer, an error, or
@@ -736,7 +746,10 @@ impl ClusterControl for ClusterControlService {
                 k: request.k,
                 x: request.x.clone(),
             };
-            let (op_id, answer) = self.shards.submit(&op.node_id, frame)?;
+            let (op_id, answer) = self
+                .shards
+                .submit(&op.node_id, frame)
+                .map_err(|status| blame(status, &op.node_id))?;
             guard.ops.push(op_id);
             waiting.push(answer);
         }
@@ -745,13 +758,26 @@ impl ClusterControl for ClusterControlService {
         let mut outputs = Vec::with_capacity(waiting.len());
         for (spec, answer) in request.ops.iter().zip(waiting) {
             let result = match tokio::time::timeout_at(deadline, answer).await {
-                Err(_) => return Err(Status::deadline_exceeded("o worker não respondeu a tempo")),
-                Ok(Err(_)) => return Err(Status::unavailable("o canal do worker caiu")),
+                Err(_) => {
+                    return Err(blame(
+                        Status::deadline_exceeded("o worker não respondeu a tempo"),
+                        &spec.node_id,
+                    ));
+                }
+                Ok(Err(_)) => {
+                    return Err(blame(
+                        Status::unavailable("o canal do worker caiu"),
+                        &spec.node_id,
+                    ));
+                }
                 Ok(Ok(result)) => result,
             };
             let cols = spec.row_end - spec.row_start;
             if !result.ok {
-                return Err(Status::failed_precondition(result.error));
+                return Err(blame(
+                    Status::failed_precondition(result.error),
+                    &spec.node_id,
+                ));
             }
             if result.rows != request.rows
                 || result.cols != cols

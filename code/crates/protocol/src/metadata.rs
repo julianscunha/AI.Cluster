@@ -74,6 +74,10 @@ pub const NODE_AUTH_HEADER: &str = "x-ai-cluster-node-auth";
 /// when the stream opens, so the node has to be known then.
 pub const NODE_ID_HEADER: &str = "x-ai-cluster-node-id";
 
+/// Header on a failed `ShardMatmul` naming the node that caused the failure, so the caller can
+/// route its slices elsewhere and try again (J5).
+pub const FAILED_NODE_HEADER: &str = "x-ai-cluster-failed-node";
+
 /// Ceiling for a single gRPC message, in bytes, in both directions.
 ///
 /// A work unit travels as one message carrying its operands as `repeated double`: a
