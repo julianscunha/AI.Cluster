@@ -76,3 +76,14 @@ de 4 núcleos (Docker no Windows), prompt de 8 tokens:
   segundos. Para um modelo deste tamanho distribuir **não ganha tempo**; o ganho existe quando
   o modelo não cabe num nó ou quando há lote/prefill grande.
 - RTT real entre nós não foi medido aqui (o contêiner único não representa uma rede).
+
+### Paralelizar o decode local (resultado)
+
+- A projeção de saída (49152×576 na SmolLM2) é um produto escalar por linha do vocabulário; passou
+  a ser dividida em threads (`project_rows`): **156 → ~105 ms por token** na SmolLM2 e
+  140 → ~109 ms no GPT-2, com os mesmos logits (a paridade segue passando).
+- Dividir por **colunas** o matmul de uma linha das camadas (`Matrix::multiply_with_threads`) foi
+  testado e **descartado**: ficou ~2× mais lento (0,45 → 0,85 ms por matmul e ~195 ms por token),
+  porque cada chamada cria threads novas (~840 por token) para ~0,5 ms de trabalho. Só valeria com
+  um pool de threads persistente; fica registrado como o próximo ganho local, não feito.
+- O que sobra (~105 ms) são ~106 M multiplicações-soma das camadas em uma thread só.

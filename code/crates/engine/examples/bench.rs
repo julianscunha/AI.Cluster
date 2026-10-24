@@ -18,11 +18,17 @@ fn main() {
     };
     println!("carga: {:.2?}", started.elapsed());
 
-    let prompt = tokenizer.encode("The capital of France is a city that").unwrap();
+    let prompt = tokenizer
+        .encode("The capital of France is a city that")
+        .unwrap();
     let mut cache = model.new_cache();
     let started = Instant::now();
     let mut logits = model.forward(&prompt, &mut cache).unwrap();
-    println!("prompt de {} tokens: {:.2?}", prompt.len(), started.elapsed());
+    println!(
+        "prompt de {} tokens: {:.2?}",
+        prompt.len(),
+        started.elapsed()
+    );
 
     let steps = 16;
     let started = Instant::now();
@@ -46,6 +52,9 @@ fn main() {
         for _ in 0..200 {
             x.multiply_with_threads(&w, threads).unwrap();
         }
-        println!("matmul 1x576x1536, {threads} thread(s): {:.2?}", started.elapsed() / 200);
+        println!(
+            "matmul 1x576x1536, {threads} thread(s): {:.2?}",
+            started.elapsed() / 200
+        );
     }
 }

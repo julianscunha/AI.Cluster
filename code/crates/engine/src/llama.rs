@@ -3,7 +3,7 @@
 //! `Matrix`, every dense layer through `Matrix::multiply_with_threads`.
 
 use crate::cache::KvCache;
-use crate::gpt2::{add_in_place, softmax};
+use crate::gpt2::{add_in_place, project_rows, softmax};
 use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
 use ai_cluster_common::matrix::Matrix;
@@ -311,12 +311,7 @@ impl LanguageModel for Llama {
         let last = tokens.len() - 1;
         let normed = rms_norm(&x, &self.norm, self.eps);
         let last_row = &normed.data[last * width..(last + 1) * width];
-        Ok(self
-            .embed
-            .data
-            .chunks_exact(width)
-            .map(|embedding| embedding.iter().zip(last_row).map(|(a, b)| a * b).sum())
-            .collect())
+        Ok(project_rows(&self.embed, last_row, self.threads))
     }
 }
 

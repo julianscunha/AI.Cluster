@@ -199,12 +199,7 @@ impl LanguageModel for Gpt2 {
         let last = tokens.len() - 1;
         let normed = layer_norm(&x, &self.ln_f, self.eps);
         let last_row = &normed.data[last * width..(last + 1) * width];
-        Ok(self
-            .wte
-            .data
-            .chunks_exact(width)
-            .map(|embedding| embedding.iter().zip(last_row).map(|(a, b)| a * b).sum())
-            .collect())
+        Ok(project_rows(&self.wte, last_row, self.threads))
     }
 }
 
@@ -282,6 +277,25 @@ fn layer_norm(x: &Matrix, norm: &Norm, eps: f64) -> Matrix {
         }
     }
     out
+}
+
+/// `table * row`: the dot product of `row` with every row of `table` (the tied output
+/// projection), split over `threads`. Each logit is one dot product, so the split does not
+/// change any value.
+pub(crate) fn project_rows(table: &Matrix, row: &[f64], threads: usize) -> Vec<f64> {
+    let (rows, width) = (table.rows as usize, row.len());
+    let band = rows.div_ceil(threads.max(1)).max(1);
+    let mut logits = vec![0.0; rows];
+    std::thread::scope(|scope| {
+        for (out, rows) in logits.chunks_mut(band).zip(table.data.chunks(band * width)) {
+            scope.spawn(move || {
+                for (logit, embedding) in out.iter_mut().zip(rows.chunks_exact(width)) {
+                    *logit = embedding.iter().zip(row).map(|(a, b)| a * b).sum();
+                }
+            });
+        }
+    });
+    logits
 }
 
 pub(crate) fn softmax(values: &mut [f64]) {
