@@ -547,6 +547,56 @@ mod tests {
         );
     }
 
+    /// Answers 200 to anything that reaches it.
+    #[derive(Clone)]
+    struct Reached;
+
+    impl tonic::codegen::Service<tonic::codegen::http::Request<()>> for Reached {
+        type Response = tonic::codegen::http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(
+            &mut self,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _: tonic::codegen::http::Request<()>) -> Self::Future {
+            std::future::ready(Ok(tonic::codegen::http::Response::new(
+                tonic::body::Body::empty(),
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_gate_lets_the_inference_token_reach_only_shard_matmul() {
+        use tonic::codegen::Service;
+        let mut gate = inference_gate(Reached, "inf");
+        let mut call = async |token: &str, path: &str| {
+            let request = tonic::codegen::http::Request::builder()
+                .uri(path)
+                .header(AUTH_HEADER, token)
+                .body(())
+                .unwrap();
+            let response = gate.call(request).await.unwrap();
+            // A denial is a gRPC status in the headers; a pass-through has none.
+            response.headers().get("grpc-status").is_none()
+        };
+        assert!(call("inf", SHARD_MATMUL_PATH).await);
+        for path in [
+            "/ai.cluster.v1.ClusterControl/ListNodes",
+            "/ai.cluster.v1.ClusterControl/ShardChannel",
+            "/ai.cluster.v1.LinkProbe/Probe",
+            "/ai.cluster.v1.ClusterControl/ShardMatmul/",
+        ] {
+            assert!(!call("inf", path).await, "{path}");
+        }
+        // Other tokens are not the gate's business (the interceptor judges them).
+        assert!(call("op-secret", "/ai.cluster.v1.ClusterControl/ListNodes").await);
+    }
+
     #[test]
     fn the_inference_token_marks_only_inference_and_never_operator() {
         let mut server = ServerMetadata::new("secret", "op-secret").with_inference("inf");

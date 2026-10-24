@@ -35,7 +35,7 @@ const MAX_SHARD_X: usize = 2 * 1024 * 1024;
 const MAX_SHARD_ROWS: u32 = 1 << 20;
 /// f64 values one operation may return (64 MiB), and twice that across a call.
 const MAX_SHARD_OUT: usize = 8 * 1024 * 1024;
-const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 use crate::events::EventLog;
 use crate::metrics;

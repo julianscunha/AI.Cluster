@@ -121,9 +121,14 @@ impl Roster {
 
     /// `slices` with every band of a benched node handed to a live one.
     fn assign(&self, slices: &[Slice]) -> Result<Vec<Slice>, String> {
-        let live = self.live();
+        let mut live = self.live();
         if live.is_empty() {
-            return Err("fatias: nenhum worker disponível".into());
+            // Everyone failed recently: try them all again rather than refusing for the whole
+            // bench time; a node that is really gone fails fast and ends the retries.
+            live = self.nodes.iter().map(String::as_str).collect();
+        }
+        if live.is_empty() {
+            return Err("fatias: nenhum worker configurado".into());
         }
         Ok(slices
             .iter()
@@ -299,7 +304,7 @@ impl Executor for GrpcExecutor {
                         // Every retry benches one more node, so this ends after the last of them.
                         Some(node) if retryable && attempts < self.roster.nodes.len() => {
                             eprintln!(
-                                "worker {node} falhou ({}); refazendo nos demais",
+                                "worker {node} falhou ({:?}); refazendo nos demais",
                                 status.message()
                             );
                             self.roster.bench(&node);
@@ -762,6 +767,15 @@ async fn chat_completions(
     }
 }
 
+/// Sets the flag when dropped, whether the request finished or its future was dropped.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 async fn complete_chat(prepared: Prepared) -> Response {
     let Prepared {
         llm,
@@ -774,6 +788,8 @@ async fn complete_chat(prepared: Prepared) -> Response {
     // The permit moves into the blocking task, so the slot frees only when the generation really
     // ends. A timeout sets `cancel`, which stops it at the next token.
     let cancel = Arc::new(AtomicBool::new(false));
+    // If the client disconnects, axum drops this future: the guard still cancels the generation.
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
     let worker = llm.clone();
     let flag = cancel.clone();
     let task = tokio::task::spawn_blocking(move || {
@@ -786,6 +802,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
         Ok(Ok(Ok(tokens))) => tokens,
         Err(_) => {
             cancel.store(true, Ordering::Relaxed);
+            log_remote(&llm, 0);
             return error(
                 StatusCode::GATEWAY_TIMEOUT,
                 "TIMEOUT",
@@ -794,6 +811,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
         }
         Ok(failed) => {
             eprintln!("geração falhou: {failed:?}");
+            log_remote(&llm, 0);
             return error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "MODEL_UNAVAILABLE",
@@ -851,6 +869,35 @@ fn new_text<'a>(full: &'a str, sent: &mut usize, done: bool) -> &'a str {
     fresh
 }
 
+/// How long a streaming client may leave its buffer full before the gateway gives up on it. A
+/// reader that stops reading would otherwise hold the only generation slot forever.
+const STREAM_STALL: Duration = Duration::from_secs(10);
+
+type EventTx = tokio::sync::mpsc::Sender<Result<Bytes, Infallible>>;
+
+/// Queues `item` from the blocking generation thread; false if the client left or stalled.
+fn push_blocking(tx: &EventTx, mut item: Result<Bytes, Infallible>) -> bool {
+    let started = std::time::Instant::now();
+    loop {
+        match tx.try_send(item) {
+            Ok(()) => return true,
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return false,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(back)) => {
+                if started.elapsed() > STREAM_STALL {
+                    return false;
+                }
+                item = back;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
+/// Queues `item` from async code, giving up after [`STREAM_STALL`].
+async fn put(tx: &EventTx, item: Result<Bytes, Infallible>) {
+    let _ = tokio::time::timeout(STREAM_STALL, tx.send(item)).await;
+}
+
 /// `stream: true`: server-sent events in the OpenAI shape, one `chat.completion.chunk` per piece
 /// of text, then `[DONE]`. The headers go out at once, so a failure after that arrives as an
 /// `error` event instead of a status code.
@@ -881,7 +928,7 @@ fn stream_chat(prepared: Prepared) -> Response {
             .into())
         }
     };
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(32);
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
     let cancel = Arc::new(AtomicBool::new(false));
     let (worker, flag, out, content) = (llm.clone(), cancel.clone(), tx.clone(), event.clone());
     let task = tokio::task::spawn_blocking(move || {
@@ -890,11 +937,9 @@ fn stream_chat(prepared: Prepared) -> Response {
         let (mut tokens, mut sent) = (Vec::new(), 0);
         let send = |text: &str| {
             if !text.is_empty()
-                && out
-                    .blocking_send(content(json!({ "content": text }), json!(null)))
-                    .is_err()
+                && !push_blocking(&out, content(json!({ "content": text }), json!(null)))
             {
-                // The client went away: nobody is reading, so stop generating.
+                // The client went away or stopped reading: stop generating and free the slot.
                 flag.store(true, Ordering::Relaxed);
             }
         };
@@ -917,37 +962,36 @@ fn stream_chat(prepared: Prepared) -> Response {
         generated
     });
     tokio::spawn(async move {
-        let _ = tx
-            .send(event(json!({ "role": "assistant" }), json!(null)))
-            .await;
+        put(&tx, event(json!({ "role": "assistant" }), json!(null))).await;
         let failure = match tokio::time::timeout(DEADLINE, task).await {
             Ok(Ok(Ok(generated))) => {
                 log_remote(&llm, generated.len());
                 let stopped = generated.last() == Some(&llm.end_of_text);
-                let _ = tx
-                    .send(event(
-                        json!({}),
-                        json!(if stopped { "stop" } else { "length" }),
-                    ))
-                    .await;
+                put(
+                    &tx,
+                    event(json!({}), json!(if stopped { "stop" } else { "length" })),
+                )
+                .await;
                 None
             }
             Err(_) => {
                 cancel.store(true, Ordering::Relaxed);
+                log_remote(&llm, 0);
                 Some(("TIMEOUT", "a geração não terminou a tempo"))
             }
             // Cancelled because the client left: there is nobody to tell.
             Ok(Ok(Err(_))) if tx.is_closed() => None,
             Ok(failed) => {
                 eprintln!("geração falhou: {failed:?}");
+                log_remote(&llm, 0);
                 Some(("MODEL_UNAVAILABLE", "a geração falhou"))
             }
         };
         if let Some((kind, message)) = failure {
             let body = json!({ "error": { "type": kind, "message": message } });
-            let _ = tx.send(Ok(format!("data: {body}\n\n").into())).await;
+            put(&tx, Ok(format!("data: {body}\n\n").into())).await;
         }
-        let _ = tx.send(Ok("data: [DONE]\n\n".into())).await;
+        put(&tx, Ok("data: [DONE]\n\n".into())).await;
     });
     let mut response = Response::new(Body::from_stream(
         tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(rx),
@@ -1041,7 +1085,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         llms.push(Arc::new(Llm {
             id: "gpt2",
-            description: "GPT-2 small (124M) no gateway, com as projeções nos workers se houver                 AI_CLUSTER_GPT2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
+            description: "GPT-2 small (124M) no gateway, com as projeções nos workers se houver \
+                AI_CLUSTER_GPT2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
             model,
             tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
             end_of_text: 50256,
@@ -1102,7 +1147,9 @@ mod tests {
 
         roster.bench("a");
         roster.bench("c");
-        assert!(roster.assign(&slices).is_err(), "sem nós vivos");
+        // With nobody live, every node is tried again.
+        assert_eq!(nodes(roster.assign(&slices).unwrap()), ["a", "b", "c"]);
+        assert!(Roster::new(vec![]).assign(&slices).is_err(), "sem nós");
     }
 
     #[test]
