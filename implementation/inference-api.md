@@ -58,16 +58,17 @@ prioridades, cotas e contagem de tokens, ACL de modelo e multi-tenant.
 
 ## J3: `/v1/chat/completions` sobre o GPT-2
 
-Com `AI_CLUSTER_GPT2_DIR` apontando para os arquivos do GPT-2 small (veja `inference-engine.md`),
-o gateway carrega o modelo na subida (falha fechada se o diretório estiver incompleto) e passa a
-listar `gpt2` em `/v1/models` e a aceitar `POST /v1/chat/completions` (mesma chave de API).
+Com `AI_CLUSTER_GPT2_DIR` (GPT-2 small) e/ou `AI_CLUSTER_SMOLLM2_DIR` (SmolLM2-135M, id
+`smollm2-135m`) apontando para os arquivos do modelo (veja `inference-engine.md`), o gateway
+carrega cada um na subida (falha fechada se um diretório estiver incompleto) e passa a
+listar o modelo em `/v1/models` e a aceitar `POST /v1/chat/completions` (mesma chave de API).
 
 - Formato OpenAI: `model`, `messages` (`system`/`user`/`assistant`), `max_tokens` (padrão 16, teto
   64); resposta com `choices[0].message`, `finish_reason` (`stop` no fim de texto, `length`) e
   `usage`. `stream: true` responde 400.
 - O GPT-2 é um modelo base, sem template de chat: os conteúdos das mensagens são unidos por
   quebra de linha e o modelo **continua o texto**. A resposta é uma continuação, não uma resposta.
-- Geração gulosa e determinística. Uma geração por vez (429 com `Retry-After` se ocupado); prompt de
+- Geração gulosa e determinística. Uma geração por vez, somando todos os modelos (429 com `Retry-After` se ocupado); prompt de
   até 512 tokens e 8 KiB; prazo de 30 s (504). Estourar o prazo sinaliza o cancelamento, que vale
   no próximo token; o slot só libera quando a geração termina. `max_tokens` fora de 1–64 é
   ajustado, não rejeitado; `temperature`, `n` e `stop` são ignorados (sempre gulosa, uma escolha).

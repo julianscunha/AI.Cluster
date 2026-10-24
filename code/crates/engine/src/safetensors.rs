@@ -1,12 +1,14 @@
 //! Minimal safetensors reader: an 8-byte little-endian header length, a JSON header mapping each
-//! tensor to its dtype, shape and byte range, then the raw data. Only `F32` is read; anything
-//! else is an error rather than a silent reinterpretation.
+//! tensor to its dtype, shape and byte range, then the raw data. `F32` and `BF16` are read (the
+//! latter widens exactly: it is the top half of an f32); anything else is an error rather than a
+//! silent reinterpretation.
 
 use ai_cluster_common::matrix::Matrix;
 use std::collections::HashMap;
 use std::path::Path;
 
 struct Entry {
+    bf16: bool,
     shape: Vec<usize>,
     start: usize,
     end: usize,
@@ -46,9 +48,12 @@ impl Tensors {
                 continue;
             }
             let dtype = meta["dtype"].as_str().unwrap_or_default();
-            if dtype != "F32" {
-                return Err(format!("{name}: dtype {dtype} não suportado (só F32)"));
+            if dtype != "F32" && dtype != "BF16" {
+                return Err(format!(
+                    "{name}: dtype {dtype} não suportado (só F32 e BF16)"
+                ));
             }
+            let bf16 = dtype == "BF16";
             let shape: Vec<usize> = meta["shape"]
                 .as_array()
                 .ok_or_else(|| format!("{name}: sem shape"))?
@@ -67,11 +72,20 @@ impl Tensors {
             let elements = shape.iter().try_fold(1usize, |a, d| a.checked_mul(*d));
             if start > end
                 || end > data_len
-                || elements.and_then(|n| n.checked_mul(4)) != Some(end - start)
+                || elements.and_then(|n| n.checked_mul(if bf16 { 2 } else { 4 }))
+                    != Some(end - start)
             {
                 return Err(format!("{name}: intervalo de dados incoerente com o shape"));
             }
-            index.insert(name.clone(), Entry { shape, start, end });
+            index.insert(
+                name.clone(),
+                Entry {
+                    bf16,
+                    shape,
+                    start,
+                    end,
+                },
+            );
         }
         Ok(Self { bytes, base, index })
     }
@@ -80,17 +94,25 @@ impl Tensors {
         self.index.get(name).map(|entry| entry.shape.as_slice())
     }
 
-    fn floats(&self, name: &str) -> Result<(&Entry, impl Iterator<Item = f64> + '_), String> {
+    fn floats(&self, name: &str) -> Result<(&Entry, Vec<f64>), String> {
         let entry = self
             .index
             .get(name)
             .ok_or_else(|| format!("tensor ausente: {name}"))?;
         let raw = &self.bytes[self.base + entry.start..self.base + entry.end];
-        let values = raw
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| f32::from_le_bytes(*b) as f64);
+        let values = if entry.bf16 {
+            raw.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| f32::from_bits(u32::from(u16::from_le_bytes(*b)) << 16) as f64)
+                .collect()
+        } else {
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b) as f64)
+                .collect()
+        };
         Ok((entry, values))
     }
 
@@ -108,7 +130,7 @@ impl Tensors {
         Ok(Matrix {
             rows,
             cols,
-            data: values.collect(),
+            data: values,
         })
     }
 
@@ -121,7 +143,7 @@ impl Tensors {
                 entry.shape.len()
             ));
         }
-        Ok(values.collect())
+        Ok(values)
     }
 }
 
@@ -151,11 +173,22 @@ mod tests {
     }
 
     #[test]
+    fn widens_bf16_exactly() {
+        // 1.0 is 0x3F80 and -2.5 is 0xC020 in bfloat16.
+        let header = r#"{"w":{"dtype":"BF16","shape":[2],"data_offsets":[0,4]}}"#;
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend(header.as_bytes());
+        bytes.extend([0x80, 0x3F, 0x20, 0xC0]);
+        let tensors = Tensors::from_bytes(bytes).unwrap();
+        assert_eq!(tensors.vector("w").unwrap(), vec![1.0, -2.5]);
+    }
+
+    #[test]
     fn rejects_malformed_files() {
         assert!(Tensors::from_bytes(vec![1, 2, 3]).is_err());
         // Header length past the end of the file.
         assert!(Tensors::from_bytes(100u64.to_le_bytes().to_vec()).is_err());
-        let wrong_dtype = r#"{"w":{"dtype":"F16","shape":[1],"data_offsets":[0,2]}}"#;
+        let wrong_dtype = r#"{"w":{"dtype":"F64","shape":[1],"data_offsets":[0,2]}}"#;
         assert!(Tensors::from_bytes(file(wrong_dtype, &[0.0])).is_err());
         let lying_shape = r#"{"w":{"dtype":"F32","shape":[3],"data_offsets":[0,8]}}"#;
         assert!(Tensors::from_bytes(file(lying_shape, &[0.0, 0.0])).is_err());

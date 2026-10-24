@@ -13,13 +13,19 @@ use std::path::Path;
 
 /// Longest text `encode` accepts; far above the 1024-token context of GPT-2.
 const MAX_TEXT_BYTES: usize = 64 * 1024;
+/// Longest run of bytes without a break the pre-tokenizer would keep together. The merge loop
+/// is quadratic in it, so a long unbroken run is refused instead of tokenized.
+const MAX_PIECE_BYTES: usize = 512;
 
 pub struct Tokenizer {
     vocab: HashMap<String, u32>,
     tokens: Vec<String>,
-    ranks: HashMap<(String, String), usize>,
+    /// `"left\0right"` -> rank, so a lookup needs no allocation (a byte symbol is never `\0`).
+    ranks: HashMap<String, usize>,
     byte_to_char: [char; 256],
     char_to_byte: HashMap<char, u8>,
+    /// Every digit is its own piece before the regex runs (SmolLM2's `Digits` pre-tokenizer).
+    split_digits: bool,
 }
 
 /// The reversible byte -> printable char table GPT-2 uses, so every byte has a visible stand-in.
@@ -63,6 +69,31 @@ fn class(c: char) -> Class {
 
 /// Splits `text` the way the GPT-2 regex does.
 pub fn pre_tokenize(text: &str) -> Vec<String> {
+    pre_tokenize_with(text, false)
+}
+
+/// The GPT-2 split, optionally after cutting out every digit as its own piece, as the HF
+/// `Digits(individual_digits)` pre-tokenizer does before the byte-level regex.
+pub fn pre_tokenize_with(text: &str, split_digits: bool) -> Vec<String> {
+    if !split_digits {
+        return split_regex(text);
+    }
+    let mut pieces = Vec::new();
+    let mut run = String::new();
+    for c in text.chars() {
+        if c.is_numeric() {
+            pieces.extend(split_regex(&run));
+            run.clear();
+            pieces.push(c.to_string());
+        } else {
+            run.push(c);
+        }
+    }
+    pieces.extend(split_regex(&run));
+    pieces
+}
+
+fn split_regex(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut pieces = Vec::new();
     let mut i = 0;
@@ -110,7 +141,17 @@ impl Tokenizer {
         let read = |name: &str| {
             std::fs::read_to_string(dir.join(name)).map_err(|err| format!("{name}: {err}"))
         };
-        Self::new(&read("vocab.json")?, &read("merges.txt")?)
+        let mut tokenizer = Self::new(&read("vocab.json")?, &read("merges.txt")?)?;
+        // Only the pre-tokenizer setting is read from tokenizer.json; the vocabulary and merges
+        // come from the two files above, which hold the same data.
+        if let Ok(text) = read("tokenizer.json") {
+            let json: serde_json::Value =
+                serde_json::from_str(&text).map_err(|err| format!("tokenizer.json: {err}"))?;
+            tokenizer.split_digits = json["pre_tokenizer"]
+                .to_string()
+                .contains("\"individual_digits\":true");
+        }
+        Ok(tokenizer)
     }
 
     pub fn new(vocab_json: &str, merges: &str) -> Result<Self, String> {
@@ -128,7 +169,7 @@ impl Tokenizer {
             .enumerate()
             .map(|(rank, line)| {
                 let (left, right) = line.split_once(' ').ok_or("merges.txt: linha inválida")?;
-                Ok(((left.to_string(), right.to_string()), rank))
+                Ok((format!("{left}\0{right}"), rank))
             })
             .collect::<Result<_, &str>>()?;
         let byte_to_char = byte_table();
@@ -143,6 +184,7 @@ impl Tokenizer {
             ranks,
             byte_to_char,
             char_to_byte,
+            split_digits: false,
         })
     }
 
@@ -151,12 +193,16 @@ impl Tokenizer {
     }
 
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, String> {
-        // The merge loop is quadratic in the length of a space-free run.
         if text.len() > MAX_TEXT_BYTES {
             return Err(format!("texto acima de {MAX_TEXT_BYTES} bytes"));
         }
         let mut ids = Vec::new();
-        for piece in pre_tokenize(text) {
+        for piece in pre_tokenize_with(text, self.split_digits) {
+            if piece.len() > MAX_PIECE_BYTES {
+                return Err(format!(
+                    "trecho sem separador acima de {MAX_PIECE_BYTES} bytes"
+                ));
+            }
             let symbols = piece
                 .bytes()
                 .map(|b| self.byte_to_char[b as usize].to_string())
@@ -174,11 +220,15 @@ impl Tokenizer {
 
     /// Repeatedly merges the lowest-ranked adjacent pair until none is in `merges.txt`.
     fn merge(&self, mut symbols: Vec<String>) -> Vec<String> {
+        let mut key = String::new();
         loop {
             let best = (0..symbols.len().saturating_sub(1))
                 .filter_map(|i| {
-                    let pair = (symbols[i].clone(), symbols[i + 1].clone());
-                    self.ranks.get(&pair).map(|rank| (*rank, i))
+                    key.clear();
+                    key.push_str(&symbols[i]);
+                    key.push('\0');
+                    key.push_str(&symbols[i + 1]);
+                    self.ranks.get(&key).map(|rank| (*rank, i))
                 })
                 .min();
             let Some((_, at)) = best else { return symbols };
@@ -226,6 +276,17 @@ mod tests {
     }
 
     #[test]
+    fn individual_digits_are_cut_out_before_the_regex() {
+        assert_eq!(
+            pre_tokenize_with("a 12 b", true),
+            ["a", " ", "1", "2", " b"]
+        );
+        assert_eq!(pre_tokenize_with("3.14", true), ["3", ".", "1", "4"]);
+        assert_eq!(pre_tokenize_with("abc", true), pre_tokenize("abc"));
+        assert_eq!(pre_tokenize_with("a 12", false), ["a", " 12"]);
+    }
+
+    #[test]
     fn bytes_round_trip_through_the_table() {
         let table = byte_table();
         let distinct: std::collections::HashSet<_> = table.iter().collect();
@@ -243,6 +304,7 @@ mod tests {
         assert_eq!(tokenizer.encode("ba").unwrap(), vec![1, 0]);
         assert_eq!(tokenizer.decode(&[3, 2]).unwrap(), "ab ");
         assert!(tokenizer.encode("z").is_err());
+        assert!(tokenizer.encode(&"a".repeat(MAX_PIECE_BYTES + 1)).is_err());
         assert!(tokenizer.decode(&[99]).is_err());
     }
 }

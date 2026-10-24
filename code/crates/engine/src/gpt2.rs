@@ -5,10 +5,11 @@
 //! layer goes through `Matrix::multiply_with_threads`, the single place a later slice can swap
 //! for a distributed product.
 
+use crate::cache::KvCache;
+use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
 use ai_cluster_common::matrix::Matrix;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 struct Linear {
     /// GPT-2 stores `Conv1D` weights as `[in, out]`, so `x * w + b` needs no transpose.
@@ -133,66 +134,29 @@ impl Gpt2 {
             ln_f,
         })
     }
+}
 
-    pub fn context_len(&self) -> usize {
+impl LanguageModel for Gpt2 {
+    fn context_len(&self) -> usize {
         self.wpe.rows as usize
     }
 
-    pub fn vocab_size(&self) -> usize {
+    fn vocab_size(&self) -> usize {
         self.wte.rows as usize
     }
 
-    /// An empty cache for [`Gpt2::forward`].
-    pub fn new_cache(&self) -> KvCache {
-        KvCache {
-            keys: vec![Vec::new(); self.blocks.len()],
-            values: vec![Vec::new(); self.blocks.len()],
-            len: 0,
-        }
-    }
-
-    /// Logits over the vocabulary for the token that follows `tokens`.
-    pub fn next_token_logits(&self, tokens: &[u32]) -> Result<Vec<f64>, String> {
-        self.forward(tokens, &mut self.new_cache())
-    }
-
-    /// Greedy continuation: up to `max_new` tokens after `prompt`, stopping early (and
-    /// including it) at `stop`. The prompt runs once; each new token is one cached step.
-    /// `cancel` is checked between steps: setting it ends the run with an error.
-    pub fn generate(
-        &self,
-        prompt: &[u32],
-        max_new: usize,
-        stop: Option<u32>,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<u32>, String> {
-        let mut cache = self.new_cache();
-        let mut produced = Vec::new();
-        let mut logits = self.forward(prompt, &mut cache)?;
-        while produced.len() < max_new {
-            let next = logits
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.total_cmp(b.1))
-                .map(|(id, _)| id as u32)
-                .ok_or("vocabulário vazio")?;
-            produced.push(next);
-            if Some(next) == stop || cache.len >= self.context_len() {
-                break;
-            }
-            if cancel.load(Ordering::Relaxed) {
-                return Err("geração cancelada".into());
-            }
-            logits = self.forward(&[next], &mut cache)?;
-        }
-        Ok(produced)
+    fn new_cache(&self) -> KvCache {
+        KvCache::new(self.blocks.len())
     }
 
     /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,
     /// and returns the logits for the token that follows the last of them.
-    pub fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {
+    fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {
         if tokens.is_empty() {
             return Err("prompt vazio".into());
+        }
+        if cache.keys.len() != self.blocks.len() {
+            return Err("cache de outro modelo".into());
         }
         let past = cache.len;
         if past + tokens.len() > self.context_len() {
@@ -242,7 +206,9 @@ impl Gpt2 {
             .map(|embedding| embedding.iter().zip(last_row).map(|(a, b)| a * b).sum())
             .collect())
     }
+}
 
+impl Gpt2 {
     /// Multi-head causal self-attention over the normalised input, ending in the output
     /// projection. The new keys and values are appended to `cache` for `layer`, and each new
     /// position attends to everything cached before it plus itself.
@@ -292,24 +258,6 @@ impl Gpt2 {
     }
 }
 
-/// Keys and values of every position already run, per layer, row-major `[position, width]`.
-pub struct KvCache {
-    keys: Vec<Vec<f64>>,
-    values: Vec<Vec<f64>>,
-    len: usize,
-}
-
-impl KvCache {
-    /// Positions held so far.
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
 fn linear(x: &Matrix, layer: &Linear, threads: usize) -> Result<Matrix, String> {
     let mut y = x
         .multiply_with_threads(&layer.weight, threads)
@@ -336,7 +284,7 @@ fn layer_norm(x: &Matrix, norm: &Norm, eps: f64) -> Matrix {
     out
 }
 
-fn softmax(values: &mut [f64]) {
+pub(crate) fn softmax(values: &mut [f64]) {
     let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut total = 0.0;
     for value in values.iter_mut() {
@@ -353,7 +301,7 @@ fn gelu(x: f64) -> f64 {
     0.5 * x * (1.0 + ((2.0 / std::f64::consts::PI).sqrt() * (x + 0.044715 * x.powi(3))).tanh())
 }
 
-fn add_in_place(x: &mut Matrix, delta: &Matrix) {
+pub(crate) fn add_in_place(x: &mut Matrix, delta: &Matrix) {
     for (a, b) in x.data.iter_mut().zip(&delta.data) {
         *a += b;
     }

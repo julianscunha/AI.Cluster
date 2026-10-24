@@ -4,7 +4,7 @@
 //! `AI_CLUSTER_GPT2_DIR` apontando para o diretório com `model.safetensors`, `vocab.json`,
 //! `merges.txt` e `config.json`, os testes avisam e passam sem verificar nada.
 
-use ai_cluster_engine::{gpt2::Gpt2, tokenizer::Tokenizer};
+use ai_cluster_engine::{LanguageModel, gpt2::Gpt2, tokenizer::Tokenizer};
 use std::path::PathBuf;
 
 fn model_dir() -> Option<PathBuf> {

@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ai_cluster_engine::{gpt2::Gpt2, tokenizer::Tokenizer};
+use ai_cluster_engine::{LanguageModel, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer};
 use ai_cluster_protocol::cluster::{EnqueueGraphRequest, GetOutputRequest, GetTraceRequest};
 use ai_cluster_protocol::metadata::{
     INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV, connect_operator,
@@ -43,20 +43,19 @@ const POLL: Duration = Duration::from_millis(50);
 /// Requests running at once. Past it the gateway answers 429 instead of queueing without bound.
 const MAX_IN_FLIGHT: usize = 4;
 
-const LLM_ID: &str = "gpt2";
-/// GPT-2's `<|endoftext|>`.
-const END_OF_TEXT: u32 = 50256;
 const DEFAULT_NEW_TOKENS: u32 = 16;
 const MAX_NEW_TOKENS: u32 = 64;
 const MAX_PROMPT_TOKENS: usize = 512;
 const MAX_MESSAGES: usize = 32;
 
-/// The language model and what it needs to serve a request.
+/// A language model and what it needs to serve a request.
 struct Llm {
-    model: Gpt2,
+    id: &'static str,
+    description: &'static str,
+    model: Box<dyn LanguageModel + Send + Sync>,
     tokenizer: Tokenizer,
-    /// One generation at a time: it is CPU-bound and every thread is already used by the matmul.
-    slot: Arc<Semaphore>,
+    /// The token that ends a text (`<|endoftext|>`); generation stops at it.
+    end_of_text: u32,
 }
 
 #[derive(Clone)]
@@ -64,7 +63,10 @@ struct Gateway {
     client: MetadataClient,
     api_key: Arc<str>,
     slots: Arc<Semaphore>,
-    llm: Option<Arc<Llm>>,
+    llms: Arc<Vec<Arc<Llm>>>,
+    /// One generation at a time across all models: it is CPU-bound and every thread is already
+    /// used by the matmul.
+    llm_slot: Arc<Semaphore>,
 }
 
 /// The external error model (docs/23 §13): a stable category and a short message. The cause
@@ -120,14 +122,13 @@ async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response 
         "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
             cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
     })];
-    if gateway.llm.is_some() {
+    for llm in gateway.llms.iter() {
         data.push(json!({
-            "id": LLM_ID,
+            "id": llm.id,
             "object": "model",
             "owned_by": "ai-cluster",
             "kind": "language-model",
-            "description": "GPT-2 small (124M) no motor local do gateway; modelo base, sem \
-                template de chat. Só /v1/chat/completions.",
+            "description": llm.description,
         }));
     }
     Json(json!({ "object": "list", "data": data })).into_response()
@@ -354,7 +355,12 @@ async fn chat_completions(
             );
         }
     };
-    let Some(llm) = gateway.llm.clone().filter(|_| request.model == LLM_ID) else {
+    let Some(llm) = gateway
+        .llms
+        .iter()
+        .find(|llm| llm.id == request.model)
+        .cloned()
+    else {
         return error(
             StatusCode::NOT_FOUND,
             "MODEL_NOT_FOUND",
@@ -389,7 +395,7 @@ async fn chat_completions(
         .collect::<Vec<_>>()
         .join("\n");
     // The slot comes first so a busy gateway spends no CPU tokenizing for a request it refuses.
-    let Ok(slot) = llm.slot.clone().try_acquire_owned() else {
+    let Ok(slot) = gateway.llm_slot.clone().try_acquire_owned() else {
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,
             "CAPACITY_UNAVAILABLE",
@@ -414,7 +420,7 @@ async fn chat_completions(
         let _slot = slot;
         worker
             .model
-            .generate(&prompt, new_tokens, Some(END_OF_TEXT), &flag)
+            .generate(&prompt, new_tokens, Some(worker.end_of_text), &flag)
     });
     let generated = match tokio::time::timeout(DEADLINE, task).await {
         Ok(Ok(Ok(tokens))) => tokens,
@@ -435,7 +441,7 @@ async fn chat_completions(
             );
         }
     };
-    let stopped = generated.last() == Some(&END_OF_TEXT);
+    let stopped = generated.last() == Some(&llm.end_of_text);
     let visible = &generated[..generated.len() - usize::from(stopped)];
     let Ok(content) = llm.tokenizer.decode(visible) else {
         eprintln!("decodificação falhou para {visible:?}");
@@ -452,13 +458,13 @@ async fn chat_completions(
     (
         [
             ("x-request-id", id.clone()),
-            ("x-model-id", LLM_ID.to_string()),
+            ("x-model-id", llm.id.to_string()),
         ],
         Json(json!({
             "id": id,
             "object": "chat.completion",
             "created": created,
-            "model": LLM_ID,
+            "model": llm.id,
             "choices": [{
                 "index": 0,
                 "message": { "role": "assistant", "content": content },
@@ -510,23 +516,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let controller = std::env::var("AI_CLUSTER_CONTROLLER")
         .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string());
     let client = connect_operator(controller.clone()).await?;
-    // Optional: without a model directory the gateway serves only the synthetic model.
-    let llm = match std::env::var_os("AI_CLUSTER_GPT2_DIR") {
-        Some(dir) => {
-            let dir = std::path::PathBuf::from(dir);
-            Some(Arc::new(Llm {
-                model: Gpt2::load(&dir).map_err(|err| format!("modelo {LLM_ID}: {err}"))?,
-                tokenizer: Tokenizer::open(&dir).map_err(|err| format!("tokenizador: {err}"))?,
-                slot: Arc::new(Semaphore::new(1)),
-            }))
-        }
-        None => None,
-    };
+    // Optional: without a model directory the gateway serves only the synthetic model. Each
+    // model that is configured loads at startup, and a broken directory stops the gateway.
+    let mut llms = Vec::new();
+    if let Some(dir) = std::env::var_os("AI_CLUSTER_GPT2_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        llms.push(Arc::new(Llm {
+            id: "gpt2",
+            description: "GPT-2 small (124M) no motor local do gateway; modelo base, sem template \
+                de chat. Só /v1/chat/completions.",
+            model: Box::new(Gpt2::load(&dir).map_err(|err| format!("gpt2: {err}"))?),
+            tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
+            end_of_text: 50256,
+        }));
+    }
+    if let Some(dir) = std::env::var_os("AI_CLUSTER_SMOLLM2_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        llms.push(Arc::new(Llm {
+            id: "smollm2-135m",
+            description: "SmolLM2-135M (Llama) no motor local do gateway; modelo base, sem template \
+                de chat. Só /v1/chat/completions.",
+            model: Box::new(Llama::load(&dir).map_err(|err| format!("smollm2: {err}"))?),
+            tokenizer: Tokenizer::open(&dir)
+                .map_err(|err| format!("smollm2: tokenizador: {err}"))?,
+            end_of_text: 0,
+        }));
+    }
     let gateway = Gateway {
         client,
         api_key: api_key.into(),
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
-        llm,
+        llms: Arc::new(llms),
+        llm_slot: Arc::new(Semaphore::new(1)),
     };
     let app = Router::new()
         .route("/health", get(health))
