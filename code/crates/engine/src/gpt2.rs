@@ -8,6 +8,7 @@
 use crate::safetensors::Tensors;
 use ai_cluster_common::matrix::Matrix;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct Linear {
     /// GPT-2 stores `Conv1D` weights as `[in, out]`, so `x * w + b` needs no transpose.
@@ -157,11 +158,13 @@ impl Gpt2 {
 
     /// Greedy continuation: up to `max_new` tokens after `prompt`, stopping early (and
     /// including it) at `stop`. The prompt runs once; each new token is one cached step.
+    /// `cancel` is checked between steps: setting it ends the run with an error.
     pub fn generate(
         &self,
         prompt: &[u32],
         max_new: usize,
         stop: Option<u32>,
+        cancel: &AtomicBool,
     ) -> Result<Vec<u32>, String> {
         let mut cache = self.new_cache();
         let mut produced = Vec::new();
@@ -176,6 +179,9 @@ impl Gpt2 {
             produced.push(next);
             if Some(next) == stop || cache.len >= self.context_len() {
                 break;
+            }
+            if cancel.load(Ordering::Relaxed) {
+                return Err("geração cancelada".into());
             }
             logits = self.forward(&[next], &mut cache)?;
         }

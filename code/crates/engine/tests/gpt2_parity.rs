@@ -88,7 +88,8 @@ fn cached_generation_matches_recomputing_the_whole_prompt() {
     let model = Gpt2::load(&dir).unwrap();
     let tokenizer = Tokenizer::open(&dir).unwrap();
     let prompt = tokenizer.encode("The capital of France is").unwrap();
-    let generated = model.generate(&prompt, 6, None).unwrap();
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
+    let generated = model.generate(&prompt, 6, None, &no_cancel).unwrap();
     assert_eq!(generated.len(), 6);
 
     // Without a cache every step re-runs the growing sequence from scratch.
@@ -106,7 +107,17 @@ fn cached_generation_matches_recomputing_the_whole_prompt() {
     }
     // The tokens decode to text, and a stop token ends the run early (and is kept).
     assert!(!tokenizer.decode(&generated).unwrap().is_empty());
-    let stopped = model.generate(&prompt, 6, Some(generated[2])).unwrap();
+    let stopped = model
+        .generate(&prompt, 6, Some(generated[2]), &no_cancel)
+        .unwrap();
     assert!(stopped.len() <= 3);
     assert_eq!(stopped, generated[..stopped.len()]);
+}
+
+#[test]
+fn a_cancelled_generation_stops() {
+    let Some(dir) = model_dir() else { return };
+    let model = Gpt2::load(&dir).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    assert!(model.generate(&[15496], 4, None, &cancelled).is_err());
 }

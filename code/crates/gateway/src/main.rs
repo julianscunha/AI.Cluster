@@ -1,6 +1,8 @@
-//! Inference API gateway (Fase J1): the HTTP door the Application Plane uses (docs/23).
+//! Inference API gateway (Fase J1/J3): the HTTP door the Application Plane uses (docs/23).
 //!
-//! There is no language model behind it yet. The one "model" is `matmul-diamond-v0`: a
+//! Two models sit behind it. `gpt2` (J3, only when `AI_CLUSTER_GPT2_DIR` is set) is a real
+//! language model, run by the in-process Inference Engine for `/v1/chat/completions`; its matrix
+//! products do not go through the cluster yet. The other, `matmul-diamond-v0`, is a
 //! synthetic forward pass — the diamond matrix graph — that really runs on the cluster, and
 //! whose output is returned as an "embedding". The vector comes from a hash of the input pushed
 //! through matrix multiplications; it carries no meaning. Every response says so, so no client
@@ -11,6 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ai_cluster_engine::{gpt2::Gpt2, tokenizer::Tokenizer};
 use ai_cluster_protocol::cluster::{EnqueueGraphRequest, GetOutputRequest, GetTraceRequest};
 use ai_cluster_protocol::metadata::{
     INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV, connect_operator,
@@ -24,6 +27,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
@@ -39,11 +43,28 @@ const POLL: Duration = Duration::from_millis(50);
 /// Requests running at once. Past it the gateway answers 429 instead of queueing without bound.
 const MAX_IN_FLIGHT: usize = 4;
 
+const LLM_ID: &str = "gpt2";
+/// GPT-2's `<|endoftext|>`.
+const END_OF_TEXT: u32 = 50256;
+const DEFAULT_NEW_TOKENS: u32 = 16;
+const MAX_NEW_TOKENS: u32 = 64;
+const MAX_PROMPT_TOKENS: usize = 512;
+const MAX_MESSAGES: usize = 32;
+
+/// The language model and what it needs to serve a request.
+struct Llm {
+    model: Gpt2,
+    tokenizer: Tokenizer,
+    /// One generation at a time: it is CPU-bound and every thread is already used by the matmul.
+    slot: Arc<Semaphore>,
+}
+
 #[derive(Clone)]
 struct Gateway {
     client: MetadataClient,
     api_key: Arc<str>,
     slots: Arc<Semaphore>,
+    llm: Option<Arc<Llm>>,
 }
 
 /// The external error model (docs/23 §13): a stable category and a short message. The cause
@@ -91,18 +112,25 @@ async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response 
     if !authenticated(&headers, &gateway.api_key) {
         return unauthorized();
     }
-    Json(json!({
-        "object": "list",
-        "data": [{
-            "id": MODEL_ID,
+    let mut data = vec![json!({
+        "id": MODEL_ID,
+        "object": "model",
+        "owned_by": "ai-cluster",
+        "kind": "synthetic-matmul",
+        "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
+            cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
+    })];
+    if gateway.llm.is_some() {
+        data.push(json!({
+            "id": LLM_ID,
             "object": "model",
             "owned_by": "ai-cluster",
-            "kind": "synthetic-matmul",
-            "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
-                cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
-        }],
-    }))
-    .into_response()
+            "kind": "language-model",
+            "description": "GPT-2 small (124M) no motor local do gateway; modelo base, sem \
+                template de chat. Só /v1/chat/completions.",
+        }));
+    }
+    Json(json!({ "object": "list", "data": data })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -285,6 +313,167 @@ async fn embeddings(
     }
 }
 
+#[derive(Deserialize)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    max_tokens: Option<u32>,
+    #[serde(default)]
+    stream: bool,
+}
+
+fn invalid(message: &str) -> Response {
+    error(StatusCode::BAD_REQUEST, "INVALID_REQUEST", message)
+}
+
+/// Chat completions over the base model. GPT-2 was never trained on chat turns, so there is no
+/// template: the message contents are joined by newlines and the model continues the text. The
+/// reply is a continuation, not an answer.
+async fn chat_completions(
+    State(gateway): State<Gateway>,
+    headers: HeaderMap,
+    body: Result<Json<ChatRequest>, JsonRejection>,
+) -> Response {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    if !authenticated(&headers, &gateway.api_key) {
+        return unauthorized();
+    }
+    let request = match body {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            return error(
+                rejection.status(),
+                "INVALID_REQUEST",
+                "corpo inválido: esperado JSON com `model` e `messages` (role e content)",
+            );
+        }
+    };
+    let Some(llm) = gateway.llm.clone().filter(|_| request.model == LLM_ID) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "MODEL_NOT_FOUND",
+            "modelo desconhecido; veja GET /v1/models",
+        );
+    };
+    if request.stream {
+        return invalid("streaming ainda não é suportado");
+    }
+    let total: usize = request.messages.iter().map(|m| m.content.len()).sum();
+    if request.messages.is_empty()
+        || request.messages.len() > MAX_MESSAGES
+        || total == 0
+        || total > MAX_INPUT_BYTES
+        || request
+            .messages
+            .iter()
+            .any(|m| !matches!(m.role.as_str(), "system" | "user" | "assistant"))
+    {
+        return invalid(
+            "`messages` deve ter de 1 a 32 mensagens (role system, user ou assistant) e de 1 a 8192 bytes de texto",
+        );
+    }
+    let new_tokens = request
+        .max_tokens
+        .unwrap_or(DEFAULT_NEW_TOKENS)
+        .clamp(1, MAX_NEW_TOKENS) as usize;
+    let text = request
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The slot comes first so a busy gateway spends no CPU tokenizing for a request it refuses.
+    let Ok(slot) = llm.slot.clone().try_acquire_owned() else {
+        let mut response = error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "CAPACITY_UNAVAILABLE",
+            "capacidade esgotada; tente de novo em instantes",
+        );
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
+        return response;
+    };
+    let prompt = match llm.tokenizer.encode(&text) {
+        Ok(prompt) if !prompt.is_empty() && prompt.len() <= MAX_PROMPT_TOKENS => prompt,
+        _ => return invalid("o texto deve ter de 1 a 512 tokens"),
+    };
+    let prompt_tokens = prompt.len();
+    // The permit moves into the blocking task, so the slot frees only when the generation really
+    // ends. A timeout sets `cancel`, which stops it at the next token.
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker = llm.clone();
+    let flag = cancel.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        worker
+            .model
+            .generate(&prompt, new_tokens, Some(END_OF_TEXT), &flag)
+    });
+    let generated = match tokio::time::timeout(DEADLINE, task).await {
+        Ok(Ok(Ok(tokens))) => tokens,
+        Err(_) => {
+            cancel.store(true, Ordering::Relaxed);
+            return error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "TIMEOUT",
+                "a geração não terminou a tempo",
+            );
+        }
+        Ok(failed) => {
+            eprintln!("geração falhou: {failed:?}");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MODEL_UNAVAILABLE",
+                "a geração falhou",
+            );
+        }
+    };
+    let stopped = generated.last() == Some(&END_OF_TEXT);
+    let visible = &generated[..generated.len() - usize::from(stopped)];
+    let Ok(content) = llm.tokenizer.decode(visible) else {
+        eprintln!("decodificação falhou para {visible:?}");
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "MODEL_UNAVAILABLE",
+            "a geração falhou",
+        );
+    };
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let id = format!("chatcmpl-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    (
+        [
+            ("x-request-id", id.clone()),
+            ("x-model-id", LLM_ID.to_string()),
+        ],
+        Json(json!({
+            "id": id,
+            "object": "chat.completion",
+            "created": created,
+            "model": LLM_ID,
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": content },
+                "finish_reason": if stopped { "stop" } else { "length" },
+            }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": visible.len(),
+                "total_tokens": prompt_tokens + visible.len(),
+            },
+        })),
+    )
+        .into_response()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key = std::env::var("AI_CLUSTER_API_KEY")
@@ -321,15 +510,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let controller = std::env::var("AI_CLUSTER_CONTROLLER")
         .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string());
     let client = connect_operator(controller.clone()).await?;
+    // Optional: without a model directory the gateway serves only the synthetic model.
+    let llm = match std::env::var_os("AI_CLUSTER_GPT2_DIR") {
+        Some(dir) => {
+            let dir = std::path::PathBuf::from(dir);
+            Some(Arc::new(Llm {
+                model: Gpt2::load(&dir).map_err(|err| format!("modelo {LLM_ID}: {err}"))?,
+                tokenizer: Tokenizer::open(&dir).map_err(|err| format!("tokenizador: {err}"))?,
+                slot: Arc::new(Semaphore::new(1)),
+            }))
+        }
+        None => None,
+    };
     let gateway = Gateway {
         client,
         api_key: api_key.into(),
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
+        llm,
     };
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/embeddings", post(embeddings))
+        .route("/v1/chat/completions", post(chat_completions))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(gateway);
     println!("gateway em http://{addr} (modelo {MODEL_ID}, controller {controller})");

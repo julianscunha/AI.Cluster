@@ -55,6 +55,7 @@ dependencies = [
 name = "ai-cluster-gateway"
 version = "0.1.0"
 dependencies = [
+ "ai-cluster-engine",
  "ai-cluster-protocol",
  "axum",
  "serde",

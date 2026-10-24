@@ -29,7 +29,7 @@ Legenda: `[x]` implementado e validado · `[~]` parcial · `[ ]` não iniciado.
 - SSD/NVMe aproveitados para cache/swap conforme política. `[ ]`
 - Telemetria detalhada e TUI via shell. `[~]` — telemetria de eventos pronta; TUI não iniciada.
 - Performance Model expected vs actual. `[ ]`
-- Application Plane desacoplado via Inference API; acesso direto ao Data Plane não é permitido. `[~]` — gateway HTTP com chave de API, `/v1/models` e `/v1/embeddings` sobre um modelo **sintético** (grafo de matmul); sem LLM, sem chat, streaming nem cancelamento (`implementation/inference-api.md`).
+- Application Plane desacoplado via Inference API; acesso direto ao Data Plane não é permitido. `[~]` — gateway HTTP com chave de API, `/v1/models` e `/v1/embeddings` sobre um modelo **sintético** (grafo de matmul); `/v1/chat/completions` sobre o GPT-2 small rodando no próprio gateway (fora do cluster), sem template de chat, streaming nem cancelamento (`implementation/inference-api.md`).
 - Request Manager separado do Scheduler para admissão, fila, quotas e orçamento. `[ ]`
 - Inference Engine separado do Planner/Scheduler para execução matemática do modelo. `[~]` — forward do GPT-2 small em CPU (`crates/engine`) com paridade contra `transformers`; geração gulosa com KV cache, local, ainda fora dos workers (`implementation/inference-engine.md`).
 

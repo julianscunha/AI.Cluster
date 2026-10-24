@@ -55,3 +55,22 @@ prioridades, cotas e contagem de tokens, ACL de modelo e multi-tenant.
 - **Resultado por `request_id`:** o `GetOutput` é do operador; o gateway só devolve ao cliente o
   resultado do pedido que ele mesmo criou.
 - **Sem TLS na perna HTTP**, a chave trafega em claro fora de loopback.
+
+## J3: `/v1/chat/completions` sobre o GPT-2
+
+Com `AI_CLUSTER_GPT2_DIR` apontando para os arquivos do GPT-2 small (veja `inference-engine.md`),
+o gateway carrega o modelo na subida (falha fechada se o diretório estiver incompleto) e passa a
+listar `gpt2` em `/v1/models` e a aceitar `POST /v1/chat/completions` (mesma chave de API).
+
+- Formato OpenAI: `model`, `messages` (`system`/`user`/`assistant`), `max_tokens` (padrão 16, teto
+  64); resposta com `choices[0].message`, `finish_reason` (`stop` no fim de texto, `length`) e
+  `usage`. `stream: true` responde 400.
+- O GPT-2 é um modelo base, sem template de chat: os conteúdos das mensagens são unidos por
+  quebra de linha e o modelo **continua o texto**. A resposta é uma continuação, não uma resposta.
+- Geração gulosa e determinística. Uma geração por vez (429 com `Retry-After` se ocupado); prompt de
+  até 512 tokens e 8 KiB; prazo de 30 s (504). Estourar o prazo sinaliza o cancelamento, que vale
+  no próximo token; o slot só libera quando a geração termina. `max_tokens` fora de 1–64 é
+  ajustado, não rejeitado; `temperature`, `n` e `stop` são ignorados (sempre gulosa, uma escolha).
+  `completion_tokens` não conta o token de fim de texto.
+- O modelo roda **dentro do gateway** (cerca de 1,6 GB de RAM); os produtos de matriz não passam
+  pelo cluster. O E2E é `tests/phase-j-chat.sh` e exige os pesos em `code/models/gpt2`.
