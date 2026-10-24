@@ -4,7 +4,7 @@
 //! `AI_CLUSTER_SMOLLM2_DIR` apontando para o diretório com `model.safetensors`, `vocab.json`,
 //! `merges.txt`, `tokenizer.json` e `config.json`, os testes avisam e passam sem verificar nada.
 
-use ai_cluster_engine::{LanguageModel, llama::Llama, tokenizer::Tokenizer};
+use ai_cluster_engine::{LanguageModel, LocalExecutor, llama::Llama, tokenizer::Tokenizer};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
@@ -104,4 +104,29 @@ fn cached_generation_matches_recomputing_the_whole_prompt() {
         assert_eq!(best as u32, *expected);
         context.push(best as u32);
     }
+}
+
+#[test]
+fn sharded_projections_match_the_local_forward() {
+    let Some(dir) = model_dir() else { return };
+    let tokenizer = Tokenizer::open(&dir).unwrap();
+    let prompt = tokenizer.encode("The capital of France is").unwrap();
+    let local = Llama::load(&dir).unwrap();
+    let expected = local.next_token_logits(&prompt).unwrap();
+
+    // The same model with every projection cut across three nodes and read back from the files.
+    let root = dir.parent().unwrap().to_path_buf();
+    let subdir = dir.file_name().unwrap().to_str().unwrap();
+    let executor = std::sync::Arc::new(LocalExecutor::new(root, subdir, 4));
+    let nodes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let sharded = Llama::load_remote(&dir, executor, nodes).unwrap();
+    let logits = sharded.next_token_logits(&prompt).unwrap();
+    assert_eq!(logits, expected, "fatiar não pode mudar nenhum logit");
+
+    // And with the KV cache, one token at a time.
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        sharded.generate(&prompt, 3, None, &cancel).unwrap(),
+        local.generate(&prompt, 3, None, &cancel).unwrap()
+    );
 }

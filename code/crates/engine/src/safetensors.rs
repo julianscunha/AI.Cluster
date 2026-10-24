@@ -37,56 +37,7 @@ impl Tensors {
             .checked_add(header_len)
             .filter(|end| *end <= bytes.len())
             .ok_or("tamanho de cabeçalho inválido")?;
-        let header: serde_json::Value =
-            serde_json::from_slice(&bytes[8..base]).map_err(|err| format!("cabeçalho: {err}"))?;
-        let header = header.as_object().ok_or("cabeçalho não é um objeto")?;
-        let data_len = bytes.len() - base;
-
-        let mut index = HashMap::new();
-        for (name, meta) in header {
-            if name == "__metadata__" {
-                continue;
-            }
-            let dtype = meta["dtype"].as_str().unwrap_or_default();
-            if dtype != "F32" && dtype != "BF16" {
-                return Err(format!(
-                    "{name}: dtype {dtype} não suportado (só F32 e BF16)"
-                ));
-            }
-            let bf16 = dtype == "BF16";
-            let shape: Vec<usize> = meta["shape"]
-                .as_array()
-                .ok_or_else(|| format!("{name}: sem shape"))?
-                .iter()
-                .map(|dim| dim.as_u64().map(|d| d as usize))
-                .collect::<Option<_>>()
-                .ok_or_else(|| format!("{name}: shape inválido"))?;
-            let offsets = meta["data_offsets"].as_array().map(Vec::as_slice);
-            let (Some(start), Some(end)) = (
-                offsets.and_then(|o| o.first()).and_then(|v| v.as_u64()),
-                offsets.and_then(|o| o.get(1)).and_then(|v| v.as_u64()),
-            ) else {
-                return Err(format!("{name}: data_offsets inválido"));
-            };
-            let (start, end) = (start as usize, end as usize);
-            let elements = shape.iter().try_fold(1usize, |a, d| a.checked_mul(*d));
-            if start > end
-                || end > data_len
-                || elements.and_then(|n| n.checked_mul(if bf16 { 2 } else { 4 }))
-                    != Some(end - start)
-            {
-                return Err(format!("{name}: intervalo de dados incoerente com o shape"));
-            }
-            index.insert(
-                name.clone(),
-                Entry {
-                    bf16,
-                    shape,
-                    start,
-                    end,
-                },
-            );
-        }
+        let index = parse_header(&bytes[8..base], bytes.len() - base)?;
         Ok(Self { bytes, base, index })
     }
 
@@ -100,20 +51,7 @@ impl Tensors {
             .get(name)
             .ok_or_else(|| format!("tensor ausente: {name}"))?;
         let raw = &self.bytes[self.base + entry.start..self.base + entry.end];
-        let values = if entry.bf16 {
-            raw.as_chunks::<2>()
-                .0
-                .iter()
-                .map(|b| f32::from_bits(u32::from(u16::from_le_bytes(*b)) << 16) as f64)
-                .collect()
-        } else {
-            raw.as_chunks::<4>()
-                .0
-                .iter()
-                .map(|b| f32::from_le_bytes(*b) as f64)
-                .collect()
-        };
-        Ok((entry, values))
+        Ok((entry, decode(raw, entry.bf16)))
     }
 
     /// A 2-D tensor as a row-major matrix.
@@ -147,6 +85,137 @@ impl Tensors {
     }
 }
 
+/// The tensor index of a safetensors header, with every byte range checked against the shape and
+/// against the `data_len` bytes that follow the header.
+fn parse_header(header: &[u8], data_len: usize) -> Result<HashMap<String, Entry>, String> {
+    let header: serde_json::Value =
+        serde_json::from_slice(header).map_err(|err| format!("cabeçalho: {err}"))?;
+    let header = header.as_object().ok_or("cabeçalho não é um objeto")?;
+    let mut index = HashMap::new();
+    for (name, meta) in header {
+        if name == "__metadata__" {
+            continue;
+        }
+        let dtype = meta["dtype"].as_str().unwrap_or_default();
+        if dtype != "F32" && dtype != "BF16" {
+            return Err(format!(
+                "{name}: dtype {dtype} não suportado (só F32 e BF16)"
+            ));
+        }
+        let bf16 = dtype == "BF16";
+        let shape: Vec<usize> = meta["shape"]
+            .as_array()
+            .ok_or_else(|| format!("{name}: sem shape"))?
+            .iter()
+            .map(|dim| dim.as_u64().map(|d| d as usize))
+            .collect::<Option<_>>()
+            .ok_or_else(|| format!("{name}: shape inválido"))?;
+        let offsets = meta["data_offsets"].as_array().map(Vec::as_slice);
+        let (Some(start), Some(end)) = (
+            offsets.and_then(|o| o.first()).and_then(|v| v.as_u64()),
+            offsets.and_then(|o| o.get(1)).and_then(|v| v.as_u64()),
+        ) else {
+            return Err(format!("{name}: data_offsets inválido"));
+        };
+        let (start, end) = (start as usize, end as usize);
+        let elements = shape.iter().try_fold(1usize, |a, d| a.checked_mul(*d));
+        if start > end
+            || end > data_len
+            || elements.and_then(|n| n.checked_mul(if bf16 { 2 } else { 4 })) != Some(end - start)
+        {
+            return Err(format!("{name}: intervalo de dados incoerente com o shape"));
+        }
+        index.insert(
+            name.clone(),
+            Entry {
+                bf16,
+                shape,
+                start,
+                end,
+            },
+        );
+    }
+    Ok(index)
+}
+
+fn decode(raw: &[u8], bf16: bool) -> Vec<f64> {
+    if bf16 {
+        raw.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| f32::from_bits(u32::from(u16::from_le_bytes(*b)) << 16) as f64)
+            .collect()
+    } else {
+        raw.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b) as f64)
+            .collect()
+    }
+}
+
+/// Largest header `read_rows` accepts; real ones are a few hundred KB.
+const MAX_HEADER_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Rows `row_start..row_end` of a 2-D tensor, read straight from the file: the header and those
+/// rows' bytes only, never the rest of the (possibly huge) file. `max_bytes` bounds the widened
+/// f64 result, checked before anything is allocated.
+pub fn read_rows(
+    path: &Path,
+    name: &str,
+    row_start: usize,
+    row_end: usize,
+    max_bytes: usize,
+) -> Result<Matrix, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let context = |err: std::io::Error| format!("{}: {err}", path.display());
+    let mut file = std::fs::File::open(path).map_err(context)?;
+    let file_len = file.metadata().map_err(context)?.len();
+    let mut prefix = [0u8; 8];
+    file.read_exact(&mut prefix).map_err(context)?;
+    let header_len = u64::from_le_bytes(prefix);
+    if header_len > MAX_HEADER_BYTES || header_len + 8 > file_len {
+        return Err("tamanho de cabeçalho inválido".into());
+    }
+    let mut header = vec![0u8; header_len as usize];
+    file.read_exact(&mut header).map_err(context)?;
+    let base = 8 + header_len;
+    let index = parse_header(&header, (file_len - base) as usize)?;
+    let entry = index
+        .get(name)
+        .ok_or_else(|| format!("tensor ausente: {name}"))?;
+    let [rows, cols] = entry.shape[..] else {
+        return Err(format!(
+            "{name}: esperava 2 dimensões, tem {}",
+            entry.shape.len()
+        ));
+    };
+    if row_start >= row_end || row_end > rows {
+        return Err(format!(
+            "{name}: linhas {row_start}..{row_end} fora de 0..{rows}"
+        ));
+    }
+    let count = row_end - row_start;
+    let element = if entry.bf16 { 2 } else { 4 };
+    // Checked against the f64 size the caller will hold, which is the larger of the two.
+    if count
+        .checked_mul(cols)
+        .and_then(|n| n.checked_mul(8))
+        .is_none_or(|n| n > max_bytes)
+    {
+        return Err(format!("{name}: fatia acima de {max_bytes} bytes"));
+    }
+    let offset = base + (entry.start + row_start * cols * element) as u64;
+    file.seek(SeekFrom::Start(offset)).map_err(context)?;
+    let mut raw = vec![0u8; count * cols * element];
+    file.read_exact(&mut raw).map_err(context)?;
+    Ok(Matrix {
+        rows: u32::try_from(count).map_err(|e| e.to_string())?,
+        cols: u32::try_from(cols).map_err(|e| e.to_string())?,
+        data: decode(&raw, entry.bf16),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +239,27 @@ mod tests {
         assert_eq!(tensors.shape("w"), Some(&[2usize, 2][..]));
         assert!(tensors.matrix("b").is_err(), "um vetor não é uma matriz");
         assert!(tensors.vector("ghost").is_err());
+    }
+
+    #[test]
+    fn read_rows_reads_only_the_requested_rows() {
+        let header = r#"{"w":{"dtype":"F32","shape":[3,2],"data_offsets":[0,24]}}"#;
+        let path =
+            std::env::temp_dir().join(format!("aic-rows-{}.safetensors", std::process::id()));
+        std::fs::write(&path, file(header, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])).unwrap();
+        let mid = read_rows(&path, "w", 1, 3, 1024).unwrap();
+        assert_eq!(
+            (mid.rows, mid.cols, mid.data),
+            (2, 2, vec![3.0, 4.0, 5.0, 6.0])
+        );
+        assert!(read_rows(&path, "w", 2, 2, 1024).is_err(), "fatia vazia");
+        assert!(
+            read_rows(&path, "w", 0, 4, 1024).is_err(),
+            "além das linhas"
+        );
+        assert!(read_rows(&path, "w", 0, 3, 16).is_err(), "acima do teto");
+        assert!(read_rows(&path, "ghost", 0, 1, 1024).is_err());
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

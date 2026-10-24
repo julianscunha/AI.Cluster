@@ -7,7 +7,9 @@ pub mod gpt2;
 pub mod llama;
 pub mod model;
 pub mod safetensors;
+pub mod shard;
 pub mod tokenizer;
 
 pub use cache::KvCache;
 pub use model::LanguageModel;
+pub use shard::{Executor, LocalExecutor, ShardStore, Slice};

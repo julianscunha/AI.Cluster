@@ -1,27 +1,40 @@
 //! Llama-family forward pass on CPU (SmolLM2): RMSNorm, rotary embeddings, grouped-query
 //! attention, SwiGLU MLP, tied output embedding. Same conventions as `gpt2`: weights as f64
 //! `Matrix`, every dense layer through `Matrix::multiply_with_threads`.
+//!
+//! The seven projections of a layer can instead live on other nodes (`Llama::load_remote`): each
+//! is cut by output rows into slices and run through an [`Executor`]. Embeddings, norms and the
+//! output projection stay local.
 
 use crate::cache::KvCache;
 use crate::gpt2::{add_in_place, project_rows, softmax};
 use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
+use crate::shard::{Executor, Slice, transposed};
 use ai_cluster_common::matrix::Matrix;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Largest context a config may declare; the KV cache grows with it.
 const MAX_CONTEXT: usize = 131_072;
 
+/// A projection: held here as `[in, out]`, or cut into slices that live on other nodes.
+enum Weight {
+    Local(Matrix),
+    /// Slices in output order; their outputs concatenate by columns.
+    Remote(Vec<Slice>),
+}
+
 struct Block {
     attn_norm: Vec<f64>,
-    q: Matrix,
-    k: Matrix,
-    v: Matrix,
-    o: Matrix,
+    q: Weight,
+    k: Weight,
+    v: Weight,
+    o: Weight,
     mlp_norm: Vec<f64>,
-    gate: Matrix,
-    up: Matrix,
-    down: Matrix,
+    gate: Weight,
+    up: Weight,
+    down: Weight,
 }
 
 pub struct Llama {
@@ -37,26 +50,32 @@ pub struct Llama {
     context: usize,
     blocks: Vec<Block>,
     norm: Vec<f64>,
-}
-
-/// Llama stores `Linear` weights as `[out, in]`; `x * w` needs `[in, out]`.
-fn transposed(m: &Matrix) -> Matrix {
-    let (rows, cols) = (m.rows as usize, m.cols as usize);
-    let mut data = vec![0.0; m.data.len()];
-    for r in 0..rows {
-        for c in 0..cols {
-            data[c * rows + r] = m.data[r * cols + c];
-        }
-    }
-    Matrix {
-        rows: m.cols,
-        cols: m.rows,
-        data,
-    }
+    executor: Option<Arc<dyn Executor>>,
 }
 
 impl Llama {
+    /// All weights in this process.
     pub fn load(dir: &Path) -> Result<Self, String> {
+        Self::load_with(dir, None)
+    }
+
+    /// Projections cut across `nodes` (at least one) and run through `executor`; `dir` is read
+    /// only for the config, the shapes and the small local tensors.
+    pub fn load_remote(
+        dir: &Path,
+        executor: Arc<dyn Executor>,
+        nodes: Vec<String>,
+    ) -> Result<Self, String> {
+        if nodes.is_empty() {
+            return Err("sem nós para as fatias".into());
+        }
+        Self::load_with(dir, Some((executor, nodes)))
+    }
+
+    fn load_with(
+        dir: &Path,
+        remote: Option<(Arc<dyn Executor>, Vec<String>)>,
+    ) -> Result<Self, String> {
         let config: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.join("config.json"))
                 .map_err(|e| format!("config.json: {e}"))?,
@@ -74,18 +93,6 @@ impl Llama {
         let context = int("max_position_embeddings")?;
         let eps = config["rms_norm_eps"].as_f64().unwrap_or(1e-5);
         let theta = config["rope_theta"].as_f64().unwrap_or(10_000.0);
-        // Variants this slice does not implement fail loudly instead of computing the wrong thing.
-        if config["hidden_act"].as_str() != Some("silu")
-            || !config["rope_scaling"].is_null()
-            || config["attention_bias"].as_bool().unwrap_or(false)
-            || config["mlp_bias"].as_bool().unwrap_or(false)
-            || !config["tie_word_embeddings"].as_bool().unwrap_or(false)
-        {
-            return Err(
-                "só silu, sem rope_scaling, sem bias e com embeddings amarrados são suportados"
-                    .into(),
-            );
-        }
         if width == 0
             || layers == 0
             || inner == 0
@@ -101,6 +108,18 @@ impl Llama {
         {
             return Err("config.json com valores fora do suportado".into());
         }
+        // Variants this slice does not implement fail loudly instead of computing the wrong thing.
+        if config["hidden_act"].as_str() != Some("silu")
+            || !config["rope_scaling"].is_null()
+            || config["attention_bias"].as_bool().unwrap_or(false)
+            || config["mlp_bias"].as_bool().unwrap_or(false)
+            || !config["tie_word_embeddings"].as_bool().unwrap_or(false)
+        {
+            return Err(
+                "só silu, sem rope_scaling, sem bias e com embeddings amarrados são suportados"
+                    .into(),
+            );
+        }
         if heads == 0
             || kv_heads == 0
             || !width.is_multiple_of(heads)
@@ -112,15 +131,34 @@ impl Llama {
         let head_dim = width / heads;
 
         let tensors = Tensors::open(&dir.join("model.safetensors"))?;
-        let weight = |name: String, rows: usize, cols: usize| -> Result<Matrix, String> {
-            let m = tensors.matrix(&name)?;
-            if (m.rows as usize, m.cols as usize) != (rows, cols) {
-                return Err(format!(
-                    "{name}: forma {}x{}, esperava {rows}x{cols}",
-                    m.rows, m.cols
-                ));
+        let (executor, nodes) = match remote {
+            Some((executor, nodes)) => (Some(executor), nodes),
+            None => (None, Vec::new()),
+        };
+        let weight = |name: String, rows: usize, cols: usize| -> Result<Weight, String> {
+            if tensors.shape(&name) != Some(&[rows, cols][..]) {
+                return Err(format!("{name}: forma diferente de {rows}x{cols}"));
             }
-            Ok(transposed(&m))
+            if nodes.is_empty() {
+                return Ok(Weight::Local(transposed(&tensors.matrix(&name)?)));
+            }
+            if rows < nodes.len() {
+                return Err(format!("{name}: {rows} linhas para {} nós", nodes.len()));
+            }
+            // Equal bands of output rows, one per node, in node order.
+            let bounds = |i: usize| (i * rows / nodes.len()) as u32;
+            Ok(Weight::Remote(
+                nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, node)| Slice {
+                        node: node.clone(),
+                        tensor: name.clone(),
+                        row_start: bounds(i),
+                        row_end: bounds(i + 1),
+                    })
+                    .collect(),
+            ))
         };
         let vector = |name: String, len: usize| -> Result<Vec<f64>, String> {
             let v = tensors.vector(&name)?;
@@ -164,12 +202,46 @@ impl Llama {
             context,
             blocks,
             norm: vector("model.norm.weight".into(), width)?,
+            executor,
         })
     }
 
-    fn matmul(&self, x: &Matrix, w: &Matrix) -> Matrix {
-        x.multiply_with_threads(w, self.threads)
-            .expect("shapes checked at load")
+    /// `x * w` for each weight, in order. Every remote weight goes out in one executor call, so
+    /// projections that share an input (q, k, v; gate, up) cost one round trip.
+    fn linear(&self, x: &Matrix, weights: &[&Weight]) -> Result<Vec<Matrix>, String> {
+        let slices: Vec<Slice> = weights
+            .iter()
+            .filter_map(|w| match w {
+                Weight::Remote(parts) => Some(parts.iter().cloned()),
+                Weight::Local(_) => None,
+            })
+            .flatten()
+            .collect();
+        let mut remote = if slices.is_empty() {
+            Vec::new().into_iter()
+        } else {
+            let executor = self
+                .executor
+                .as_ref()
+                .ok_or("fatias remotas sem executor")?;
+            let outputs = executor.matmul(x, &slices)?;
+            if outputs.len() != slices.len() {
+                return Err("o executor devolveu um número errado de saídas".into());
+            }
+            outputs.into_iter()
+        };
+        weights
+            .iter()
+            .map(|weight| match weight {
+                Weight::Local(w) => x
+                    .multiply_with_threads(w, self.threads)
+                    .ok_or_else(|| "formas incompatíveis na multiplicação".to_string()),
+                Weight::Remote(parts) => {
+                    let pieces: Vec<Matrix> = remote.by_ref().take(parts.len()).collect();
+                    join_columns(&pieces, x.rows, parts)
+                }
+            })
+            .collect()
     }
 
     /// Rotates each `head_dim`-wide head of every row by its position (the "rotate half"
@@ -197,12 +269,13 @@ impl Llama {
         input: &Matrix,
         cache: &mut KvCache,
         layer: usize,
-    ) -> Matrix {
+    ) -> Result<Matrix, String> {
         let tokens = input.rows as usize;
         let past = cache.len;
-        let mut q = self.matmul(input, &block.q);
-        let mut k = self.matmul(input, &block.k);
-        let v = self.matmul(input, &block.v);
+        let [mut q, mut k, v]: [Matrix; 3] = self
+            .linear(input, &[&block.q, &block.k, &block.v])?
+            .try_into()
+            .map_err(|_| "saídas de q, k e v")?;
         self.rope(&mut q, past);
         self.rope(&mut k, past);
         cache.keys[layer].extend_from_slice(&k.data);
@@ -234,8 +307,35 @@ impl Llama {
                 }
             }
         }
-        self.matmul(&mixed, &block.o)
+        let mut out = self.linear(&mixed, &[&block.o])?;
+        out.pop().ok_or_else(|| "saída de o".to_string())
     }
+}
+
+/// Concatenates the per-slice outputs of one projection side by side.
+fn join_columns(pieces: &[Matrix], rows: u32, parts: &[Slice]) -> Result<Matrix, String> {
+    if pieces.len() != parts.len() {
+        return Err("faltam saídas de fatias".into());
+    }
+    let mut width = 0u32;
+    for (piece, part) in pieces.iter().zip(parts) {
+        if piece.rows != rows || piece.cols != part.row_end - part.row_start {
+            return Err(format!("{}: saída com forma inesperada", part.tensor));
+        }
+        width += piece.cols;
+    }
+    let mut data = Vec::with_capacity(rows as usize * width as usize);
+    for r in 0..rows as usize {
+        for piece in pieces {
+            let w = piece.cols as usize;
+            data.extend_from_slice(&piece.data[r * w..(r + 1) * w]);
+        }
+    }
+    Ok(Matrix {
+        rows,
+        cols: width,
+        data,
+    })
 }
 
 fn rms_norm(x: &Matrix, gain: &[f64], eps: f64) -> Matrix {
@@ -295,16 +395,22 @@ impl LanguageModel for Llama {
 
         for (layer, block) in self.blocks.iter().enumerate() {
             let normed = rms_norm(&x, &block.attn_norm, self.eps);
-            let attended = self.attention(block, &normed, cache, layer);
+            let attended = self.attention(block, &normed, cache, layer)?;
             add_in_place(&mut x, &attended);
 
             let normed = rms_norm(&x, &block.mlp_norm, self.eps);
-            let mut hidden = self.matmul(&normed, &block.gate);
-            let up = self.matmul(&normed, &block.up);
+            let [mut hidden, up]: [Matrix; 2] = self
+                .linear(&normed, &[&block.gate, &block.up])?
+                .try_into()
+                .map_err(|_| "saídas de gate e up")?;
             for (g, u) in hidden.data.iter_mut().zip(&up.data) {
                 *g = silu(*g) * u;
             }
-            add_in_place(&mut x, &self.matmul(&hidden, &block.down));
+            let down = self
+                .linear(&hidden, &[&block.down])?
+                .pop()
+                .ok_or("saída de down")?;
+            add_in_place(&mut x, &down);
         }
         cache.len = past + tokens.len();
 
@@ -333,6 +439,7 @@ mod tests {
             context: 0,
             blocks: Vec::new(),
             norm: Vec::new(),
+            executor: None,
         }
     }
 
@@ -395,5 +502,31 @@ mod tests {
         let t = transposed(&m);
         assert_eq!((t.rows, t.cols), (3, 2));
         assert_eq!(t.data, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn slice_outputs_join_side_by_side_in_slice_order() {
+        let part = |end: u32| Slice {
+            node: "n".into(),
+            tensor: "t".into(),
+            row_start: 0,
+            row_end: end,
+        };
+        let a = Matrix {
+            rows: 2,
+            cols: 1,
+            data: vec![1.0, 2.0],
+        };
+        let b = Matrix {
+            rows: 2,
+            cols: 2,
+            data: vec![10.0, 11.0, 20.0, 21.0],
+        };
+        let joined = join_columns(&[a.clone(), b.clone()], 2, &[part(1), part(2)]).unwrap();
+        assert_eq!((joined.rows, joined.cols), (2, 3));
+        assert_eq!(joined.data, vec![1.0, 10.0, 11.0, 2.0, 20.0, 21.0]);
+        // A piece with the wrong shape, or a missing one, is an error.
+        assert!(join_columns(&[a.clone(), b.clone()], 2, &[part(2), part(2)]).is_err());
+        assert!(join_columns(&[a], 2, &[part(1), part(2)]).is_err());
     }
 }
