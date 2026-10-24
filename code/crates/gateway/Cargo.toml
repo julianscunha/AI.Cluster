@@ -1,0 +1,19 @@
+[package]
+name = "ai-cluster-gateway"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+ai-cluster-protocol = { path = "../protocol" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tonic = "0.14"
+# axum is already in the tree through the controller's exporter; "json" brings serde_json so the
+# request body is parsed by a real parser instead of by hand.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "ai-cluster-gateway"
+path = "src/main.rs"

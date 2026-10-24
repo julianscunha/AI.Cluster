@@ -8,4 +8,5 @@ members = [
   "crates/transport",
   "crates/benchmark",
   "crates/cli",
+  "crates/gateway",
 ]

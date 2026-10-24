@@ -54,8 +54,29 @@ struct Dispatched {
     unit: WorkUnit,
 }
 
+/// How many kept results the store holds (J1). A result is read once, right after its request
+/// ends, so a short window is enough and bounds the memory a client can pin.
+const MAX_KEPT_RESULTS: usize = 64;
+
+/// The output of a request's final unit, held for `GetOutput` after the intermediate-output
+/// sweep would have dropped it.
+#[derive(Debug)]
+struct KeptResult {
+    request_id: String,
+    rows: u32,
+    cols: u32,
+    data: Vec<f64>,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
+    /// Work ids whose output a client asked to keep (J1). Not persisted: a restart loses the
+    /// result, and the client sees `found: false`.
+    ///
+    /// ponytail: an id whose unit fails stays here; a few bytes per failed request. Prune on
+    /// failure if gateways ever churn through many failing requests.
+    keep: HashSet<String>,
+    results: VecDeque<KeptResult>,
     queue: VecDeque<WorkUnit>,
     dispatched: HashMap<String, Dispatched>,
     completed: Vec<CompletedWork>,
@@ -214,6 +235,8 @@ fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
             continue;
         }
         inner.attempts.remove(&id);
+        // A failed unit will never complete, so a kept result for it would wait forever (J1).
+        inner.keep.remove(&id);
         failed += 1;
         let mut survivors = VecDeque::with_capacity(inner.queue.len());
         for unit in inner.queue.drain(..) {
@@ -720,6 +743,17 @@ impl WorkStore {
             checksum: result.checksum,
         };
         inner.completed.push(completed.clone());
+        if inner.keep.remove(&result.work_id) {
+            if inner.results.len() == MAX_KEPT_RESULTS {
+                inner.results.pop_front();
+            }
+            inner.results.push_back(KeptResult {
+                request_id: completed.request_id.clone(),
+                rows: result.rows,
+                cols: result.cols,
+                data: result.matrix_c.clone(),
+            });
+        }
         // Recorded so units that depend on this one become claimable, and so a
         // dependent unit can read this unit's output as its own input.
         inner
@@ -729,6 +763,21 @@ impl WorkStore {
         inner.attempts.remove(&result.work_id);
         self.save_locked(&mut inner);
         Some(completed)
+    }
+
+    /// Asks the store to keep the output of `work_id` for `kept_output` (J1).
+    pub fn keep_output(&self, work_id: &str) {
+        self.lock().keep.insert(work_id.to_string());
+    }
+
+    /// The kept output of a request as `(rows, cols, data)`, if it finished and is still held.
+    pub fn kept_output(&self, request_id: &str) -> Option<(u32, u32, Vec<f64>)> {
+        self.lock()
+            .results
+            .iter()
+            .rev()
+            .find(|kept| kept.request_id == request_id)
+            .map(|kept| (kept.rows, kept.cols, kept.data.clone()))
     }
 
     pub fn completed(&self) -> Vec<CompletedWork> {
@@ -934,6 +983,41 @@ mod tests {
             checksum: 134.0,
             compute_time_us,
         }
+    }
+
+    #[test]
+    fn a_kept_output_outlives_the_sweep_and_the_window_is_bounded() {
+        let store = WorkStore::new();
+        store.keep_output("w1");
+        store.enqueue([unit("w1"), unit("w2")]);
+        store.claim("node-a", &capability(8, 0.0), 1_000).unwrap();
+        store.claim("node-a", &capability(8, 0.0), 1_000).unwrap();
+        store.complete(result("w1", 10), 2_000).unwrap();
+        store.complete(result("w2", 10), 2_000).unwrap();
+
+        // w2 was not kept, w1 was: nothing references either output, yet w1's survives.
+        assert_eq!(store.outputs_held(), 0);
+        let (rows, cols, data) = store.kept_output("req-test").expect("w1 was kept");
+        assert_eq!((rows, cols), (2, 2));
+        assert_eq!(data, vec![19.0, 22.0, 43.0, 50.0]);
+        assert!(store.kept_output("req-other").is_none());
+
+        // Only the newest MAX_KEPT_RESULTS are held.
+        for n in 0..MAX_KEPT_RESULTS + 1 {
+            let mut one = unit(&format!("k{n}"));
+            one.request_id = format!("req-k{n}");
+            store.keep_output(&one.work_id);
+            store.enqueue([one]);
+            store.claim("node-a", &capability(8, 0.0), 1_000).unwrap();
+            store.complete(result(&format!("k{n}"), 10), 2_000).unwrap();
+        }
+        assert!(store.kept_output("req-test").is_none());
+        assert!(store.kept_output("req-k0").is_none());
+        assert!(
+            store
+                .kept_output(&format!("req-k{MAX_KEPT_RESULTS}"))
+                .is_some()
+        );
     }
 
     #[test]

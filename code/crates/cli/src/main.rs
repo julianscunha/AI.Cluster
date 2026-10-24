@@ -189,6 +189,7 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
             size,
             seed: 42,
             request_id: String::new(),
+            keep_result: false,
         })
         .await?
         .into_inner();

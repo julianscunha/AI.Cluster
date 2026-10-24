@@ -5,13 +5,14 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, ApproveNodeResponse, EnqueueGraphRequest, EnqueueGraphResponse,
-    EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetTraceRequest, GetTraceResponse,
-    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
-    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
-    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
-    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
+    EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetOutputRequest,
+    GetOutputResponse, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
+    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
+    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse,
+    ListReservationsRequest, ListReservationsResponse, MetricsResponse, ProbeLinkRequest,
+    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
+    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
+    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
     SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
     WorkReportResponse, WorkUnit,
 };
@@ -21,6 +22,9 @@ use tonic::{Request, Response, Status};
 /// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
 /// buffered: the real probe sends 2 MiB, and the 64 MiB data limit is sized for work units.
 pub const MAX_PROBE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Queued plus in-flight units past which `EnqueueGraph` refuses new graphs (J1).
+const MAX_QUEUED_UNITS: usize = 256;
 
 use crate::events::EventLog;
 use crate::metrics;
@@ -465,6 +469,14 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<EnqueueGraphResponse>, Status> {
         require_operator(&request)?;
         let request = request.into_inner();
+        // Without cancellation, graphs nobody waits for any more pile up in the queue (a gateway
+        // request that timed out leaves its graph behind). A ceiling turns that into an error
+        // the caller can see instead of unbounded growth.
+        if self.work.pending() > MAX_QUEUED_UNITS {
+            return Err(Status::resource_exhausted(
+                "a fila do controller está cheia; tente de novo em instantes",
+            ));
+        }
         if request.size == 0 {
             return Err(Status::invalid_argument(
                 "o tamanho deve ser maior que zero",
@@ -537,8 +549,17 @@ impl ClusterControl for ClusterControlService {
                 0x0FED_CBA9_8765_4321,
             ),
             // D: both operands from the two branches.
-            make(join, vec![left.clone(), right.clone()], left, right, 0),
+            make(
+                join.clone(),
+                vec![left.clone(), right.clone()],
+                left,
+                right,
+                0,
+            ),
         ];
+        if request.keep_result {
+            self.work.keep_output(&join);
+        }
         let enqueued = self.work.enqueue(units);
         self.events.record(
             unix_ms(),
@@ -549,6 +570,25 @@ impl ClusterControl for ClusterControlService {
             enqueued: enqueued as u32,
             blocked: self.work.blocked() as u32,
             request_id,
+        }))
+    }
+
+    /// The kept output of a request enqueued with `keep_result` (J1). Operator-only: a result
+    /// is the cluster's data, and the gateway is what decides who may read it.
+    async fn get_output(
+        &self,
+        request: Request<GetOutputRequest>,
+    ) -> Result<Response<GetOutputResponse>, Status> {
+        require_operator(&request)?;
+        let request_id = request.into_inner().request_id;
+        Ok(Response::new(match self.work.kept_output(&request_id) {
+            Some((rows, cols, matrix_c)) => GetOutputResponse {
+                found: true,
+                rows,
+                cols,
+                matrix_c,
+            },
+            None => GetOutputResponse::default(),
         }))
     }
 
@@ -1155,6 +1195,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn enqueue_graph_refuses_new_graphs_when_the_queue_is_full() {
+        let service = service();
+        let graph = || {
+            op(EnqueueGraphRequest {
+                size: 2,
+                seed: 1,
+                request_id: String::new(),
+                keep_result: false,
+            })
+        };
+        // Four units per graph: the ceiling is crossed after 65 of them.
+        for _ in 0..=MAX_QUEUED_UNITS / 4 {
+            service.enqueue_graph(graph()).await.unwrap();
+        }
+        let refused = service.enqueue_graph(graph()).await.unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
     async fn enqueue_graph_builds_a_diamond_with_blocked_branches() {
         let (service, work_store) = service_with_work();
         let response = service
@@ -1162,6 +1221,7 @@ mod tests {
                 size: 2,
                 seed: 7,
                 request_id: String::new(),
+                keep_result: false,
             }))
             .await
             .unwrap()
@@ -1178,6 +1238,7 @@ mod tests {
                 size: 0,
                 seed: 7,
                 request_id: String::new(),
+                keep_result: false,
             }))
             .await
             .unwrap_err();
