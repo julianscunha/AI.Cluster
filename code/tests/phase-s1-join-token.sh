@@ -27,7 +27,7 @@ cli() {
   shift
   local env=()
   [ "$token" != "-" ] && env=(-e "AI_CLUSTER_OPERATOR_TOKEN=$token")
-  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t "${env[@]}" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t "${env[@]}" \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster $*" 2>&1
 }
 
@@ -35,7 +35,7 @@ cli() {
 worker() {
   local env=()
   [ "$3" != "-" ] && env=(-e "AI_CLUSTER_JOIN_TOKEN=$3")
-  MSYS_NO_PATHCONV=1 docker run -d --name "$1" --network "$NET" -v aic-target:/t "${env[@]}" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name "$1" --network "$NET" -v aic-target:/t "${env[@]}" \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID="$2" \
     "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 }
@@ -51,7 +51,7 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 echo "=== A) controller sem token recusa subir ==="
-OUT=$(MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t "$IMG" \
+OUT=$(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t "$IMG" \
   sh -c "$R/ai-cluster-controller" 2>&1)
 if echo "$OUT" | grep -q "AI_CLUSTER_JOIN_TOKEN"; then
   echo "OK: o controller sem token não subiu"
@@ -59,7 +59,7 @@ else
   fail "o controller deveria recusar subir sem token, saiu: $OUT"
 fi
 
-MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e "AI_CLUSTER_JOIN_TOKEN=$TOKEN" -e AI_CLUSTER_OPERATOR_TOKEN=s1-operator   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 
 echo "=== B) token errado e token ausente não entram ==="

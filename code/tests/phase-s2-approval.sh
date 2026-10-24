@@ -25,7 +25,7 @@ teardown() {
 OPERATOR=s2-operator
 
 cli() {
-  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_OPERATOR_TOKEN=${CLI_TOKEN:-$OPERATOR} -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
     "$IMG" sh -c "$R/ai-cluster $*" 2>&1
 }
@@ -42,10 +42,10 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 # Sem AI_CLUSTER_AUTO_APPROVE: o padrão é exigir aprovação.
-MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
-MSYS_NO_PATHCONV=1 docker run -d --name aic-worker --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   -e AI_CLUSTER_NODE_ID=node-new "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
@@ -58,7 +58,7 @@ if echo "$NODES" | grep -E "^node-new " | grep -q pendente; then
 else
   fail "node-new deveria estar pendente"
 fi
-MSYS_NO_PATHCONV=1 docker run -d --name aic-bench --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-bench --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   "$IMG" sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1" >/dev/null
 sleep 10

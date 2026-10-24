@@ -22,6 +22,45 @@ pub const PROTOCOL_VERSION: &str = "v1";
 pub const VERSION_HEADER: &str = "x-ai-cluster-protocol-version";
 pub const CORRELATION_HEADER: &str = "x-ai-cluster-correlation-id";
 pub const AUTH_HEADER: &str = "x-ai-cluster-auth";
+/// Opt-out of transport security (Fase S4): with it set, an `http://` endpoint is allowed and a
+/// controller without a certificate starts. Meant for a closed lab network and the test suite;
+/// every token then crosses the wire in clear.
+pub const INSECURE_ENV: &str = "AI_CLUSTER_INSECURE";
+/// PEM file with the CA that signed the controller's certificate, for `https://` endpoints.
+pub const TLS_CA_ENV: &str = "AI_CLUSTER_TLS_CA";
+/// Name to verify the certificate against when the endpoint is an IP or an alias.
+pub const TLS_DOMAIN_ENV: &str = "AI_CLUSTER_TLS_DOMAIN";
+
+/// Whether the operator chose to run without TLS.
+pub fn insecure_allowed() -> bool {
+    std::env::var(INSECURE_ENV).is_ok_and(|value| matches!(value.trim(), "1" | "true"))
+}
+
+/// Opens the channel. `https://` verifies the controller against [`TLS_CA_ENV`]; `http://` is
+/// refused unless [`INSECURE_ENV`] is set, so a worker never sends a token in clear by default.
+async fn open_channel(
+    dst: String,
+) -> Result<tonic::transport::Channel, Box<dyn std::error::Error>> {
+    let mut endpoint = tonic::transport::Endpoint::from_shared(dst.clone())?;
+    if dst.to_ascii_lowercase().starts_with("https://") {
+        let ca_path = std::env::var(TLS_CA_ENV)
+            .map_err(|_| format!("{TLS_CA_ENV} é obrigatório com endpoint https"))?;
+        let mut tls = tonic::transport::ClientTlsConfig::new().ca_certificate(
+            tonic::transport::Certificate::from_pem(std::fs::read(&ca_path)?),
+        );
+        if let Ok(domain) = std::env::var(TLS_DOMAIN_ENV) {
+            tls = tls.domain_name(domain);
+        }
+        endpoint = endpoint.tls_config(tls)?;
+    } else if !insecure_allowed() {
+        return Err(format!(
+            "endpoint {dst} sem TLS; use https:// ou {INSECURE_ENV}=1 numa rede fechada"
+        )
+        .into());
+    }
+    Ok(endpoint.connect().await?)
+}
+
 /// Header carrying the per-node credential the controller issued at registration (S3b).
 pub const NODE_AUTH_HEADER: &str = "x-ai-cluster-node-auth";
 
@@ -268,9 +307,7 @@ async fn connect_with(
     dst: impl Into<String>,
     metadata: ClientMetadata,
 ) -> Result<MetadataClient, Box<dyn std::error::Error>> {
-    let channel = tonic::transport::Endpoint::from_shared(dst.into())?
-        .connect()
-        .await?;
+    let channel = open_channel(dst.into()).await?;
     Ok(ClusterControlClient::with_interceptor(channel, metadata)
         .max_decoding_message_size(MAX_MESSAGE_BYTES)
         .max_encoding_message_size(MAX_MESSAGE_BYTES))
@@ -280,9 +317,7 @@ async fn connect_with(
 pub async fn connect_probe(
     dst: impl Into<String>,
 ) -> Result<ProbeClient, Box<dyn std::error::Error>> {
-    let channel = tonic::transport::Endpoint::from_shared(dst.into())?
-        .connect()
-        .await?;
+    let channel = open_channel(dst.into()).await?;
     Ok(LinkProbeClient::with_interceptor(
         channel,
         ClientMetadata::from_env(),

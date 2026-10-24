@@ -8,12 +8,12 @@ use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
-    JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV, ServerMetadata, join_token,
-    operator_token,
+    INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV, ServerMetadata,
+    insecure_allowed, join_token, operator_token,
 };
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::Server;
+use tonic::transport::{Identity, Server, ServerTlsConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -147,8 +147,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Messages a little over the probe payload (protobuf framing), still far under the data limit.
     let probe =
         LinkProbeServer::new(LinkProbeService).max_decoding_message_size(MAX_PROBE_BYTES + 1024);
+    // S4: certificate and key come as a pair. A certificate wins over the insecure opt-out, so a
+    // forgotten flag cannot downgrade a controller that was given one.
+    let identity = match (
+        std::env::var("AI_CLUSTER_TLS_CERT"),
+        std::env::var("AI_CLUSTER_TLS_KEY"),
+    ) {
+        (Ok(cert), Ok(key)) => Some(Identity::from_pem(
+            std::fs::read(cert)?,
+            std::fs::read(key)?,
+        )),
+        (Err(_), Err(_)) => None,
+        _ => {
+            return Err("AI_CLUSTER_TLS_CERT e AI_CLUSTER_TLS_KEY vêm juntos".into());
+        }
+    };
+    let mut builder = Server::builder();
+    match identity {
+        Some(identity) => {
+            builder = builder.tls_config(ServerTlsConfig::new().identity(identity))?;
+        }
+        None if insecure_allowed() => {
+            println!("AVISO: sem TLS ({INSECURE_ENV}=1); os tokens trafegam em claro");
+        }
+        None => {
+            return Err(format!(
+                "sem AI_CLUSTER_TLS_CERT/KEY o controller não sobe; {INSECURE_ENV}=1 libera numa rede fechada"
+            )
+            .into());
+        }
+    }
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
-    Server::builder()
+    builder
         .add_service(InterceptedService::new(server, auth.clone()))
         .add_service(InterceptedService::new(probe, auth))
         .serve(addr)

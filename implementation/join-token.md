@@ -59,9 +59,29 @@ checagem; o dono de uma unidade restaurada do disco, ausente do registro, pode t
 fechado por quem tem o token de join e o `work_id` (o `Debug` de `NodeRecord` e de
 `NodeCredential` também imprime o segredo, mas nada o loga hoje).
 
+## TLS (Fase S4)
+
+Os tokens e a credencial deixam de cruzar a rede em claro.
+
+- O controller serve TLS de um sentido com `AI_CLUSTER_TLS_CERT` e `AI_CLUSTER_TLS_KEY` (PEM,
+  sempre em par). Sem eles ele **não sobe**, a menos que `AI_CLUSTER_INSECURE=1` (aviso alto).
+  Com certificado e `INSECURE` juntos vale o certificado: um opt-out esquecido não rebaixa.
+- O cliente (worker e CLI) usa `https://` e confere a CA de `AI_CLUSTER_TLS_CA` (obrigatória
+  nesse caso; `AI_CLUSTER_TLS_DOMAIN` troca o nome verificado quando o endpoint é um IP).
+  `http://` só com `AI_CLUSTER_INSECURE=1`: o cliente também falha fechado.
+- Vale para os dois serviços (`ClusterControl` e `LinkProbe`); a medição de rede (C2) agora
+  inclui o custo do TLS, então a linha de base de `network_achieved_score` muda.
+- Evidência: `bash code/tests/phase-s4-tls.sh` (https com a CA certa entra; http puro e CA
+  errada são recusados por erro de transporte, não de token; http sem `INSECURE` o cliente
+  recusa; controller sem certificado não sobe). Os demais scripts rodam com `INSECURE=1`.
+
+**Tetos:** TLS de um sentido, sem mTLS (o cliente não apresenta certificado, a credencial por nó
+continua sendo o segredo); sem rotação nem revogação de certificado; a porta de métricas 9101
+segue sem TLS nem autenticação; a chave fica em arquivo e em volume.
+
 ## Tetos
 
-- **Texto claro.** Sem TLS, quem escuta a rede captura o token. E a variável de ambiente
+- **Texto claro** sem TLS (S4 resolve com certificado). A variável de ambiente
   aparece em `docker inspect`.
 - **Segredo compartilhado.** Não há identidade por nó: quem tem o token é qualquer nó.
   Rotação, revogação e credencial por nó (mTLS, docs/19) são os próximos degraus.
