@@ -21,7 +21,7 @@ KILL_AFTER=${KILL_AFTER:-10}
 WORK_DELAY_MS=${WORK_DELAY_MS:-12000}
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -34,11 +34,11 @@ echo "=== iniciar controller + dois workers ==="
 # Graça deliberadamente menor que a retenção de trabalho abaixo. Antes de o heartbeat ser
 # desacoplado do laço de trabalho, isso ceifava o worker saudável no meio da unidade; a execução
 # agora só deve ceifar o nó que foi morto.
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" \
   -v aic-target:/t -e AI_CLUSTER_HEARTBEAT_GRACE_MS=9000 \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 for n in b c; do
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name "aic-worker-$n" --network "$NET" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name "aic-worker-$n" --network "$NET" \
     -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID="node-$n" \
     -e AI_CLUSTER_WORK_DELAY_MS="$WORK_DELAY_MS" \
     "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null

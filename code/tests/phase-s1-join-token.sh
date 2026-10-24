@@ -26,7 +26,7 @@ cli() {
   local token=$1
   shift
   local env=()
-  [ "$token" != "-" ] && env=(-e "AI_CLUSTER_JOIN_TOKEN=$token")
+  [ "$token" != "-" ] && env=(-e "AI_CLUSTER_OPERATOR_TOKEN=$token")
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t "${env[@]}" \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster $*" 2>&1
 }
@@ -60,7 +60,7 @@ else
 fi
 
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
-  -e "AI_CLUSTER_JOIN_TOKEN=$TOKEN" "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
+  -e "AI_CLUSTER_JOIN_TOKEN=$TOKEN" -e AI_CLUSTER_OPERATOR_TOKEN=s1-operator   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 
 echo "=== B) token errado e token ausente não entram ==="
 worker aic-w-bad node-bad wrong-token

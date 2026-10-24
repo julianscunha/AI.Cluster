@@ -29,7 +29,7 @@ STATE=$STATE_DIR/state.bin
 ONE_MATRIX=524288
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -44,11 +44,11 @@ field() {
 teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "rm -rf $STATE_DIR && mkdir -p $STATE_DIR"
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "rm -rf $STATE_DIR && mkdir -p $STATE_DIR"
 
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_STATE=$STATE "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-i3 --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-i3 --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-i3 \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 6
@@ -57,7 +57,7 @@ echo "=== A) 8 unidades de 256³, sem dependências ==="
 run "$R/ai-cluster benchmark --size 256 --repetitions 8" 2>&1 | tail -2
 
 echo "=== B) o snapshot final não guarda nenhuma matriz de saída ==="
-SIZE=$(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "stat -c %s $STATE")
+SIZE=$(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "stat -c %s $STATE")
 echo "state.bin = $SIZE bytes (uma matriz de saída = $ONE_MATRIX bytes)"
 if [ "$SIZE" -lt "$ONE_MATRIX" ] 2>/dev/null; then
   echo "OK: 8 unidades concluídas e o estado é menor que uma única matriz"
@@ -66,7 +66,7 @@ else
   teardown
   exit 1
 fi
-if MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "test -s $STATE.replica"; then
+if MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "test -s $STATE.replica"; then
   echo "OK: a cópia também foi escrita"
 else
   echo "FALHA: a cópia está ausente ou vazia"
@@ -77,7 +77,7 @@ fi
 echo "=== C) reload sobre o mesmo arquivo ==="
 docker kill aic-controller >/dev/null 2>&1
 docker rm -f aic-controller >/dev/null 2>&1
-MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
+MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_STATE=$STATE "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 4
 REPORT=$(run "$R/ai-cluster metrics" 2>/dev/null)

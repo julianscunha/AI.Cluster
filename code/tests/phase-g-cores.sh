@@ -32,7 +32,7 @@ cleanup() {
 }
 
 run() {
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 
@@ -43,9 +43,9 @@ measure() {
   local name=$1 threads=$2 out compute_us checksum controller_log
   cleanup
   docker network create "$NET" >/dev/null
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" \
     -v aic-target:/t "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
-  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name "aic-worker-$name" --network "$NET" \
+  MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name "aic-worker-$name" --network "$NET" \
     -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
     -e AI_CLUSTER_NODE_ID="node-$name" \
     -e AI_CLUSTER_CPU_THREADS="$threads" \
@@ -77,7 +77,7 @@ measure() {
 }
 
 cleanup
-echo "=== host: $(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_AUTO_APPROVE=1 --rm "$IMG" nproc) cores visíveis no container ===" >&2
+echo "=== host: $(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm "$IMG" nproc) cores visíveis no container ===" >&2
 
 read -r NARROW_US NARROW_CK <<<"$(measure narrow "$NARROW_THREADS")"
 read -r WIDE_US WIDE_CK <<<"$(measure wide "$WIDE_THREADS")"

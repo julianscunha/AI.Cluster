@@ -14,6 +14,7 @@ use ai_cluster_protocol::cluster::{
     Reservation, ReserveRequest, ReserveResponse, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
+use ai_cluster_protocol::metadata::require_operator;
 use tonic::{Request, Response, Status};
 
 /// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
@@ -136,6 +137,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ApproveNodeRequest>,
     ) -> Result<Response<ApproveNodeResponse>, Status> {
+        require_operator(&request)?;
         let node_id = request.into_inner().node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -338,6 +340,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<EnqueueWorkRequest>,
     ) -> Result<Response<EnqueueWorkResponse>, Status> {
+        require_operator(&request)?;
         let request = request.into_inner();
         if request.rows == 0 || request.shared == 0 || request.cols == 0 {
             return Err(Status::invalid_argument(
@@ -395,6 +398,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<EnqueueGraphRequest>,
     ) -> Result<Response<EnqueueGraphResponse>, Status> {
+        require_operator(&request)?;
         let request = request.into_inner();
         if request.size == 0 {
             return Err(Status::invalid_argument(
@@ -557,6 +561,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ReserveRequest>,
     ) -> Result<Response<ReserveResponse>, Status> {
+        require_operator(&request)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -611,6 +616,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ReleaseReservationRequest>,
     ) -> Result<Response<ReleaseReservationResponse>, Status> {
+        require_operator(&request)?;
         let node_id = request.into_inner().node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -646,6 +652,15 @@ mod tests {
     use ai_cluster_protocol::cluster::{
         CapabilityReport, HealthReport, NodeIdentity, WorkResult, WorkUnit,
     };
+
+    /// A request that arrived with the operator token, as the interceptor would mark it.
+    fn op<T>(message: T) -> Request<T> {
+        let mut request = Request::new(message);
+        request
+            .extensions_mut()
+            .insert(ai_cluster_protocol::metadata::Operator);
+        request
+    }
 
     fn service_with_work() -> (ClusterControlService, Arc<WorkStore>) {
         let work = Arc::new(WorkStore::new());
@@ -897,7 +912,7 @@ mod tests {
             .unwrap();
 
         let enqueued = service
-            .enqueue_work(Request::new(EnqueueWorkRequest {
+            .enqueue_work(op(EnqueueWorkRequest {
                 rows: 4,
                 shared: 4,
                 cols: 4,
@@ -928,7 +943,7 @@ mod tests {
         assert_eq!(claimed.matrix_b.len(), 16);
 
         let invalid = service
-            .enqueue_work(Request::new(EnqueueWorkRequest {
+            .enqueue_work(op(EnqueueWorkRequest {
                 rows: 0,
                 shared: 4,
                 cols: 4,
@@ -1031,7 +1046,7 @@ mod tests {
     async fn enqueue_graph_builds_a_diamond_with_blocked_branches() {
         let (service, work_store) = service_with_work();
         let response = service
-            .enqueue_graph(Request::new(EnqueueGraphRequest {
+            .enqueue_graph(op(EnqueueGraphRequest {
                 size: 2,
                 seed: 7,
                 request_id: String::new(),
@@ -1047,7 +1062,7 @@ mod tests {
 
         // A size of zero is a client error.
         let invalid = service
-            .enqueue_graph(Request::new(EnqueueGraphRequest {
+            .enqueue_graph(op(EnqueueGraphRequest {
                 size: 0,
                 seed: 7,
                 request_id: String::new(),
@@ -1232,7 +1247,7 @@ mod tests {
 
         // The service mints a request id when the client does not supply one.
         let enqueued = service
-            .enqueue_work(Request::new(EnqueueWorkRequest {
+            .enqueue_work(op(EnqueueWorkRequest {
                 rows: 2,
                 shared: 2,
                 cols: 2,
@@ -1320,7 +1335,7 @@ mod tests {
     }
 
     fn reserve_request(node_id: &str, request_id: &str, ttl_ms: u64) -> Request<ReserveRequest> {
-        Request::new(ReserveRequest {
+        op(ReserveRequest {
             node_id: node_id.to_string(),
             request_id: request_id.to_string(),
             ttl_ms,
@@ -1416,7 +1431,7 @@ mod tests {
             .unwrap();
 
         let released = service
-            .release_reservation(Request::new(ReleaseReservationRequest {
+            .release_reservation(op(ReleaseReservationRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -1426,7 +1441,7 @@ mod tests {
 
         // Releasing a node nobody holds is not an error, just false.
         let again = service
-            .release_reservation(Request::new(ReleaseReservationRequest {
+            .release_reservation(op(ReleaseReservationRequest {
                 node_id: "node-a".to_string(),
             }))
             .await

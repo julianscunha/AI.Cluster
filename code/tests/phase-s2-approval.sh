@@ -22,9 +22,11 @@ teardown() {
   docker rm -f aic-controller aic-worker aic-bench >/dev/null 2>&1
 }
 
+OPERATOR=s2-operator
+
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
-    -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
+    -e AI_CLUSTER_OPERATOR_TOKEN=${CLI_TOKEN:-$OPERATOR} -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
     "$IMG" sh -c "$R/ai-cluster $*" 2>&1
 }
 
@@ -41,7 +43,8 @@ docker network create "$NET" >/dev/null
 
 # Sem AI_CLUSTER_AUTO_APPROVE: o padrão é exigir aprovação.
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller --network "$NET" -v aic-target:/t \
-  -e AI_CLUSTER_JOIN_TOKEN=$TOKEN "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
+  -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR \
+  "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -d --name aic-worker --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   -e AI_CLUSTER_NODE_ID=node-new "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
@@ -56,7 +59,7 @@ else
   fail "node-new deveria estar pendente"
 fi
 MSYS_NO_PATHCONV=1 docker run -d --name aic-bench --network "$NET" -v aic-target:/t \
-  -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
+  -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   "$IMG" sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1" >/dev/null
 sleep 10
 if docker logs aic-bench 2>&1 | grep -q '^w-'; then
@@ -64,6 +67,20 @@ if docker logs aic-bench 2>&1 | grep -q '^w-'; then
   fail "uma unidade foi entregue a um nó pendente"
 fi
 echo "OK: a unidade esperou, o nó pendente não recebeu trabalho"
+
+echo "=== A2) o token de join não aprova nó (S3a) ==="
+DENIED=$(CLI_TOKEN=$TOKEN cli approve node-new)
+echo "$DENIED"
+if echo "$DENIED" | grep -qi "operador"; then
+  echo "OK: approve com o token de join foi recusado"
+else
+  fail "approve com o token de join deveria ser recusado"
+fi
+if cli nodes | grep -E "^node-new " | grep -q pendente; then
+  echo "OK: node-new continua pendente"
+else
+  fail "node-new não deveria ter sido aprovado pelo token de join"
+fi
 
 echo "=== B) approve libera o nó e a unidade que esperava ==="
 OUT=$(cli approve node-new)

@@ -8,7 +8,8 @@ use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
-    JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, ServerMetadata, join_token,
+    JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV, ServerMetadata, join_token,
+    operator_token,
 };
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
@@ -31,7 +32,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{JOIN_TOKEN_ENV} é obrigatório; o controller não sobe sem token").into(),
         );
     };
-    let auth = ServerMetadata::new(&token);
+    let Some(operator) = operator_token() else {
+        return Err(format!(
+            "{OPERATOR_TOKEN_ENV} é obrigatório; sem ele ninguém aprova nós nem enfileira trabalho"
+        )
+        .into());
+    };
+    if operator == token {
+        return Err(format!("{OPERATOR_TOKEN_ENV} deve ser diferente de {JOIN_TOKEN_ENV}").into());
+    }
+    let auth = ServerMetadata::new(&token, &operator);
 
     // S2: a new node waits for `ai-cluster approve` unless the operator opts out, which is
     // what a closed lab network or the E2E scripts do.

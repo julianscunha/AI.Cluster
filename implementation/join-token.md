@@ -22,6 +22,20 @@ token errado e worker sem token não aparecem em `nodes` e o log mostra `Unauthe
 C) worker com o token certo fica READY; D) a CLI sem token é recusada. Os demais scripts de
 `code/tests` passam a levar `AI_CLUSTER_JOIN_TOKEN` (padrão `e2e-token`) em cada `docker run`.
 
+## Token de operador (Fase S3a)
+
+O token de join identifica "alguém da rede"; ele não manda no cluster.
+
+- `AI_CLUSTER_OPERATOR_TOKEN` é obrigatório no controller (fail-closed) e deve ser diferente do
+  de join. A CLI o envia no mesmo `AUTH_HEADER`; os workers continuam com o de join.
+- `ServerMetadata` aceita os dois e marca a requisição com `Operator` quando o token é o do
+  operador. `require_operator` abre as RPCs administrativas: `ApproveNode`, `EnqueueWork`,
+  `EnqueueGraph`, `Reserve`, `ReleaseReservation`. Sem a marca: `PermissionDenied`.
+- Leituras (`nodes`, `events`, métricas) e as RPCs de nó aceitam qualquer um dos dois.
+- Fecha o achado 1 da revisão de S2 (quem tem o token aprovava a si mesmo). `LeaveNode` fica
+  aberto, porque o worker o chama ao desligar; ele depende da credencial por nó (S3b).
+- Teto: continua em texto claro, sem TLS; o operador não tem rotação nem revogação.
+
 ## Tetos
 
 - **Texto claro.** Sem TLS, quem escuta a rede captura o token. E a variável de ambiente

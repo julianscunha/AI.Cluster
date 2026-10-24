@@ -53,6 +53,35 @@ pub fn join_token() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Environment variable holding the operator token (Fase S3a). It authorizes the administrative
+/// RPCs (approve, enqueue, reserve, release); the join token does not, so a node that holds
+/// only the join token cannot approve itself or queue work.
+pub const OPERATOR_TOKEN_ENV: &str = "AI_CLUSTER_OPERATOR_TOKEN";
+
+/// The operator token from the environment; unset or blank is "none".
+pub fn operator_token() -> Option<String> {
+    std::env::var(OPERATOR_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Marker the interceptor leaves in a request's extensions when the caller proved the
+/// operator token.
+#[derive(Clone, Copy, Debug)]
+pub struct Operator;
+
+/// Refuses the call unless it came in with the operator token.
+pub fn require_operator<T>(request: &Request<T>) -> Result<(), Status> {
+    if request.extensions().get::<Operator>().is_some() {
+        Ok(())
+    } else {
+        Err(Status::permission_denied(
+            "esta operação exige o token de operador",
+        ))
+    }
+}
+
 static CORRELATION_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Timestamp plus a process-local counter: unique enough across processes to
@@ -93,6 +122,11 @@ impl ClientMetadata {
         Self::with_token(join_token().unwrap_or_default())
     }
 
+    /// The operator token, for the CLI. Same fail-visible behavior as [`Self::from_env`].
+    pub fn operator_from_env() -> Self {
+        Self::with_token(operator_token().unwrap_or_default())
+    }
+
     pub fn with_token(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
@@ -117,17 +151,20 @@ impl Interceptor for ClientMetadata {
     }
 }
 
-/// Rejects calls that lack the join token or do not announce the protocol version this build
+/// Rejects calls that lack the join or operator token (the latter also marks the request as
+/// [`Operator`]) or do not announce the protocol version this build
 /// speaks. The token check comes first, so an unauthenticated caller learns nothing else.
 #[derive(Clone, Debug)]
 pub struct ServerMetadata {
     token: std::sync::Arc<str>,
+    operator: std::sync::Arc<str>,
 }
 
 impl ServerMetadata {
-    pub fn new(token: &str) -> Self {
+    pub fn new(token: &str, operator: &str) -> Self {
         Self {
             token: token.into(),
+            operator: operator.into(),
         }
     }
 }
@@ -144,13 +181,19 @@ fn same_token(expected: &[u8], given: &[u8]) -> bool {
 }
 
 impl Interceptor for ServerMetadata {
-    fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
         let given = request
             .metadata()
             .get(AUTH_HEADER)
             .map_or(&b""[..], |value| value.as_bytes());
-        if self.token.is_empty() || !same_token(self.token.as_bytes(), given) {
-            return Err(Status::unauthenticated("token de join ausente ou inválido"));
+        // Both comparisons always run, so timing does not say which token a guess resembled.
+        let is_operator = !self.operator.is_empty() && same_token(self.operator.as_bytes(), given);
+        let is_node = !self.token.is_empty() && same_token(self.token.as_bytes(), given);
+        if !is_operator && !is_node {
+            return Err(Status::unauthenticated("token ausente ou inválido"));
+        }
+        if is_operator {
+            request.extensions_mut().insert(Operator);
         }
         let version = request
             .metadata()
@@ -174,14 +217,26 @@ impl Interceptor for ServerMetadata {
 pub async fn connect_controller(
     dst: impl Into<String>,
 ) -> Result<MetadataClient, Box<dyn std::error::Error>> {
+    connect_with(dst, ClientMetadata::from_env()).await
+}
+
+/// Connects as the operator (the CLI): same channel, the operator token on every call.
+pub async fn connect_operator(
+    dst: impl Into<String>,
+) -> Result<MetadataClient, Box<dyn std::error::Error>> {
+    connect_with(dst, ClientMetadata::operator_from_env()).await
+}
+
+async fn connect_with(
+    dst: impl Into<String>,
+    metadata: ClientMetadata,
+) -> Result<MetadataClient, Box<dyn std::error::Error>> {
     let channel = tonic::transport::Endpoint::from_shared(dst.into())?
         .connect()
         .await?;
-    Ok(
-        ClusterControlClient::with_interceptor(channel, ClientMetadata::from_env())
-            .max_decoding_message_size(MAX_MESSAGE_BYTES)
-            .max_encoding_message_size(MAX_MESSAGE_BYTES),
-    )
+    Ok(ClusterControlClient::with_interceptor(channel, metadata)
+        .max_decoding_message_size(MAX_MESSAGE_BYTES)
+        .max_encoding_message_size(MAX_MESSAGE_BYTES))
 }
 
 /// Connects the probe client to the same controller address.
@@ -240,7 +295,7 @@ mod tests {
     #[test]
     fn server_accepts_matching_version_and_rejects_others() {
         let mut stamp = ClientMetadata::with_token("secret");
-        let mut server = ServerMetadata::new("secret");
+        let mut server = ServerMetadata::new("secret", "op-secret");
         let stamped = stamp.call(Request::new(())).unwrap();
         assert!(server.call(stamped).is_ok());
 
@@ -262,7 +317,7 @@ mod tests {
 
     #[test]
     fn server_refuses_a_missing_wrong_or_empty_token() {
-        let mut server = ServerMetadata::new("secret");
+        let mut server = ServerMetadata::new("secret", "op-secret");
         let with = |token: &str| {
             ClientMetadata::with_token(token)
                 .call(Request::new(()))
@@ -276,10 +331,27 @@ mod tests {
             );
         }
         // A server built with an empty token accepts nobody, not everybody.
-        let mut open = ServerMetadata::new("");
+        let mut open = ServerMetadata::new("", "");
         assert_eq!(
             open.call(with("")).unwrap_err().code(),
             tonic::Code::Unauthenticated
         );
+    }
+
+    #[test]
+    fn only_the_operator_token_marks_the_request_as_operator() {
+        let mut server = ServerMetadata::new("secret", "op-secret");
+        let with = |token: &str| {
+            ClientMetadata::with_token(token)
+                .call(Request::new(()))
+                .unwrap()
+        };
+        let node = server.call(with("secret")).unwrap();
+        assert!(require_operator(&node).is_err());
+        let operator = server.call(with("op-secret")).unwrap();
+        assert!(require_operator(&operator).is_ok());
+        // With no operator token configured, an empty guess must not become the operator.
+        let mut none = ServerMetadata::new("secret", "");
+        assert!(none.call(with("")).is_err());
     }
 }

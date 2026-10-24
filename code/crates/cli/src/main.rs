@@ -6,7 +6,7 @@ use ai_cluster_protocol::cluster::{
     GetTraceRequest, ListEventsRequest, ListNodesRequest, ListReservationsRequest,
     ReleaseReservationRequest, ReserveRequest, WorkReportRequest, WorkReportResponse,
 };
-use ai_cluster_protocol::metadata::connect_controller;
+use ai_cluster_protocol::metadata::connect_operator;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -176,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// gating works: B and C wait for A, and D waits for both. Run it against two
 /// workers to see B and C land on different nodes.
 async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let response = client
         .enqueue_graph(EnqueueGraphRequest {
             size,
@@ -214,7 +214,7 @@ async fn run_reserve(
     request_id: &str,
     ttl_ms: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let response = client
         .reserve(ReserveRequest {
             node_id: node.to_string(),
@@ -237,7 +237,7 @@ async fn run_reserve(
 
 /// Lista as reservas ativas: nó, requisição dona e vencimento.
 async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let reservations = client
         .list_reservations(ListReservationsRequest {})
         .await?
@@ -256,7 +256,7 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
 
 /// Libera a reserva de um nó antes do vencimento. Um nó sem reserva não é erro.
 async fn approve_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let approved = client
         .approve_node(ApproveNodeRequest {
             node_id: node.to_string(),
@@ -273,7 +273,7 @@ async fn approve_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::err
 }
 
 async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let released = client
         .release_reservation(ReleaseReservationRequest {
             node_id: node.to_string(),
@@ -290,7 +290,7 @@ async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn s
 }
 
 async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let nodes = client
         .list_nodes(ListNodesRequest {})
         .await?
@@ -363,7 +363,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// `thermal_throttling` — ficam de fora. Imprimi-los zerados diria que valem zero, que é
 /// diferente de não existirem.
 async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let node = client
         .list_nodes(ListNodesRequest {})
         .await?
@@ -500,7 +500,7 @@ fn list_or_dash(values: &[String]) -> String {
 
 /// Prints the controller's recent lifecycle events, oldest first.
 async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let events = client
         .list_events(ListEventsRequest { limit })
         .await?
@@ -523,7 +523,7 @@ async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::err
 /// command a script or a scraper is likely to read, and positional parsing breaks whenever
 /// a label changes. The keys match the proto field names, so the output is stable.
 async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let metrics = client.get_metrics(GetMetricsRequest {}).await?.into_inner();
     println!(
         "nodes_total={} nodes_available={}",
@@ -568,7 +568,7 @@ async fn print_dashboard(
     endpoint: &str,
     watch_secs: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     loop {
         let nodes = client
             .list_nodes(ListNodesRequest {})
@@ -652,7 +652,7 @@ async fn print_dashboard(
 /// there and back. A unit still in flight or failed has no timings yet, so it shows zero —
 /// its row is there to say the unit exists and where it is, not to report a cost.
 async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let response = client
         .get_trace(GetTraceRequest {
             request_id: request_id.to_string(),
@@ -734,7 +734,7 @@ async fn run_benchmark(
     if local {
         return run_local_baseline(size, repetitions);
     }
-    let mut client = connect_controller(endpoint.to_string()).await?;
+    let mut client = connect_operator(endpoint.to_string()).await?;
     let response = client
         .enqueue_work(EnqueueWorkRequest {
             rows: size,
