@@ -81,3 +81,32 @@ fn the_logits_match_the_reference() {
         }
     }
 }
+
+#[test]
+fn cached_generation_matches_recomputing_the_whole_prompt() {
+    let Some(dir) = model_dir() else { return };
+    let model = Gpt2::load(&dir).unwrap();
+    let tokenizer = Tokenizer::open(&dir).unwrap();
+    let prompt = tokenizer.encode("The capital of France is").unwrap();
+    let generated = model.generate(&prompt, 6, None).unwrap();
+    assert_eq!(generated.len(), 6);
+
+    // Without a cache every step re-runs the growing sequence from scratch.
+    let mut context = prompt.clone();
+    for expected in &generated {
+        let logits = model.next_token_logits(&context).unwrap();
+        let best = logits
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap()
+            .0;
+        assert_eq!(best as u32, *expected);
+        context.push(best as u32);
+    }
+    // The tokens decode to text, and a stop token ends the run early (and is kept).
+    assert!(!tokenizer.decode(&generated).unwrap().is_empty());
+    let stopped = model.generate(&prompt, 6, Some(generated[2])).unwrap();
+    assert!(stopped.len() <= 3);
+    assert_eq!(stopped, generated[..stopped.len()]);
+}

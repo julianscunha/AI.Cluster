@@ -141,15 +141,58 @@ impl Gpt2 {
         self.wte.rows as usize
     }
 
+    /// An empty cache for [`Gpt2::forward`].
+    pub fn new_cache(&self) -> KvCache {
+        KvCache {
+            keys: vec![Vec::new(); self.blocks.len()],
+            values: vec![Vec::new(); self.blocks.len()],
+            len: 0,
+        }
+    }
+
     /// Logits over the vocabulary for the token that follows `tokens`.
     pub fn next_token_logits(&self, tokens: &[u32]) -> Result<Vec<f64>, String> {
+        self.forward(tokens, &mut self.new_cache())
+    }
+
+    /// Greedy continuation: up to `max_new` tokens after `prompt`, stopping early (and
+    /// including it) at `stop`. The prompt runs once; each new token is one cached step.
+    pub fn generate(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        stop: Option<u32>,
+    ) -> Result<Vec<u32>, String> {
+        let mut cache = self.new_cache();
+        let mut produced = Vec::new();
+        let mut logits = self.forward(prompt, &mut cache)?;
+        while produced.len() < max_new {
+            let next = logits
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(id, _)| id as u32)
+                .ok_or("vocabulário vazio")?;
+            produced.push(next);
+            if Some(next) == stop || cache.len >= self.context_len() {
+                break;
+            }
+            logits = self.forward(&[next], &mut cache)?;
+        }
+        Ok(produced)
+    }
+
+    /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,
+    /// and returns the logits for the token that follows the last of them.
+    pub fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {
         if tokens.is_empty() {
             return Err("prompt vazio".into());
         }
-        if tokens.len() > self.context_len() {
+        let past = cache.len;
+        if past + tokens.len() > self.context_len() {
             return Err(format!(
                 "{} tokens excedem o contexto de {}",
-                tokens.len(),
+                past + tokens.len(),
                 self.context_len()
             ));
         }
@@ -162,12 +205,13 @@ impl Gpt2 {
             }
             for col in 0..width {
                 x.data[row * width + col] =
-                    self.wte.data[token * width + col] + self.wpe.data[row * width + col];
+                    self.wte.data[token * width + col] + self.wpe.data[(past + row) * width + col];
             }
         }
 
-        for block in &self.blocks {
-            let attended = self.attention(block, &layer_norm(&x, &block.ln_1, self.eps));
+        for (layer, block) in self.blocks.iter().enumerate() {
+            let normed = layer_norm(&x, &block.ln_1, self.eps);
+            let attended = self.attention(block, &normed, cache, layer);
             add_in_place(&mut x, &attended);
             let hidden = linear(
                 &layer_norm(&x, &block.ln_2, self.eps),
@@ -180,6 +224,7 @@ impl Gpt2 {
             };
             add_in_place(&mut x, &linear(&hidden, &block.proj, self.threads)?);
         }
+        cache.len = past + tokens.len();
 
         let last = tokens.len() - 1;
         let normed = layer_norm(&x, &self.ln_f, self.eps);
@@ -192,34 +237,45 @@ impl Gpt2 {
             .collect())
     }
 
-    /// Multi-head causal self-attention over the normalised input, ending in the output projection.
-    fn attention(&self, block: &Block, input: &Matrix) -> Matrix {
+    /// Multi-head causal self-attention over the normalised input, ending in the output
+    /// projection. The new keys and values are appended to `cache` for `layer`, and each new
+    /// position attends to everything cached before it plus itself.
+    fn attention(
+        &self,
+        block: &Block,
+        input: &Matrix,
+        cache: &mut KvCache,
+        layer: usize,
+    ) -> Matrix {
         let tokens = input.rows as usize;
         let width = input.cols as usize;
         let head_dim = width / self.heads;
         let qkv = linear(input, &block.qkv, self.threads).expect("shapes checked at load");
         let stride = 3 * width;
         let scale = 1.0 / (head_dim as f64).sqrt();
+        let past = cache.len;
+        for row in qkv.data.chunks_exact(stride) {
+            cache.keys[layer].extend_from_slice(&row[width..2 * width]);
+            cache.values[layer].extend_from_slice(&row[2 * width..]);
+        }
+        let (keys, values) = (&cache.keys[layer], &cache.values[layer]);
 
         let mut mixed = Matrix::zeros(tokens as u32, width as u32);
-        let mut weights = vec![0.0; tokens];
+        let mut weights = vec![0.0; past + tokens];
         for head in 0..self.heads {
-            let (q_at, k_at, v_at) = (
-                head * head_dim,
-                width + head * head_dim,
-                2 * width + head * head_dim,
-            );
+            let at = head * head_dim;
             for t in 0..tokens {
-                let q = &qkv.data[t * stride + q_at..t * stride + q_at + head_dim];
-                // Causal: position t only sees positions 0..=t.
-                for (s, weight) in weights[..=t].iter_mut().enumerate() {
-                    let k = &qkv.data[s * stride + k_at..s * stride + k_at + head_dim];
+                let q = &qkv.data[t * stride + at..t * stride + at + head_dim];
+                // Causal: new position t sees the cache and the new positions up to itself.
+                let visible = past + t + 1;
+                for (s, weight) in weights[..visible].iter_mut().enumerate() {
+                    let k = &keys[s * width + at..s * width + at + head_dim];
                     *weight = q.iter().zip(k).map(|(a, b)| a * b).sum::<f64>() * scale;
                 }
-                softmax(&mut weights[..=t]);
-                let out = &mut mixed.data[t * width + q_at..t * width + q_at + head_dim];
-                for (s, weight) in weights[..=t].iter().enumerate() {
-                    let v = &qkv.data[s * stride + v_at..s * stride + v_at + head_dim];
+                softmax(&mut weights[..visible]);
+                let out = &mut mixed.data[t * width + at..t * width + at + head_dim];
+                for (s, weight) in weights[..visible].iter().enumerate() {
+                    let v = &values[s * width + at..s * width + at + head_dim];
                     for (o, v) in out.iter_mut().zip(v) {
                         *o += weight * v;
                     }
@@ -227,6 +283,24 @@ impl Gpt2 {
             }
         }
         linear(&mixed, &block.attn_out, self.threads).expect("shapes checked at load")
+    }
+}
+
+/// Keys and values of every position already run, per layer, row-major `[position, width]`.
+pub struct KvCache {
+    keys: Vec<Vec<f64>>,
+    values: Vec<Vec<f64>>,
+    len: usize,
+}
+
+impl KvCache {
+    /// Positions held so far.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 }
 

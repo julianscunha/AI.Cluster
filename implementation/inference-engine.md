@@ -17,7 +17,7 @@ e ter implementação de referência amplamente usada. A segunda família será 
 - `safetensors.rs`: leitor mínimo (só `F32`; valida dtype, forma e intervalos de bytes).
 - `tokenizer.rs`: BPE em nível de byte do GPT-2. O pré-tokenizador é a regex do GPT-2 escrita à
   mão (ela usa lookahead). `char::is_alphabetic`/`is_numeric` fazem o papel de `\p{L}`/`\p{N}`.
-- `gpt2.rs`: `Gpt2::load(dir)` e `next_token_logits(&[u32])`; atenção multi-head causal,
+- `gpt2.rs`: `Gpt2::load(dir)` e `next_token_logits(&[u32])`, `forward` com `KvCache` e `generate`; atenção multi-head causal,
   `gelu_new`, saída amarrada ao embedding.
 
 ## Verificação de paridade
@@ -36,8 +36,9 @@ AI_CLUSTER_GPT2_DIR=code/models/gpt2 cargo test --release -p ai-cluster-engine
 
 ## Limites
 
-- Só prefill: sem KV cache, sem geração (laço de amostragem), sem streaming. Cada chamada
-  recalcula o contexto inteiro.
+- Geração só gulosa (`generate`, com parada em token), sem amostragem por temperatura/top-p e sem
+  streaming. O KV cache (`KvCache`, `forward`) é verificado contra recalcular o prompt inteiro a
+  cada passo (`cached_generation_matches_recomputing_the_whole_prompt`).
 - CPU, `Matrix` em f64 (~1 GB de RAM para o GPT-2 small); sem quantização.
 - Local: nada disso roda ainda nos workers. O gateway continua servindo o modelo sintético.
 - O custo de distribuir o forward não foi medido; para um modelo pequeno a latência de rede pode
