@@ -77,7 +77,7 @@ Os tokens e a credencial deixam de cruzar a rede em claro.
 
 **Tetos:** TLS de um sentido, sem mTLS (o cliente não apresenta certificado, a credencial por nó
 continua sendo o segredo); sem rotação nem revogação de certificado; a porta de métricas 9101
-segue sem TLS nem autenticação; a chave fica em arquivo e em volume.
+exige `Authorization: Bearer <token de operador>` (S5, 401 sem ele), mas sem TLS; a chave fica em arquivo e em volume.
 
 ## Tetos
 
@@ -85,4 +85,4 @@ segue sem TLS nem autenticação; a chave fica em arquivo e em volume.
   aparece em `docker inspect`.
 - **Segredo compartilhado.** Não há identidade por nó: quem tem o token é qualquer nó.
   Rotação, revogação e credencial por nó (mTLS, docs/19) são os próximos degraus.
-- **Fora do escopo:** o exportador de métricas (porta 9101) não é autenticado.
+- O exportador de métricas (porta 9101) exige o token de operador desde a S5.

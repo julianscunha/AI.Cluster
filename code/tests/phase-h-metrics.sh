@@ -105,7 +105,16 @@ else
 fi
 
 echo "=== E) exportador Prometheus ==="
-EXPORT=$(run "curl -sf http://aic-controller:9101/metrics")
+OPERATOR=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator}
+DENIED=$(run "curl -s -o /dev/null -w %{http_code} http://aic-controller:9101/metrics")
+if [ "$DENIED" = 401 ]; then
+  echo "OK: /metrics sem token responde 401"
+else
+  echo "FALHA: /metrics sem token deveria responder 401, respondeu: $DENIED"
+  teardown
+  exit 1
+fi
+EXPORT=$(run "curl -sf -H 'Authorization: Bearer $OPERATOR' http://aic-controller:9101/metrics")
 if [ -z "$EXPORT" ]; then
   echo "FALHA: o exportador não respondeu em /metrics"
   teardown

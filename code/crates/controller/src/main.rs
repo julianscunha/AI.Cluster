@@ -127,13 +127,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // never fatal — losing the exporter must not take the control plane down with it.
     let exporter_registry = registry.clone();
     let exporter_work = work.clone();
+    let exporter_token: Arc<str> = operator.as_str().into();
     tokio::spawn(async move {
         let metrics_addr =
             std::env::var("AI_CLUSTER_METRICS_ADDR").unwrap_or_else(|_| "0.0.0.0:9101".to_string());
         println!("exportador de métricas em http://{metrics_addr}/metrics");
-        if let Err(err) =
-            ai_cluster_controller::exporter::serve(metrics_addr, exporter_registry, exporter_work)
-                .await
+        if let Err(err) = ai_cluster_controller::exporter::serve(
+            metrics_addr,
+            exporter_registry,
+            exporter_work,
+            exporter_token,
+        )
+        .await
         {
             println!("exportador de métricas parou: {err}");
         }

@@ -12,7 +12,9 @@
 use std::sync::Arc;
 
 use ai_cluster_protocol::cluster::{MetricsResponse, NodeSnapshot};
+use ai_cluster_protocol::metadata::same_token;
 use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::routing::get;
 use axum::{Router, response::IntoResponse};
 
@@ -24,6 +26,19 @@ use crate::work::WorkStore;
 struct ExporterState {
     registry: Arc<Registry>,
     work: Arc<WorkStore>,
+    /// Bearer token a scraper must present (S5): the operator token, which is what Prometheus's
+    /// `authorization` setting carries. Read-only data, but the port was open to the network.
+    token: Arc<str>,
+}
+
+/// Whether the request carries `Authorization: Bearer <token>`.
+fn authorized(headers: &HeaderMap, token: &str) -> bool {
+    let given = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    !token.is_empty() && same_token(token.as_bytes(), given.as_bytes())
 }
 
 /// Serves `GET /metrics` on `addr` until the process ends.
@@ -34,15 +49,30 @@ pub async fn serve(
     addr: String,
     registry: Arc<Registry>,
     work: Arc<WorkStore>,
+    token: Arc<str>,
 ) -> Result<(), std::io::Error> {
     let app = Router::new()
         .route("/metrics", get(handle))
-        .with_state(ExporterState { registry, work });
+        .with_state(ExporterState {
+            registry,
+            work,
+            token,
+        });
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await
 }
 
-async fn handle(State(state): State<ExporterState>) -> impl IntoResponse {
+async fn handle(State(state): State<ExporterState>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &state.token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "token ausente ou inválido
+"
+            .to_string(),
+        )
+            .into_response();
+    }
     let (nodes_total, nodes_available) = state.registry.counts();
     let summary = metrics::summarize(
         nodes_total,
@@ -53,7 +83,7 @@ async fn handle(State(state): State<ExporterState>) -> impl IntoResponse {
         state.work.failed() as u32,
     );
     let body = render(&summary, &state.registry.list());
-    ([("content-type", "text/plain; version=0.0.4")], body)
+    ([("content-type", "text/plain; version=0.0.4")], body).into_response()
 }
 
 /// Writes one header block for a metric, then a sample per node carrying a `node` label.
@@ -384,5 +414,20 @@ mod tests {
         let bare = NodeSnapshot::default();
         let out = render(&summary(), &[bare]);
         assert!(out.contains("ai_cluster_node_cpu_utilization{node=\"\"} 0\n"));
+    }
+
+    #[test]
+    fn only_the_bearer_token_may_scrape() {
+        let with = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::AUTHORIZATION, value.parse().unwrap());
+            headers
+        };
+        assert!(authorized(&with("Bearer secret"), "secret"));
+        for bad in ["Bearer wrong", "Bearer ", "secret", "Basic secret"] {
+            assert!(!authorized(&with(bad), "secret"), "{bad:?}");
+        }
+        assert!(!authorized(&HeaderMap::new(), "secret"));
+        assert!(!authorized(&with("Bearer "), ""));
     }
 }
