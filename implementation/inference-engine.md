@@ -53,3 +53,26 @@ AI_CLUSTER_GPT2_DIR=code/models/gpt2 cargo test --release -p ai-cluster-engine
 - Local: nada disso roda ainda nos workers. O gateway continua servindo o modelo sintético.
 - O custo de distribuir o forward não foi medido; para um modelo pequeno a latência de rede pode
   superar o ganho.
+
+## Custo local medido (antes de distribuir)
+
+`cargo run --release -p ai-cluster-engine --example bench -- <gpt2|smollm2> <dir>`, num contêiner
+de 4 núcleos (Docker no Windows), prompt de 8 tokens:
+
+| modelo | carga | prompt | por token gerado |
+|--------|-------|--------|------------------|
+| SmolLM2-135M | 3 s | 0,58 s | **156 ms** |
+| GPT-2 small | 15 s | 0,34 s | **140 ms** |
+
+- Um matmul `1×576×1536` (gate/up da SmolLM2) leva **0,65 ms** em uma thread. Um token da SmolLM2
+  faz cerca de 210 matmuls de camada mais a projeção de saída (49152×576): ~134 M
+  multiplicações-soma em 156 ms, ou seja, **cerca de 1 GMAC/s: uma thread só**. O produto divide
+  o trabalho por linhas de saída (`multiply_with_threads`); com 1 linha (decodificação) não há o
+  que dividir.
+- Consequência para distribuir: enviar os pesos a cada chamada é inviável (28 MB por camada em
+  f64); eles teriam de ficar residentes nos workers (cada um com uma fatia de colunas), e só as
+  ativações (~4,6 KB) trafegariam. Mesmo assim são ~210 idas e voltas por token: com RTT de
+  0,3–1 ms em LAN isso soma 60–210 ms por token, mais do que o custo local inteiro; em Wi-Fi,
+  segundos. Para um modelo deste tamanho distribuir **não ganha tempo**; o ganho existe quando
+  o modelo não cabe num nó ou quando há lote/prefill grande.
+- RTT real entre nós não foi medido aqui (o contêiner único não representa uma rede).
