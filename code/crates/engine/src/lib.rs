@@ -3,6 +3,7 @@
 //! can send those products through the execution graph without touching the model code.
 
 mod cache;
+pub mod chat;
 pub mod gpt2;
 pub mod llama;
 pub mod model;

@@ -29,6 +29,19 @@ pub trait LanguageModel {
         stop: Option<u32>,
         cancel: &AtomicBool,
     ) -> Result<Vec<u32>, String> {
+        self.generate_with(prompt, max_new, stop, cancel, &mut |_| {})
+    }
+
+    /// [`generate`](Self::generate) that also hands each token to `on_token` the moment it is
+    /// chosen (the stop token included), so a caller can stream it.
+    fn generate_with(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        stop: Option<u32>,
+        cancel: &AtomicBool,
+        on_token: &mut dyn FnMut(u32),
+    ) -> Result<Vec<u32>, String> {
         if cancel.load(Ordering::Relaxed) {
             return Err("geração cancelada".into());
         }
@@ -43,6 +56,7 @@ pub trait LanguageModel {
                 .map(|(id, _)| id as u32)
                 .ok_or("vocabulário vazio")?;
             produced.push(next);
+            on_token(next);
             // No forward for a token that will not be followed by another.
             if Some(next) == stop || produced.len() >= max_new || cache.len() >= self.context_len()
             {

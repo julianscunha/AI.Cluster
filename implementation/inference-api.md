@@ -56,22 +56,34 @@ prioridades, cotas e contagem de tokens, ACL de modelo e multi-tenant.
   resultado do pedido que ele mesmo criou.
 - **Sem TLS na perna HTTP**, a chave trafega em claro fora de loopback.
 
-## J3: `/v1/chat/completions` sobre o GPT-2
+## J3: `/v1/chat/completions` sobre modelos de linguagem
 
-Com `AI_CLUSTER_GPT2_DIR` (GPT-2 small) e/ou `AI_CLUSTER_SMOLLM2_DIR` (SmolLM2-135M, id
-`smollm2-135m`) apontando para os arquivos do modelo (veja `inference-engine.md`), o gateway
+Com `AI_CLUSTER_GPT2_DIR` (GPT-2 small), `AI_CLUSTER_SMOLLM2_DIR` (SmolLM2-135M, id `smollm2-135m`)
+e/ou `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` (SmolLM2-135M-Instruct, id `smollm2-135m-instruct`) apontando para os arquivos do modelo (veja `inference-engine.md`), o gateway
 carrega cada um na subida (falha fechada se um diretório estiver incompleto) e passa a
 listar o modelo em `/v1/models` e a aceitar `POST /v1/chat/completions` (mesma chave de API).
 
 - Formato OpenAI: `model`, `messages` (`system`/`user`/`assistant`), `max_tokens` (padrão 16, teto
   64); resposta com `choices[0].message`, `finish_reason` (`stop` no fim de texto, `length`) e
-  `usage`. `stream: true` responde 400.
-- O GPT-2 é um modelo base, sem template de chat: os conteúdos das mensagens são unidos por
-  quebra de linha e o modelo **continua o texto**. A resposta é uma continuação, não uma resposta.
+  `usage`.
+- **Streaming.** `stream: true` devolve `text/event-stream` no formato OpenAI: um chunk com o
+  papel, um `chat.completion.chunk` por trecho de texto, um com o `finish_reason` e `data: [DONE]`.
+  Um caractere UTF-8 partido entre tokens só sai inteiro. Os cabeçalhos saem antes da geração, então
+  uma falha depois disso chega como evento `{"error": ...}` seguido de `[DONE]`, não como status.
+  Se o cliente desconecta, a geração é cancelada no próximo token. Não há `usage` no stream.
+- **Modelos base** (GPT-2, SmolLM2-135M) não têm template de chat: os conteúdos das mensagens são
+  unidos por quebra de linha e o modelo **continua o texto**. A resposta é uma continuação.
+- **Modelo instruct** (`smollm2-135m-instruct`) recebe a conversa em ChatML
+  (`<|im_start|>papel\nconteúdo<|im_end|>\n`), com a mensagem de sistema padrão do modelo quando não há
+  uma, e termina a resposta em `<|im_end|>` (`finish_reason: "stop"`). Os tokens especiais entram
+  por id e o texto das mensagens passa pelo codificador comum: um `<|im_end|>` escrito pelo usuário é
+  só texto e não consegue fechar o próprio turno nem abrir um de `system`. A paridade dos ids do
+  prompt e da continuação com o `transformers` está em `tests/smollm2_chat_parity.rs`.
 - Geração gulosa e determinística. Uma geração por vez, somando todos os modelos (429 com `Retry-After` se ocupado); prompt de
   até 512 tokens e 8 KiB; prazo de 30 s (504). Estourar o prazo sinaliza o cancelamento, que vale
   no próximo token; o slot só libera quando a geração termina. `max_tokens` fora de 1–64 é
   ajustado, não rejeitado; `temperature`, `n` e `stop` são ignorados (sempre gulosa, uma escolha).
   `completion_tokens` não conta o token de fim de texto.
 - O modelo roda **dentro do gateway** (cerca de 1,6 GB de RAM); os produtos de matriz não passam
-  pelo cluster. O E2E é `tests/phase-j-chat.sh` e exige os pesos em `code/models/gpt2`.
+  pelo cluster (a menos que `*_SHARDS` ponha as projeções nos workers: `inference-engine.md`, J5). O
+  E2E é `tests/phase-j-chat.sh [gpt2|smollm2|instruct]` e exige os pesos em `code/models/<modelo>`.

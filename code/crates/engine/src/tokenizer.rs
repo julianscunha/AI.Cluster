@@ -192,6 +192,13 @@ impl Tokenizer {
         self.tokens.len()
     }
 
+    /// The id of a token written out in full, such as a special token (`<|im_end|>`). Text given
+    /// to [`encode`](Self::encode) never produces one: special tokens enter a prompt only
+    /// through the template, so a user cannot forge a turn boundary.
+    pub fn token_id(&self, token: &str) -> Option<u32> {
+        self.vocab.get(token).copied()
+    }
+
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, String> {
         if text.len() > MAX_TEXT_BYTES {
             return Err(format!("texto acima de {MAX_TEXT_BYTES} bytes"));

@@ -10,13 +10,14 @@
 //! the controller for; the HTTP contract, auth and limits stay.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_engine::{
-    Executor, LanguageModel, Slice, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer,
+    Executor, LanguageModel, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer,
 };
 use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, GetOutputRequest, GetTraceRequest, ShardMatmulRequest, ShardOp,
@@ -26,6 +27,7 @@ use ai_cluster_protocol::metadata::{
     OPERATOR_TOKEN_ENV, connect_inference, connect_operator, inference_token, insecure_allowed,
     join_token, operator_token, same_token,
 };
+use axum::body::{Body, Bytes};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -65,6 +67,8 @@ struct Llm {
     end_of_text: u32,
     /// Set when the projections run on workers (J5).
     remote: Option<Arc<RemoteStats>>,
+    /// Instruct models take their conversation as ChatML turns; base models just continue text.
+    chat: Option<ChatMl>,
 }
 
 /// Where the time of a remote generation went, since the last read.
@@ -169,6 +173,86 @@ fn grpc_executor(
         roster: Roster::new(nodes),
     });
     (executor, stats)
+}
+
+/// A SmolLM2 checkpoint the gateway can serve, and the environment variables that configure it.
+/// `<prefix>_DIR` turns it on; `<prefix>_SHARDS` (comma-separated node ids) puts the seven
+/// projections of every layer on those workers, each holding a band of rows resident, instead of
+/// running the whole model here; `<prefix>_SUBDIR` names its directory under the workers' model
+/// root.
+struct LlamaSpec {
+    id: &'static str,
+    description: &'static str,
+    prefix: &'static str,
+    default_subdir: &'static str,
+    /// ChatML turns and `<|im_end|>` as the end of a reply.
+    instruct: bool,
+}
+
+const LLAMAS: &[LlamaSpec] = &[
+    LlamaSpec {
+        id: "smollm2-135m",
+        description: "SmolLM2-135M (Llama) no gateway, com as projeções nos workers se houver \
+            AI_CLUSTER_SMOLLM2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
+        prefix: "AI_CLUSTER_SMOLLM2",
+        default_subdir: "smollm2",
+        instruct: false,
+    },
+    LlamaSpec {
+        id: "smollm2-135m-instruct",
+        description: "SmolLM2-135M-Instruct (Llama) com template ChatML, com as projeções nos \
+            workers se houver AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS. Só /v1/chat/completions.",
+        prefix: "AI_CLUSTER_SMOLLM2_INSTRUCT",
+        default_subdir: "smollm2-instruct",
+        instruct: true,
+    },
+];
+
+fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, String> {
+    let Some(dir) = std::env::var_os(format!("{}_DIR", spec.prefix)) else {
+        return Ok(None);
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let shards = shard_nodes(&format!("{}_SHARDS", spec.prefix));
+    let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
+        (
+            Box::new(Llama::load(&dir).map_err(|err| format!("{}: {err}", spec.id))?),
+            None,
+        )
+    } else {
+        let (executor, stats) = grpc_executor(
+            client,
+            &format!("{}_SUBDIR", spec.prefix),
+            spec.default_subdir,
+            shards.clone(),
+        );
+        (
+            Box::new(
+                Llama::load_remote(&dir, executor, shards)
+                    .map_err(|err| format!("{}: {err}", spec.id))?,
+            ),
+            Some(stats),
+        )
+    };
+    let tokenizer =
+        Tokenizer::open(&dir).map_err(|err| format!("{}: tokenizador: {err}", spec.id))?;
+    let chat = if spec.instruct {
+        Some(
+            ChatMl::for_tokenizer(&tokenizer)
+                .ok_or_else(|| format!("{}: o vocabulário não tem os tokens ChatML", spec.id))?,
+        )
+    } else {
+        None
+    };
+    Ok(Some(Llm {
+        id: spec.id,
+        description: spec.description,
+        model,
+        end_of_text: chat.as_ref().map_or(0, |chat| chat.end),
+        tokenizer,
+        remote,
+        chat,
+    }))
 }
 
 impl Executor for GrpcExecutor {
@@ -536,26 +620,44 @@ fn invalid(message: &str) -> Response {
     error(StatusCode::BAD_REQUEST, "INVALID_REQUEST", message)
 }
 
-/// Chat completions over the base model. GPT-2 was never trained on chat turns, so there is no
-/// template: the message contents are joined by newlines and the model continues the text. The
-/// reply is a continuation, not an answer.
-async fn chat_completions(
-    State(gateway): State<Gateway>,
-    headers: HeaderMap,
+/// A request that passed validation and holds the one generation slot.
+struct Prepared {
+    llm: Arc<Llm>,
+    prompt: Vec<u32>,
+    new_tokens: usize,
+    stream: bool,
+    slot: tokio::sync::OwnedSemaphorePermit,
+}
+
+static NEXT_CHAT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Authentication, validation, the generation slot and the prompt. Instruct models get their
+/// ChatML turns; a base model was never trained on chat turns, so the message contents are
+/// joined by newlines and it continues the text. The reply is then a continuation, not an answer.
+// The error is the HTTP response itself, sent straight back; boxing it would only add noise.
+#[allow(clippy::result_large_err)]
+fn prepare(
+    gateway: &Gateway,
+    headers: &HeaderMap,
     body: Result<Json<ChatRequest>, JsonRejection>,
-) -> Response {
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    if !authenticated(&headers, &gateway.api_key) {
-        return unauthorized();
+) -> Result<Prepared, Response> {
+    if !authenticated(headers, &gateway.api_key) {
+        return Err(unauthorized());
     }
     let request = match body {
         Ok(Json(request)) => request,
         Err(rejection) => {
-            return error(
+            return Err(error(
                 rejection.status(),
                 "INVALID_REQUEST",
                 "corpo inválido: esperado JSON com `model` e `messages` (role e content)",
-            );
+            ));
         }
     };
     let Some(llm) = gateway
@@ -564,15 +666,12 @@ async fn chat_completions(
         .find(|llm| llm.id == request.model)
         .cloned()
     else {
-        return error(
+        return Err(error(
             StatusCode::NOT_FOUND,
             "MODEL_NOT_FOUND",
             "modelo desconhecido; veja GET /v1/models",
-        );
+        ));
     };
-    if request.stream {
-        return invalid("streaming ainda não é suportado");
-    }
     let total: usize = request.messages.iter().map(|m| m.content.len()).sum();
     if request.messages.is_empty()
         || request.messages.len() > MAX_MESSAGES
@@ -583,20 +682,14 @@ async fn chat_completions(
             .iter()
             .any(|m| !matches!(m.role.as_str(), "system" | "user" | "assistant"))
     {
-        return invalid(
+        return Err(invalid(
             "`messages` deve ter de 1 a 32 mensagens (role system, user ou assistant) e de 1 a 8192 bytes de texto",
-        );
+        ));
     }
     let new_tokens = request
         .max_tokens
         .unwrap_or(DEFAULT_NEW_TOKENS)
         .clamp(1, MAX_NEW_TOKENS) as usize;
-    let text = request
-        .messages
-        .iter()
-        .map(|m| m.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     // The slot comes first so a busy gateway spends no CPU tokenizing for a request it refuses.
     let Ok(slot) = gateway.llm_slot.clone().try_acquire_owned() else {
         let mut response = error(
@@ -607,12 +700,76 @@ async fn chat_completions(
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
-        return response;
+        return Err(response);
     };
-    let prompt = match llm.tokenizer.encode(&text) {
+    let built = match &llm.chat {
+        Some(chat) => {
+            let turns: Vec<(&str, &str)> = request
+                .messages
+                .iter()
+                .map(|m| (m.role.as_str(), m.content.as_str()))
+                .collect();
+            chat.prompt(&llm.tokenizer, &turns)
+        }
+        None => {
+            let text = request
+                .messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            llm.tokenizer.encode(&text)
+        }
+    };
+    let prompt = match built {
         Ok(prompt) if !prompt.is_empty() && prompt.len() <= MAX_PROMPT_TOKENS => prompt,
-        _ => return invalid("o texto deve ter de 1 a 512 tokens"),
+        _ => return Err(invalid("o texto deve ter de 1 a 512 tokens")),
     };
+    Ok(Prepared {
+        llm,
+        prompt,
+        new_tokens,
+        stream: request.stream,
+        slot,
+    })
+}
+
+/// Logs where the time of a remote generation went; no-op for a local model.
+fn log_remote(llm: &Llm, tokens: usize) {
+    if let Some(stats) = &llm.remote {
+        let calls = stats.calls.swap(0, Ordering::Relaxed);
+        let wall = stats.wall_us.swap(0, Ordering::Relaxed);
+        let compute = stats.compute_us.swap(0, Ordering::Relaxed);
+        let retries = stats.retries.swap(0, Ordering::Relaxed);
+        eprintln!(
+            "remoto: {tokens} tokens, {calls} chamadas, {} ms nas chamadas ({} us cada), {} ms de cálculo nos workers, {retries} refeitas",
+            wall / 1000,
+            wall.checked_div(calls).unwrap_or(0),
+            compute / 1000
+        );
+    }
+}
+
+async fn chat_completions(
+    State(gateway): State<Gateway>,
+    headers: HeaderMap,
+    body: Result<Json<ChatRequest>, JsonRejection>,
+) -> Response {
+    match prepare(&gateway, &headers, body) {
+        Ok(prepared) if prepared.stream => stream_chat(prepared),
+        Ok(prepared) => complete_chat(prepared).await,
+        Err(response) => response,
+    }
+}
+
+async fn complete_chat(prepared: Prepared) -> Response {
+    let Prepared {
+        llm,
+        prompt,
+        new_tokens,
+        slot,
+        ..
+    } = prepared;
     let prompt_tokens = prompt.len();
     // The permit moves into the blocking task, so the slot frees only when the generation really
     // ends. A timeout sets `cancel`, which stops it at the next token.
@@ -644,19 +801,7 @@ async fn chat_completions(
             );
         }
     };
-    if let Some(stats) = &llm.remote {
-        let calls = stats.calls.swap(0, Ordering::Relaxed);
-        let wall = stats.wall_us.swap(0, Ordering::Relaxed);
-        let compute = stats.compute_us.swap(0, Ordering::Relaxed);
-        let retries = stats.retries.swap(0, Ordering::Relaxed);
-        eprintln!(
-            "remoto: {} tokens, {calls} chamadas, {} ms nas chamadas ({} us cada), {} ms de cálculo nos workers, {retries} refeitas",
-            generated.len(),
-            wall / 1000,
-            wall.checked_div(calls).unwrap_or(0),
-            compute / 1000
-        );
-    }
+    log_remote(&llm, generated.len());
     let stopped = generated.last() == Some(&llm.end_of_text);
     let visible = &generated[..generated.len() - usize::from(stopped)];
     let Ok(content) = llm.tokenizer.decode(visible) else {
@@ -667,10 +812,7 @@ async fn chat_completions(
             "a geração falhou",
         );
     };
-    let created = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let id = format!("chatcmpl-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
     (
         [
             ("x-request-id", id.clone()),
@@ -679,7 +821,7 @@ async fn chat_completions(
         Json(json!({
             "id": id,
             "object": "chat.completion",
-            "created": created,
+            "created": unix_seconds(),
             "model": llm.id,
             "choices": [{
                 "index": 0,
@@ -694,6 +836,131 @@ async fn chat_completions(
         })),
     )
         .into_response()
+}
+
+/// The part of `full` not yet sent, advancing `sent`. A text that ends in U+FFFD may be a
+/// character whose last bytes have not been generated yet, so it is held back until `done`.
+fn new_text<'a>(full: &'a str, sent: &mut usize, done: bool) -> &'a str {
+    let ready = if done {
+        full
+    } else {
+        full.strip_suffix('\u{FFFD}').unwrap_or(full)
+    };
+    let fresh = ready.get(*sent..).unwrap_or("");
+    *sent = (*sent).max(ready.len());
+    fresh
+}
+
+/// `stream: true`: server-sent events in the OpenAI shape, one `chat.completion.chunk` per piece
+/// of text, then `[DONE]`. The headers go out at once, so a failure after that arrives as an
+/// `error` event instead of a status code.
+fn stream_chat(prepared: Prepared) -> Response {
+    let Prepared {
+        llm,
+        prompt,
+        new_tokens,
+        slot,
+        ..
+    } = prepared;
+    let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
+    let created = unix_seconds();
+    let model_id = llm.id;
+    let event = {
+        let (id, model) = (id.clone(), llm.id);
+        move |delta: serde_json::Value, finish: serde_json::Value| -> Result<Bytes, Infallible> {
+            Ok(format!(
+                "data: {}\n\n",
+                json!({
+                    "id": id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
+                })
+            )
+            .into())
+        }
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(32);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (worker, flag, out, content) = (llm.clone(), cancel.clone(), tx.clone(), event.clone());
+    let task = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        let stop = worker.end_of_text;
+        let (mut tokens, mut sent) = (Vec::new(), 0);
+        let send = |text: &str| {
+            if !text.is_empty()
+                && out
+                    .blocking_send(content(json!({ "content": text }), json!(null)))
+                    .is_err()
+            {
+                // The client went away: nobody is reading, so stop generating.
+                flag.store(true, Ordering::Relaxed);
+            }
+        };
+        let generated =
+            worker
+                .model
+                .generate_with(&prompt, new_tokens, Some(stop), &flag, &mut |token| {
+                    if token == stop {
+                        return;
+                    }
+                    tokens.push(token);
+                    if let Ok(text) = worker.tokenizer.decode(&tokens) {
+                        send(new_text(&text, &mut sent, false));
+                    }
+                });
+        // Whatever was held back waiting for the rest of a character.
+        if let Ok(text) = worker.tokenizer.decode(&tokens) {
+            send(new_text(&text, &mut sent, true));
+        }
+        generated
+    });
+    tokio::spawn(async move {
+        let _ = tx
+            .send(event(json!({ "role": "assistant" }), json!(null)))
+            .await;
+        let failure = match tokio::time::timeout(DEADLINE, task).await {
+            Ok(Ok(Ok(generated))) => {
+                log_remote(&llm, generated.len());
+                let stopped = generated.last() == Some(&llm.end_of_text);
+                let _ = tx
+                    .send(event(
+                        json!({}),
+                        json!(if stopped { "stop" } else { "length" }),
+                    ))
+                    .await;
+                None
+            }
+            Err(_) => {
+                cancel.store(true, Ordering::Relaxed);
+                Some(("TIMEOUT", "a geração não terminou a tempo"))
+            }
+            // Cancelled because the client left: there is nobody to tell.
+            Ok(Ok(Err(_))) if tx.is_closed() => None,
+            Ok(failed) => {
+                eprintln!("geração falhou: {failed:?}");
+                Some(("MODEL_UNAVAILABLE", "a geração falhou"))
+            }
+        };
+        if let Some((kind, message)) = failure {
+            let body = json!({ "error": { "type": kind, "message": message } });
+            let _ = tx.send(Ok(format!("data: {body}\n\n").into())).await;
+        }
+        let _ = tx.send(Ok("data: [DONE]\n\n".into())).await;
+    });
+    let mut response = Response::new(Body::from_stream(
+        tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(rx),
+    ));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        "text/event-stream".parse().expect("ascii"),
+    );
+    headers.insert(header::CACHE_CONTROL, "no-cache".parse().expect("ascii"));
+    headers.insert("x-request-id", id.parse().expect("ascii"));
+    headers.insert("x-model-id", model_id.parse().expect("ascii"));
+    response
 }
 
 #[tokio::main]
@@ -779,43 +1046,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
             end_of_text: 50256,
             remote,
+            chat: None,
         }));
     }
-    if let Some(dir) = std::env::var_os("AI_CLUSTER_SMOLLM2_DIR") {
-        let dir = std::path::PathBuf::from(dir);
-        // With AI_CLUSTER_SMOLLM2_SHARDS (comma-separated node ids) the seven projections of every
-        // layer run on those workers, each holding a band of rows resident; without it the whole
-        // model runs here.
-        let shards = shard_nodes("AI_CLUSTER_SMOLLM2_SHARDS");
-        let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
-            (
-                Box::new(Llama::load(&dir).map_err(|err| format!("smollm2: {err}"))?),
-                None,
-            )
-        } else {
-            let (executor, stats) = grpc_executor(
-                &client,
-                "AI_CLUSTER_SMOLLM2_SUBDIR",
-                "smollm2",
-                shards.clone(),
-            );
-            (
-                Box::new(
-                    Llama::load_remote(&dir, executor, shards)
-                        .map_err(|err| format!("smollm2: {err}"))?,
-                ),
-                Some(stats),
-            )
-        };
-        llms.push(Arc::new(Llm {
-            id: "smollm2-135m",
-            description: "SmolLM2-135M (Llama) no gateway, com as projeções nos workers se houver                 AI_CLUSTER_SMOLLM2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
-            model,
-            tokenizer: Tokenizer::open(&dir)
-                .map_err(|err| format!("smollm2: tokenizador: {err}"))?,
-            end_of_text: 0,
-            remote,
-        }));
+    for spec in LLAMAS {
+        if let Some(llm) = load_llama(&client, spec)? {
+            llms.push(Arc::new(llm));
+        }
     }
     let gateway = Gateway {
         client: operator_client,
@@ -866,6 +1103,22 @@ mod tests {
         roster.bench("a");
         roster.bench("c");
         assert!(roster.assign(&slices).is_err(), "sem nós vivos");
+    }
+
+    #[test]
+    fn streamed_text_waits_for_a_whole_character() {
+        let mut sent = 0;
+        assert_eq!(new_text("ol", &mut sent, false), "ol");
+        // "á" is two bytes; generated one at a time, the first decodes to U+FFFD and is held.
+        assert_eq!(new_text("ol\u{FFFD}", &mut sent, false), "");
+        assert_eq!(new_text("olá", &mut sent, false), "á");
+        assert_eq!(new_text("olá!", &mut sent, false), "!");
+        // Nothing new, or a string shorter than what went out, sends nothing.
+        assert_eq!(new_text("olá!", &mut sent, false), "");
+        assert_eq!(new_text("ol", &mut sent, false), "");
+        // At the end the held character is sent as it is.
+        let mut sent = 0;
+        assert_eq!(new_text("ok\u{FFFD}", &mut sent, true), "ok\u{FFFD}");
     }
 
     #[test]
