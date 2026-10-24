@@ -87,3 +87,20 @@ de 4 núcleos (Docker no Windows), prompt de 8 tokens:
   porque cada chamada cria threads novas (~840 por token) para ~0,5 ms de trabalho. Só valeria com
   um pool de threads persistente; fica registrado como o próximo ganho local, não feito.
 - O que sobra (~105 ms) são ~106 M multiplicações-soma das camadas em uma thread só.
+
+### Custo de passar um matmul pela fila de trabalho atual (medido)
+
+Latência de `POST /v1/embeddings` (grafo diamante: 4 unidades, 3 níveis de dependência) com 2
+workers em contêineres na mesma rede Docker: **54 a 160 ms por requisição**, em degraus de ~50 ms
+(o gateway consulta o trace a cada 50 ms). A fila é de **puxar**: o worker pergunta por trabalho
+(`WORK_POLL_IDLE_MS = 200` quando está ocioso), o resultado volta por `SubmitWorkResult` e o
+cliente descobre por polling. Piso por operação dependente: algumas dezenas de ms.
+
+Com ~210 matmuls dependentes por token isso daria **4 a 10 s por token** contra ~105 ms local
+(40 a 100× pior). A fila foi feita para trabalho em lote independente, não para o caminho
+crítico de um decode. Ligar o `Linear` do engine a ela só confirmaria o número.
+
+Caminho que faria sentido: um canal **residente e de empurrar** (stream gRPC bidirecional aberto
+pelo worker, com as fatias de pesos já carregadas e quadros `matmul(fatia, ativação)`), com
+latência próxima do RTT. É uma superfície de protocolo nova (autenticação, quotas, carga e
+descarte de fatias, falha de um worker no meio do token) e fica como decisão de projeto.
