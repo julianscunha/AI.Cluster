@@ -8,8 +8,8 @@ use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
-    INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV, ServerMetadata,
-    insecure_allowed, join_token, operator_token,
+    INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV,
+    ServerMetadata, inference_gate, inference_token, insecure_allowed, join_token, operator_token,
 };
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
@@ -41,7 +41,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if operator == token {
         return Err(format!("{OPERATOR_TOKEN_ENV} deve ser diferente de {JOIN_TOKEN_ENV}").into());
     }
-    let auth = ServerMetadata::new(&token, &operator);
+    // Optional third secret (J5): lets a gateway run models on the workers without the operator
+    // token. It must differ from the other two, or it would stand in for them.
+    let inference = inference_token();
+    if inference
+        .as_ref()
+        .is_some_and(|t| *t == token || *t == operator)
+    {
+        return Err(format!(
+            "{INFERENCE_TOKEN_ENV} deve ser diferente de {JOIN_TOKEN_ENV} e de {OPERATOR_TOKEN_ENV}"
+        )
+        .into());
+    }
+    let auth =
+        ServerMetadata::new(&token, &operator).with_inference(inference.as_deref().unwrap_or(""));
+    let gate = inference.clone().unwrap_or_default();
 
     // S2: a new node waits for `ai-cluster approve` unless the operator opts out, which is
     // what a closed lab network or the E2E scripts do.
@@ -192,8 +206,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     builder
-        .add_service(InterceptedService::new(server, auth.clone()))
-        .add_service(InterceptedService::new(probe, auth))
+        .add_service(InterceptedService::new(
+            inference_gate(server, &gate),
+            auth.clone(),
+        ))
+        .add_service(InterceptedService::new(inference_gate(probe, &gate), auth))
         .serve(addr)
         .await?;
     Ok(())

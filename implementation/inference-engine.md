@@ -148,6 +148,17 @@ mensagem `ShardOp`/`ShardCompute` ganhou `by_columns`. `AI_CLUSTER_GPT2_SHARDS`/
 modo; `tests/phase-j-shards.sh gpt2` e `sharded_projections_match_the_local_forward` (GPT-2) provam
 logits idênticos e a mesma continuação.
 
+### Papel de inferência
+
+`AI_CLUSTER_INFERENCE_TOKEN` (opcional, diferente do token de join e do de operador) autentica **só
+`ShardMatmul`**. O controller embrulha cada serviço num `InferenceGate`: quem apresenta esse token e
+chama qualquer outro caminho (listar nós, aprovar, enfileirar, abrir o canal de um worker, sondar
+enlace) recebe `PermissionDenied`; um RPC novo fica fora do alcance do token até alguém liberá-lo.
+O gateway com só esse token roda os modelos nos workers sem poder aprovar nós nem enfileirar
+trabalho; `/v1/embeddings` (que enfileira o grafo sintético) fica desligado (503) nele. Com os dois
+tokens os modelos usam o mais estreito. `phase-j-shards.sh` sobe o gateway só com o de inferência e
+confere que o token não lista nós.
+
 ### Tolerância a falha de worker
 
 Qualquer worker computa qualquer faixa (lê do próprio disco), então mover uma faixa não copia
@@ -167,8 +178,8 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
 
 ### Limites
 
-- O gateway tem o papel de operador e comanda a carga de arquivos nos workers: um papel "inferência"
-  separado seria o passo seguinte.
+- O token de inferência vale só para `ShardMatmul` (veja abaixo); a carga nos workers continua
+  sendo comandada pelo gateway, que não passa de nomes de tensor e faixas dentro da raiz de modelos.
 - Tolerância a falha só por reatribuição (abaixo): sem réplica de fatias pré-carregada, então o nó
   que herda uma faixa a lê do disco na primeira vez (segundos de aquecimento); sem rebalanceamento
   proativo quando entra um nó (a faixa volta ao dono quando o castigo de 30 s acaba).

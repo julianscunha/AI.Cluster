@@ -23,6 +23,7 @@ IMG=aic-rust:1
 R=/t/release
 JOIN=h-token
 OPERATOR=h-operator
+INFERENCE=h-inference
 KEY=h-api-key
 CONTROLLER=http://aic-controller:50051
 GATEWAY=http://aic-gateway:8080
@@ -42,7 +43,7 @@ fail() {
 }
 
 common=(--network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1
-  -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR)
+  -e AI_CLUSTER_JOIN_TOKEN=$JOIN)
 
 http() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" "$IMG" curl -s "$@"
@@ -59,6 +60,7 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller "${common[@]}" -e AI_CLUSTER_AUTO_APPROVE=1 \
+  -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 2
 for i in 1 2; do
@@ -74,7 +76,9 @@ done
 echo "OK: os dois workers abriram o canal residente"
 
 # O gateway só lê config, formas e tensores pequenos; as projeções ficam nos workers.
+# O gateway só tem o token de inferência: roda os modelos nos workers, sem poder de operador.
 MSYS_NO_PATHCONV=1 docker run -d --name aic-gateway "${common[@]}" -e AI_CLUSTER_API_KEY=$KEY \
+  -e AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE \
   -v "$PWD/models/$DIR:/model:ro" -e AI_CLUSTER_${VAR}_DIR=/model \
   -e AI_CLUSTER_${VAR}_SHARDS=worker-1,worker-2 -e AI_CLUSTER_${VAR}_SUBDIR=$DIR \
   -e AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8080 -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
@@ -94,6 +98,21 @@ SECOND=$(chat 5)
 echo "$SECOND" | grep -q "\"content\":\"$EXPECT\"" || fail "segunda chamada divergiu"
 docker logs aic-gateway 2>&1 | grep "remoto:" | tail -2
 echo "OK: a continuação com as projeções nos workers é idêntica à local"
+
+echo "=== A2) o token de inferência só serve para ShardMatmul ==="
+cli() { # cli <token> <comando>: o CLI como quem tem esse token
+  MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
+    -e AI_CLUSTER_OPERATOR_TOKEN="$1" -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
+    sh -c "$R/ai-cluster $2" 2>&1
+}
+cli "$OPERATOR" nodes | grep -q worker-1 || fail "o operador deveria listar os nós"
+DENIED=$(cli "$INFERENCE" nodes)
+echo "$DENIED" | grep -q worker-1 && fail "o token de inferência vazou a lista de nós"
+echo "$DENIED" | grep -qi "PermissionDenied\|permission" || fail "o token de inferência deveria ser recusado: $DENIED"
+EMB=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model":"matmul-diamond-v0","input":"oi"}' $GATEWAY/v1/embeddings)
+[ "$EMB" = 503 ] || fail "sem token de operador os embeddings deveriam dar 503, deu: $EMB"
+echo "OK: o token de inferência não lista nós; embeddings desligados no gateway sem operador"
 
 echo "=== B) um worker morre no meio da geração: as faixas dele vão para o outro ==="
 OUT=$(mktemp)

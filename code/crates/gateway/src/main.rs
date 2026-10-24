@@ -22,8 +22,9 @@ use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, GetOutputRequest, GetTraceRequest, ShardMatmulRequest, ShardOp,
 };
 use ai_cluster_protocol::metadata::{
-    FAILED_NODE_HEADER, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV,
-    connect_operator, insecure_allowed, join_token, operator_token, same_token,
+    FAILED_NODE_HEADER, INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient,
+    OPERATOR_TOKEN_ENV, connect_inference, connect_operator, inference_token, insecure_allowed,
+    join_token, operator_token, same_token,
 };
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
@@ -253,7 +254,9 @@ impl Executor for GrpcExecutor {
 
 #[derive(Clone)]
 struct Gateway {
-    client: MetadataClient,
+    /// Operator connection, for the synthetic embeddings graph; absent when the gateway was
+    /// given only the inference token.
+    client: Option<MetadataClient>,
     api_key: Arc<str>,
     slots: Arc<Semaphore>,
     llms: Arc<Vec<Arc<Llm>>>,
@@ -458,7 +461,14 @@ async fn embeddings(
         return response;
     };
 
-    match run_graph(gateway.client.clone(), seed_of(&request.input)).await {
+    let Some(client) = gateway.client.clone() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "EMBEDDINGS_DISABLED",
+            "embeddings exigem o token de operador, que este gateway não tem",
+        );
+    };
+    match run_graph(client, seed_of(&request.input)).await {
         Ok((request_id, embedding)) => (
             [
                 ("x-request-id", request_id.clone()),
@@ -695,16 +705,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("AI_CLUSTER_API_KEY é obrigatório; o gateway não sobe sem chave")?;
     // The key faces applications; the join and operator tokens face the cluster. Reusing one
     // would let an application's key act as a node or as the operator.
-    if Some(&api_key) == join_token().as_ref() || Some(&api_key) == operator_token().as_ref() {
+    if [join_token(), operator_token(), inference_token()]
+        .iter()
+        .any(|token| token.as_ref() == Some(&api_key))
+    {
         return Err(format!(
-            "AI_CLUSTER_API_KEY deve ser diferente de {JOIN_TOKEN_ENV} e de {OPERATOR_TOKEN_ENV}"
+            "AI_CLUSTER_API_KEY deve ser diferente de {JOIN_TOKEN_ENV}, {OPERATOR_TOKEN_ENV} e {INFERENCE_TOKEN_ENV}"
         )
         .into());
     }
-    if operator_token().is_none() {
-        return Err(
-            format!("{OPERATOR_TOKEN_ENV} é obrigatório: o gateway fala como operador").into(),
-        );
+    // The operator token runs the synthetic embeddings graph; the inference token is enough for
+    // the language models. With both, the models still use the narrower one.
+    if operator_token().is_none() && inference_token().is_none() {
+        return Err(format!(
+            "{OPERATOR_TOKEN_ENV} (embeddings) ou {INFERENCE_TOKEN_ENV} (modelos) é obrigatório"
+        )
+        .into());
     }
 
     let addr: SocketAddr = std::env::var("AI_CLUSTER_GATEWAY_ADDR")
@@ -721,7 +737,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let controller = std::env::var("AI_CLUSTER_CONTROLLER")
         .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string());
-    let client = connect_operator(controller.clone()).await?;
+    let operator_client = if operator_token().is_some() {
+        Some(connect_operator(controller.clone()).await?)
+    } else {
+        None
+    };
+    let client = if inference_token().is_some() {
+        connect_inference(controller.clone()).await?
+    } else {
+        operator_client
+            .clone()
+            .ok_or("sem token para falar com o controller")?
+    };
     // Optional: without a model directory the gateway serves only the synthetic model. Each
     // model that is configured loads at startup, and a broken directory stops the gateway.
     let mut llms = Vec::new();
@@ -791,7 +818,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
     }
     let gateway = Gateway {
-        client,
+        client: operator_client,
         api_key: api_key.into(),
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),

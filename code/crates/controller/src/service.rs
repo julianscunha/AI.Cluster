@@ -16,7 +16,9 @@ use ai_cluster_protocol::cluster::{
     ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
-use ai_cluster_protocol::metadata::{NODE_ID_HEADER, node_credential, require_operator};
+use ai_cluster_protocol::metadata::{
+    NODE_ID_HEADER, node_credential, require_inference, require_operator,
+};
 use tonic::{Request, Response, Status};
 
 /// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
@@ -687,7 +689,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ShardMatmulRequest>,
     ) -> Result<Response<ShardMatmulResponse>, Status> {
-        require_operator(&request)?;
+        require_inference(&request)?;
         let request = request.into_inner();
         let x_len = (request.rows as usize).checked_mul(request.k as usize);
         if request.ops.is_empty()

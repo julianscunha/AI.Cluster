@@ -121,6 +121,35 @@ pub fn operator_token() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Environment variable holding the inference token (J5). It authorizes `ShardMatmul` and
+/// nothing else, so a gateway can run models on the workers without holding the operator
+/// token that approves nodes and queues arbitrary work. Optional.
+pub const INFERENCE_TOKEN_ENV: &str = "AI_CLUSTER_INFERENCE_TOKEN";
+
+/// The inference token from the environment; unset or blank is "none".
+pub fn inference_token() -> Option<String> {
+    std::env::var(INFERENCE_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Marker the interceptor leaves in a request's extensions when the caller proved the
+/// inference token.
+#[derive(Clone, Copy, Debug)]
+pub struct Inference;
+
+/// Refuses the call unless it came in with the operator or the inference token.
+pub fn require_inference<T>(request: &Request<T>) -> Result<(), Status> {
+    if request.extensions().get::<Inference>().is_some() || require_operator(request).is_ok() {
+        Ok(())
+    } else {
+        Err(Status::permission_denied(
+            "esta operação exige o token de operador ou de inferência",
+        ))
+    }
+}
+
 /// Marker the interceptor leaves in a request's extensions when the caller proved the
 /// operator token.
 #[derive(Clone, Copy, Debug)]
@@ -236,6 +265,7 @@ impl Interceptor for ClientMetadata {
 pub struct ServerMetadata {
     token: std::sync::Arc<str>,
     operator: std::sync::Arc<str>,
+    inference: std::sync::Arc<str>,
 }
 
 impl ServerMetadata {
@@ -243,7 +273,84 @@ impl ServerMetadata {
         Self {
             token: token.into(),
             operator: operator.into(),
+            inference: "".into(),
         }
+    }
+
+    /// Also accepts the inference token; pair it with [`inference_gate`], which keeps it to
+    /// `ShardMatmul`.
+    pub fn with_inference(mut self, inference: &str) -> Self {
+        self.inference = inference.into();
+        self
+    }
+}
+
+/// Path of `ShardMatmul`, the one call the inference token may make.
+const SHARD_MATMUL_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardMatmul";
+
+/// Wraps a service so a caller presenting the inference token reaches `ShardMatmul` and gets
+/// `PermissionDenied` on every other path. Fail-closed by construction: a new RPC is out of
+/// reach of that token until someone says otherwise here.
+#[derive(Clone)]
+pub struct InferenceGate<S> {
+    inner: S,
+    token: std::sync::Arc<str>,
+}
+
+pub fn inference_gate<S>(inner: S, token: &str) -> InferenceGate<S> {
+    InferenceGate {
+        inner,
+        token: token.into(),
+    }
+}
+
+impl<S: tonic::server::NamedService> tonic::server::NamedService for InferenceGate<S> {
+    const NAME: &'static str = S::NAME;
+}
+
+impl<S, B> tonic::codegen::Service<tonic::codegen::http::Request<B>> for InferenceGate<S>
+where
+    S: tonic::codegen::Service<
+            tonic::codegen::http::Request<B>,
+            Response = tonic::codegen::http::Response<tonic::body::Body>,
+        > + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    S::Error: Send + 'static,
+    B: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: tonic::codegen::http::Request<B>) -> Self::Future {
+        let presented = request
+            .headers()
+            .get(AUTH_HEADER)
+            .map_or(&b""[..], |value| value.as_bytes());
+        if !self.token.is_empty()
+            && same_token(self.token.as_bytes(), presented)
+            && request.uri().path() != SHARD_MATMUL_PATH
+        {
+            return Box::pin(async {
+                Ok(
+                    Status::permission_denied("o token de inferência só vale para ShardMatmul")
+                        .into_http(),
+                )
+            });
+        }
+        // The clone that was polled ready is the one that serves the call.
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        Box::pin(inner.call(request))
     }
 }
 
@@ -275,11 +382,16 @@ impl Interceptor for ServerMetadata {
         // Both comparisons always run, so timing does not say which token a guess resembled.
         let is_operator = !self.operator.is_empty() && same_token(self.operator.as_bytes(), given);
         let is_node = !self.token.is_empty() && same_token(self.token.as_bytes(), given);
-        if !is_operator && !is_node {
+        let is_inference =
+            !self.inference.is_empty() && same_token(self.inference.as_bytes(), given);
+        if !is_operator && !is_node && !is_inference {
             return Err(Status::unauthenticated("token ausente ou inválido"));
         }
         if is_operator {
             request.extensions_mut().insert(Operator);
+        }
+        if is_inference {
+            request.extensions_mut().insert(Inference);
         }
         let version = request
             .metadata()
@@ -315,6 +427,17 @@ pub async fn connect_operator(
     dst: impl Into<String>,
 ) -> Result<MetadataClient, Box<dyn std::error::Error>> {
     connect_with(dst, ClientMetadata::operator_from_env()).await
+}
+
+/// Connects with the inference token on every call (the gateway's model traffic).
+pub async fn connect_inference(
+    dst: impl Into<String>,
+) -> Result<MetadataClient, Box<dyn std::error::Error>> {
+    connect_with(
+        dst,
+        ClientMetadata::with_token(inference_token().unwrap_or_default()),
+    )
+    .await
 }
 
 async fn connect_with(
@@ -422,6 +545,25 @@ mod tests {
             open.call(with("")).unwrap_err().code(),
             tonic::Code::Unauthenticated
         );
+    }
+
+    #[test]
+    fn the_inference_token_marks_only_inference_and_never_operator() {
+        let mut server = ServerMetadata::new("secret", "op-secret").with_inference("inf");
+        let with = |token: &str| {
+            ClientMetadata::with_token(token)
+                .call(Request::new(()))
+                .unwrap()
+        };
+        let inference = server.call(with("inf")).unwrap();
+        assert!(require_inference(&inference).is_ok());
+        assert!(require_operator(&inference).is_err());
+        // The operator also passes the inference check; a node (join token) does not.
+        assert!(require_inference(&server.call(with("op-secret")).unwrap()).is_ok());
+        assert!(require_inference(&server.call(with("secret")).unwrap()).is_err());
+        // Without the token configured, "inf" is just a wrong token.
+        let mut plain = ServerMetadata::new("secret", "op-secret");
+        assert!(plain.call(with("inf")).is_err());
     }
 
     #[test]

@@ -32,6 +32,8 @@ O token de join identifica "alguém da rede"; ele não manda no cluster.
   operador. `require_operator` abre as RPCs administrativas: `ApproveNode`, `EnqueueWork`,
   `EnqueueGraph`, `Reserve`, `ReleaseReservation`. Sem a marca: `PermissionDenied`.
 - Leituras (`nodes`, `events`, métricas) e as RPCs de nó aceitam qualquer um dos dois.
+- `AI_CLUSTER_INFERENCE_TOKEN` (opcional, diferente dos outros dois) é um terceiro papel que só
+  chama `ShardMatmul`; ver `inference-engine.md`.
 - Fecha o achado 1 da revisão de S2 (quem tem o token aprovava a si mesmo). `LeaveNode` fica
   aberto, porque o worker o chama ao desligar; ele depende da credencial por nó (S3b).
 - Teto: o operador não tem rotação nem revogação própria (troca-se reiniciando o controller).
