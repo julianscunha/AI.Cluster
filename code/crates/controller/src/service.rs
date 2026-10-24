@@ -14,7 +14,7 @@ use ai_cluster_protocol::cluster::{
     Reservation, ReserveRequest, ReserveResponse, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
-use ai_cluster_protocol::metadata::require_operator;
+use ai_cluster_protocol::metadata::{node_credential, require_operator};
 use tonic::{Request, Response, Status};
 
 /// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
@@ -94,12 +94,29 @@ fn clamp_tolerance(parsed: Option<f64>) -> f64 {
     }
 }
 
+/// S3b: a call that speaks for `node_id` must carry that node's credential, or come from the
+/// operator. Without it the join token alone could heartbeat, drain or submit for any node.
+fn authorize_node<T>(
+    registry: &Registry,
+    request: &Request<T>,
+    node_id: &str,
+) -> Result<(), Status> {
+    if require_operator(request).is_ok() || registry.authorizes(node_id, node_credential(request)) {
+        Ok(())
+    } else {
+        Err(Status::unauthenticated(
+            "credencial do nó ausente ou inválida",
+        ))
+    }
+}
+
 #[tonic::async_trait]
 impl ClusterControl for ClusterControlService {
     async fn register_node(
         &self,
         request: Request<RegisterNodeRequest>,
     ) -> Result<Response<RegisterNodeResponse>, Status> {
+        let presented = node_credential(&request).to_vec();
         let request = request.into_inner();
         let identity = request
             .identity
@@ -112,9 +129,12 @@ impl ClusterControl for ClusterControlService {
         // A node offers the copy of the state it holds. A controller that lost its own files
         // takes the newest one — a node keeping the copy is exactly what lets the queue come
         // back after the volume dies (I4).
-        let record = self
-            .registry
-            .register(identity, request.capability.unwrap_or_default(), now);
+        let record = self.registry.register_as(
+            identity,
+            request.capability.unwrap_or_default(),
+            now,
+            &presented,
+        );
         // S2: an unapproved node must not be able to write controller state, so its copy is
         // ignored until it is trusted. A node that comes back after approval offers it again.
         if let Some(replica) = request.replica.filter(|_| record.trusted) {
@@ -129,6 +149,7 @@ impl ClusterControl for ClusterControlService {
             } else {
                 format!("nó {node_id} registrado, aguardando aprovação")
             },
+            node_credential: record.credential,
         }))
     }
 
@@ -153,6 +174,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
+        authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -178,6 +200,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<HealthStreamRequest>,
     ) -> Result<Response<HealthStreamResponse>, Status> {
+        authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -208,6 +231,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<LeaveNodeRequest>,
     ) -> Result<Response<LeaveNodeResponse>, Status> {
+        authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -242,6 +266,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<RequestWorkRequest>,
     ) -> Result<Response<RequestWorkResponse>, Status> {
+        authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -295,6 +320,15 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<SubmitWorkResultRequest>,
     ) -> Result<Response<SubmitWorkResultResponse>, Status> {
+        authorize_node(
+            &self.registry,
+            &request,
+            request
+                .get_ref()
+                .result
+                .as_ref()
+                .map_or("", |result| result.node_id.as_str()),
+        )?;
         let result = request
             .into_inner()
             .result
@@ -750,7 +784,7 @@ mod tests {
         assert_eq!(registered.cluster_id, "test-cluster");
 
         let heartbeat = service
-            .heartbeat(Request::new(HeartbeatRequest {
+            .heartbeat(op(HeartbeatRequest {
                 node_id: "node-a".to_string(),
                 unix_ms: 123,
                 replica_epoch_unix_ms: 0,
@@ -761,7 +795,7 @@ mod tests {
         assert!(heartbeat.acknowledged);
 
         let health = service
-            .report_health(Request::new(HealthStreamRequest {
+            .report_health(op(HealthStreamRequest {
                 node_id: "node-a".to_string(),
                 health: Some(HealthReport {
                     health_score: 0.9,
@@ -806,7 +840,7 @@ mod tests {
         assert_eq!(blank.code(), tonic::Code::InvalidArgument);
 
         let ghost = service
-            .heartbeat(Request::new(HeartbeatRequest {
+            .heartbeat(op(HeartbeatRequest {
                 node_id: "ghost".to_string(),
                 unix_ms: 0,
                 replica_epoch_unix_ms: 0,
@@ -830,7 +864,7 @@ mod tests {
             .unwrap();
 
         let idle = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -841,7 +875,7 @@ mod tests {
 
         work_store.enqueue([unit("w1")]);
         let claimed = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -853,7 +887,7 @@ mod tests {
         assert_eq!(claimed.matrix_a.len(), 4);
 
         let accepted = service
-            .submit_work_result(Request::new(SubmitWorkResultRequest {
+            .submit_work_result(op(SubmitWorkResultRequest {
                 result: Some(WorkResult {
                     work_id: "w1".to_string(),
                     node_id: "node-a".to_string(),
@@ -877,7 +911,7 @@ mod tests {
         let service = service();
 
         let blank = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "  ".to_string(),
             }))
             .await
@@ -885,7 +919,7 @@ mod tests {
         assert_eq!(blank.code(), tonic::Code::InvalidArgument);
 
         let unknown = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "ghost".to_string(),
             }))
             .await
@@ -893,7 +927,7 @@ mod tests {
         assert_eq!(unknown.code(), tonic::Code::FailedPrecondition);
 
         let missing = service
-            .submit_work_result(Request::new(SubmitWorkResultRequest { result: None }))
+            .submit_work_result(op(SubmitWorkResultRequest { result: None }))
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::InvalidArgument);
@@ -928,7 +962,7 @@ mod tests {
         assert_eq!(work_store.pending(), 2);
 
         let claimed = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -971,7 +1005,7 @@ mod tests {
 
         work_store.enqueue([unit("w1")]);
         let claimed = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -981,7 +1015,7 @@ mod tests {
         assert_eq!(work_store.pending(), 1);
 
         let left = service
-            .leave_node(Request::new(LeaveNodeRequest {
+            .leave_node(op(LeaveNodeRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -1001,7 +1035,7 @@ mod tests {
 
         // Leaving twice reports accepted=false rather than failing the call.
         let again = service
-            .leave_node(Request::new(LeaveNodeRequest {
+            .leave_node(op(LeaveNodeRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -1012,12 +1046,59 @@ mod tests {
 
         // A blank node id is a client error.
         let blank = service
-            .leave_node(Request::new(LeaveNodeRequest {
+            .leave_node(op(LeaveNodeRequest {
                 node_id: "  ".to_string(),
             }))
             .await
             .unwrap_err();
         assert_eq!(blank.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn a_node_call_needs_the_credential_issued_at_registration() {
+        let service = service();
+        let registered = service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+                replica: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let beat = |credential: Option<&str>| {
+            let mut request = Request::new(HeartbeatRequest {
+                node_id: "node-a".to_string(),
+                ..Default::default()
+            });
+            if let Some(value) = credential {
+                request.metadata_mut().insert(
+                    ai_cluster_protocol::metadata::NODE_AUTH_HEADER,
+                    value.parse().unwrap(),
+                );
+            }
+            request
+        };
+        assert!(!registered.node_credential.is_empty());
+        for bad in [None, Some("wrong")] {
+            let refused = service.heartbeat(beat(bad)).await.unwrap_err();
+            assert_eq!(refused.code(), tonic::Code::Unauthenticated);
+        }
+        assert!(
+            service
+                .heartbeat(beat(Some(&registered.node_credential)))
+                .await
+                .is_ok()
+        );
+        // The operator may act for any node.
+        assert!(
+            service
+                .leave_node(op(LeaveNodeRequest {
+                    node_id: "node-a".to_string(),
+                }))
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -1034,7 +1115,7 @@ mod tests {
 
         registry.mark_stale_offline(unix_ms() + 20_000, 10_000);
         let refused = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -1097,7 +1178,7 @@ mod tests {
         // transfer term dwarfs compute, the two costs land within the G5 hysteresis
         // band, and the weak node would rightly take it instead of yielding.
         let weak = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-weak".to_string(),
             }))
             .await
@@ -1109,7 +1190,7 @@ mod tests {
 
         // The node that fits the unit better takes it.
         let strong = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-strong".to_string(),
             }))
             .await
@@ -1197,13 +1278,13 @@ mod tests {
 
         work_store.enqueue([unit("w1")]);
         service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
             .unwrap();
         service
-            .submit_work_result(Request::new(SubmitWorkResultRequest {
+            .submit_work_result(op(SubmitWorkResultRequest {
                 result: Some(WorkResult {
                     work_id: "w1".to_string(),
                     node_id: "node-a".to_string(),
@@ -1274,7 +1355,7 @@ mod tests {
 
         // Run the unit end to end: dispatch, compute, submit.
         let claimed = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await
@@ -1283,7 +1364,7 @@ mod tests {
             .work
             .expect("work unit present");
         service
-            .submit_work_result(Request::new(SubmitWorkResultRequest {
+            .submit_work_result(op(SubmitWorkResultRequest {
                 result: Some(WorkResult {
                     work_id: claimed.work_id.clone(),
                     node_id: "node-a".to_string(),
@@ -1379,7 +1460,7 @@ mod tests {
             .unwrap();
 
         let refused = service
-            .request_work(Request::new(RequestWorkRequest {
+            .request_work(op(RequestWorkRequest {
                 node_id: "node-a".to_string(),
             }))
             .await

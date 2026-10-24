@@ -37,6 +37,7 @@ dependencies = [
  "ai-cluster-common",
  "ai-cluster-protocol",
  "axum",
+ "getrandom",
  "prost",
  "tokio",
  "tonic",

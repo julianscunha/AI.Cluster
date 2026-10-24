@@ -8,6 +8,8 @@ ai-cluster-common = { path = "../common" }
 ai-cluster-protocol = { path = "../protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tonic = "0.14"
+# Per-node credentials (S3b) need real entropy; already in the tree through another crate.
+getrandom = "0.4"
 # Reuses the generated message types for the on-disk snapshot; already in the
 # tree through ai-cluster-protocol, so this adds no new crate.
 prost = "0.14"

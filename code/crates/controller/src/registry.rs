@@ -1,3 +1,4 @@
+use ai_cluster_protocol::metadata::same_token;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +12,14 @@ pub fn unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// 128 random bits as hex. Without an entropy source the controller cannot make a secret
+/// worth having, so it stops rather than issue a guessable one.
+fn new_credential() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("sem fonte de entropia para a credencial do nó");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Whether the controller may hand new work to a node. A node that is leaving or believed dead
@@ -32,6 +41,9 @@ pub struct NodeRecord {
     /// False until someone approves the node (S2). Liveness and health still flow for an
     /// untrusted node so an operator can see it; it just never receives work or state.
     pub trusted: bool,
+    /// Secret issued at registration (S3b). Only the node that registered it knows it; the
+    /// snapshot shown to readers leaves it out.
+    pub credential: String,
     pub registered_at_unix_ms: u64,
     pub last_heartbeat_unix_ms: u64,
 }
@@ -99,15 +111,29 @@ impl Registry {
         capability: CapabilityReport,
         now: u64,
     ) -> NodeRecord {
+        self.register_as(identity, capability, now, b"")
+    }
+
+    /// `register` for a caller that presents a credential. Only the holder of the credential
+    /// issued for this `node_id` is that node coming back (S3b); anyone else — a restarted
+    /// worker included, which lost it — gets a new credential and earns trust again, the safe
+    /// direction to fail. It also supersedes the S2 device check, which a client could fake.
+    pub fn register_as(
+        &self,
+        identity: NodeIdentity,
+        capability: CapabilityReport,
+        now: u64,
+        presented: &[u8],
+    ) -> NodeRecord {
         let trusted = self.auto_approve;
+        // Drawn before the lock: if entropy fails the panic must not poison the registry.
+        let fresh = new_credential();
         let mut nodes = self.lock();
         nodes
             .entry(identity.node_id.clone())
             .and_modify(|record| {
-                // The same node_id from a different device is not the node that was approved:
-                // it earns trust again instead of inheriting it (S2). A reimaged or replaced
-                // machine is re-approved, which is the safe direction to fail.
-                if record.identity.device_id != identity.device_id {
+                if !same_token(record.credential.as_bytes(), presented) {
+                    record.credential = fresh.clone();
                     record.trusted = trusted;
                 }
                 record.identity = identity.clone();
@@ -122,10 +148,19 @@ impl Registry {
                 state: NodeState::Ready,
                 // Re-registration keeps the trust a node already earned (and_modify above).
                 trusted,
+                credential: fresh,
                 registered_at_unix_ms: now,
                 last_heartbeat_unix_ms: now,
             })
             .clone()
+    }
+
+    /// Whether a call that speaks for `node_id` may proceed. An unknown node has no secret to
+    /// protect, so it passes and the handler gives its usual "unknown" answer.
+    pub fn authorizes(&self, node_id: &str, presented: &[u8]) -> bool {
+        self.lock()
+            .get(node_id)
+            .is_none_or(|record| same_token(record.credential.as_bytes(), presented))
     }
 
     /// Returns false when the node is unknown, so the caller can ask it to re-register.
@@ -288,7 +323,7 @@ mod tests {
     #[test]
     fn a_new_node_waits_for_approval_and_keeps_it_across_re_registration() {
         let registry = Registry::requiring_approval();
-        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        let first = registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
         // Untrusted: alive and visible, but never a candidate or counted as available.
         assert!(registry.knows("node-a"));
         assert!(!registry.is_available("node-a"));
@@ -302,22 +337,44 @@ mod tests {
         assert!(registry.is_available("node-a"));
         assert_eq!(registry.counts(), (1, 1));
 
-        // Re-registering (a restart, a lost heartbeat) must not revoke the approval.
-        registry.register(identity("node-a"), CapabilityReport::default(), 2_000);
+        // Re-registering with its own credential (a lost heartbeat) must not revoke the approval.
+        registry.register_as(
+            identity("node-a"),
+            CapabilityReport::default(),
+            2_000,
+            first.credential.as_bytes(),
+        );
         assert!(registry.is_available("node-a"));
     }
 
     #[test]
-    fn the_same_node_id_from_another_device_does_not_inherit_trust() {
+    fn the_same_node_id_without_the_credential_does_not_inherit_trust() {
         let registry = Registry::requiring_approval();
-        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        let first = registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
         registry.approve("node-a");
 
-        let mut impostor = identity("node-a");
-        impostor.device_id = "another-machine".to_string();
-        let record = registry.register(impostor, CapabilityReport::default(), 2_000);
-        assert!(!record.trusted);
-        assert!(!registry.is_available("node-a"));
+        // The holder comes back: same credential, trust kept.
+        let back = registry.register_as(
+            identity("node-a"),
+            CapabilityReport::default(),
+            1_500,
+            first.credential.as_bytes(),
+        );
+        assert!(back.trusted);
+        assert_eq!(back.credential, first.credential);
+
+        // Anyone else, device_id copied or not, gets a new secret and no trust.
+        let impostor = registry.register_as(
+            identity("node-a"),
+            CapabilityReport::default(),
+            2_000,
+            b"guess",
+        );
+        assert!(!impostor.trusted);
+        assert_ne!(impostor.credential, first.credential);
+        assert!(!registry.authorizes("node-a", first.credential.as_bytes()));
+        assert!(registry.authorizes("node-a", impostor.credential.as_bytes()));
+        assert!(registry.authorizes("ghost", b""));
     }
 
     #[test]

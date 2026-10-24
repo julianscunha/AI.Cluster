@@ -8,7 +8,7 @@ use ai_cluster_protocol::cluster::{
     NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, RequestWorkRequest, StateReplica,
     SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
-use ai_cluster_protocol::metadata::{ProbeClient, connect_controller, connect_probe};
+use ai_cluster_protocol::metadata::{ProbeClient, connect_node, connect_probe};
 use prost::Message;
 use tokio::time;
 
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // at a time here, so the unit gets the whole budget the node reports.
     let cores = core_budget(capability.cpu_threads);
 
-    let mut client = connect_controller(endpoint.clone()).await?;
+    let (mut client, credential) = connect_node(endpoint.clone()).await?;
     // A pinned node measures nothing, the same contract as the pinned compute score.
     // The probe has its own connection; if it cannot open, the node simply reports no rate.
     let mut probe_client = match pinned_network_score() {
@@ -193,6 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?
         .into_inner();
+    credential.set(&registered.node_credential);
     println!(
         "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id
@@ -219,6 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let node_id = node_id.clone();
         let identity = identity.clone();
         let capability = capability.clone();
+        let credential = credential.clone();
         async move {
             let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
             loop {
@@ -245,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         if !beat.acknowledged {
                             println!("controller não conhece {node_id}; re-registrando");
-                            if let Err(err) = client
+                            match client
                                 .register_node(RegisterNodeRequest {
                                     identity: Some(identity.clone()),
                                     capability: Some(capability.clone()),
@@ -253,7 +255,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .await
                             {
-                                println!("heartbeat: re-registro falhou: {err}");
+                                Ok(again) => credential.set(&again.into_inner().node_credential),
+                                Err(err) => println!("heartbeat: re-registro falhou: {err}"),
                             }
                         }
                     }

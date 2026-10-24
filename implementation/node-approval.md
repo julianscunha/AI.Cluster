@@ -16,9 +16,9 @@ O token de join (S1) decide quem pode falar com o controller. Isto decide quem p
   (Achado pelo E2E: a primeira versão devolvia `FailedPrecondition` e o worker saía.)
 - `ai-cluster approve <nó>` chama o RPC `ApproveNode`. Nó desconhecido responde "não
   encontrado"; aprovar duas vezes é inofensivo. Gera o evento `node_approved`.
-- Re-registro (reinício do worker, heartbeat perdido) **mantém** a aprovação já dada, desde que
-  o `device_id` seja o mesmo. O mesmo `node_id` vindo de outro dispositivo volta a pendente: não
-  herda a confiança de quem foi aprovado (achado da revisão).
+- Re-registro **mantém** a aprovação só se provar a credencial do nó (S3b, `join-token.md`). Um
+  worker reiniciado a perdeu e volta a pendente; o mesmo `node_id` vindo de outro cliente
+  também: não herda a confiança de quem foi aprovado.
 - A réplica de estado que um nó oferece no registro (I4) é **ignorada enquanto ele está
   pendente**: um nó não aprovado não escreve estado do controller.
 
@@ -48,10 +48,8 @@ unitários no registry.
 
 ## O que a aprovação **não** é
 
-A S2 barra um nó desconhecido, não um nó malicioso que já tem o token. Como o segredo é
-compartilhado e não há identidade por nó, quem o tem pode: aprovar a si mesmo (`approve`),
-derrubar um nó alheio (`leave_node`), forjar o resultado de uma unidade cujo `work_id` e dono
-conheça (`submit_work_result`), e mexer em saúde e estado pelo heartbeat. O `device_id` é
-informado pelo próprio cliente, então quem conhece o do nó aprovado também o imita. Fechar isso
-exige credencial por nó (mTLS, docs/19) e um token de operador separado. A revisão de segurança
-apontou cada um desses pontos; o teto está aceito e registrado aqui.
+A S2 barra um nó desconhecido, não um nó malicioso. Os achados da revisão sobre o segredo
+compartilhado foram fechados depois: autoaprovação pelo token de operador separado (S3a) e
+`leave_node` alheio, `submit_work_result` forjado e heartbeat/saúde forjados pela credencial por
+nó (S3b). O que resta é o teto de `join-token.md`: tudo em texto claro (sem TLS), sem revogação
+nem rotação, e o token de join ainda deixa registrar um `node_id` alheio e derrubá-lo.

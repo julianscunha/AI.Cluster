@@ -126,6 +126,9 @@ message RegisterNodeResponse {
   bool accepted = 1;
   string cluster_id = 2;
   string message = 3;
+  // Segredo do nó (Fase S3b), emitido a cada registro de quem não prova o anterior. O nó o
+  // devolve no cabeçalho x-ai-cluster-node-auth em toda chamada que fala por ele.
+  string node_credential = 4;
 }
 
 message HeartbeatRequest {

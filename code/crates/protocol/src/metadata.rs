@@ -22,6 +22,8 @@ pub const PROTOCOL_VERSION: &str = "v1";
 pub const VERSION_HEADER: &str = "x-ai-cluster-protocol-version";
 pub const CORRELATION_HEADER: &str = "x-ai-cluster-correlation-id";
 pub const AUTH_HEADER: &str = "x-ai-cluster-auth";
+/// Header carrying the per-node credential the controller issued at registration (S3b).
+pub const NODE_AUTH_HEADER: &str = "x-ai-cluster-node-auth";
 
 /// Ceiling for a single gRPC message, in bytes, in both directions.
 ///
@@ -113,6 +115,22 @@ pub type ProbeClient = LinkProbeClient<
 #[derive(Clone, Debug, Default)]
 pub struct ClientMetadata {
     token: String,
+    credential: NodeCredential,
+}
+
+/// The credential a node received at registration, shared with the interceptor of every client
+/// cloned from the connection, so one `set` after `RegisterNode` stamps all later calls.
+#[derive(Clone, Debug, Default)]
+pub struct NodeCredential(std::sync::Arc<std::sync::Mutex<String>>);
+
+impl NodeCredential {
+    pub fn set(&self, value: &str) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = value.to_string();
+    }
+
+    fn get(&self) -> String {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
 }
 
 impl ClientMetadata {
@@ -130,6 +148,7 @@ impl ClientMetadata {
     pub fn with_token(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
+            credential: NodeCredential::default(),
         }
     }
 }
@@ -146,6 +165,12 @@ impl Interceptor for ClientMetadata {
         // without it and is refused, rather than panicking the client.
         if let Ok(value) = self.token.parse() {
             metadata.insert(AUTH_HEADER, value);
+        }
+        let credential = self.credential.get();
+        if !credential.is_empty()
+            && let Ok(value) = credential.parse()
+        {
+            metadata.insert(NODE_AUTH_HEADER, value);
         }
         Ok(request)
     }
@@ -169,9 +194,17 @@ impl ServerMetadata {
     }
 }
 
+/// The credential a call presents, or empty when it carries none.
+pub fn node_credential<T>(request: &Request<T>) -> &[u8] {
+    request
+        .metadata()
+        .get(NODE_AUTH_HEADER)
+        .map_or(&b""[..], |value| value.as_bytes())
+}
+
 /// Equal-length byte comparison without an early exit, so timing does not reveal how much of
 /// a guess matched. The length itself is not secret.
-fn same_token(expected: &[u8], given: &[u8]) -> bool {
+pub fn same_token(expected: &[u8], given: &[u8]) -> bool {
     expected.len() == given.len()
         && expected
             .iter()
@@ -214,10 +247,14 @@ impl Interceptor for ServerMetadata {
 ///
 /// The message-size ceiling is raised past the gRPC default so a worker can receive a
 /// work unit whose operands exceed 4MB — see [`MAX_MESSAGE_BYTES`].
-pub async fn connect_controller(
+///
+/// Returns the handle a node sets with the credential from `RegisterNode` (S3b).
+pub async fn connect_node(
     dst: impl Into<String>,
-) -> Result<MetadataClient, Box<dyn std::error::Error>> {
-    connect_with(dst, ClientMetadata::from_env()).await
+) -> Result<(MetadataClient, NodeCredential), Box<dyn std::error::Error>> {
+    let metadata = ClientMetadata::from_env();
+    let credential = metadata.credential.clone();
+    Ok((connect_with(dst, metadata).await?, credential))
 }
 
 /// Connects as the operator (the CLI): same channel, the operator token on every call.

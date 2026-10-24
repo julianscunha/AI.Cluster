@@ -36,6 +36,29 @@ O token de join identifica "alguém da rede"; ele não manda no cluster.
   aberto, porque o worker o chama ao desligar; ele depende da credencial por nó (S3b).
 - Teto: continua em texto claro, sem TLS; o operador não tem rotação nem revogação.
 
+## Credencial por nó (Fase S3b)
+
+O token de join diz "alguém da rede"; a credencial diz "este nó".
+
+- `RegisterNode` devolve `node_credential` (128 bits aleatórios, `getrandom`). O worker a guarda
+  em `NodeCredential` e a manda em `x-ai-cluster-node-auth` em toda chamada seguinte.
+- `Heartbeat`, `ReportHealth`, `RequestWork`, `SubmitWorkResult` e `LeaveNode` conferem a
+  credencial do `node_id` que dizem representar (`authorize_node`); o operador também passa.
+  Um nó desconhecido passa, e o handler dá a resposta de sempre ("não conheço").
+- Quem registra um `node_id` existente sem provar a credencial atual recebe uma nova e volta a
+  `pendente` (ou `aprovado` com `AI_CLUSTER_AUTO_APPROVE`). Isso substitui a checagem de
+  `device_id` da S2, que o cliente podia forjar.
+- Fecha os achados 3 e 4 da revisão de S2: `leave_node` alheio e `submit_work_result` forjado.
+
+**Preço:** um worker que reinicia perdeu a credencial (só vive em memória) e, sem
+`AUTO_APPROVE`, precisa ser aprovado de novo. **Tetos:** a credencial é guardada em claro no
+controller e trafega em claro, sem TLS; quem tem o token de join ainda pode registrar um
+`node_id` alheio e derrubá-lo (negação de serviço, não falsificação); não há revogação nem
+rotação periódica. O operador age por qualquer nó. Um `node_id` que o registro não conhece passa pela
+checagem; o dono de uma unidade restaurada do disco, ausente do registro, pode ter o resultado
+fechado por quem tem o token de join e o `work_id` (o `Debug` de `NodeRecord` e de
+`NodeCredential` também imprime o segredo, mas nada o loga hoje).
+
 ## Tetos
 
 - **Texto claro.** Sem TLS, quem escuta a rede captura o token. E a variável de ambiente
