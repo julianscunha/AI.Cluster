@@ -731,6 +731,7 @@ impl ClusterControl for ClusterControlService {
                 tensor: op.tensor.clone(),
                 row_start: op.row_start,
                 row_end: op.row_end,
+                by_columns: op.by_columns,
                 rows: request.rows,
                 k: request.k,
                 x: request.x.clone(),

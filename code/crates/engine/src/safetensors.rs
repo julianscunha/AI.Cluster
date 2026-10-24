@@ -154,17 +154,19 @@ fn decode(raw: &[u8], bf16: bool) -> Vec<f64> {
     }
 }
 
-/// Largest header `read_rows` accepts; real ones are a few hundred KB.
+/// Largest header `read_band` accepts; real ones are a few hundred KB.
 const MAX_HEADER_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Rows `row_start..row_end` of a 2-D tensor, read straight from the file: the header and those
+/// Rows `start..end` of a 2-D tensor (or, with `by_columns`, columns `start..end` of every row),
+/// read straight from the file: the header and those
 /// rows' bytes only, never the rest of the (possibly huge) file. `max_bytes` bounds the widened
 /// f64 result, checked before anything is allocated.
-pub fn read_rows(
+pub fn read_band(
     path: &Path,
     name: &str,
-    row_start: usize,
-    row_end: usize,
+    start: usize,
+    end: usize,
+    by_columns: bool,
     max_bytes: usize,
 ) -> Result<Matrix, String> {
     use std::io::{Read, Seek, SeekFrom};
@@ -191,28 +193,42 @@ pub fn read_rows(
             entry.shape.len()
         ));
     };
-    if row_start >= row_end || row_end > rows {
-        return Err(format!(
-            "{name}: linhas {row_start}..{row_end} fora de 0..{rows}"
-        ));
+    let extent = if by_columns { cols } else { rows };
+    if start >= end || end > extent {
+        return Err(format!("{name}: faixa {start}..{end} fora de 0..{extent}"));
     }
-    let count = row_end - row_start;
+    let count = end - start;
+    let (out_rows, out_cols) = if by_columns {
+        (rows, count)
+    } else {
+        (count, cols)
+    };
     let element = if entry.bf16 { 2 } else { 4 };
     // Checked against the f64 size the caller will hold, which is the larger of the two.
-    if count
-        .checked_mul(cols)
+    if out_rows
+        .checked_mul(out_cols)
         .and_then(|n| n.checked_mul(8))
         .is_none_or(|n| n > max_bytes)
     {
         return Err(format!("{name}: fatia acima de {max_bytes} bytes"));
     }
-    let offset = base + (entry.start + row_start * cols * element) as u64;
-    file.seek(SeekFrom::Start(offset)).map_err(context)?;
-    let mut raw = vec![0u8; count * cols * element];
-    file.read_exact(&mut raw).map_err(context)?;
+    let origin = base + entry.start as u64;
+    let mut raw = vec![0u8; out_rows * out_cols * element];
+    if by_columns {
+        // One short read per row; done once per slice, when it becomes resident.
+        for (r, line) in raw.chunks_exact_mut(count * element).enumerate() {
+            let offset = origin + ((r * cols + start) * element) as u64;
+            file.seek(SeekFrom::Start(offset)).map_err(context)?;
+            file.read_exact(line).map_err(context)?;
+        }
+    } else {
+        file.seek(SeekFrom::Start(origin + (start * cols * element) as u64))
+            .map_err(context)?;
+        file.read_exact(&mut raw).map_err(context)?;
+    }
     Ok(Matrix {
-        rows: u32::try_from(count).map_err(|e| e.to_string())?,
-        cols: u32::try_from(cols).map_err(|e| e.to_string())?,
+        rows: u32::try_from(out_rows).map_err(|e| e.to_string())?,
+        cols: u32::try_from(out_cols).map_err(|e| e.to_string())?,
         data: decode(&raw, entry.bf16),
     })
 }
@@ -243,23 +259,36 @@ mod tests {
     }
 
     #[test]
-    fn read_rows_reads_only_the_requested_rows() {
+    fn read_band_reads_only_the_requested_rows_or_columns() {
         let header = r#"{"w":{"dtype":"F32","shape":[3,2],"data_offsets":[0,24]}}"#;
         let path =
             std::env::temp_dir().join(format!("aic-rows-{}.safetensors", std::process::id()));
         std::fs::write(&path, file(header, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])).unwrap();
-        let mid = read_rows(&path, "w", 1, 3, 1024).unwrap();
+        let mid = read_band(&path, "w", 1, 3, false, 1024).unwrap();
         assert_eq!(
             (mid.rows, mid.cols, mid.data),
             (2, 2, vec![3.0, 4.0, 5.0, 6.0])
         );
-        assert!(read_rows(&path, "w", 2, 2, 1024).is_err(), "fatia vazia");
         assert!(
-            read_rows(&path, "w", 0, 4, 1024).is_err(),
+            read_band(&path, "w", 2, 2, false, 1024).is_err(),
+            "fatia vazia"
+        );
+        assert!(
+            read_band(&path, "w", 0, 4, false, 1024).is_err(),
             "além das linhas"
         );
-        assert!(read_rows(&path, "w", 0, 3, 16).is_err(), "acima do teto");
-        assert!(read_rows(&path, "ghost", 0, 1, 1024).is_err());
+        assert!(
+            read_band(&path, "w", 0, 3, false, 16).is_err(),
+            "acima do teto"
+        );
+        assert!(read_band(&path, "ghost", 0, 1, false, 1024).is_err());
+        // Column 1 of [[1,2],[3,4],[5,6]] is [2,4,6], laid out as a 3x1 matrix.
+        let col = read_band(&path, "w", 1, 2, true, 1024).unwrap();
+        assert_eq!((col.rows, col.cols, col.data), (3, 1, vec![2.0, 4.0, 6.0]));
+        assert!(
+            read_band(&path, "w", 0, 3, true, 1024).is_err(),
+            "além das colunas"
+        );
         std::fs::remove_file(&path).ok();
     }
 

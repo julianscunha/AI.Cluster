@@ -83,6 +83,31 @@ struct GrpcExecutor {
     stats: Arc<RemoteStats>,
 }
 
+/// The node ids listed (comma-separated) in the environment variable `var`.
+fn shard_nodes(var: &str) -> Vec<String> {
+    std::env::var(var)
+        .unwrap_or_default()
+        .split(',')
+        .map(|node| node.trim().to_string())
+        .filter(|node| !node.is_empty())
+        .collect()
+}
+
+fn grpc_executor(
+    client: &MetadataClient,
+    subdir_var: &str,
+    default_subdir: &str,
+) -> (Arc<GrpcExecutor>, Arc<RemoteStats>) {
+    let stats = Arc::new(RemoteStats::default());
+    let executor = Arc::new(GrpcExecutor {
+        client: client.clone(),
+        runtime: tokio::runtime::Handle::current(),
+        subdir: std::env::var(subdir_var).unwrap_or_else(|_| default_subdir.to_string()),
+        stats: stats.clone(),
+    });
+    (executor, stats)
+}
+
 impl Executor for GrpcExecutor {
     fn matmul(&self, x: &Matrix, slices: &[Slice]) -> Result<Vec<Matrix>, String> {
         let started = std::time::Instant::now();
@@ -98,6 +123,7 @@ impl Executor for GrpcExecutor {
                     tensor: s.tensor.clone(),
                     row_start: s.row_start,
                     row_end: s.row_end,
+                    by_columns: s.by_columns,
                 })
                 .collect(),
         };
@@ -609,14 +635,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut llms = Vec::new();
     if let Some(dir) = std::env::var_os("AI_CLUSTER_GPT2_DIR") {
         let dir = std::path::PathBuf::from(dir);
+        // AI_CLUSTER_GPT2_SHARDS: see the SmolLM2 block below; GPT-2's slices are column bands.
+        let shards = shard_nodes("AI_CLUSTER_GPT2_SHARDS");
+        let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
+            (
+                Box::new(Gpt2::load(&dir).map_err(|err| format!("gpt2: {err}"))?),
+                None,
+            )
+        } else {
+            let (executor, stats) = grpc_executor(&client, "AI_CLUSTER_GPT2_SUBDIR", "gpt2");
+            (
+                Box::new(
+                    Gpt2::load_remote(&dir, executor, shards)
+                        .map_err(|err| format!("gpt2: {err}"))?,
+                ),
+                Some(stats),
+            )
+        };
         llms.push(Arc::new(Llm {
             id: "gpt2",
-            description: "GPT-2 small (124M) no motor local do gateway; modelo base, sem template \
-                de chat. Só /v1/chat/completions.",
-            model: Box::new(Gpt2::load(&dir).map_err(|err| format!("gpt2: {err}"))?),
+            description: "GPT-2 small (124M) no gateway, com as projeções nos workers se houver                 AI_CLUSTER_GPT2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
+            model,
             tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
             end_of_text: 50256,
-            remote: None,
+            remote,
         }));
     }
     if let Some(dir) = std::env::var_os("AI_CLUSTER_SMOLLM2_DIR") {
@@ -624,26 +666,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // With AI_CLUSTER_SMOLLM2_SHARDS (comma-separated node ids) the seven projections of every
         // layer run on those workers, each holding a band of rows resident; without it the whole
         // model runs here.
-        let shards: Vec<String> = std::env::var("AI_CLUSTER_SMOLLM2_SHARDS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|node| node.trim().to_string())
-            .filter(|node| !node.is_empty())
-            .collect();
+        let shards = shard_nodes("AI_CLUSTER_SMOLLM2_SHARDS");
         let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
             (
                 Box::new(Llama::load(&dir).map_err(|err| format!("smollm2: {err}"))?),
                 None,
             )
         } else {
-            let stats = Arc::new(RemoteStats::default());
-            let executor = Arc::new(GrpcExecutor {
-                client: client.clone(),
-                runtime: tokio::runtime::Handle::current(),
-                subdir: std::env::var("AI_CLUSTER_SMOLLM2_SUBDIR")
-                    .unwrap_or_else(|_| "smollm2".to_string()),
-                stats: stats.clone(),
-            });
+            let (executor, stats) = grpc_executor(&client, "AI_CLUSTER_SMOLLM2_SUBDIR", "smollm2");
             (
                 Box::new(
                     Llama::load_remote(&dir, executor, shards)
@@ -654,8 +684,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         llms.push(Arc::new(Llm {
             id: "smollm2-135m",
-            description: "SmolLM2-135M (Llama) no gateway, com as projeções nos workers se houver \
-                AI_CLUSTER_SMOLLM2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
+            description: "SmolLM2-135M (Llama) no gateway, com as projeções nos workers se houver                 AI_CLUSTER_SMOLLM2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
             model,
             tokenizer: Tokenizer::open(&dir)
                 .map_err(|err| format!("smollm2: tokenizador: {err}"))?,

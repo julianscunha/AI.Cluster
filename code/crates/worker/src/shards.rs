@@ -92,8 +92,8 @@ fn answer(store: &ShardStore, frame: ShardCompute) -> ShardResult {
     match store.compute(
         &frame.model_subdir,
         &frame.tensor,
-        frame.row_start,
-        frame.row_end,
+        (frame.row_start, frame.row_end),
+        frame.by_columns,
         &x,
     ) {
         Ok(y) => ShardResult {

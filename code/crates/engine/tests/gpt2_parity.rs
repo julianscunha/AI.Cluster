@@ -4,7 +4,7 @@
 //! `AI_CLUSTER_GPT2_DIR` apontando para o diretório com `model.safetensors`, `vocab.json`,
 //! `merges.txt` e `config.json`, os testes avisam e passam sem verificar nada.
 
-use ai_cluster_engine::{LanguageModel, gpt2::Gpt2, tokenizer::Tokenizer};
+use ai_cluster_engine::{LanguageModel, LocalExecutor, gpt2::Gpt2, tokenizer::Tokenizer};
 use std::path::PathBuf;
 
 fn model_dir() -> Option<PathBuf> {
@@ -120,4 +120,30 @@ fn a_cancelled_generation_stops() {
     let model = Gpt2::load(&dir).unwrap();
     let cancelled = std::sync::atomic::AtomicBool::new(true);
     assert!(model.generate(&[15496], 4, None, &cancelled).is_err());
+}
+
+#[test]
+fn sharded_projections_match_the_local_forward() {
+    let Some(dir) = model_dir() else { return };
+    let tokenizer = Tokenizer::open(&dir).unwrap();
+    let prompt = tokenizer.encode("The capital of France is").unwrap();
+    let local = Gpt2::load(&dir).unwrap();
+    let expected = local.next_token_logits(&prompt).unwrap();
+
+    // Every projection cut by output columns across three nodes and read back from the file.
+    let root = dir.parent().unwrap().to_path_buf();
+    let subdir = dir.file_name().unwrap().to_str().unwrap();
+    let executor = std::sync::Arc::new(LocalExecutor::new(root, subdir, 4));
+    let nodes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let sharded = Gpt2::load_remote(&dir, executor, nodes).unwrap();
+    assert_eq!(
+        sharded.next_token_logits(&prompt).unwrap(),
+        expected,
+        "fatiar não pode mudar nenhum logit"
+    );
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(
+        sharded.generate(&prompt, 3, None, &cancel).unwrap(),
+        local.generate(&prompt, 3, None, &cancel).unwrap()
+    );
 }

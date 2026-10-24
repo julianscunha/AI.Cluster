@@ -280,6 +280,8 @@ message ShardOp {
   string tensor = 3;
   uint32 row_start = 4;
   uint32 row_end = 5;
+  /// As faixas são colunas de um tensor `[in, out]` (GPT-2), não linhas de um `[out, in]`.
+  bool by_columns = 6;
 }
 
 message ShardMatmulRequest {
@@ -312,6 +314,7 @@ message ShardCompute {
   uint32 rows = 6;
   uint32 k = 7;
   repeated double x = 8;
+  bool by_columns = 9;
 }
 
 /// Worker -> controller pelo canal residente.

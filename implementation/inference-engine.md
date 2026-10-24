@@ -138,6 +138,16 @@ gateway --ShardMatmul(x, ops)--> controller --ShardCompute--> worker (stream res
   (`sharded_projections_match_the_local_forward`); `tests/phase-j-shards.sh` sobe controller, 2
   workers e gateway: mesma continuação do local, e 503 (sem pendurar) quando um worker some.
 
+### GPT-2 pelo mesmo canal
+
+`Gpt2::load_remote` corta qkv, c_proj, c_fc e c_proj do MLP em **colunas de saída** (os pesos do
+`Conv1D` são `[in, out]`): o worker lê a faixa de colunas com um `seek` por linha (`read_band`) e a
+fatia já fica como `[in, faixa]`, sem transposta. O viés é pequeno e fica no gateway. São 4 idas e
+voltas por bloco (48 por token, contra 120 da SmolLM2), porque nada aqui compartilha entrada. A
+mensagem `ShardOp`/`ShardCompute` ganhou `by_columns`. `AI_CLUSTER_GPT2_SHARDS`/`_SUBDIR` ligam o
+modo; `tests/phase-j-shards.sh gpt2` e `sharded_projections_match_the_local_forward` (GPT-2) provam
+logits idênticos e a mesma continuação.
+
 ### Custo medido (contêineres numa máquina, rede Docker local)
 
 SmolLM2-135M, 2 workers, 120 chamadas por token, depois do aquecimento: **~2,5 ms por chamada**, dos
@@ -147,8 +157,8 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
 
 ### Limites
 
-- Só `Llama` (SmolLM2); o GPT-2 ainda é local. O gateway tem o papel de operador e comanda a carga
-  de arquivos nos workers: um papel "inferência" separado seria o passo seguinte.
+- O gateway tem o papel de operador e comanda a carga de arquivos nos workers: um papel "inferência"
+  separado seria o passo seguinte.
 - Sem tolerância a falha: se um worker cai no meio de um token, a requisição inteira falha (503).
   Sem réplica de fatias, sem rebalanceamento, sem redistribuir quando entra um nó.
 - Quarentena e drain não derrubam a sessão (só `revoke`/`leave`); as operações a nós indisponíveis

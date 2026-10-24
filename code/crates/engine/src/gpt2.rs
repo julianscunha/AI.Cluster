@@ -8,13 +8,18 @@
 use crate::cache::KvCache;
 use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
+use crate::shard::{Executor, Weight, apply};
 use ai_cluster_common::matrix::Matrix;
 use std::path::Path;
+use std::sync::Arc;
 
 struct Linear {
-    /// GPT-2 stores `Conv1D` weights as `[in, out]`, so `x * w + b` needs no transpose.
-    weight: Matrix,
+    /// GPT-2 stores `Conv1D` weights as `[in, out]`, so `x * w + b` needs no transpose. Remote
+    /// slices are bands of output columns.
+    weight: Weight,
     bias: Vec<f64>,
+    input: usize,
+    output: usize,
 }
 
 struct Norm {
@@ -40,10 +45,36 @@ pub struct Gpt2 {
     wpe: Matrix,
     blocks: Vec<Block>,
     ln_f: Norm,
+    executor: Option<Arc<dyn Executor>>,
 }
 
 impl Gpt2 {
+    /// All weights in this process.
     pub fn load(dir: &Path) -> Result<Self, String> {
+        Self::load_with(dir, None)
+    }
+
+    /// The four projections of every block cut across `nodes` (at least one) and run through
+    /// `executor`; `dir` is read for the config, the shapes, the biases and the small tensors.
+    pub fn load_remote(
+        dir: &Path,
+        executor: Arc<dyn Executor>,
+        nodes: Vec<String>,
+    ) -> Result<Self, String> {
+        if nodes.is_empty() {
+            return Err("sem nós para as fatias".into());
+        }
+        Self::load_with(dir, Some((executor, nodes)))
+    }
+
+    fn load_with(
+        dir: &Path,
+        remote: Option<(Arc<dyn Executor>, Vec<String>)>,
+    ) -> Result<Self, String> {
+        let (executor, nodes) = match remote {
+            Some((executor, nodes)) => (Some(executor), nodes),
+            None => (None, Vec::new()),
+        };
         let config: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.join("config.json"))
                 .map_err(|e| format!("config.json: {e}"))?,
@@ -70,9 +101,20 @@ impl Gpt2 {
         };
         let name = |suffix: &str| format!("{prefix}{suffix}");
         let linear = |base: String| -> Result<Linear, String> {
+            let weight = format!("{base}.weight");
+            let [input, output] = tensors
+                .shape(&weight)
+                .and_then(|shape| <[usize; 2]>::try_from(shape).ok())
+                .ok_or_else(|| format!("{weight}: esperava 2 dimensões"))?;
             Ok(Linear {
-                weight: tensors.matrix(&format!("{base}.weight"))?,
+                weight: if nodes.is_empty() {
+                    Weight::Local(tensors.matrix(&weight)?)
+                } else {
+                    Weight::split(&nodes, &weight, output, true)?
+                },
                 bias: tensors.vector(&format!("{base}.bias"))?,
+                input,
+                output,
             })
         };
         let norm = |base: String| -> Result<Norm, String> {
@@ -100,19 +142,19 @@ impl Gpt2 {
                 };
                 let biases_fit = [&block.qkv, &block.attn_out, &block.fc, &block.proj]
                     .iter()
-                    .all(|l| l.bias.len() == l.weight.cols as usize);
+                    .all(|l| l.bias.len() == l.output);
                 let norms_fit = [&block.ln_1, &block.ln_2]
                     .iter()
                     .all(|n| n.gain.len() == width && n.bias.len() == width);
                 let shapes_fit = biases_fit
                     && norms_fit
-                    && block.qkv.weight.rows as usize == width
-                    && block.qkv.weight.cols as usize == 3 * width
-                    && block.attn_out.weight.rows as usize == width
-                    && block.attn_out.weight.cols as usize == width
-                    && block.fc.weight.rows as usize == width
-                    && block.proj.weight.cols as usize == width
-                    && block.fc.weight.cols == block.proj.weight.rows;
+                    && block.qkv.input == width
+                    && block.qkv.output == 3 * width
+                    && block.attn_out.input == width
+                    && block.attn_out.output == width
+                    && block.fc.input == width
+                    && block.proj.output == width
+                    && block.fc.output == block.proj.input;
                 if shapes_fit {
                     Ok(block)
                 } else {
@@ -132,6 +174,7 @@ impl Gpt2 {
             wpe,
             blocks,
             ln_f,
+            executor,
         })
     }
 }
@@ -181,18 +224,14 @@ impl LanguageModel for Gpt2 {
 
         for (layer, block) in self.blocks.iter().enumerate() {
             let normed = layer_norm(&x, &block.ln_1, self.eps);
-            let attended = self.attention(block, &normed, cache, layer);
+            let attended = self.attention(block, &normed, cache, layer)?;
             add_in_place(&mut x, &attended);
-            let hidden = linear(
-                &layer_norm(&x, &block.ln_2, self.eps),
-                &block.fc,
-                self.threads,
-            )?;
+            let hidden = self.linear(&layer_norm(&x, &block.ln_2, self.eps), &block.fc)?;
             let hidden = Matrix {
                 data: hidden.data.iter().map(|v| gelu(*v)).collect(),
                 ..hidden
             };
-            add_in_place(&mut x, &linear(&hidden, &block.proj, self.threads)?);
+            add_in_place(&mut x, &self.linear(&hidden, &block.proj)?);
         }
         cache.len = past + tokens.len();
 
@@ -213,11 +252,11 @@ impl Gpt2 {
         input: &Matrix,
         cache: &mut KvCache,
         layer: usize,
-    ) -> Matrix {
+    ) -> Result<Matrix, String> {
         let tokens = input.rows as usize;
         let width = input.cols as usize;
         let head_dim = width / self.heads;
-        let qkv = linear(input, &block.qkv, self.threads).expect("shapes checked at load");
+        let qkv = self.linear(input, &block.qkv)?;
         let stride = 3 * width;
         let scale = 1.0 / (head_dim as f64).sqrt();
         let past = cache.len;
@@ -249,14 +288,23 @@ impl Gpt2 {
                 }
             }
         }
-        linear(&mixed, &block.attn_out, self.threads).expect("shapes checked at load")
+        self.linear(&mixed, &block.attn_out)
+    }
+
+    fn linear(&self, x: &Matrix, layer: &Linear) -> Result<Matrix, String> {
+        linear(x, layer, self.executor.as_ref(), self.threads)
     }
 }
 
-fn linear(x: &Matrix, layer: &Linear, threads: usize) -> Result<Matrix, String> {
-    let mut y = x
-        .multiply_with_threads(&layer.weight, threads)
-        .ok_or("formas incompatíveis na multiplicação")?;
+fn linear(
+    x: &Matrix,
+    layer: &Linear,
+    executor: Option<&Arc<dyn Executor>>,
+    threads: usize,
+) -> Result<Matrix, String> {
+    let mut y = apply(executor, threads, x, &[&layer.weight])?
+        .pop()
+        .ok_or("saída de projeção ausente")?;
     for row in y.data.chunks_exact_mut(layer.bias.len()) {
         for (value, bias) in row.iter_mut().zip(&layer.bias) {
             *value += bias;
@@ -360,12 +408,14 @@ mod tests {
     #[test]
     fn linear_adds_the_bias_to_every_row() {
         let layer = Linear {
-            weight: Matrix {
+            weight: Weight::Local(Matrix {
                 rows: 2,
                 cols: 2,
                 data: vec![1.0, 0.0, 0.0, 1.0],
-            },
+            }),
             bias: vec![10.0, 20.0],
+            input: 2,
+            output: 2,
         };
         let x = Matrix {
             rows: 2,
@@ -373,7 +423,7 @@ mod tests {
             data: vec![1.0, 2.0, 3.0, 4.0],
         };
         assert_eq!(
-            linear(&x, &layer, 2).unwrap().data,
+            linear(&x, &layer, None, 2).unwrap().data,
             vec![11.0, 22.0, 13.0, 24.0]
         );
     }
