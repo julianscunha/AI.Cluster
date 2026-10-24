@@ -6,6 +6,7 @@ license = "Apache-2.0"
 
 [dependencies]
 ai-cluster-protocol = { path = "../protocol" }
+ai-cluster-common = { path = "../common" }
 ai-cluster-engine = { path = "../engine" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 tonic = "0.14"

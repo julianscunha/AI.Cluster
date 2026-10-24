@@ -172,7 +172,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("AI_CLUSTER_TLS_CERT e AI_CLUSTER_TLS_KEY vêm juntos".into());
         }
     };
-    let mut builder = Server::builder();
+    // Detects a worker that vanished without closing its resident stream.
+    let mut builder = Server::builder()
+        .http2_keepalive_interval(Some(std::time::Duration::from_secs(10)))
+        .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)));
     match identity {
         Some(identity) => {
             builder = builder.tls_config(ServerTlsConfig::new().identity(identity))?;

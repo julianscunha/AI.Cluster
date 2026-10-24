@@ -340,6 +340,14 @@ impl Registry {
             .is_none_or(|known| same_token(known.credential.as_bytes(), presented))
     }
 
+    /// Whether `node_id` may open a resident channel (J5): registered, approved, alive and
+    /// holding exactly this credential. Stricter than `authorizes`: an unknown node does not pass.
+    pub fn channel_allowed(&self, node_id: &str, presented: &[u8]) -> bool {
+        self.lock().get(node_id).is_some_and(|record| {
+            eligible(record) && same_token(record.credential.as_bytes(), presented)
+        })
+    }
+
     /// Returns false when the node is unknown, so the caller can ask it to re-register.
     pub fn heartbeat(&self, node_id: &str, now: u64) -> bool {
         let mut nodes = self.lock();

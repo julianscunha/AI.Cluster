@@ -272,6 +272,59 @@ message EnqueueGraphRequest {
   bool keep_result = 4;
 }
 
+/// Uma fatia de pesos: as linhas [row_start, row_end) do tensor `[out, in]` de
+/// `<raiz de modelos do nó>/<model_subdir>/model.safetensors`, calculada por `node_id`.
+message ShardOp {
+  string node_id = 1;
+  string model_subdir = 2;
+  string tensor = 3;
+  uint32 row_start = 4;
+  uint32 row_end = 5;
+}
+
+message ShardMatmulRequest {
+  uint32 rows = 1;
+  uint32 k = 2;
+  /// `rows x k`, linha a linha; a mesma entrada vale para todas as operações.
+  repeated double x = 3;
+  repeated ShardOp ops = 4;
+}
+
+message ShardOutput {
+  uint32 rows = 1;
+  uint32 cols = 2;
+  repeated double data = 3;
+  /// Tempo de cálculo medido no worker, sem rede.
+  uint64 compute_us = 4;
+}
+
+message ShardMatmulResponse {
+  repeated ShardOutput outputs = 1;
+}
+
+/// Controller -> worker pelo canal residente.
+message ShardCompute {
+  uint64 op_id = 1;
+  string model_subdir = 2;
+  string tensor = 3;
+  uint32 row_start = 4;
+  uint32 row_end = 5;
+  uint32 rows = 6;
+  uint32 k = 7;
+  repeated double x = 8;
+}
+
+/// Worker -> controller pelo canal residente.
+message ShardResult {
+  uint64 op_id = 1;
+  bool ok = 2;
+  string error = 3;
+  uint32 rows = 4;
+  uint32 cols = 5;
+  repeated double data = 6;
+  uint64 compute_us = 7;
+}
+
 message GetOutputRequest {
   string request_id = 1;
 }
@@ -501,6 +554,11 @@ service ClusterControl {
   rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
   rpc RevokeNode(RevokeNodeRequest) returns (RevokeNodeResponse);
   rpc GetOutput(GetOutputRequest) returns (GetOutputResponse);
+  /// Canal residente de um worker (J5): o worker abre o stream e recebe operações de fatia de
+  /// peso; o nó vem no metadata `x-ai-cluster-node-id`, com a credencial do nó.
+  rpc ShardChannel(stream ShardResult) returns (stream ShardCompute);
+  /// Só operador: roda `x * fatia^T` em cada nó indicado e devolve as saídas na mesma ordem.
+  rpc ShardMatmul(ShardMatmulRequest) returns (ShardMatmulResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

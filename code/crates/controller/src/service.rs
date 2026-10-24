@@ -12,11 +12,11 @@ use ai_cluster_protocol::cluster::{
     ListReservationsRequest, ListReservationsResponse, MetricsResponse, ProbeLinkRequest,
     ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
     ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
-    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
-    WorkReportResponse, WorkUnit,
+    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, ShardCompute,
+    ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
-use ai_cluster_protocol::metadata::{node_credential, require_operator};
+use ai_cluster_protocol::metadata::{NODE_ID_HEADER, node_credential, require_operator};
 use tonic::{Request, Response, Status};
 
 /// Message ceiling for the `LinkProbe` service, enforced by the server before the payload is
@@ -26,9 +26,19 @@ pub const MAX_PROBE_BYTES: usize = 4 * 1024 * 1024;
 /// Queued plus in-flight units past which `EnqueueGraph` refuses new graphs (J1).
 const MAX_QUEUED_UNITS: usize = 256;
 
+/// Limits on a `ShardMatmul` (J5). A decode step moves a few KB; a prefill of a few hundred
+/// tokens stays well under these.
+const MAX_SHARD_OPS: usize = 64;
+const MAX_SHARD_X: usize = 2 * 1024 * 1024;
+const MAX_SHARD_ROWS: u32 = 1 << 20;
+/// f64 values one operation may return (64 MiB), and twice that across a call.
+const MAX_SHARD_OUT: usize = 8 * 1024 * 1024;
+const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 use crate::events::EventLog;
 use crate::metrics;
 use crate::registry::{Registry, unix_ms};
+use crate::shards::ShardHub;
 use crate::work::WorkStore;
 
 #[derive(Debug)]
@@ -37,6 +47,7 @@ pub struct ClusterControlService {
     work: Arc<WorkStore>,
     events: Arc<EventLog>,
     cluster_id: String,
+    shards: Arc<ShardHub>,
 }
 
 impl ClusterControlService {
@@ -51,6 +62,7 @@ impl ClusterControlService {
             work,
             events,
             cluster_id: cluster_id.into(),
+            shards: Arc::new(ShardHub::default()),
         }
     }
 
@@ -112,6 +124,20 @@ fn authorize_node<T>(
         Err(Status::unauthenticated(
             "credencial do nó ausente ou inválida",
         ))
+    }
+}
+
+/// Forgets the operations of a `ShardMatmul` when the call ends, for any reason.
+struct ShardGuard<'a> {
+    hub: &'a ShardHub,
+    ops: Vec<u64>,
+}
+
+impl Drop for ShardGuard<'_> {
+    fn drop(&mut self) {
+        for op in &self.ops {
+            self.hub.cancel(*op);
+        }
     }
 }
 
@@ -190,6 +216,7 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         let revoked = self.registry.revoke(&node_id);
+        self.shards.drop_node(&node_id);
         let requeued = if revoked {
             self.work.requeue_for_node(&node_id).requeued as u32
         } else {
@@ -279,6 +306,7 @@ impl ClusterControl for ClusterControlService {
         }
         let outcome = self.work.requeue_for_node(&request.node_id);
         self.registry.remove(&request.node_id);
+        self.shards.drop_node(&request.node_id);
         println!(
             "nó {} saiu; {} unidades em voo reenfileiradas, {} falharam",
             request.node_id, outcome.requeued, outcome.failed
@@ -590,6 +618,154 @@ impl ClusterControl for ClusterControlService {
             },
             None => GetOutputResponse::default(),
         }))
+    }
+
+    type ShardChannelStream = std::pin::Pin<
+        Box<dyn tonic::codegen::tokio_stream::Stream<Item = Result<ShardCompute, Status>> + Send>,
+    >;
+
+    /// The resident channel of a worker (J5). The node and its credential come in the metadata
+    /// when the stream opens; the operator token does not stand in for them, so the activations
+    /// that flow down this stream only ever reach an approved, live node holding its credential.
+    async fn shard_channel(
+        &self,
+        request: Request<tonic::Streaming<ShardResult>>,
+    ) -> Result<Response<Self::ShardChannelStream>, Status> {
+        let node_id = request
+            .metadata()
+            .get(NODE_ID_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if node_id.is_empty() {
+            return Err(Status::invalid_argument("falta o nó do canal"));
+        }
+        if !self
+            .registry
+            .channel_allowed(&node_id, node_credential(&request))
+        {
+            return Err(Status::unauthenticated(
+                "nó desconhecido, não aprovado, indisponível ou com credencial inválida",
+            ));
+        }
+        let credential = node_credential(&request).to_vec();
+        let mut incoming = request.into_inner();
+        let (session, frames) = self.shards.attach(&node_id);
+        // A revoke or leave can land between the check above and the attach; check again so a
+        // revoked node never keeps a session.
+        if !self.registry.channel_allowed(&node_id, &credential) {
+            self.shards.detach(&node_id, session);
+            return Err(Status::unauthenticated("o nó deixou de ser aprovado"));
+        }
+        self.events
+            .record(unix_ms(), "shard_channel_opened", node_id.clone());
+        let hub = self.shards.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(result)) = incoming.message().await {
+                hub.complete(&node_id, result);
+            }
+            hub.detach(&node_id, session);
+        });
+        Ok(Response::new(Box::pin(
+            tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(frames),
+        )))
+    }
+
+    /// Runs one activation against several weight slices on the nodes that hold them (J5).
+    /// Operator-only: it commands work on every worker.
+    async fn shard_matmul(
+        &self,
+        request: Request<ShardMatmulRequest>,
+    ) -> Result<Response<ShardMatmulResponse>, Status> {
+        require_operator(&request)?;
+        let request = request.into_inner();
+        let x_len = (request.rows as usize).checked_mul(request.k as usize);
+        if request.ops.is_empty()
+            || request.ops.len() > MAX_SHARD_OPS
+            || request.rows == 0
+            || request.k == 0
+            || x_len != Some(request.x.len())
+            || request.x.len() > MAX_SHARD_X
+            || request.ops.iter().any(|op| {
+                op.node_id.is_empty()
+                    || op.model_subdir.len() > 128
+                    || op.tensor.is_empty()
+                    || op.tensor.len() > 256
+                    || op.row_start >= op.row_end
+                    || op.row_end - op.row_start > MAX_SHARD_ROWS
+            })
+        {
+            return Err(Status::invalid_argument("operação de fatia inválida"));
+        }
+        // The answers come back as f64 in one message each: bound them per operation and in total.
+        let out_values = |op: &ai_cluster_protocol::cluster::ShardOp| {
+            request.rows as usize * (op.row_end - op.row_start) as usize
+        };
+        if request.ops.iter().any(|op| out_values(op) > MAX_SHARD_OUT)
+            || request.ops.iter().map(out_values).sum::<usize>() > 2 * MAX_SHARD_OUT
+        {
+            return Err(Status::invalid_argument("saída de fatias grande demais"));
+        }
+        if let Some(op) = request
+            .ops
+            .iter()
+            .find(|op| !self.registry.is_available(&op.node_id))
+        {
+            return Err(Status::failed_precondition(format!(
+                "nó {} indisponível",
+                op.node_id
+            )));
+        }
+
+        // Operations still waiting are forgotten however this call ends: an answer, an error, or
+        // the caller going away and dropping this future.
+        let mut guard = ShardGuard {
+            hub: &self.shards,
+            ops: Vec::with_capacity(request.ops.len()),
+        };
+        let mut waiting = Vec::with_capacity(request.ops.len());
+        for op in &request.ops {
+            let frame = ShardCompute {
+                op_id: 0,
+                model_subdir: op.model_subdir.clone(),
+                tensor: op.tensor.clone(),
+                row_start: op.row_start,
+                row_end: op.row_end,
+                rows: request.rows,
+                k: request.k,
+                x: request.x.clone(),
+            };
+            let (op_id, answer) = self.shards.submit(&op.node_id, frame)?;
+            guard.ops.push(op_id);
+            waiting.push(answer);
+        }
+
+        let deadline = tokio::time::Instant::now() + SHARD_TIMEOUT;
+        let mut outputs = Vec::with_capacity(waiting.len());
+        for (spec, answer) in request.ops.iter().zip(waiting) {
+            let result = match tokio::time::timeout_at(deadline, answer).await {
+                Err(_) => return Err(Status::deadline_exceeded("o worker não respondeu a tempo")),
+                Ok(Err(_)) => return Err(Status::unavailable("o canal do worker caiu")),
+                Ok(Ok(result)) => result,
+            };
+            let cols = spec.row_end - spec.row_start;
+            if !result.ok {
+                return Err(Status::failed_precondition(result.error));
+            }
+            if result.rows != request.rows
+                || result.cols != cols
+                || result.data.len() != request.rows as usize * cols as usize
+            {
+                return Err(Status::internal("saída de fatia com forma inesperada"));
+            }
+            outputs.push(ShardOutput {
+                rows: result.rows,
+                cols: result.cols,
+                data: result.data,
+                compute_us: result.compute_us,
+            });
+        }
+        Ok(Response::new(ShardMatmulResponse { outputs }))
     }
 
     async fn work_report(

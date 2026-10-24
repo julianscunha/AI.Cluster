@@ -12,6 +12,10 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Largest slice and largest output one computation may hold in memory.
+const MAX_SLICE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+
 /// Name of the weights file inside a model directory. Fixed, never taken from a caller.
 const MODEL_FILE: &str = "model.safetensors";
 
@@ -39,6 +43,9 @@ pub struct ShardStore {
     threads: usize,
     /// Loaded slices (already transposed to `[in, rows]`) and the bytes they hold.
     cache: Mutex<(HashMap<Key, Arc<Matrix>>, usize)>,
+    /// One disk load at a time: a load briefly holds the raw rows, their f64 form and the
+    /// transposed copy, and concurrent loads of the same slice would each do all of that.
+    loading: Mutex<()>,
 }
 
 impl ShardStore {
@@ -48,6 +55,7 @@ impl ShardStore {
             cap_bytes,
             threads,
             cache: Mutex::new((HashMap::new(), 0)),
+            loading: Mutex::new(()),
         }
     }
 
@@ -67,14 +75,16 @@ impl ShardStore {
             .root
             .canonicalize()
             .map_err(|e| format!("raiz de modelos: {e}"))?;
-        let dir = root
+        // The file is resolved too: a symlink at the file itself would pass a check on the directory.
+        let file = root
             .join(relative)
+            .join(MODEL_FILE)
             .canonicalize()
-            .map_err(|e| format!("modelo {subdir}: {e}"))?;
-        if !dir.starts_with(&root) {
+            .map_err(|_| format!("modelo {subdir}: arquivo de pesos não encontrado"))?;
+        if !file.starts_with(&root) {
             return Err("subdiretório de modelo fora da raiz".into());
         }
-        Ok(dir.join(MODEL_FILE))
+        Ok(file)
     }
 
     fn slice(
@@ -84,26 +94,38 @@ impl ShardStore {
         row_start: u32,
         row_end: u32,
     ) -> Result<Arc<Matrix>, String> {
-        let key = (subdir.to_string(), tensor.to_string(), row_start, row_end);
-        if let Some(found) = self.cache.lock().expect("shard cache").0.get(&key) {
-            return Ok(found.clone());
+        // "m", "m/" and "m//" are one directory: the key uses the components, not the raw string,
+        // so spelling variants cannot fill the cache with copies of the same slice.
+        let normal: Vec<_> = Path::new(subdir).components().collect();
+        let subdir = normal
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let key = (subdir.clone(), tensor.to_string(), row_start, row_end);
+        let lookup = |cache: &(HashMap<Key, Arc<Matrix>>, usize)| cache.0.get(&key).cloned();
+        let lock = || {
+            self.cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        };
+        if let Some(found) = lookup(&lock()) {
+            return Ok(found);
         }
-        let path = self.model_path(subdir)?;
-        // Read outside the lock so one slow load does not stall computes on resident slices.
-        let held = self.cache.lock().expect("shard cache").1;
-        let rows = read_rows(
-            &path,
-            tensor,
-            row_start as usize,
-            row_end as usize,
-            self.cap_bytes.saturating_sub(held),
-        )?;
+        let path = self.model_path(&subdir)?;
+        let _load = self
+            .loading
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Whoever held the gate may have loaded exactly this slice.
+        if let Some(found) = lookup(&lock()) {
+            return Ok(found);
+        }
+        let room = self.cap_bytes.saturating_sub(lock().1).min(MAX_SLICE_BYTES);
+        let rows = read_rows(&path, tensor, row_start as usize, row_end as usize, room)?;
         let loaded = Arc::new(transposed(&rows));
-        let mut cache = self.cache.lock().expect("shard cache");
-        // Another thread may have loaded the same slice meanwhile; keep one copy.
-        if let Some(found) = cache.0.get(&key) {
-            return Ok(found.clone());
-        }
+        drop(rows);
+        let mut cache = lock();
         let bytes = loaded.data.len() * 8;
         if cache.1 + bytes > self.cap_bytes {
             return Err("memória de fatias esgotada neste nó".into());
@@ -123,6 +145,13 @@ impl ShardStore {
         x: &Matrix,
     ) -> Result<Matrix, String> {
         let weights = self.slice(subdir, tensor, row_start, row_end)?;
+        if (x.rows as usize)
+            .checked_mul(weights.cols as usize)
+            .and_then(|n| n.checked_mul(8))
+            .is_none_or(|n| n > MAX_OUTPUT_BYTES)
+        {
+            return Err(format!("{tensor}: saída acima de {MAX_OUTPUT_BYTES} bytes"));
+        }
         x.multiply_with_threads(&weights, self.threads)
             .ok_or_else(|| {
                 format!(

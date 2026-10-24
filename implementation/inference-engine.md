@@ -104,3 +104,53 @@ Caminho que faria sentido: um canal **residente e de empurrar** (stream gRPC bid
 pelo worker, com as fatias de pesos já carregadas e quadros `matmul(fatia, ativação)`), com
 latência próxima do RTT. É uma superfície de protocolo nova (autenticação, quotas, carga e
 descarte de fatias, falha de um worker no meio do token) e fica como decisão de projeto.
+
+## J5: canal residente de fatias
+
+Os pesos de cada projeção (q, k, v, o, gate, up, down de cada camada) ficam **nos workers**, cortados
+por linhas de saída (`[out, in]`, bandas iguais, uma por nó). O gateway guarda só embeddings, normas
+e a projeção de saída; para cada projeção manda a ativação aos nós e junta as saídas por colunas.
+Projeções com a mesma entrada (q, k, v; gate, up) vão numa chamada só: 4 idas e voltas por camada.
+
+```
+gateway --ShardMatmul(x, ops)--> controller --ShardCompute--> worker (stream residente)
+        <------ saídas ---------            <--ShardResult---
+```
+
+- **Canal.** `ShardChannel` (stream bidirecional) é aberto pelo worker, que não precisa de porta.
+  O nó vem no metadata `x-ai-cluster-node-id` e a credencial no cabeçalho de sempre. O controller
+  exige nó **registrado, aprovado, vivo e com a credencial exata**; o token de operador não vale
+  como atalho. Sessão nova substitui a antiga e falha o que esperava nela; `revoke` e `leave`
+  derrubam a sessão. Keepalive HTTP/2 de 10 s nos dois lados detecta conexão meio-aberta.
+- **Pesos não trafegam.** O worker lê só as linhas da sua fatia do `model.safetensors` do próprio
+  disco (`read_rows`: cabeçalho + `seek`), na primeira vez que a fatia é pedida, e a mantém residente
+  (`ShardStore`). A chave da fatia é `(subdir, tensor, linhas)`, então não há versão a sincronizar; a
+  primeira chamada é lenta (aquecimento). `AI_CLUSTER_MODEL_DIR` liga o canal no worker;
+  `AI_CLUSTER_SHARD_CACHE_MB` (2048) limita a memória das fatias. O subdiretório só aceita
+  componentes simples, é canonicalizado e precisa continuar sob a raiz; o nome do arquivo é fixo.
+- **Relay.** O controller só repassa: `op_id` próprio, uma resposta só vale para a operação enviada
+  àquele nó, fila de 64 quadros e 64 operações em voo por nó, `ShardMatmul` limitado a 64 operações e
+  2 Mi valores, prazo de 60 s, operações descartadas ao falhar uma irmã.
+- **Gateway.** `AI_CLUSTER_SMOLLM2_SHARDS=worker-1,worker-2` (e `AI_CLUSTER_SMOLLM2_SUBDIR`, padrão
+  `smollm2`) liga o modo remoto; o log `remoto:` mostra chamadas, tempo nas chamadas e o cálculo
+  dos workers.
+- **Verificações.** Forward fatiado em 3 nós, lendo os arquivos, dá logits **idênticos** ao local
+  (`sharded_projections_match_the_local_forward`); `tests/phase-j-shards.sh` sobe controller, 2
+  workers e gateway: mesma continuação do local, e 503 (sem pendurar) quando um worker some.
+
+### Custo medido (contêineres numa máquina, rede Docker local)
+
+SmolLM2-135M, 2 workers, 120 chamadas por token, depois do aquecimento: **~2,5 ms por chamada**, dos
+quais ~1,1 ms são o cálculo do worker (o resto é gateway → controller → worker e volta). Isso dá
+~300 ms por token contra ~105 ms local: **cerca de 3× mais lento**, ao contrário dos 40–100× da fila
+de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT soma a cada chamada.
+
+### Limites
+
+- Só `Llama` (SmolLM2); o GPT-2 ainda é local. O gateway tem o papel de operador e comanda a carga
+  de arquivos nos workers: um papel "inferência" separado seria o passo seguinte.
+- Sem tolerância a falha: se um worker cai no meio de um token, a requisição inteira falha (503).
+  Sem réplica de fatias, sem rebalanceamento, sem redistribuir quando entra um nó.
+- Quarentena e drain não derrubam a sessão (só `revoke`/`leave`); as operações a nós indisponíveis
+  são recusadas pelo `ShardMatmul`.
+- Divisão só por linhas de saída, entrada replicada: sem all-reduce, sem pipeline entre camadas.

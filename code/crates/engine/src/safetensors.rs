@@ -168,7 +168,8 @@ pub fn read_rows(
     max_bytes: usize,
 ) -> Result<Matrix, String> {
     use std::io::{Read, Seek, SeekFrom};
-    let context = |err: std::io::Error| format!("{}: {err}", path.display());
+    // No path in the message: it travels back to the caller, who must not learn the disk layout.
+    let context = |err: std::io::Error| format!("leitura do modelo: {err}");
     let mut file = std::fs::File::open(path).map_err(context)?;
     let file_len = file.metadata().map_err(context)?.len();
     let mut prefix = [0u8; 8];

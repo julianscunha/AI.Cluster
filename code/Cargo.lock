@@ -55,6 +55,7 @@ dependencies = [
 name = "ai-cluster-gateway"
 version = "0.1.0"
 dependencies = [
+ "ai-cluster-common",
  "ai-cluster-engine",
  "ai-cluster-protocol",
  "axum",
@@ -86,6 +87,7 @@ name = "ai-cluster-worker"
 version = "0.1.0"
 dependencies = [
  "ai-cluster-common",
+ "ai-cluster-engine",
  "ai-cluster-protocol",
  "prost",
  "tokio",

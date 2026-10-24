@@ -43,7 +43,9 @@ pub trait LanguageModel {
                 .map(|(id, _)| id as u32)
                 .ok_or("vocabulário vazio")?;
             produced.push(next);
-            if Some(next) == stop || cache.len() >= self.context_len() {
+            // No forward for a token that will not be followed by another.
+            if Some(next) == stop || produced.len() >= max_new || cache.len() >= self.context_len()
+            {
                 break;
             }
             if cancel.load(Ordering::Relaxed) {

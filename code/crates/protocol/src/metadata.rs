@@ -58,11 +58,21 @@ async fn open_channel(
         )
         .into());
     }
+    // A half-open connection (Wi-Fi drop, suspended worker) would otherwise look alive until a
+    // long-lived stream times out; probing detects it in seconds.
+    let endpoint = endpoint
+        .http2_keep_alive_interval(std::time::Duration::from_secs(10))
+        .keep_alive_timeout(std::time::Duration::from_secs(10))
+        .keep_alive_while_idle(true);
     Ok(endpoint.connect().await?)
 }
 
 /// Header carrying the per-node credential the controller issued at registration (S3b).
 pub const NODE_AUTH_HEADER: &str = "x-ai-cluster-node-auth";
+
+/// Header naming the node on a call whose body is a stream (J5): the credential is checked
+/// when the stream opens, so the node has to be known then.
+pub const NODE_ID_HEADER: &str = "x-ai-cluster-node-id";
 
 /// Ceiling for a single gRPC message, in bytes, in both directions.
 ///

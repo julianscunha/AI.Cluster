@@ -13,8 +13,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ai_cluster_engine::{LanguageModel, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer};
-use ai_cluster_protocol::cluster::{EnqueueGraphRequest, GetOutputRequest, GetTraceRequest};
+use ai_cluster_common::matrix::Matrix;
+use ai_cluster_engine::{
+    Executor, LanguageModel, Slice, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer,
+};
+use ai_cluster_protocol::cluster::{
+    EnqueueGraphRequest, GetOutputRequest, GetTraceRequest, ShardMatmulRequest, ShardOp,
+};
 use ai_cluster_protocol::metadata::{
     INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient, OPERATOR_TOKEN_ENV, connect_operator,
     insecure_allowed, join_token, operator_token, same_token,
@@ -56,6 +61,77 @@ struct Llm {
     tokenizer: Tokenizer,
     /// The token that ends a text (`<|endoftext|>`); generation stops at it.
     end_of_text: u32,
+    /// Set when the projections run on workers (J5).
+    remote: Option<Arc<RemoteStats>>,
+}
+
+/// Where the time of a remote generation went, since the last read.
+#[derive(Default)]
+struct RemoteStats {
+    calls: AtomicU64,
+    /// Wall time of the whole call: relay, network and worker.
+    wall_us: AtomicU64,
+    /// The slowest worker's own compute per call, summed: the part that is not transport.
+    compute_us: AtomicU64,
+}
+
+/// Sends projections to the workers through the controller's resident channels.
+struct GrpcExecutor {
+    client: MetadataClient,
+    runtime: tokio::runtime::Handle,
+    subdir: String,
+    stats: Arc<RemoteStats>,
+}
+
+impl Executor for GrpcExecutor {
+    fn matmul(&self, x: &Matrix, slices: &[Slice]) -> Result<Vec<Matrix>, String> {
+        let started = std::time::Instant::now();
+        let request = ShardMatmulRequest {
+            rows: x.rows,
+            k: x.cols,
+            x: x.data.clone(),
+            ops: slices
+                .iter()
+                .map(|s| ShardOp {
+                    node_id: s.node.clone(),
+                    model_subdir: self.subdir.clone(),
+                    tensor: s.tensor.clone(),
+                    row_start: s.row_start,
+                    row_end: s.row_end,
+                })
+                .collect(),
+        };
+        let mut client = self.client.clone();
+        // Called from a blocking thread (generation runs in `spawn_blocking`), so blocking on the
+        // runtime handle is safe.
+        let response = self
+            .runtime
+            .block_on(client.shard_matmul(request))
+            .map_err(|status| format!("fatias: {}", status.message()))?
+            .into_inner();
+        self.stats.calls.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .wall_us
+            .fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        self.stats.compute_us.fetch_add(
+            response
+                .outputs
+                .iter()
+                .map(|o| o.compute_us)
+                .max()
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        Ok(response
+            .outputs
+            .into_iter()
+            .map(|o| Matrix {
+                rows: o.rows,
+                cols: o.cols,
+                data: o.data,
+            })
+            .collect())
+    }
 }
 
 #[derive(Clone)]
@@ -441,6 +517,18 @@ async fn chat_completions(
             );
         }
     };
+    if let Some(stats) = &llm.remote {
+        let calls = stats.calls.swap(0, Ordering::Relaxed);
+        let wall = stats.wall_us.swap(0, Ordering::Relaxed);
+        let compute = stats.compute_us.swap(0, Ordering::Relaxed);
+        eprintln!(
+            "remoto: {} tokens, {calls} chamadas, {} ms nas chamadas ({} us cada), {} ms de cálculo nos workers",
+            generated.len(),
+            wall / 1000,
+            wall.checked_div(calls).unwrap_or(0),
+            compute / 1000
+        );
+    }
     let stopped = generated.last() == Some(&llm.end_of_text);
     let visible = &generated[..generated.len() - usize::from(stopped)];
     let Ok(content) = llm.tokenizer.decode(visible) else {
@@ -528,18 +616,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: Box::new(Gpt2::load(&dir).map_err(|err| format!("gpt2: {err}"))?),
             tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
             end_of_text: 50256,
+            remote: None,
         }));
     }
     if let Some(dir) = std::env::var_os("AI_CLUSTER_SMOLLM2_DIR") {
         let dir = std::path::PathBuf::from(dir);
+        // With AI_CLUSTER_SMOLLM2_SHARDS (comma-separated node ids) the seven projections of every
+        // layer run on those workers, each holding a band of rows resident; without it the whole
+        // model runs here.
+        let shards: Vec<String> = std::env::var("AI_CLUSTER_SMOLLM2_SHARDS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|node| node.trim().to_string())
+            .filter(|node| !node.is_empty())
+            .collect();
+        let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
+            (
+                Box::new(Llama::load(&dir).map_err(|err| format!("smollm2: {err}"))?),
+                None,
+            )
+        } else {
+            let stats = Arc::new(RemoteStats::default());
+            let executor = Arc::new(GrpcExecutor {
+                client: client.clone(),
+                runtime: tokio::runtime::Handle::current(),
+                subdir: std::env::var("AI_CLUSTER_SMOLLM2_SUBDIR")
+                    .unwrap_or_else(|_| "smollm2".to_string()),
+                stats: stats.clone(),
+            });
+            (
+                Box::new(
+                    Llama::load_remote(&dir, executor, shards)
+                        .map_err(|err| format!("smollm2: {err}"))?,
+                ),
+                Some(stats),
+            )
+        };
         llms.push(Arc::new(Llm {
             id: "smollm2-135m",
-            description: "SmolLM2-135M (Llama) no motor local do gateway; modelo base, sem template \
-                de chat. Só /v1/chat/completions.",
-            model: Box::new(Llama::load(&dir).map_err(|err| format!("smollm2: {err}"))?),
+            description: "SmolLM2-135M (Llama) no gateway, com as projeções nos workers se houver \
+                AI_CLUSTER_SMOLLM2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
+            model,
             tokenizer: Tokenizer::open(&dir)
                 .map_err(|err| format!("smollm2: tokenizador: {err}"))?,
             end_of_text: 0,
+            remote,
         }));
     }
     let gateway = Gateway {

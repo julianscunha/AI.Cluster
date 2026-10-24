@@ -1,3 +1,5 @@
+mod shards;
+
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -248,6 +250,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Resident weight slices (J5): only a node that was told where the models live opens the
+    // channel. The cap bounds the memory the slices may hold.
+    let shard_channel = std::env::var_os("AI_CLUSTER_MODEL_DIR").map(|root| {
+        let cap_mb = std::env::var("AI_CLUSTER_SHARD_CACHE_MB")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(2048);
+        let store = std::sync::Arc::new(ai_cluster_engine::ShardStore::new(
+            PathBuf::from(root),
+            cap_mb.saturating_mul(1024 * 1024),
+            cores,
+        ));
+        tokio::spawn(shards::run(client.clone(), node_id.clone(), store))
+    });
+
     // Liveness runs on its own interval, not inside the work loop. Sharing the loop
     // means a unit that takes longer than the heartbeat grace starves the heartbeat,
     // and the controller reaps a healthy worker and hands its unit to another node
@@ -379,6 +396,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(task) = shard_channel {
+        task.abort();
+    }
     // Stop liveness before leaving: a beat that lands after LeaveNode would make the
     // controller re-register this node, undoing the departure.
     stop_tx.send(()).ok();
