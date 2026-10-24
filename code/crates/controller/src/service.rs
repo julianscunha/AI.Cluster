@@ -11,8 +11,9 @@ use ai_cluster_protocol::cluster::{
     ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
     ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
     ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
-    Reservation, ReserveRequest, ReserveResponse, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
+    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
+    WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{node_credential, require_operator};
 use tonic::{Request, Response, Status};
@@ -129,12 +130,16 @@ impl ClusterControl for ClusterControlService {
         // A node offers the copy of the state it holds. A controller that lost its own files
         // takes the newest one — a node keeping the copy is exactly what lets the queue come
         // back after the volume dies (I4).
-        let record = self.registry.register_as(
+        let Some(record) = self.registry.register_as(
             identity,
             request.capability.unwrap_or_default(),
             now,
             &presented,
-        );
+        ) else {
+            return Err(Status::failed_precondition(
+                "nó aprovado com outra credencial; o operador precisa rodar `ai-cluster revoke` antes",
+            ));
+        };
         // S2: an unapproved node must not be able to write controller state, so its copy is
         // ignored until it is trusted. A node that comes back after approval offers it again.
         if let Some(replica) = request.replica.filter(|_| record.trusted) {
@@ -168,6 +173,32 @@ impl ClusterControl for ClusterControlService {
             self.events.record(unix_ms(), "node_approved", node_id);
         }
         Ok(Response::new(ApproveNodeResponse { approved }))
+    }
+
+    /// Strips a node of trust and its credential, and hands its in-flight units back (S5).
+    async fn revoke_node(
+        &self,
+        request: Request<RevokeNodeRequest>,
+    ) -> Result<Response<RevokeNodeResponse>, Status> {
+        require_operator(&request)?;
+        let node_id = request.into_inner().node_id;
+        if node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        let revoked = self.registry.revoke(&node_id);
+        let requeued = if revoked {
+            self.work.requeue_for_node(&node_id).requeued as u32
+        } else {
+            0
+        };
+        if revoked {
+            self.events.record(
+                unix_ms(),
+                "node_revoked",
+                format!("{node_id} reenfileiradas={requeued}"),
+            );
+        }
+        Ok(Response::new(RevokeNodeResponse { revoked, requeued }))
     }
 
     async fn heartbeat(

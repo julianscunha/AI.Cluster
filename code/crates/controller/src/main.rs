@@ -47,10 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // what a closed lab network or the E2E scripts do.
     let auto_approve = std::env::var("AI_CLUSTER_AUTO_APPROVE")
         .is_ok_and(|value| matches!(value.trim(), "1" | "true"));
-    let registry = Arc::new(if auto_approve {
+    let registry = if auto_approve {
         Registry::new()
     } else {
         Registry::requiring_approval()
+    };
+    // AI_CLUSTER_NODES names a file where approvals and credentials survive a restart (S5).
+    let registry = Arc::new(match std::env::var("AI_CLUSTER_NODES") {
+        Ok(path) if !path.trim().is_empty() => registry.persisted(path),
+        _ => registry,
     });
     // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
     // the benchmark runs use; point it at a mounted volume so a restart keeps the

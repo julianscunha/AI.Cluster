@@ -34,7 +34,7 @@ O token de join identifica "alguém da rede"; ele não manda no cluster.
 - Leituras (`nodes`, `events`, métricas) e as RPCs de nó aceitam qualquer um dos dois.
 - Fecha o achado 1 da revisão de S2 (quem tem o token aprovava a si mesmo). `LeaveNode` fica
   aberto, porque o worker o chama ao desligar; ele depende da credencial por nó (S3b).
-- Teto: continua em texto claro, sem TLS; o operador não tem rotação nem revogação.
+- Teto: o operador não tem rotação nem revogação própria (troca-se reiniciando o controller).
 
 ## Credencial por nó (Fase S3b)
 
@@ -47,13 +47,15 @@ O token de join diz "alguém da rede"; a credencial diz "este nó".
   Um nó desconhecido passa, e o handler dá a resposta de sempre ("não conheço").
 - Quem registra um `node_id` existente sem provar a credencial atual recebe uma nova e volta a
   `pendente` (ou `aprovado` com `AI_CLUSTER_AUTO_APPROVE`). Isso substitui a checagem de
-  `device_id` da S2, que o cliente podia forjar.
+  `device_id` da S2, que o cliente podia forjar. Com aprovação manual, um nó **aprovado** não é
+  substituído assim: o registro é recusado (`FailedPrecondition`) até o operador rodar
+  `ai-cluster revoke` (S5), então o token de join não expulsa um nó aprovado.
 - Fecha os achados 3 e 4 da revisão de S2: `leave_node` alheio e `submit_work_result` forjado.
 
-**Preço:** um worker que reinicia perdeu a credencial (só vive em memória) e, sem
-`AUTO_APPROVE`, precisa ser aprovado de novo. **Tetos:** a credencial é guardada em claro no
+**Preço:** um worker que reinicia perdeu a credencial e, sem `AI_CLUSTER_NODE_CREDENTIAL_FILE`
+(S5) e `AUTO_APPROVE`, precisa ser aprovado de novo. **Tetos:** a credencial é guardada em claro no
 controller e trafega em claro, sem TLS; quem tem o token de join ainda pode registrar um
-`node_id` alheio e derrubá-lo (negação de serviço, não falsificação); não há revogação nem
+`node_id` alheio **pendente** e tomá-lo (um aprovado só com `revoke`); a revogação é manual (`revoke`, S5), sem
 rotação periódica. O operador age por qualquer nó. Um `node_id` que o registro não conhece passa pela
 checagem; o dono de uma unidade restaurada do disco, ausente do registro, pode ter o resultado
 fechado por quem tem o token de join e o `work_id` (o `Debug` de `NodeRecord` e de
@@ -76,7 +78,7 @@ Os tokens e a credencial deixam de cruzar a rede em claro.
   recusa; controller sem certificado não sobe). Os demais scripts rodam com `INSECURE=1`.
 
 **Tetos:** TLS de um sentido, sem mTLS (o cliente não apresenta certificado, a credencial por nó
-continua sendo o segredo); sem rotação nem revogação de certificado; a porta de métricas 9101
+continua sendo o segredo); sem rotação nem revogação de certificado (troca-se os PEM e reinicia); a porta de métricas 9101
 exige `Authorization: Bearer <token de operador>` (S5, 401 sem ele), mas sem TLS; a chave fica em arquivo e em volume.
 
 ## Tetos

@@ -4,7 +4,8 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest,
     GetTraceRequest, ListEventsRequest, ListNodesRequest, ListReservationsRequest,
-    ReleaseReservationRequest, ReserveRequest, WorkReportRequest, WorkReportResponse,
+    ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest, WorkReportRequest,
+    WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_operator;
 use clap::{Parser, Subcommand};
@@ -91,6 +92,11 @@ enum Command {
         /// Nó a aprovar.
         node: String,
     },
+    /// Retira a confiança e a credencial de um nó e devolve o trabalho dele à fila (S5).
+    Revoke {
+        /// Nó a revogar.
+        node: String,
+    },
     /// Libera a reserva de um nó antes do vencimento.
     Release {
         /// Nó a liberar.
@@ -164,6 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => run_reserve(&cli.controller, &node, &request_id, ttl_ms).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
         Command::Approve { node } => approve_node(&cli.controller, &node).await?,
+        Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
         Command::Release { node } => release_reservation(&cli.controller, &node).await?,
         Command::Dashboard { watch } => print_dashboard(&cli.controller, watch).await?,
     }
@@ -266,6 +273,22 @@ async fn approve_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::err
         .approved;
     if approved {
         println!("NÓ aprovado no={node}");
+    } else {
+        println!("NÓ não encontrado no={node}");
+    }
+    Ok(())
+}
+
+async fn revoke_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .revoke_node(RevokeNodeRequest {
+            node_id: node.to_string(),
+        })
+        .await?
+        .into_inner();
+    if reply.revoked {
+        println!("NÓ revogado no={node} reenfileiradas={}", reply.requeued);
     } else {
         println!("NÓ não encontrado no={node}");
     }

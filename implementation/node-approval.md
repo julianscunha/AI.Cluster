@@ -53,3 +53,24 @@ compartilhado foram fechados depois: autoaprovação pelo token de operador sepa
 `leave_node` alheio, `submit_work_result` forjado e heartbeat/saúde forjados pela credencial por
 nó (S3b). O que resta é o teto de `join-token.md`: tudo em texto claro (sem TLS), sem revogação
 nem rotação, e o token de join ainda deixa registrar um `node_id` alheio e derrubá-lo.
+
+## Persistência e revogação (Fase S5)
+
+- `AI_CLUSTER_NODES=<arquivo>` no controller guarda `node_id`, credencial e aprovação (modo
+  0600, em claro). Sem a variável, a memória vale só enquanto o controller vive. Um nó que
+  **sai** (`leave_node`) deixa de constar em `nodes`, mas o controller lembra dele.
+- `AI_CLUSTER_NODE_CREDENTIAL_FILE=<arquivo>` no worker guarda a credencial recebida. Ao
+  reiniciar, o worker a apresenta no registro e **mantém a aprovação**; sem o arquivo, volta
+  a pendente. Com o arquivo do controller perdido, todos voltam a pendente.
+- `ai-cluster revoke <nó>` (operador) retira a aprovação, troca a credencial, devolve as
+  unidades em voo à fila e gera o evento `node_revoked`. O worker revogado encerra com
+  `Unauthenticated`; se subir de novo, nasce pendente. Revogar também esquece um nó que já saiu.
+  Com aprovação manual, registrar o id de um nó aprovado sem a credencial dele é recusado até o
+  `revoke`: é o caminho para um worker que perdeu o arquivo de credencial.
+- É também a **rotação** de credencial de um nó. Rotação dos tokens de join e de operador é
+  reiniciar o controller com valores novos; a de certificado, trocar os PEM e reiniciar.
+
+**Tetos:** com `AI_CLUSTER_AUTO_APPROVE` o nó revogado volta aprovado ao se registrar de novo,
+então a revogação só tem efeito com aprovação manual. O worker não sobrevive a um controller
+fora do ar (um orquestrador precisa reergue-lo). Os segredos ficam em claro nos dois arquivos.
+

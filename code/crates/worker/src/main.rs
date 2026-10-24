@@ -140,6 +140,39 @@ fn state_replica() -> Option<StateReplica> {
         .clone()
 }
 
+/// File where this node keeps its credential between runs (S5); unset means memory only, and a
+/// restart then asks for approval again.
+fn credential_file() -> Option<String> {
+    std::env::var("AI_CLUSTER_NODE_CREDENTIAL_FILE")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+}
+
+fn load_credential() -> Option<String> {
+    let text = std::fs::read_to_string(credential_file()?).ok()?;
+    Some(text.trim().to_string()).filter(|value| !value.is_empty())
+}
+
+fn store_credential(value: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let Some(path) = credential_file() else {
+        return;
+    };
+    // Recreated so the 0600 mode applies even to a file left behind with another one.
+    let _ = std::fs::remove_file(&path);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .and_then(|mut file| file.write_all(value.as_bytes()));
+    if let Err(err) = written {
+        println!("aviso: não consegui gravar a credencial em {path}: {err}");
+    }
+}
+
 /// Epoch of the copy this node holds, for the heartbeat request. Zero when it holds none.
 ///
 /// The controller compares this against its own epoch and sends a copy only when its own is
@@ -171,6 +204,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cores = core_budget(capability.cpu_threads);
 
     let (mut client, credential) = connect_node(endpoint.clone()).await?;
+    // A restarted worker presents the credential it saved, so it keeps the approval it earned.
+    if let Some(saved) = load_credential() {
+        credential.set(&saved);
+    }
     // A pinned node measures nothing, the same contract as the pinned compute score.
     // The probe has its own connection; if it cannot open, the node simply reports no rate.
     let mut probe_client = match pinned_network_score() {
@@ -194,6 +231,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_inner();
     credential.set(&registered.node_credential);
+    store_credential(&registered.node_credential);
     println!(
         "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id
@@ -255,7 +293,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .await
                             {
-                                Ok(again) => credential.set(&again.into_inner().node_credential),
+                                Ok(again) => {
+                                    let issued = again.into_inner().node_credential;
+                                    credential.set(&issued);
+                                    store_credential(&issued);
+                                }
                                 Err(err) => println!("heartbeat: re-registro falhou: {err}"),
                             }
                         }
