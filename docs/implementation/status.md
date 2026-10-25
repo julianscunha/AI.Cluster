@@ -30,7 +30,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-11-request-manager\|F11]] | Request Manager | `[~]` | quotas e fila sob carga | no gateway; sem estados, idempotência nem cancelamento no worker |
 | [[fase-12-model-runtime\|F12]] | Model Runtime distribuído | `[~]` | overhead medido; M4 | N4 (sharding) e N6 (CPU) adiantados em F08 |
 | [[fase-13-graph-engine\|F13]] | Graph engine | `[ ]` | só adotar com ganho medido | — |
-| [[fase-14-edge-optimizer\|F14]] | Edge optimizer | `[ ]` | ganho > custo; M5 | — |
+| [[fase-14-edge-optimizer\|F14]] | Edge optimizer | `[~]` | ganho > custo; M5 | — |
 | [[fase-15-ai-cluster-os\|F15]] | AI Cluster OS e provisionamento | `[ ]` | máquina limpa vira worker; M2 | — |
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[ ]` | melhora estatística | — |
@@ -122,7 +122,15 @@ Estado em [[fase-09-transporte]].
 
 - `[~]` [[f12-manifest-de-modelo]] — `manifest.json` com versão e SHA-256; gateway e workers recusam pesos que não conferem no start; versão em `/v1/models` e `x-model-version`. Sem registry central, variantes nem placement pelo controller.
 
-### F13 a F19 `[ ]`
+### F13 — Graph engine `[ ]`
+
+Não iniciado de propósito: sem corpus nem tarefa de recuperação, o gate ("só adotar com ganho medido") não tem como ser cumprido. Ver [[fase-13-graph-engine]].
+
+### F14 — Edge optimizer `[~]`
+
+- `[x]` [[f14-cache-exato]] — M1: cache exato de respostas no gateway (1,85 s gerado × 2,4 ms do cache). M2 a M10 não iniciados.
+
+### F15 a F19 `[ ]`
 
 Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
 

@@ -1,9 +1,9 @@
 ---
 title: "F14 — Edge optimizer"
 aliases: ["Fase M — Edge Optimizer", "docs/15 (edge optimizer)", "M5"]
-tags: [implementacao/fase/14, implementacao/estado/planejado]
+tags: [implementacao/fase/14, implementacao/estado/parcial]
 type: implementacao/fase
-status: planejado
+status: parcial
 codigos-antigos: ["EP M1–M10", "roadmap 5 (exact/semantic cache, dedup, context selection, token budgeting)", "M5"]
 sistema: ["[[edge-optimizer]]", "[[request-manager]]", "[[graph-engine]]", "[[inference-api]]"]
 ---
@@ -30,9 +30,9 @@ Reduzir tokens e latência de inferência com caches, recuperação, deduplicaç
 
 ## Checklist
 
-Verificado em `code/crates`: nenhum item iniciado.
+Verificado em `code/crates`: M1 feito; os demais não iniciados.
 
-- [ ] M1 Cache exato.
+- [x] M1 Cache exato. LRU no gateway; 1,85 s gerado contra 2,4 ms do cache, com o mesmo texto ([[f14-cache-exato]]).
 - [ ] M2 Cache semântico.
 - [ ] M3 Recuperação por grafo.
 - [ ] M4 Seleção de contexto.
@@ -42,7 +42,7 @@ Verificado em `code/crates`: nenhum item iniciado.
 - [ ] M8 Compilador de prompt.
 - [ ] M9 Orçamento de tokens.
 - [ ] M10 Caminho rápido.
-- [ ] Critério de saída: redução de tokens ou latência que supere o custo do otimizador, medida.
+- [~] Critério de saída: redução de tokens ou latência que supere o custo do otimizador, medida. Medido para M1 (acerto 750 vezes mais rápido que gerar, busca em microssegundos); M2 a M10 sem medição. M3 depende de [[fase-13-graph-engine]], que não foi iniciada de propósito.
 
 ## Gate
 
@@ -52,7 +52,9 @@ Gate específico (manifesto): ganho maior que o custo; M5 completo com benchmark
 
 ## Slices
 
-Notas desta pasta (esta nota é o MOC): nenhum slice criado.
+Notas desta pasta (esta nota é o MOC):
+
+- [[f14-cache-exato]]: M1, cache exato de respostas no gateway.
 
 Slices a criar:
 

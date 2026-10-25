@@ -33,7 +33,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-controller-h5 "${common[@]}" -e AI_C
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 2
 MSYS_NO_PATHCONV=1 docker run -d --name aic-gateway-h5 "${common[@]}" -e AI_CLUSTER_API_KEY=$KEY \
-  -v "$PWD/$DIR:/models:ro" -e AI_CLUSTER_GPT2_DIR=/models \
+  -v "$PWD/$DIR:/models:ro" -e AI_CLUSTER_GPT2_DIR=/models -e AI_CLUSTER_CACHE_ENTRIES=0 \
   -e AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8080 -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   "$IMG" sh -c "exec $R/ai-cluster-gateway" >/dev/null
 for _ in $(seq 1 60); do http $GATEWAY/health | grep -q green && break; sleep 2; done

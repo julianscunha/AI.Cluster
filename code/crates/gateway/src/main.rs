@@ -9,6 +9,7 @@
 //! mistakes it for a real model. A real model replaces this by changing what `run_graph` asks
 //! the controller for; the HTTP contract, auth and limits stay.
 
+mod cache;
 mod metrics;
 mod request_manager;
 
@@ -406,6 +407,7 @@ struct Gateway {
     /// given only the inference token.
     client: Option<MetadataClient>,
     tenants: Arc<Tenants>,
+    cache: Arc<cache::ResponseCache>,
     slots: Arc<Semaphore>,
     llms: Arc<Vec<Arc<Llm>>>,
     /// One generation at a time across all models, handed out by priority class: it is CPU-bound
@@ -451,7 +453,7 @@ async fn inference_metrics(State(gateway): State<Gateway>, headers: HeaderMap) -
     };
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        metrics::render() + &gateway.tenants.render(&tenant),
+        metrics::render() + &gateway.cache.render() + &gateway.tenants.render(&tenant),
     )
         .into_response()
 }
@@ -744,8 +746,69 @@ struct Prepared {
     prompt: Vec<u32>,
     new_tokens: usize,
     stream: bool,
-    slot: Permit,
+    /// `None` when the answer comes from the cache and no generation runs.
+    slot: Option<Permit>,
     tenant: Arc<Tenant>,
+    cache: Arc<cache::ResponseCache>,
+    cached: Option<Vec<u32>>,
+}
+
+/// Runs one generation inside the blocking thread, or replays a cached one, and does the
+/// bookkeeping both need: the tenant is charged for prompt plus visible tokens, the sampler
+/// records a real generation, and a finished real generation goes into the cache. `on_token`
+/// sees every token, the stop token included, as `generate_with` hands them out.
+fn generate_or_replay(
+    prepared: &Prepared,
+    worker: &Llm,
+    flag: &AtomicBool,
+    on_token: &mut dyn FnMut(u32),
+) -> Result<Vec<u32>, String> {
+    let stop = worker.end_of_text;
+    let prompt = &prepared.prompt;
+    if let Some(tokens) = &prepared.cached {
+        let visible = tokens.iter().filter(|&&token| token != stop).count();
+        for &token in tokens {
+            on_token(token);
+        }
+        prepared.tenant.charge((prompt.len() + visible) as u64);
+        return Ok(tokens.clone());
+    }
+    let mut sampler = metrics::Sampler::start();
+    let generated = worker.model.generate_with(
+        prompt,
+        prepared.new_tokens,
+        Some(stop),
+        flag,
+        &mut |token| {
+            if token != stop {
+                sampler.token();
+            }
+            on_token(token);
+        },
+    );
+    let stopped = generated
+        .as_ref()
+        .is_ok_and(|tokens| tokens.last() == Some(&stop));
+    prepared
+        .tenant
+        .charge((prompt.len() + sampler.tokens()) as u64);
+    sampler.finish(
+        generated.is_ok(),
+        prompt.len(),
+        stopped,
+        worker.model.kv_bytes_per_position(),
+    );
+    if let Ok(tokens) = &generated {
+        prepared.cache.put(
+            &prepared.tenant.name,
+            worker.id,
+            &worker.version,
+            prompt,
+            prepared.new_tokens,
+            tokens,
+        );
+    }
+    generated
 }
 
 /// The class a call asks for in `x-priority`, if it names one.
@@ -844,26 +907,6 @@ async fn prepare(
     if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
         return Err(quota_exceeded(retry));
     }
-    // The slot comes first so a busy gateway spends no CPU tokenizing for a request it refuses.
-    // A request waits in line by class, up to the gateway's limit, and is refused past it.
-    let class = tenant.class_for(requested_class(headers));
-    let Ok(slot) = gateway.admission.acquire(class).await else {
-        tenant.note_rejected();
-        let mut response = error(
-            StatusCode::TOO_MANY_REQUESTS,
-            "CAPACITY_UNAVAILABLE",
-            "capacidade esgotada; tente de novo em instantes",
-        );
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
-        return Err(response);
-    };
-    // Checked again now that the wait is over: a burst that queued behind an empty quota would
-    // otherwise all be let through, each spending up to a full generation.
-    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
-        return Err(quota_exceeded(retry));
-    }
     let built = match &llm.chat {
         Some(chat) => {
             let turns: Vec<(&str, &str)> = request
@@ -887,6 +930,35 @@ async fn prepare(
         Ok(prompt) if !prompt.is_empty() && prompt.len() <= MAX_PROMPT_TOKENS => prompt,
         _ => return Err(invalid("o texto deve ter de 1 a 512 tokens")),
     };
+    // A request this tenant already had answered is served from memory and never queues for the
+    // generation slot. The input is capped at MAX_INPUT_BYTES above, so tokenizing it first is cheap.
+    let cached = gateway
+        .cache
+        .get(&tenant.name, llm.id, &llm.version, &prompt, new_tokens);
+    let slot = if cached.is_some() {
+        None
+    } else {
+        // A request waits in line by class, up to the gateway's limit, and is refused past it.
+        let class = tenant.class_for(requested_class(headers));
+        let Ok(slot) = gateway.admission.acquire(class).await else {
+            tenant.note_rejected();
+            let mut response = error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CAPACITY_UNAVAILABLE",
+                "capacidade esgotada; tente de novo em instantes",
+            );
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
+            return Err(response);
+        };
+        // Checked again now that the wait is over: a burst that queued behind an empty quota would
+        // otherwise all be let through, each spending up to a full generation.
+        if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+            return Err(quota_exceeded(retry));
+        }
+        Some(slot)
+    };
     Ok(Prepared {
         llm,
         prompt,
@@ -894,6 +966,8 @@ async fn prepare(
         stream: request.stream,
         slot,
         tenant,
+        cache: gateway.cache.clone(),
+        cached,
     })
 }
 
@@ -934,16 +1008,9 @@ impl Drop for CancelOnDrop {
     }
 }
 
-async fn complete_chat(prepared: Prepared) -> Response {
-    let Prepared {
-        llm,
-        prompt,
-        new_tokens,
-        slot,
-        tenant,
-        ..
-    } = prepared;
-    let prompt_tokens = prompt.len();
+async fn complete_chat(mut prepared: Prepared) -> Response {
+    let llm = prepared.llm.clone();
+    let prompt_tokens = prepared.prompt.len();
     // The permit moves into the blocking task, so the slot frees only when the generation really
     // ends. A timeout sets `cancel`, which stops it at the next token.
     let cancel = Arc::new(AtomicBool::new(false));
@@ -952,31 +1019,9 @@ async fn complete_chat(prepared: Prepared) -> Response {
     let worker = llm.clone();
     let flag = cancel.clone();
     let task = tokio::task::spawn_blocking(move || {
-        let _slot = slot;
+        let _slot = prepared.slot.take();
         bind_cancel(&worker, &flag);
-        let mut sampler = metrics::Sampler::start();
-        let generated = worker.model.generate_with(
-            &prompt,
-            new_tokens,
-            Some(worker.end_of_text),
-            &flag,
-            &mut |token| {
-                if token != worker.end_of_text {
-                    sampler.token();
-                }
-            },
-        );
-        let stopped = generated
-            .as_ref()
-            .is_ok_and(|tokens| tokens.last() == Some(&worker.end_of_text));
-        tenant.charge((prompt.len() + sampler.tokens()) as u64);
-        sampler.finish(
-            generated.is_ok(),
-            prompt.len(),
-            stopped,
-            worker.model.kv_bytes_per_position(),
-        );
-        generated
+        generate_or_replay(&prepared, &worker, &flag, &mut |_| {})
     });
     let generated = match tokio::time::timeout(DEADLINE, task).await {
         Ok(Ok(Ok(tokens))) => tokens,
@@ -1082,15 +1127,8 @@ async fn put(tx: &EventTx, item: Result<Bytes, Infallible>) {
 /// `stream: true`: server-sent events in the OpenAI shape, one `chat.completion.chunk` per piece
 /// of text, then `[DONE]`. The headers go out at once, so a failure after that arrives as an
 /// `error` event instead of a status code.
-fn stream_chat(prepared: Prepared) -> Response {
-    let Prepared {
-        llm,
-        prompt,
-        new_tokens,
-        slot,
-        tenant,
-        ..
-    } = prepared;
+fn stream_chat(mut prepared: Prepared) -> Response {
+    let llm = prepared.llm.clone();
     let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
     let created = unix_seconds();
     let model_id = llm.id;
@@ -1115,11 +1153,10 @@ fn stream_chat(prepared: Prepared) -> Response {
     let cancel = Arc::new(AtomicBool::new(false));
     let (worker, flag, out, content) = (llm.clone(), cancel.clone(), tx.clone(), event.clone());
     let task = tokio::task::spawn_blocking(move || {
-        let _slot = slot;
+        let _slot = prepared.slot.take();
         bind_cancel(&worker, &flag);
         let stop = worker.end_of_text;
         let (mut tokens, mut sent) = (Vec::new(), 0);
-        let mut sampler = metrics::Sampler::start();
         let send = |text: &str| {
             if !text.is_empty()
                 && !push_blocking(&out, content(json!({ "content": text }), json!(null)))
@@ -1128,33 +1165,19 @@ fn stream_chat(prepared: Prepared) -> Response {
                 flag.store(true, Ordering::Relaxed);
             }
         };
-        let generated =
-            worker
-                .model
-                .generate_with(&prompt, new_tokens, Some(stop), &flag, &mut |token| {
-                    if token == stop {
-                        return;
-                    }
-                    sampler.token();
-                    tokens.push(token);
-                    if let Ok(text) = worker.tokenizer.decode(&tokens) {
-                        send(new_text(&text, &mut sent, false));
-                    }
-                });
+        let generated = generate_or_replay(&prepared, &worker, &flag, &mut |token| {
+            if token == stop {
+                return;
+            }
+            tokens.push(token);
+            if let Ok(text) = worker.tokenizer.decode(&tokens) {
+                send(new_text(&text, &mut sent, false));
+            }
+        });
         // Whatever was held back waiting for the rest of a character.
         if let Ok(text) = worker.tokenizer.decode(&tokens) {
             send(new_text(&text, &mut sent, true));
         }
-        let stopped = generated
-            .as_ref()
-            .is_ok_and(|tokens| tokens.last() == Some(&stop));
-        tenant.charge((prompt.len() + sampler.tokens()) as u64);
-        sampler.finish(
-            generated.is_ok(),
-            prompt.len(),
-            stopped,
-            worker.model.kv_bytes_per_position(),
-        );
         generated
     });
     tokio::spawn(async move {
@@ -1342,6 +1365,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gateway = Gateway {
         client: operator_client,
         tenants,
+        cache: Arc::new(cache::ResponseCache::new(
+            env_number("AI_CLUSTER_CACHE_ENTRIES", 256) as usize,
+        )),
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),
         admission,

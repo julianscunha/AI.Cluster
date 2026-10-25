@@ -36,7 +36,10 @@ Verificado em `code/crates`: não há modelo de grafo além do DAG de execução
 - [ ] L2 Projeção que sincroniza objetos operacionais. Não existe.
 - [ ] L3 Travessia com queries de topologia, localidade e relação. Não existe.
 - [ ] L4 Benchmark de retrieval com grafo contra baseline. Não existe.
-- [ ] Critério de saída: só adotar travessia onde houver ganho mensurável.
+- [ ] Critério de saída: só adotar travessia onde houver ganho mensurável. **Hoje não há como medir**: o sistema não tem corpus de conhecimento nem tarefa de recuperação (RAG, contexto de longo prazo) para o L4 comparar o grafo com um baseline. A fase fica **não iniciada de propósito**, e não porque falte tempo.
+
+> [!warning] Decisão: não construir antes de existir o que recuperar
+> O gate da fase proíbe adotar travessia sem ganho medido, e o ganho de recuperação por grafo só se mede contra uma coleção de documentos e perguntas. Nenhuma fase anterior produz isso. Construir L1–L3 sem L4 seria o oposto do gate: infraestrutura sem prova. O que as consultas de topologia que o cluster já precisa (quais nós estão no mesmo host, qual link entre dois nós) fazem hoje o registry e o modelo de custo, sem grafo. Reabrir quando houver um caso de recuperação real, junto de [[fase-14-edge-optimizer]] (M3).
 
 ## Gate
 

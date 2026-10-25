@@ -45,7 +45,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-controller-m "${common[@]}" -e AI_CL
 sleep 2
 TENANTS='acme=ka,models=gpt2,tokens=30,class=interactive;beta=kb,models=matmul-diamond-v0;hi=kh,models=gpt2,class=interactive;lo=kl,models=gpt2,class=batch;big=kg,models=gpt2'
 MSYS_NO_PATHCONV=1 docker run -d --name aic-gateway-m "${common[@]}" -e AI_CLUSTER_TENANTS="$TENANTS" \
-  -v "$PWD/$DIR:/models:ro" -e AI_CLUSTER_GPT2_DIR=/models \
+  -v "$PWD/$DIR:/models:ro" -e AI_CLUSTER_GPT2_DIR=/models -e AI_CLUSTER_CACHE_ENTRIES=0 \
   -e AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8080 -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   "$IMG" sh -c "exec $R/ai-cluster-gateway" >/dev/null
 for _ in $(seq 1 60); do http $GATEWAY/health | grep -q green && break; sleep 2; done
