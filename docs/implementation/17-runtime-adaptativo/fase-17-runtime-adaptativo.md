@@ -1,9 +1,9 @@
 ---
 title: "F17 — Runtime adaptativo"
 aliases: ["Fase P — Adaptive Runtime", "M-adaptativo"]
-tags: [implementacao/fase/17, implementacao/estado/planejado]
+tags: [implementacao/fase/17, implementacao/estado/parcial]
 type: implementacao/fase
-status: planejado
+status: parcial
 codigos-antigos: ["EP P1–P6", "roadmap 8"]
 sistema: ["[[modelo-de-desempenho]]", "[[scheduler]]", "[[execution-planner]]", "[[observabilidade]]"]
 ---
@@ -30,7 +30,7 @@ Aprender com o desempenho observado para melhorar a decisão do cluster: modelo 
 
 Verificado em `code/crates/controller/src/placement.rs`.
 
-- [ ] P1 Modelo de desempenho aprendido. Não existe. O modelo de custo usa a taxa típica do benchmark de registro, com o desvio como guarda. Essa é a base, não o aprendizado.
+- [~] P1 Modelo de desempenho aprendido. Razão real/previsto aprendida por nó (média móvel) e aplicada às previsões seguintes; o erro cai de 33,5 para 0,08 num nó mal calibrado ([[f17-modelo-aprendido]]). Não depende do tamanho da unidade nem persiste.
 - [ ] P2 Placement preditivo. Não existe. O placement é função pura dos scores atuais.
 - [ ] P3 Prefetch. Não existe.
 - [ ] P4 Execução especulativa. Não existe.
@@ -49,11 +49,12 @@ Gate específico (manifesto): melhora estatística em workload repetido, com exp
 
 ## Slices
 
-Notas desta pasta (esta nota é o MOC): nenhum slice criado.
+Notas desta pasta (esta nota é o MOC):
+
+- [[f17-modelo-aprendido]]: P1, correção por nó aprendida do real contra o previsto.
 
 Slices a criar:
 
-- `f17-modelo-de-desempenho-aprendido`: P1.
 - `f17-placement-preditivo`: P2.
 - `f17-prefetch`: P3.
 - `f17-execucao-especulativa`: P4.

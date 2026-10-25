@@ -49,6 +49,9 @@ struct Dispatched {
     /// Prediction carried from claim time to completion (H5). Held here because the
     /// node's capability is only in hand at claim time, not when the result comes back.
     predicted_compute_us: u64,
+    /// The cost model's prediction before the per-node correction, so completion can learn how
+    /// far the model is off. Zero when unknown (a lease restored from disk).
+    raw_predicted_us: u64,
     /// Kept so a unit can be handed back to the queue when its node leaves or
     /// is believed dead. Without this the unit would be stranded forever.
     unit: WorkUnit,
@@ -102,6 +105,31 @@ struct Inner {
     /// Dispatches that went to another unit while a queued unit waited (G4 aging). Not
     /// persisted: a restart resets the age, which only delays an overtake by one span.
     passed: HashMap<String, u32>,
+    /// Per node, how many times slower (or faster) than the cost model it really computes: the
+    /// moving average of actual over predicted compute time (P1). Not persisted; a restart
+    /// relearns it from the first few units.
+    learned: HashMap<String, f64>,
+}
+
+/// Weight of the newest observation in the learned ratio.
+const LEARNING_RATE: f64 = 0.3;
+
+/// A ratio outside this band is a stall or a clock glitch, not the node's speed.
+const RATIO_BAND: (f64, f64) = (0.05, 20.0);
+
+/// The prediction after the node's learned correction. No ratio yet means the model as it is.
+fn corrected(ratio: Option<f64>, raw_us: u64) -> u64 {
+    ratio.map_or(raw_us, |ratio| (raw_us as f64 * ratio).round() as u64)
+}
+
+/// The ratio after one more observation: the first sets it, later ones move it by
+/// `LEARNING_RATE` of the way. Nothing is learned from an unknown prediction or an empty timing.
+fn learn(previous: Option<f64>, raw_us: u64, actual_us: u64) -> Option<f64> {
+    if raw_us == 0 || actual_us == 0 {
+        return previous;
+    }
+    let seen = (actual_us as f64 / raw_us as f64).clamp(RATIO_BAND.0, RATIO_BAND.1);
+    Some(previous.map_or(seen, |ratio| ratio + LEARNING_RATE * (seen - ratio)))
 }
 
 /// One row of a request trace (H3). A unit only has timings once it has completed; the
@@ -293,8 +321,10 @@ fn take_locked(
     index: usize,
     node_id: &str,
     now_unix_ms: u64,
-    predicted_compute_us: u64,
+    raw_predicted_us: u64,
 ) -> WorkUnit {
+    // P1: what this node has taught the model so far scales the prediction.
+    let predicted_compute_us = corrected(inner.learned.get(node_id).copied(), raw_predicted_us);
     let mut unit = inner
         .queue
         .remove(index)
@@ -325,6 +355,7 @@ fn take_locked(
             node_id: node_id.to_string(),
             dispatched_at_unix_ms: now_unix_ms,
             predicted_compute_us,
+            raw_predicted_us,
             unit: unit.clone(),
         },
     );
@@ -438,6 +469,7 @@ impl WorkStore {
                         node_id: lease.node_id,
                         dispatched_at_unix_ms: lease.dispatched_at_unix_ms,
                         predicted_compute_us: lease.predicted_compute_us,
+                        raw_predicted_us: 0,
                         unit: lease.unit?,
                     },
                 ))
@@ -683,14 +715,8 @@ impl WorkStore {
             })
             .first()?
         };
-        let predicted = predicted_compute_us(&inner.queue[index], capability);
-        Some(take_locked(
-            &mut inner,
-            index,
-            node_id,
-            now_unix_ms,
-            predicted,
-        ))
+        let raw = predicted_compute_us(&inner.queue[index], capability);
+        Some(take_locked(&mut inner, index, node_id, now_unix_ms, raw))
     }
 
     /// Hands the asking node the first unit it could take, but only when that node is
@@ -744,7 +770,7 @@ impl WorkStore {
         // Best rank first, but a unit this node is not the right home for (a better node, or
         // a hold for another node) must not block a lower-ranked unit it would take.
         for index in ranked {
-            let predicted = predicted_compute_us(&inner.queue[index], capability);
+            let raw = predicted_compute_us(&inner.queue[index], capability);
             let takes = decide(
                 &inner.queue[index],
                 node_id,
@@ -760,13 +786,7 @@ impl WorkStore {
                 tolerance,
             );
             if takes {
-                return Some(take_locked(
-                    &mut inner,
-                    index,
-                    node_id,
-                    now_unix_ms,
-                    predicted,
-                ));
+                return Some(take_locked(&mut inner, index, node_id, now_unix_ms, raw));
             }
         }
         None
@@ -823,6 +843,14 @@ impl WorkStore {
             return None;
         }
         let dispatched = inner.dispatched.remove(&result.work_id)?;
+        let previous = inner.learned.get(&result.node_id).copied();
+        if let Some(ratio) = learn(
+            previous,
+            dispatched.raw_predicted_us,
+            result.compute_time_us,
+        ) {
+            inner.learned.insert(result.node_id.clone(), ratio);
+        }
         let total_latency_us = now_unix_ms
             .saturating_sub(dispatched.dispatched_at_unix_ms)
             .saturating_mul(1_000);
@@ -1166,6 +1194,41 @@ mod tests {
         let next = store.claim("n", &CapabilityReport::default(), 2).unwrap();
         assert_eq!(next.work_id, "b1");
         assert!(store.claim("n", &CapabilityReport::default(), 3).is_none());
+    }
+
+    #[test]
+    fn the_learned_ratio_moves_toward_what_the_node_really_takes() {
+        // The model says 100 us and the node keeps taking 400: the ratio walks to 4.
+        let mut ratio = None;
+        for _ in 0..30 {
+            ratio = learn(ratio, 100, 400);
+        }
+        assert!((ratio.unwrap() - 4.0).abs() < 0.01);
+        assert_eq!(corrected(ratio, 100), 400);
+        // Unknown predictions and empty timings teach nothing; outliers are clamped.
+        assert_eq!(learn(Some(2.0), 0, 500), Some(2.0));
+        assert_eq!(learn(Some(2.0), 100, 0), Some(2.0));
+        assert_eq!(learn(None, 1, 1_000_000), Some(RATIO_BAND.1));
+        assert_eq!(corrected(None, 100), 100);
+    }
+
+    #[test]
+    fn a_completed_unit_corrects_the_next_prediction_for_that_node() {
+        let store = WorkStore::new();
+        let capability = CapabilityReport {
+            cpu_threads: 2,
+            compute_score: 1.0,
+            ..Default::default()
+        };
+        store.enqueue([big_unit("a"), big_unit("b")]);
+        store.claim("node-a", &capability, 1).unwrap();
+        let raw = predicted_compute_us(&big_unit("a"), &capability);
+        assert!(raw > 0);
+        // The node took four times what the model said.
+        store.complete(result("a", raw * 4), 2).unwrap();
+        store.claim("node-a", &capability, 3).unwrap();
+        let completed = store.complete(result("b", raw * 4), 4).unwrap();
+        assert_eq!(completed.predicted_compute_us, raw * 4);
     }
 
     #[test]

@@ -57,6 +57,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-o-cache.sh` | repetir um pedido vem do cache (1,85 s → 2,4 ms), igual no streaming, e as métricas contam acertos e tokens poupados | [[f14-cache-exato]] | [[fase-14-edge-optimizer]] |
 | `phase-p-bootstrap.sh` | um Debian limpo vira nó READY só com o binário e `os/bootstrap.sh`; argumentos ruins são recusados; idempotente | [[f15-bootstrap-e-imagem]] | [[fase-15-ai-cluster-os]] |
 | `phase-p-image.sh` | a imagem mínima do worker (33 MB) é construída do zero e vira um nó READY | [[f15-bootstrap-e-imagem]] | [[fase-15-ai-cluster-os]] |
+| `phase-q-learning.sh` | o erro da previsão de um nó mal calibrado cai de 33,5 para 0,08 em 40 unidades | [[f17-modelo-aprendido]] | [[fase-17-runtime-adaptativo]] |
 | `phase-j-shards.sh` | projeções da SmolLM2 em 2 workers com fatias próprias; mesma continuação; 503 sem worker | [[f08-canal-residente-de-fatias]] | [[fase-08-inferencia]] |
 
 ## Lacunas

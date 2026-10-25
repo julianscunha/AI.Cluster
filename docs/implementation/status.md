@@ -33,7 +33,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-14-edge-optimizer\|F14]] | Edge optimizer | `[~]` | ganho > custo; M5 | — |
 | [[fase-15-ai-cluster-os\|F15]] | AI Cluster OS e provisionamento | `[~]` | máquina limpa vira worker; M2 | — |
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
-| [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[ ]` | melhora estatística | — |
+| [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[ ]` | M7 | — |
 | [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[ ]` | soak e failure injection | — |
 
@@ -134,7 +134,15 @@ Não iniciado de propósito: sem corpus nem tarefa de recuperação, o gate ("s�
 
 - `[~]` [[f15-bootstrap-e-imagem]] — `os/bootstrap.sh` põe o worker num Linux existente e ele entra READY; imagem de contêiner de 33 MB. Sem imagem de disco, reimage, A/B nem ARM64 (exigem VM ou hardware).
 
-### F16 a F19 `[ ]`
+### F16 — Aceleradores `[ ]`
+
+Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
+
+### F17 — Runtime adaptativo `[~]`
+
+- `[~]` [[f17-modelo-aprendido]] — P1: razão real/previsto aprendida por nó corrige as previsões (erro 33,5 → 0,08). P2 a P6 não iniciados.
+
+### F18 a F19 `[ ]`
 
 Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
 
