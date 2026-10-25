@@ -10,6 +10,7 @@ use crate::safetensors::read_band;
 use ai_cluster_common::matrix::Matrix;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Largest slice and largest output one computation may hold in memory.
@@ -142,13 +143,17 @@ pub trait Executor: Send + Sync {
 
 type Key = (String, String, u32, u32, bool);
 
+/// Resident slices with the tick of their last use, and the bytes they hold.
+type Cache = (HashMap<Key, (Arc<Matrix>, u64)>, usize);
+
 /// Slices resident on this node, loaded lazily from `root/<subdir>/model.safetensors`.
 pub struct ShardStore {
     root: PathBuf,
     cap_bytes: usize,
     threads: usize,
-    /// Loaded slices (already transposed to `[in, rows]`) and the bytes they hold.
-    cache: Mutex<(HashMap<Key, Arc<Matrix>>, usize)>,
+    /// Loaded slices (already transposed to `[in, rows]`); the least recently used make room.
+    cache: Mutex<Cache>,
+    clock: AtomicU64,
     /// One disk load at a time: a load briefly holds the raw rows, their f64 form and the
     /// transposed copy, and concurrent loads of the same slice would each do all of that.
     loading: Mutex<()>,
@@ -161,6 +166,7 @@ impl ShardStore {
             cap_bytes,
             threads,
             cache: Mutex::new((HashMap::new(), 0)),
+            clock: AtomicU64::new(0),
             loading: Mutex::new(()),
         }
     }
@@ -219,13 +225,19 @@ impl ShardStore {
             row_end,
             by_columns,
         );
-        let lookup = |cache: &(HashMap<Key, Arc<Matrix>>, usize)| cache.0.get(&key).cloned();
+        let lookup = |cache: &mut Cache| {
+            let tick = self.clock.fetch_add(1, Ordering::Relaxed);
+            cache.0.get_mut(&key).map(|(found, used)| {
+                *used = tick;
+                found.clone()
+            })
+        };
         let lock = || {
             self.cache
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
         };
-        if let Some(found) = lookup(&lock()) {
+        if let Some(found) = lookup(&mut lock()) {
             return Ok(found);
         }
         let path = self.model_path(&subdir)?;
@@ -234,10 +246,10 @@ impl ShardStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Whoever held the gate may have loaded exactly this slice.
-        if let Some(found) = lookup(&lock()) {
+        if let Some(found) = lookup(&mut lock()) {
             return Ok(found);
         }
-        let room = self.cap_bytes.saturating_sub(lock().1).min(MAX_SLICE_BYTES);
+        let room = self.cap_bytes.min(MAX_SLICE_BYTES);
         let band = read_band(
             &path,
             tensor,
@@ -250,11 +262,27 @@ impl ShardStore {
         let loaded = Arc::new(if by_columns { band } else { transposed(&band) });
         let mut cache = lock();
         let bytes = loaded.data.len() * 8;
-        if cache.1 + bytes > self.cap_bytes {
-            return Err("memória de fatias esgotada neste nó".into());
+        if bytes > self.cap_bytes {
+            return Err("fatia maior que a memória de fatias deste nó".into());
+        }
+        // Make room by dropping the least recently used slices; one still being multiplied lives
+        // on in its caller's `Arc` and is merely loaded again on its next use.
+        while cache.1 + bytes > self.cap_bytes {
+            let Some(oldest) = cache
+                .0
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            if let Some((evicted, _)) = cache.0.remove(&oldest) {
+                cache.1 -= evicted.data.len() * 8;
+            }
         }
         cache.1 += bytes;
-        cache.0.insert(key, loaded.clone());
+        let tick = self.clock.fetch_add(1, Ordering::Relaxed);
+        cache.0.insert(key, (loaded.clone(), tick));
         Ok(loaded)
     }
 
@@ -497,9 +525,9 @@ mod tests {
     }
 
     #[test]
-    fn the_memory_cap_is_enforced() {
+    fn the_least_recently_used_slice_makes_room() {
         let root = model_dir("cap");
-        // One row of 2 f64 is 16 bytes; a 24-byte cap holds one slice and refuses the next.
+        // One row of 2 f64 is 16 bytes; a 24-byte cap holds one slice at a time.
         let store = ShardStore::new(root.clone(), 24, 1);
         let x = Matrix {
             rows: 1,
@@ -511,16 +539,21 @@ mod tests {
                 .compute("m", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
                 .is_ok()
         );
+        // The next slice evicts the first instead of failing, and the first loads again on demand.
+        for range in [(1, 2), (0, 1), (1, 2)] {
+            assert!(
+                store
+                    .compute("m", "h.0.mlp.c_fc.weight", range, false, &x)
+                    .is_ok(),
+                "{range:?}"
+            );
+        }
+        assert_eq!(store.cache.lock().unwrap().0.len(), 1);
+        // A slice that cannot fit even alone is refused.
+        let tiny = ShardStore::new(root.clone(), 8, 1);
         assert!(
-            store
-                .compute("m", "h.0.mlp.c_fc.weight", (1, 2), false, &x)
+            tiny.compute("m", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
                 .is_err()
-        );
-        // The resident slice still answers.
-        assert!(
-            store
-                .compute("m", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
-                .is_ok()
         );
         std::fs::remove_dir_all(root).ok();
     }

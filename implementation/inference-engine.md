@@ -187,7 +187,7 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
   são recusadas pelo `ShardMatmul`.
 - Divisão só por linhas de saída, entrada replicada: sem all-reduce, sem pipeline entre camadas.
 - Do review: o token de inferência escolhe nó, subdiretório, tensor e faixa (a contenção na raiz de
-  modelos é do worker), então um token vazado pode encher o cache de fatias e gerar leituras com
+  modelos é do worker), então um token vazado pode forçar o despejo (LRU) das fatias residentes e gerar leituras com
   `by_columns` (um `seek` por linha). O worker só lê projeções de camada (GPT-2 e Llama; embeddings
   e normas são recusados) e o controller aceita 8 `ShardMatmul` simultâneos (`ResourceExhausted`
   acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s e o cancelamento
