@@ -1,0 +1,22 @@
+# Imagem mínima do worker (F15, J1/J2): só o binário e um usuário sem privilégios.
+#   docker build -f os/Dockerfile.worker -t ai-cluster-worker:dev .     (a partir de code/)
+# O ambiente (controller, token de join, id do nó) entra por variáveis, nunca na imagem.
+FROM rust:1-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY proto ./proto
+RUN cargo build --release --locked -p ai-cluster-worker
+
+FROM debian:bookworm-slim
+# UID fixo, para volumes montados entre máquinas; certificados para falar https:// com o controller.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home-dir /var/lib/ai-cluster --create-home --shell /usr/sbin/nologin ai-cluster
+COPY --from=build /src/target/release/ai-cluster-worker /usr/local/bin/ai-cluster-worker
+USER ai-cluster
+WORKDIR /var/lib/ai-cluster
+ENV AI_CLUSTER_NODE_CREDENTIAL_FILE=/var/lib/ai-cluster/credential
+VOLUME /var/lib/ai-cluster
+ENTRYPOINT ["/usr/local/bin/ai-cluster-worker"]

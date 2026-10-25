@@ -1,9 +1,9 @@
 ---
 title: "F15 — AI Cluster OS e provisionamento"
 aliases: ["Fase J — AI Cluster OS (OS)", "Fase 3 — AI Cluster OS", "M2"]
-tags: [implementacao/fase/15, implementacao/estado/planejado]
+tags: [implementacao/fase/15, implementacao/estado/parcial]
 type: implementacao/fase
-status: planejado
+status: parcial
 codigos-antigos: ["EP J1–J6 (OS)", "roadmap 3", "M2", "phases.md Fase 3"]
 sistema: ["[[ai-cluster-os]]", "[[provisionamento]]", "[[adr-001-base-linux]]", "[[adr-002-os-imutavel]]"]
 ---
@@ -35,13 +35,13 @@ Fazer uma máquina limpa virar worker READY sem operação manual: imagem imutá
 
 Verificado em `code/os/README.md` (só define a fronteira do runtime; o trabalho de imagem começa aqui) e `code/scripts/` (só ambiente de desenvolvimento).
 
-- [ ] J1 Imagem base Linux. Não iniciado.
-- [ ] J2 Serviços mínimos. Não iniciado.
-- [ ] J3 Bootstrap de Linux existente até o enrollment. Não iniciado.
+- [~] J1 Imagem base Linux. Imagem de contêiner mínima do worker (30 MB, `os/Dockerfile.worker`); imagem de disco não existe ([[f15-bootstrap-e-imagem]]).
+- [~] J2 Serviços mínimos. O worker é o único serviço da imagem; a unit systemd do bootstrap restringe o processo. Sem imagem de SO.
+- [~] J3 Bootstrap de Linux existente até o enrollment. `os/bootstrap.sh` instala o worker e ele entra READY num Debian limpo (`phase-p-bootstrap.sh`); a aprovação segue manual e não foi testado com systemd real.
 - [ ] J4 Reimage em instalação limpa. Não iniciado.
 - [ ] J5 Boot e recuperação A/B. Não iniciado.
 - [ ] J6 Multi-arquitetura. Não iniciado.
-- [ ] Critério de saída: reprovisionamento automático e retorno READY. Não atendido.
+- [ ] Critério de saída: reprovisionamento automático e retorno READY. Não atendido: o bootstrap parte de um Linux já instalado, e sem VM ou hardware não há como testar imagem de disco, reimage nem A/B.
 
 ## Gate
 
@@ -51,13 +51,13 @@ Gate específico (manifesto): máquina limpa vira worker sem intervenção; M2 c
 
 ## Slices
 
-Notas desta pasta (esta nota é o MOC): nenhum slice criado.
+Notas desta pasta (esta nota é o MOC):
+
+- [[f15-bootstrap-e-imagem]]: J1/J2/J3 parciais, `bootstrap.sh` e a imagem mínima do worker.
 
 Slices a criar:
 
-- `f15-imagem-base`: J1.
-- `f15-servicos-minimos`: J2.
-- `f15-bootstrap-e-enrollment`: J3.
+- `f15-imagem-de-disco`: J1/J2 de verdade, imagem de SO e serviços.
 - `f15-reimage`: J4.
 - `f15-boot-e-ab`: J5.
 - `f15-multi-arch`: J6.

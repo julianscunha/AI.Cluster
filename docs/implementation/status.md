@@ -31,7 +31,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-12-model-runtime\|F12]] | Model Runtime distribuído | `[~]` | overhead medido; M4 | N4 (sharding) e N6 (CPU) adiantados em F08 |
 | [[fase-13-graph-engine\|F13]] | Graph engine | `[ ]` | só adotar com ganho medido | — |
 | [[fase-14-edge-optimizer\|F14]] | Edge optimizer | `[~]` | ganho > custo; M5 | — |
-| [[fase-15-ai-cluster-os\|F15]] | AI Cluster OS e provisionamento | `[ ]` | máquina limpa vira worker; M2 | — |
+| [[fase-15-ai-cluster-os\|F15]] | AI Cluster OS e provisionamento | `[~]` | máquina limpa vira worker; M2 | — |
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[ ]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[ ]` | M7 | — |
@@ -130,7 +130,11 @@ Não iniciado de propósito: sem corpus nem tarefa de recuperação, o gate ("s�
 
 - `[x]` [[f14-cache-exato]] — M1: cache exato de respostas no gateway (1,85 s gerado × 2,4 ms do cache). M2 a M10 não iniciados.
 
-### F15 a F19 `[ ]`
+### F15 — AI Cluster OS e provisionamento `[~]`
+
+- `[~]` [[f15-bootstrap-e-imagem]] — `os/bootstrap.sh` põe o worker num Linux existente e ele entra READY; imagem de contêiner de 33 MB. Sem imagem de disco, reimage, A/B nem ARM64 (exigem VM ou hardware).
+
+### F16 a F19 `[ ]`
 
 Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
 
