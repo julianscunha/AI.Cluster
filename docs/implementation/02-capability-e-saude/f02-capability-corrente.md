@@ -1,19 +1,28 @@
 ---
-title: "Capability corrente do nó"
-type: implementation
-status: implemented
-tags: [implementation, capability, placement, phase-c]
+title: "F02 — Capability corrente do nó"
+aliases: ["phase-2/capability-current", "capability-current", "C3"]
+tags: [implementacao/fase/02, implementacao/fatia, implementacao/estado/implementado]
+type: implementacao/fatia
+status: implementado
+superado: false
+fase: "[[fase-02-capability-e-saude]]"
+codigos-antigos: ["C3", "capability-current"]
+sistema: ["[[capability-engine]]", "[[modelo-de-desempenho]]"]
+evidencia: ["code/tests/phase-c-current.sh"]
 ---
+# F02 — Capability corrente do nó
 
-# Capability corrente do nó
+- [ ] Superado
+
+## Objetivo
 
 O perfil de capability era uma fotografia do registro e só: um `compute_score` medido uma vez,
 quando o nó entrou, e nada sobre o que ele fazia depois. Um nó que ficou mais lento ao longo da
 vida — vizinho barulhento no host compartilhado, limite de energia — seguia previsto pela
 velocidade do primeiro dia. Esta é a fatia C3: *baseline + current + confidence*, como o
-`docs/05` pede.
+[[capability-engine]] pede.
 
-## O que mudou
+## O que foi feito
 
 - `CapabilityReport.current_compute_score` e `compute_confidence` no proto. `compute_score`
   continua sendo o baseline; os dois novos campos carregam a última medida e o quanto confiar
@@ -37,7 +46,7 @@ velocidade do primeiro dia. Esta é a fatia C3: *baseline + current + confidence
 - `ai-cluster node show <id>` ganhou `current_compute_score` e `compute_confidence`.
 - `CapabilityReport.compute_median_score` e `compute_deviation`: a distribuição do benchmark de
   registro — o valor central, para calibrar uma previsão de tempo, e o quanto as execuções
-  discordaram. Ver `benchmark-stability.md`; é o número estável que faltava para calibrar.
+  discordaram. Ver [[f02-estabilidade-do-benchmark]]; é o número estável que faltava para calibrar.
 
 Sem dependência nova: um `Vec`, um `sort` e uma divisão.
 
@@ -99,7 +108,7 @@ O passo A não fixa o score, então as leituras são reais e do mesmo host. Que 
 mediana (0.46) e remedida (0.72) **difiram** é o ponto — cada um responde uma pergunta
 diferente e nenhum é cópia do outro. O desvio de 0.41 diz que aquela passada de registro foi
 muito perturbada; a mediana é o número que sobra para calibrar. Os detalhes são de
-`benchmark-stability.md`.
+[[f02-estabilidade-do-benchmark]].
 
 Coberto por `confidence_is_full_when_the_runs_agree`, `confidence_falls_as_the_runs_disagree`,
 `a_single_run_cannot_disagree_with_itself`, `a_broken_measurement_carries_no_confidence`,
@@ -110,9 +119,9 @@ Coberto por `confidence_is_full_when_the_runs_agree`, `confidence_falls_as_the_r
 e `a_current_score_alone_still_predicts` no placement; e `a_health_report_can_refresh_the_capability`
 no registry.
 
-## Teto conhecido
+## Limites
 
-**Confiança de uma passada, não de um histórico.** O `docs/05` pede confiança "derivada da
+**Confiança de uma passada, não de um histórico.** [[capability-engine]] pede confiança "derivada da
 quantidade/qualidade dos dados históricos". A quantidade é o N de execuções da passada; não há
 série temporal guardada, então uma passada limpa vota 1.0 mesmo sendo a primeira. Uma janela
 de amostras com desvio-padrão é o degrau seguinte, se o número se mostrar instável na prática.
@@ -122,9 +131,9 @@ de amostras com desvio-padrão é o degrau seguinte, se o número se mostrar ins
 current de baixa confiança — é uma mudança no modelo de custo e não tem dado para calibrar.
 
 **Só compute.** Current e confiança existem para o compute; memória, storage e rede não têm
-medida corrente — a rede é descoberta como velocidade nominal do link (`network-discovery.md`),
+medida corrente — a rede é descoberta como velocidade nominal do link ([[f02-descoberta-de-rede]]),
 que não se refaz como o current do compute se refaz. É o mesmo teto do
-`capability-benchmark.md`.
+[[f02-benchmark-de-capability]].
 
 **Medida em ocioso, não sob carga.** O current diz o que o nó faz quando está livre. Um nó com
 unidades longas passa o tempo computando e nunca entra no ramo ocioso: reporta só o baseline,
@@ -133,4 +142,10 @@ este campo.
 
 **Uma passada, não um histórico.** `compute_deviation` descreve o espalhamento dentro de uma
 única janela de cinco execuções; não há série temporal. Alargar a janela é o degrau seguinte se
-o desvio se mostrar grande — ver `benchmark-stability.md`.
+o desvio se mostrar grande — ver [[f02-estabilidade-do-benchmark]].
+
+## Próximos passos
+
+- Janela de amostras com desvio-padrão, se o número se mostrar instável na prática.
+- Ponderar a previsão pela confiança, quando houver dado para calibrar.
+- Medir o current para memória, storage e rede, não só compute.

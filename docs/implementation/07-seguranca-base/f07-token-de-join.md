@@ -1,92 +1,75 @@
-# Token de join (Fase S1)
+---
+title: "F07 — Token de join"
+aliases: ["join-token", "Fase S1", "S1"]
+tags: [implementacao/fase/07, implementacao/fatia, implementacao/estado/implementado]
+type: implementacao/fatia
+status: implementado
+superado: false
+fase: "[[fase-07-seguranca-base]]"
+codigos-antigos: ["S1"]
+sistema: ["[[seguranca]]"]
+evidencia: ["code/tests/phase-s1-join-token.sh"]
+---
+# F07 — Token de join
 
-Até aqui o controller aceitava qualquer cliente: o `AUTH_HEADER` carregava o literal
-`"anonymous"` e ninguém o conferia. Isso deixava a rede inteira registrar um nó, tomar unidades
-e, pior, injetar estado: `RegisterNode` chama `work.restore(&replica)` com dado do cliente.
+- [ ] Superado
 
-## O que existe
+> [!note] Contexto
+> Até a S1 o controller aceitava qualquer cliente: o `AUTH_HEADER` carregava o literal
+> `"anonymous"` e ninguém o conferia. A rede inteira podia registrar um nó, tomar unidades e,
+> pior, injetar estado: `RegisterNode` chamava `work.restore(&replica)` com dado do cliente.
+
+## Objetivo
+
+Só quem conhece um segredo de join fala com o controller, em toda RPC, antes de qualquer outra
+checagem. É o primeiro degrau de [[seguranca]]; o que vem depois está em [[f07-aprovacao-de-no]],
+[[f07-operador-e-credencial-por-no]] e [[f07-tls]].
+
+## O que foi feito
 
 - `AI_CLUSTER_JOIN_TOKEN` é a mesma variável no controller, nos workers e na CLI.
 - O controller **recusa subir** sem ela (fail-closed). Um controller sem token aceitaria todos.
 - `ServerMetadata` confere o token em **toda** RPC, dos dois serviços (`ClusterControl` e
   `LinkProbe`), antes da checagem de versão: quem não se autentica não aprende mais nada.
   Resposta: `Unauthenticated`. A comparação não tem saída antecipada (`same_token`).
-- `ClientMetadata::from_env` lê o token uma vez; sem ele o header vai vazio e o controller
-  recusa. Worker e CLI não mudaram de código: ambos já passam por `connect_controller`.
+- `ClientMetadata::from_env` lê o token uma vez; sem ele o header vai vazio e o controller recusa.
+  Worker e CLI não mudaram de código: ambos já passam por `connect_controller`.
 - Um token vazio no servidor não aceita ninguém (e não "todo mundo").
+
+## Decisões
+
+- **Um segredo só nesta fatia.** Join, operador e credencial de nó ficam separados depois (S3a e
+  S3b), mas o token de join continua valendo para todo nó que ainda não tem credencial.
+- **Fail-closed em tudo:** controller sem token não sobe; servidor com token vazio não aceita.
+- **Checagem antes da versão:** um cliente sem token não recebe nem a resposta de incompatibilidade
+  de protocolo.
 
 ## Evidência
 
-`bash code/tests/phase-s1-join-token.sh`: A) controller sem token não sobe; B) worker com
-token errado e worker sem token não aparecem em `nodes` e o log mostra `Unauthenticated`;
-C) worker com o token certo fica READY; D) a CLI sem token é recusada. Os demais scripts de
-`code/tests` passam a levar `AI_CLUSTER_JOIN_TOKEN` (padrão `e2e-token`) em cada `docker run`.
+`bash code/tests/phase-s1-join-token.sh`:
 
-## Token de operador (Fase S3a)
+- A) controller sem token não sobe.
+- B) worker com token errado e worker sem token não aparecem em `nodes`; o log mostra
+  `Unauthenticated`.
+- C) worker com o token certo fica `READY`.
+- D) a CLI sem token é recusada.
 
-O token de join identifica "alguém da rede"; ele não manda no cluster.
+Os demais scripts de `code/tests` passam a levar `AI_CLUSTER_JOIN_TOKEN` (padrão `e2e-token`) em
+cada `docker run`.
 
-- `AI_CLUSTER_OPERATOR_TOKEN` é obrigatório no controller (fail-closed) e deve ser diferente do
-  de join. A CLI o envia no mesmo `AUTH_HEADER`; os workers continuam com o de join.
-- `ServerMetadata` aceita os dois e marca a requisição com `Operator` quando o token é o do
-  operador. `require_operator` abre as RPCs administrativas: `ApproveNode`, `EnqueueWork`,
-  `EnqueueGraph`, `Reserve`, `ReleaseReservation`. Sem a marca: `PermissionDenied`.
-- Leituras (`nodes`, `events`, métricas) e as RPCs de nó aceitam qualquer um dos dois.
-- `AI_CLUSTER_INFERENCE_TOKEN` (opcional, diferente dos outros dois) é um terceiro papel que só
-  chama `ShardMatmul`; ver `inference-engine.md`.
-- Fecha o achado 1 da revisão de S2 (quem tem o token aprovava a si mesmo). `LeaveNode` fica
-  aberto, porque o worker o chama ao desligar; ele depende da credencial por nó (S3b).
-- Teto: o operador não tem rotação nem revogação própria (troca-se reiniciando o controller).
+## Limites e próximos passos
 
-## Credencial por nó (Fase S3b)
+- **Texto claro sem TLS** nesta fatia: o token trafega sem cifra. Resolvido com certificado em
+  [[f07-tls]].
+- **Segredo compartilhado.** Todo nó com o token pode registrar um `node_id` alheio e tomá-lo.
+  Parcialmente resolvido pela credencial por nó ([[f07-operador-e-credencial-por-no]]); o
+  registro de um `node_id` aprovado continua recusado até a revogação ([[f07-aprovacao-de-no]]).
+- **Rotação** do token de join é reiniciar o controller com valor novo; não há rotação periódica
+  (pendente, [[fase-19-hardening-de-producao]]).
+- **Variável em claro.** Aparece em `docker inspect`; segredo em arquivo ou cofre é pendente de
+  [[fase-19-hardening-de-producao]].
 
-O token de join diz "alguém da rede"; a credencial diz "este nó".
+## Relacionados
 
-- `RegisterNode` devolve `node_credential` (128 bits aleatórios, `getrandom`). O worker a guarda
-  em `NodeCredential` e a manda em `x-ai-cluster-node-auth` em toda chamada seguinte.
-- `Heartbeat`, `ReportHealth`, `RequestWork`, `SubmitWorkResult` e `LeaveNode` conferem a
-  credencial do `node_id` que dizem representar (`authorize_node`); o operador também passa.
-  Um nó desconhecido passa, e o handler dá a resposta de sempre ("não conheço").
-- Quem registra um `node_id` existente sem provar a credencial atual recebe uma nova e volta a
-  `pendente` (ou `aprovado` com `AI_CLUSTER_AUTO_APPROVE`). Isso substitui a checagem de
-  `device_id` da S2, que o cliente podia forjar. Com aprovação manual, um nó **aprovado** não é
-  substituído assim: o registro é recusado (`FailedPrecondition`) até o operador rodar
-  `ai-cluster revoke` (S5), então o token de join não expulsa um nó aprovado.
-- Fecha os achados 3 e 4 da revisão de S2: `leave_node` alheio e `submit_work_result` forjado.
-
-**Preço:** um worker que reinicia perdeu a credencial e, sem `AI_CLUSTER_NODE_CREDENTIAL_FILE`
-(S5) e `AUTO_APPROVE`, precisa ser aprovado de novo. **Tetos:** a credencial é guardada em claro no
-controller e trafega em claro, sem TLS; quem tem o token de join ainda pode registrar um
-`node_id` alheio **pendente** e tomá-lo (um aprovado só com `revoke`); a revogação é manual (`revoke`, S5), sem
-rotação periódica. O operador age por qualquer nó. Um `node_id` que o registro não conhece passa pela
-checagem; o dono de uma unidade restaurada do disco, ausente do registro, pode ter o resultado
-fechado por quem tem o token de join e o `work_id` (o `Debug` de `NodeRecord` e de
-`NodeCredential` também imprime o segredo, mas nada o loga hoje).
-
-## TLS (Fase S4)
-
-Os tokens e a credencial deixam de cruzar a rede em claro.
-
-- O controller serve TLS de um sentido com `AI_CLUSTER_TLS_CERT` e `AI_CLUSTER_TLS_KEY` (PEM,
-  sempre em par). Sem eles ele **não sobe**, a menos que `AI_CLUSTER_INSECURE=1` (aviso alto).
-  Com certificado e `INSECURE` juntos vale o certificado: um opt-out esquecido não rebaixa.
-- O cliente (worker e CLI) usa `https://` e confere a CA de `AI_CLUSTER_TLS_CA` (obrigatória
-  nesse caso; `AI_CLUSTER_TLS_DOMAIN` troca o nome verificado quando o endpoint é um IP).
-  `http://` só com `AI_CLUSTER_INSECURE=1`: o cliente também falha fechado.
-- Vale para os dois serviços (`ClusterControl` e `LinkProbe`); a medição de rede (C2) agora
-  inclui o custo do TLS, então a linha de base de `network_achieved_score` muda.
-- Evidência: `bash code/tests/phase-s4-tls.sh` (https com a CA certa entra; http puro e CA
-  errada são recusados por erro de transporte, não de token; http sem `INSECURE` o cliente
-  recusa; controller sem certificado não sobe). Os demais scripts rodam com `INSECURE=1`.
-
-**Tetos:** TLS de um sentido, sem mTLS (o cliente não apresenta certificado, a credencial por nó
-continua sendo o segredo); sem rotação nem revogação de certificado (troca-se os PEM e reinicia); a porta de métricas 9101
-exige `Authorization: Bearer <token de operador>` (S5, 401 sem ele), mas sem TLS; a chave fica em arquivo e em volume.
-
-## Tetos
-
-- **Texto claro** sem TLS (S4 resolve com certificado). A variável de ambiente
-  aparece em `docker inspect`.
-- **Segredo compartilhado.** Não há identidade por nó: quem tem o token é qualquer nó.
-  Rotação, revogação e credencial por nó (mTLS, docs/19) são os próximos degraus.
-- O exportador de métricas (porta 9101) exige o token de operador desde a S5.
+- Fase: [[fase-07-seguranca-base]] · Sistema: [[seguranca]]
+- Irmãos: [[f07-aprovacao-de-no]], [[f07-operador-e-credencial-por-no]], [[f07-tls]]

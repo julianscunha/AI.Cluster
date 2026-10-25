@@ -5,7 +5,7 @@
 # Critério verificado: com os pesos montados, o gateway lista o modelo `gpt2` e devolve uma
 # continuação determinística no formato de chat; sem chave responde 401; erros de entrada têm
 # códigos estáveis. Os pesos não ficam no repositório: rode a partir de code/ com
-# code/models/gpt2 já baixado (veja implementation/inference-engine.md).
+# code/models/gpt2 já baixado (veja docs/implementation/08-inferencia/f08-engine-local.md).
 set -uo pipefail
 
 NET=aic-net

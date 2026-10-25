@@ -231,7 +231,7 @@ pub fn fits(unit: &WorkUnit, capability: &CapabilityReport) -> bool {
 ///
 /// Known ceiling: locality, thermal headroom, state-movement cost and deadline
 /// feasibility are not modelled — the registry carries no data for them yet. See
-/// `implementation/phase-2/placement.md`.
+/// `docs/implementation/04-escalonamento/f04-placement.md`.
 pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
     let rows = f64::from(unit.rows);
     let shared = f64::from(unit.shared);

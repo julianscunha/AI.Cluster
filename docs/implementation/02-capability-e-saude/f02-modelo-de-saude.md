@@ -1,17 +1,26 @@
 ---
-title: "Modelo de saúde do nó"
-type: implementation
-status: implemented
-tags: [implementation, health, placement, phase-c]
+title: "F02 — Modelo de saúde do nó"
+aliases: ["health-model", "C4"]
+tags: [implementacao/fase/02, implementacao/fatia, implementacao/estado/implementado]
+type: implementacao/fatia
+status: implementado
+superado: false
+fase: "[[fase-02-capability-e-saude]]"
+codigos-antigos: ["C4", "health-model"]
+sistema: ["[[saude-e-confianca]]"]
+evidencia: ["code/tests/phase-c4-health.sh"]
 ---
+# F02 — Modelo de saúde do nó
 
-# Modelo de saúde do nó
+- [ ] Superado
+
+## Objetivo
 
 O `health_score` do nó era `1.0 - memória_usada` desde o começo: um nó com metade da RAM
 livre mas rodando a 95 °C reportava a mesma saúde de um nó frio. Esta é a fatia C4: o score
 passa a levar os domínios que o worker **mede**, e o placement já usa o resultado.
 
-## O que mudou
+## O que foi feito
 
 - `thermal_pressure` / `health_score` no worker, puras e testáveis.
 - `temperature_c()` ganhou `AI_CLUSTER_TEMPERATURE_C`, no mesmo molde dos outros overrides:
@@ -35,7 +44,7 @@ entram três domínios medidos:
 | pressão de swap | `1 - SwapFree/SwapTotal` | `/proc/meminfo` |
 | pressão térmica | rampa de 80 °C a 100 °C | `/sys/class/thermal` ou override |
 
-**CPU não entra.** O `docs/06` lista CPU como domínio de saúde e o score a deixa de fora
+**CPU não entra.** O [[saude-e-confianca]] lista CPU como domínio de saúde e o score a deixa de fora
 porque utilização mede *carga*, não *condição*: um nó que acabou de terminar uma unidade lê
 como ocupado no exato instante em que vira o melhor lugar para a próxima. O placement já
 pergunta isso — ele rankeia candidatos ociosos — então carga pertence ao modelo de custo,
@@ -70,20 +79,25 @@ O E2E é `bash code/tests/phase-c4-health.sh`; os testes de unidade são
 `the_worst_domain_decides_the_health_score` e `a_measured_node_never_scores_as_unreported`
 em `worker/src/main.rs`.
 
-## Teto conhecido
+## Limites
 
 **Limiares de temperatura genéricos.** 80 °C e 100 °C valem para um núcleo de servidor; um
-núcleo de laptop ferve antes. O `docs/06` pede uma baseline por hardware e o worker ainda
+núcleo de laptop ferve antes. O [[saude-e-confianca]] pede uma baseline por hardware e o worker ainda
 não tem como saber qual é — a detecção de hardware é a fase C1.
 
 **Saúde de storage e degradação de rede não medidas.** Nenhuma das duas tem baseline de
-dispositivo para comparar: o `storage-tiers.md` classifica camadas, mas não mede latência, e
+dispositivo para comparar: o [[f10-classes-de-armazenamento]] classifica camadas, mas não mede latência, e
 o worker não faz probe de rede. Entram quando existirem as medidas (o análogo do
-`capability-benchmark.md`).
+[[f02-benchmark-de-capability]]).
 
-**Termo de rede do `docs/06` ausente.** Sem latência de rede medida por nó, não há como
+**Termo de rede do [[saude-e-confianca]] ausente.** Sem latência de rede medida por nó, não há como
 distinguir um nó atrás de um link saturado.
 
 **Um limiar, uma penalidade.** O `HEALTH_WEIGHT` do placement é único: um nó a 100 °C paga
 o mesmo fator que um nó com a memória em 95%. Pesos por domínio — térmico pesando mais que
 memória — são uma mudança no modelo de custo, não no de saúde, e não têm dado para calibrar.
+
+## Próximos passos
+
+- Baseline térmica por hardware, quando a detecção de hardware (C1) existir para isso.
+- Saúde de storage e latência de rede, quando houver medida de referência para cada uma.

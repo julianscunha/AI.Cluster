@@ -1,18 +1,27 @@
 ---
-title: "Fase 2 — Benchmark de capability"
-type: implementation
-status: partial
-tags: [implementation, phase-2, capability, benchmark, worker]
+title: "F02 — Benchmark de capability"
+aliases: ["phase-2/capability-benchmark", "C2", "Benchmark de compute"]
+tags: [implementacao/fase/02, implementacao/fatia, implementacao/estado/parcial]
+type: implementacao/fatia
+status: parcial
+superado: false
+fase: "[[fase-02-capability-e-saude]]"
+codigos-antigos: ["C2", "phase-2/capability-benchmark"]
+sistema: ["[[capability-engine]]"]
+evidencia: ["code/tests/phase-c-benchmark.sh"]
 ---
+# F02 — Benchmark de capability
 
-# Fase 2 — Benchmark de capability
+- [ ] Superado
+
+## Objetivo
 
 O worker anunciava `cpu_threads` e mais nada: o modelo de custo do placement (G2) tinha um
 `compute_score` sempre em 0 e caía na contagem de threads. Esta fatia mede o compute no
 próprio hardware do nó e passa a reportá-lo, então o número que o scheduler usa para
 escolher o nó vem de uma medição e não de um proxy.
 
-## O que mudou
+## O que foi feito
 
 - `worker::compute_score`: mede o matmul deste nó no **mesmo kernel** que executa as
   unidades (`Matrix::multiply`, o caminho serial de `multiply_with_threads`) e normaliza a
@@ -69,15 +78,15 @@ entre contêineres no mesmo host, não do hardware.
 Coberto por `a_reference_speed_core_scores_one`, `a_nonsensical_rate_falls_back_instead_of_scoring_high`
 e `the_compute_benchmark_reports_a_positive_rate` no worker.
 
-## Teto conhecido
+## Limites
 
 **Só compute.** Memória, storage, rede e kernels de acelerador não são medidos — a fatia
 entrega o score de compute. O modelo de custo já lê `network_score` com fallback 1.0
 enquanto não há medição.
 
-**Só um score.** docs/05 pede um perfil (`general_compute`, `matmul_int4`, `memory_bandwidth`,
+**Só um score.** [[capability-engine]] pede um perfil (`general_compute`, `matmul_int4`, `memory_bandwidth`,
 `thermal_headroom`, ...); o wire carrega um `compute_score` só. O perfil completo é o resto
-da fase C2/C3.
+da fase C2/C3 ([[f02-capability-corrente]], [[f02-descoberta-de-rede]]).
 
 **Escala linear com threads.** O modelo assume que N threads dão N× o core; turbo e SMT
 fazem uma execução real de 4 threads ficar um pouco abaixo de 4× a de 1 thread. A estimativa
@@ -85,4 +94,10 @@ fazem uma execução real de 4 threads ficar um pouco abaixo de 4× a de 1 threa
 
 **Confiança não modelada no baseline.** O score do registro é uma leitura instantânea e viaja
 sem medida de confiança própria: não dá para dizer se o baseline do nó A foi mais limpo que o
-do nó B. A confiança existe para a remedida (`capability-current.md`, C3), não para o baseline.
+do nó B. A confiança existe para a remedida ([[f02-capability-corrente]], C3), não para o baseline.
+
+## Próximos passos
+
+- Medir memória sob carga e storage na mesma forma do compute (ver [[fase-02-capability-e-saude]]).
+- Perfil multidimensional em vez de um `compute_score` só, quando o placement precisar distinguir cargas.
+- Varredura multithread se o placement pender para nós grandes.

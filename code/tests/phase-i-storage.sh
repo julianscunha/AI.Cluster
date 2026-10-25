@@ -3,7 +3,7 @@
 #
 # Critério verificado: cada nó diz de que classes de armazenamento dispõe — WARM (SSD/NVMe)
 # e COLD (HDD); HOT é a RAM, já reportada em RAM_GB. Sem isso o diretório de estado
-# (docs/13-state-manager.md) não tem como escolher onde colocar estado.
+# (state-manager) não tem como escolher onde colocar estado.
 #
 # A classificação é uma medida do worker: ele lê /sys/block e traduz rotational + nome do
 # dispositivo em classe. Em contêiner comum /sys/block é do host, então o teste fixa as

@@ -1,4 +1,4 @@
-//! Inference API gateway (Fase J1/J3): the HTTP door the Application Plane uses (docs/23).
+//! Inference API gateway (Fase J1/J3): the HTTP door the Application Plane uses (`inference-api`).
 //!
 //! Two models sit behind it. `gpt2` (J3, only when `AI_CLUSTER_GPT2_DIR` is set) is a real
 //! language model, run by the in-process Inference Engine for `/v1/chat/completions`; its matrix
@@ -396,7 +396,7 @@ struct Gateway {
     llm_slot: Arc<Semaphore>,
 }
 
-/// The external error model (docs/23 §13): a stable category and a short message. The cause
+/// The external error model (`inference-api` §13): a stable category and a short message. The cause
 /// stays in the gateway's own log.
 fn error(status: StatusCode, kind: &str, message: &str) -> Response {
     (
@@ -433,7 +433,7 @@ fn seed_of(input: &str) -> u64 {
 }
 
 async fn health() -> impl IntoResponse {
-    // Never touches the cluster: the API's health is not the cluster's (docs/23 §21).
+    // Never touches the cluster: the API's health is not the cluster's (`inference-api` §21).
     Json(json!({ "api": "green" }))
 }
 
@@ -491,7 +491,7 @@ fn internal(err: tonic::Status) -> Failure {
 /// row of the final unit's output.
 ///
 /// ponytail: a request that times out leaves its graph in the controller's queue — there is no
-/// cancellation yet (docs/23 §8). The concurrency cap bounds how fast that can pile up.
+/// cancellation yet (`request-manager` §8). The concurrency cap bounds how fast that can pile up.
 /// Add a cancel RPC to the controller when abandoned graphs start to cost real capacity.
 async fn run_graph(mut client: MetadataClient, seed: u64) -> Result<(String, Vec<f64>), Failure> {
     let request_id = client
@@ -580,7 +580,7 @@ async fn embeddings(
             "`input` deve ter de 1 a 8192 bytes",
         );
     }
-    // Backpressure with an explicit policy (docs/23 §22): reject and say when to retry.
+    // Backpressure with an explicit policy (`inference-api` §22): reject and say when to retry.
     let Ok(_slot) = gateway.slots.clone().try_acquire_owned() else {
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,

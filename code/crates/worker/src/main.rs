@@ -728,7 +728,7 @@ fn normalize_compute_score(gflops: f64, reference: f64) -> f64 {
 /// de fora: existem em qualquer nó e não são armazenamento que o cluster possa usar.
 ///
 /// A classificação é por dispositivo, não por tier: HDD é COLD, SSD/NVMe são WARM, e o HOT
-/// é RAM — que já vem em `memory_bytes`. Ver `docs/18-storage-intelligence.md`.
+/// é RAM — que já vem em `memory_bytes`. Ver `storage-intelligence`.
 fn storage_class(name: &str, rotational: &str) -> Option<&'static str> {
     if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
         return None;
@@ -820,7 +820,7 @@ fn link_speed_mbps() -> f64 {
 ///
 /// Nominal link speed, not achieved throughput — what the link *is*, not what it *does*. That
 /// makes the number honest about being a ceiling: a link shared with other traffic will do
-/// worse. Measuring the achieved rate and the latency is a benchmark's job (`docs/05`), which
+/// worse. Measuring the achieved rate and the latency is a benchmark's job (`capability-engine`), which
 /// is the next rung, not this one.
 ///
 /// Set `AI_CLUSTER_NETWORK_SCORE` to pin it instead of reading the interface, so a placement
@@ -1196,7 +1196,7 @@ fn node_load(now: Instant) -> (f64, f64) {
 
 /// Temperature where thermal pressure starts to count against the health score.
 ///
-/// A generic stand-in. `docs/06` asks for a baseline specific to the hardware — a laptop core
+/// A generic stand-in. `saude-e-confianca` asks for a baseline specific to the hardware — a laptop core
 /// and a server core tolerate different limits — and the worker has no way to know one yet.
 const THERMAL_WARN_C: f64 = 80.0;
 /// Temperature at which thermal pressure saturates and the node scores the floor.
@@ -1250,12 +1250,12 @@ fn thermal_pressure(temperature_c: f64) -> f64 {
 /// in trouble even with half its memory free, and an average would hide the one domain that
 /// matters. Floored above zero for the reason in `MIN_HEALTH_SCORE`.
 ///
-/// `docs/06` lists CPU as a health domain and this score leaves it out. Utilization measures
+/// `saude-e-confianca` lists CPU as a health domain and this score leaves it out. Utilization measures
 /// load, not condition: a node that just finished a unit reads as busy at the exact moment it
 /// becomes the best place to send the next one. Placement already asks that question — it
 /// ranks idle candidates — so load belongs to the placement model, not here. Storage health
 /// and network degradation are also unmeasured: neither has a device baseline to compare
-/// against yet (`docs/18`, `docs/06`).
+/// against yet (`storage-intelligence`, `saude-e-confianca`).
 fn health_score(memory_utilization: f64, swap_utilization: f64, temperature_c: f64) -> f64 {
     let worst = memory_utilization
         .max(swap_utilization)

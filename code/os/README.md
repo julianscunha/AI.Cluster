@@ -1,10 +1,3 @@
----
-title: "AI Cluster OS"
-type: operational
-status: living
-tags: [operational, readme]
----
-
 # AI Cluster OS
 
-O trabalho da imagem de OS começa na fase de provisioning. A Fase 0 só define a fronteira do runtime.
+Imagem de OS do AI Cluster. Ainda não iniciada: pertence à fase F15 (AI Cluster OS e provisionamento) — veja [`../../docs/implementation/15-ai-cluster-os/fase-15-ai-cluster-os.md`](../../docs/implementation/15-ai-cluster-os/fase-15-ai-cluster-os.md).

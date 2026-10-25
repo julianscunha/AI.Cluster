@@ -1,63 +1,96 @@
-# Inference Engine (Fase J2)
+---
+title: "F08 — Engine local (GPT-2 e SmolLM2 em CPU)"
+aliases: ["inference-engine", "Fase J2", "Fase J4", "J2", "J4"]
+tags: [implementacao/fase/08, implementacao/fatia, implementacao/estado/implementado]
+type: implementacao/fatia
+status: implementado
+superado: false
+fase: "[[fase-08-inferencia]]"
+codigos-antigos: ["J2", "J4"]
+sistema: ["[[inference-engine]]"]
+evidencia: ["code/crates/engine/tests/gpt2_parity.rs", "code/crates/engine/tests/smollm2_parity.rs", "code/crates/engine/examples/bench.rs"]
+---
+# F08 — Engine local (GPT-2 e SmolLM2 em CPU)
 
-Primeira fatia do Inference Engine: o **forward do GPT-2 small (124M)** em CPU, num crate à parte
-(`code/crates/engine`), sem rede e sem scheduler. Ele roda sobre o `Matrix` do `common`, o mesmo
-que os workers multiplicam, e toda camada densa passa por `Matrix::multiply_with_threads`. Esse é
-o ponto em que uma fatia futura troca o produto local por um grafo distribuído.
+- [ ] Superado
 
-## Primeira família de LLM
+> [!note] Contexto
+> Primeira parte do [[inference-engine]]: o forward de modelos de linguagem em CPU, num crate à
+> parte (`code/crates/engine`), sem rede e sem scheduler. Ele roda sobre o `Matrix` do `common`, o
+> mesmo que os workers multiplicam, e toda camada densa passa por `Matrix::multiply_with_threads`.
+> É o ponto em que uma fatia futura troca o produto local por um grafo distribuído: ver
+> [[f08-canal-residente-de-fatias]].
 
-GPT-2 small, em float32 (safetensors). Escolhida por ter a arquitetura transformer mais simples
-(embeddings absolutos, LayerNorm, MLP com GELU, sem RoPE nem GQA), caber em qualquer nó (~500 MB)
-e ter implementação de referência amplamente usada. A segunda família é a SmolLM2-135M
-(arquitetura Llama: RoPE, GQA, RMSNorm, SwiGLU; pesos em BF16).
+## Objetivo
 
-## O que existe
+Um forward de LLM que seja a referência de correção (paridade com `transformers`) e medir o custo
+local antes de decidir distribuir qualquer coisa.
+
+## O que foi feito
+
+### Famílias de modelo
+
+- **GPT-2 small (124M)**, float32 (safetensors). Escolhido por ter a arquitetura transformer mais
+  simples (embeddings absolutos, LayerNorm, MLP com GELU, sem RoPE nem GQA), caber em qualquer nó
+  (~500 MB) e ter implementação de referência amplamente usada (J2).
+- **SmolLM2-135M** e **SmolLM2-135M-Instruct**, arquitetura Llama (RoPE, GQA, RMSNorm, SwiGLU;
+  pesos em BF16). Entraram como segunda família (J4).
+
+### Componentes
 
 Tudo que o gateway precisa de um modelo está no trait `LanguageModel` (`forward` com `KvCache`,
-`generate` guloso com cancelamento); `Gpt2` e `Llama` o implementam.
+`generate` guloso com cancelamento). `Gpt2` e `Llama` o implementam.
 
 - `safetensors.rs`: leitor mínimo (`F32` e `BF16`; valida dtype, forma e intervalos de bytes).
 - `tokenizer.rs`: BPE em nível de byte do GPT-2. Com `tokenizer.json` presente e `Digits`
   individual (SmolLM2), cada dígito vira uma peça antes da regex. Trechos sem separador acima de
   512 bytes são recusados (o laço de merge é quadrático). Tokens especiais no texto
-  (`<|im_start|>`, `<|endoftext|>`) não são reconhecidos: viram bytes comuns. O pré-tokenizador é a regex do GPT-2 escrita à
-  mão (ela usa lookahead). `char::is_alphabetic`/`is_numeric` fazem o papel de `\p{L}`/`\p{N}`.
+  (`<|im_start|>`, `<|endoftext|>`) não são reconhecidos como tokens: viram bytes comuns; o
+  template de chat os insere por id ([[f08-chat-completions]]). O pré-tokenizador é a regex do GPT-2
+  escrita à mão (usa lookahead). `char::is_alphabetic` e `is_numeric` fazem o papel de `\p{L}` e
+  `\p{N}`.
 - `llama.rs`: `Llama::load(dir)` para checkpoints Llama com embeddings amarrados, sem bias nem
   `rope_scaling` (outros são recusados). RoPE "rotate half", atenção com grupos de consulta,
   SwiGLU. Os pesos `[out, in]` são transpostos no carregamento.
-- `gpt2.rs`: `Gpt2::load(dir)` e `next_token_logits(&[u32])`, `forward` com `KvCache` e `generate`; atenção multi-head causal,
-  `gelu_new`, saída amarrada ao embedding.
+- `gpt2.rs`: `Gpt2::load(dir)` e `next_token_logits(&[u32])`, `forward` com `KvCache` e `generate`:
+  atenção multi-head causal, `gelu_new`, saída amarrada ao embedding.
+- `KvCache`: o forward incremental. Verificado contra recalcular o prompt inteiro a cada passo
+  (`cached_generation_matches_recomputing_the_whole_prompt`).
+
+## Decisões
+
+- **Paridade é o critério de correção.** O engine não é aceito por parecer certo: tem de bater com
+  `transformers` nos ids e nos logits.
+- **CPU, `Matrix` em f64.** Simples e exato; custa RAM (~1 GB para o GPT-2 small) e não há
+  quantização.
+- **Geração gulosa só.** Amostragem fica para depois, quando houver uso que peça.
 
 ## Verificação de paridade
 
-`crates/engine/reference/gpt2_reference.py` roda o modelo com `transformers` e grava
-`tests/fixtures/gpt2-reference.json`: ids do tokenizador para 6 textos (contrações, espaços,
-quebras de linha, acentos, CJK, dígitos) e os 10 maiores logits do último token de 3 prompts.
-`tests/gpt2_parity.rs` (e `smollm2_parity.rs`, com `AI_CLUSTER_SMOLLM2_DIR`, fixture gerada por
-`smollm2_reference.py`) exige o mesmo token mais provável e logits dentro de 1e-3. Os pesos não
-ficam no repositório (`code/models/` é ignorado); sem `AI_CLUSTER_GPT2_DIR` o teste avisa e passa
-sem verificar.
+`code/crates/engine/reference/gpt2_reference.py` roda o modelo com `transformers` e grava
+`tests/fixtures/gpt2-reference.json`: ids do tokenizador para 6 textos (contrações, espaços, quebras
+de linha, acentos, CJK, dígitos) e os 10 maiores logits do último token de 3 prompts.
 
-```
+- `tests/gpt2_parity.rs` (e `smollm2_parity.rs`, com `AI_CLUSTER_SMOLLM2_DIR`, fixture gerada por
+  `smollm2_reference.py`) exige o mesmo token mais provável e logits dentro de 1e-3.
+- Os pesos não ficam no repositório (`code/models/` é ignorado). Sem `AI_CLUSTER_GPT2_DIR` o teste
+  avisa e passa sem verificar.
+
+```text
 # pesos (de openai-community/gpt2): model.safetensors, vocab.json, merges.txt, config.json
 AI_CLUSTER_GPT2_DIR=code/models/gpt2 cargo test --release -p ai-cluster-engine
 ```
 
-## Limites
+## Evidência
 
-- Geração só gulosa (`generate`, com parada em token), sem amostragem por temperatura/top-p e sem
-  streaming. O KV cache (`KvCache`, `forward`) é verificado contra recalcular o prompt inteiro a
-  cada passo (`cached_generation_matches_recomputing_the_whole_prompt`).
-- CPU, `Matrix` em f64 (~1 GB de RAM para o GPT-2 small); sem quantização.
-- Local: nada disso roda ainda nos workers. O gateway continua servindo o modelo sintético.
-- O custo de distribuir o forward não foi medido; para um modelo pequeno a latência de rede pode
-  superar o ganho.
+- Paridade GPT-2 e SmolLM2: `gpt2_parity.rs`, `smollm2_parity.rs` (acima).
+- Paridade do template de chat: [[f08-chat-completions]].
+- Custo: `cargo run --release -p ai-cluster-engine --example bench -- <gpt2|smollm2> <dir>` (tabela
+  abaixo).
 
 ## Custo local medido (antes de distribuir)
 
-`cargo run --release -p ai-cluster-engine --example bench -- <gpt2|smollm2> <dir>`, num contêiner
-de 4 núcleos (Docker no Windows), prompt de 8 tokens:
+Num contêiner de 4 núcleos (Docker no Windows), prompt de 8 tokens:
 
 | modelo | carga | prompt | por token gerado |
 |--------|-------|--------|------------------|
@@ -66,15 +99,11 @@ de 4 núcleos (Docker no Windows), prompt de 8 tokens:
 
 - Um matmul `1×576×1536` (gate/up da SmolLM2) leva **0,65 ms** em uma thread. Um token da SmolLM2
   faz cerca de 210 matmuls de camada mais a projeção de saída (49152×576): ~134 M
-  multiplicações-soma em 156 ms, ou seja, **cerca de 1 GMAC/s: uma thread só**. O produto divide
-  o trabalho por linhas de saída (`multiply_with_threads`); com 1 linha (decodificação) não há o
-  que dividir.
-- Consequência para distribuir: enviar os pesos a cada chamada é inviável (28 MB por camada em
-  f64); eles teriam de ficar residentes nos workers (cada um com uma fatia de colunas), e só as
-  ativações (~4,6 KB) trafegariam. Mesmo assim são ~210 idas e voltas por token: com RTT de
-  0,3–1 ms em LAN isso soma 60–210 ms por token, mais do que o custo local inteiro; em Wi-Fi,
-  segundos. Para um modelo deste tamanho distribuir **não ganha tempo**; o ganho existe quando
-  o modelo não cabe num nó ou quando há lote/prefill grande.
+  multiplicações-soma em 156 ms, ou seja, **cerca de 1 GMAC/s: uma thread só**. O produto divide o
+  trabalho por linhas de saída (`multiply_with_threads`); com 1 linha (decodificação) não há o que
+  dividir.
+- Para distribuir um modelo deste tamanho, o custo de rede por token (210 idas e voltas) supera o
+  custo local inteiro. A análise completa está em [[f08-canal-residente-de-fatias]], "Motivação".
 - RTT real entre nós não foi medido aqui (o contêiner único não representa uma rede).
 
 ### Paralelizar o decode local (resultado)
@@ -85,117 +114,27 @@ de 4 núcleos (Docker no Windows), prompt de 8 tokens:
 - Dividir por **colunas** o matmul de uma linha das camadas (`Matrix::multiply_with_threads`) foi
   testado e **descartado**: ficou ~2× mais lento (0,45 → 0,85 ms por matmul e ~195 ms por token),
   porque cada chamada cria threads novas (~840 por token) para ~0,5 ms de trabalho. Só valeria com
-  um pool de threads persistente; fica registrado como o próximo ganho local, não feito.
+  um pool de threads persistente; fica como o próximo ganho local, não feito.
 - O que sobra (~105 ms) são ~106 M multiplicações-soma das camadas em uma thread só.
 
-### Custo de passar um matmul pela fila de trabalho atual (medido)
+## Limites e próximos passos
 
-Latência de `POST /v1/embeddings` (grafo diamante: 4 unidades, 3 níveis de dependência) com 2
-workers em contêineres na mesma rede Docker: **54 a 160 ms por requisição**, em degraus de ~50 ms
-(o gateway consulta o trace a cada 50 ms). A fila é de **puxar**: o worker pergunta por trabalho
-(`WORK_POLL_IDLE_MS = 200` quando está ocioso), o resultado volta por `SubmitWorkResult` e o
-cliente descobre por polling. Piso por operação dependente: algumas dezenas de ms.
+- **Geração só gulosa**, sem amostragem por temperatura ou top-p. Streaming e chat estão no
+  gateway ([[f08-chat-completions]]), não no engine.
+- **CPU, f64, ~1 GB de RAM** para o GPT-2 small; sem quantização.
+- **Forward local, não distribuído.** As projeções podem rodar nos workers pelo canal residente
+  ([[f08-canal-residente-de-fatias]]); o engine sozinho não distribui nada.
+- **Pool de threads persistente** para o decode por colunas: ganho local ainda não feito.
+- **Modelos suportados são só os dois** (GPT-2 e Llama sem bias nem `rope_scaling`). Outras
+  arquiteturas são recusadas na carga.
+- **Pesos sem versão:** o engine lê o diretório que recebe, sem manifest nem checksum. Ver
+  [[inference-engine]] e [[model-manager]] para o alvo.
 
-Com ~210 matmuls dependentes por token isso daria **4 a 10 s por token** contra ~105 ms local
-(40 a 100× pior). A fila foi feita para trabalho em lote independente, não para o caminho
-crítico de um decode. Ligar o `Linear` do engine a ela só confirmaria o número.
+> [!info] O que já existe
+> Forward do GPT-2 small e da SmolLM2 (base e instruct) em CPU, tokenizador BPE, KV cache,
+> paridade com `transformers` e bench local, em `code/crates/engine`.
 
-Caminho que faria sentido: um canal **residente e de empurrar** (stream gRPC bidirecional aberto
-pelo worker, com as fatias de pesos já carregadas e quadros `matmul(fatia, ativação)`), com
-latência próxima do RTT. É uma superfície de protocolo nova (autenticação, quotas, carga e
-descarte de fatias, falha de um worker no meio do token) e fica como decisão de projeto.
+## Relacionados
 
-## J5: canal residente de fatias
-
-Os pesos de cada projeção (q, k, v, o, gate, up, down de cada camada) ficam **nos workers**, cortados
-por linhas de saída (`[out, in]`, bandas iguais, uma por nó). O gateway guarda só embeddings, normas
-e a projeção de saída; para cada projeção manda a ativação aos nós e junta as saídas por colunas.
-Projeções com a mesma entrada (q, k, v; gate, up) vão numa chamada só: 4 idas e voltas por camada.
-
-```
-gateway --ShardMatmul(x, ops)--> controller --ShardCompute--> worker (stream residente)
-        <------ saídas ---------            <--ShardResult---
-```
-
-- **Canal.** `ShardChannel` (stream bidirecional) é aberto pelo worker, que não precisa de porta.
-  O nó vem no metadata `x-ai-cluster-node-id` e a credencial no cabeçalho de sempre. O controller
-  exige nó **registrado, aprovado, vivo e com a credencial exata**; o token de operador não vale
-  como atalho. Sessão nova substitui a antiga e falha o que esperava nela; `revoke` e `leave`
-  derrubam a sessão. Keepalive HTTP/2 de 10 s nos dois lados detecta conexão meio-aberta.
-- **Pesos não trafegam.** O worker lê só as linhas da sua fatia do `model.safetensors` do próprio
-  disco (`read_rows`: cabeçalho + `seek`), na primeira vez que a fatia é pedida, e a mantém residente
-  (`ShardStore`). A chave da fatia é `(subdir, tensor, linhas)`, então não há versão a sincronizar; a
-  primeira chamada é lenta (aquecimento). `AI_CLUSTER_MODEL_DIR` liga o canal no worker;
-  `AI_CLUSTER_SHARD_CACHE_MB` (2048) limita a memória das fatias. O subdiretório só aceita
-  componentes simples, é canonicalizado e precisa continuar sob a raiz; o nome do arquivo é fixo.
-- **Relay.** O controller só repassa: `op_id` próprio, uma resposta só vale para a operação enviada
-  àquele nó, fila de 64 quadros e 64 operações em voo por nó, `ShardMatmul` limitado a 64 operações e
-  2 Mi valores, prazo de 60 s, operações descartadas ao falhar uma irmã.
-- **Gateway.** `AI_CLUSTER_SMOLLM2_SHARDS=worker-1,worker-2` (e `AI_CLUSTER_SMOLLM2_SUBDIR`, padrão
-  `smollm2`) liga o modo remoto; o log `remoto:` mostra chamadas, tempo nas chamadas e o cálculo
-  dos workers.
-- **Verificações.** Forward fatiado em 3 nós, lendo os arquivos, dá logits **idênticos** ao local
-  (`sharded_projections_match_the_local_forward`); `tests/phase-j-shards.sh` sobe controller, 2
-  workers e gateway: mesma continuação do local, e 503 (sem pendurar) quando um worker some.
-
-### GPT-2 pelo mesmo canal
-
-`Gpt2::load_remote` corta qkv, c_proj, c_fc e c_proj do MLP em **colunas de saída** (os pesos do
-`Conv1D` são `[in, out]`): o worker lê a faixa de colunas com um `seek` por linha (`read_band`) e a
-fatia já fica como `[in, faixa]`, sem transposta. O viés é pequeno e fica no gateway. São 4 idas e
-voltas por bloco (48 por token, contra 120 da SmolLM2), porque nada aqui compartilha entrada. A
-mensagem `ShardOp`/`ShardCompute` ganhou `by_columns`. `AI_CLUSTER_GPT2_SHARDS`/`_SUBDIR` ligam o
-modo; `tests/phase-j-shards.sh gpt2` e `sharded_projections_match_the_local_forward` (GPT-2) provam
-logits idênticos e a mesma continuação.
-
-### Papel de inferência
-
-`AI_CLUSTER_INFERENCE_TOKEN` (opcional, diferente do token de join e do de operador) autentica **só
-`ShardMatmul`**. O controller embrulha cada serviço num `InferenceGate`: quem apresenta esse token e
-chama qualquer outro caminho (listar nós, aprovar, enfileirar, abrir o canal de um worker, sondar
-enlace) recebe `PermissionDenied`; um RPC novo fica fora do alcance do token até alguém liberá-lo.
-O gateway com só esse token roda os modelos nos workers sem poder aprovar nós nem enfileirar
-trabalho; `/v1/embeddings` (que enfileira o grafo sintético) fica desligado (503) nele. Com os dois
-tokens os modelos usam o mais estreito. `phase-j-shards.sh` sobe o gateway só com o de inferência e
-confere que o token não lista nós.
-
-### Tolerância a falha de worker
-
-Qualquer worker computa qualquer faixa (lê do próprio disco), então mover uma faixa não copia
-nada. Quando um `ShardMatmul` falha por um nó (sem canal, indisponível, prazo, erro de cálculo), o
-controller devolve o erro com o cabeçalho `x-ai-cluster-failed-node`; o `GrpcExecutor` do gateway
-põe esse nó de lado por 30 s (`Roster`), entrega as faixas dele aos vivos e **refaz a chamada** (é
-pura; o KV cache está no gateway, então a geração continua do mesmo ponto). Cada tentativa tira mais
-um nó, então o laço termina; sem nenhum vivo o pedido dá 503. `phase-j-shards.sh` mata um worker no
-meio da geração: a continuação sai idêntica e o log do gateway mostra as chamadas refeitas.
-
-### Custo medido (contêineres numa máquina, rede Docker local)
-
-SmolLM2-135M, 2 workers, 120 chamadas por token, depois do aquecimento: **~2,5 ms por chamada**, dos
-quais ~1,1 ms são o cálculo do worker (o resto é gateway → controller → worker e volta). Isso dá
-~300 ms por token contra ~105 ms local: **cerca de 3× mais lento**, ao contrário dos 40–100× da fila
-de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT soma a cada chamada.
-
-### Limites
-
-- O token de inferência vale só para `ShardMatmul` (veja abaixo); a carga nos workers continua
-  sendo comandada pelo gateway, que não passa de nomes de tensor e faixas dentro da raiz de modelos.
-- Tolerância a falha só por reatribuição (abaixo): sem réplica de fatias pré-carregada, então o nó
-  que herda uma faixa a lê do disco na primeira vez (segundos de aquecimento); sem rebalanceamento
-  proativo quando entra um nó (a faixa volta ao dono quando o castigo de 30 s acaba).
-- Quarentena e drain não derrubam a sessão (só `revoke`/`leave`); as operações a nós indisponíveis
-  são recusadas pelo `ShardMatmul`.
-- Divisão só por linhas de saída, entrada replicada: sem all-reduce, sem pipeline entre camadas.
-- Do review: o token de inferência escolhe nó, subdiretório, tensor e faixa (a contenção na raiz de
-  modelos é do worker), então um token vazado pode forçar o despejo (LRU) das fatias residentes e gerar leituras com
-  `by_columns` (um `seek` por linha). O worker só lê projeções de camada (GPT-2 e Llama; embeddings
-  e normas são recusados) e o controller aceita 8 `ShardMatmul` simultâneos (`ResourceExhausted`
-  acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s e o cancelamento
-  (cliente que sai) valem também dentro de um token: a chamada em voo é abandonada e o controller
-  esquece as operações. O worker marca `invalid` quando recusa o próprio pedido
-  (tensor fora da lista, entrada incoerente): isso falha com 503 sem acusar nem pôr nó de lado.
-  Um erro do nó (modelo ausente no disco dele, leitura) acusa o nó, e o gateway refaz nos outros.
-  Queda, canal fechado e falta de resposta contam como falha do nó; se todos caem, o gateway tenta todos de
-  novo em vez de recusar. Com
-  muitos nós e poucos vivos, as faixas movidas podem passar de 64 operações em voo por nó (503).
-
+- Fase: [[fase-08-inferencia]] · Sistema: [[inference-engine]]
+- Irmãos: [[f08-gateway-e-api]], [[f08-chat-completions]], [[f08-canal-residente-de-fatias]]

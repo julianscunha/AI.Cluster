@@ -17,7 +17,7 @@
 # que os arquivos do controller — o que este roteiro prova é que a *fonte* da fila recuperada
 # é a cópia do nó e não um arquivo do controller. Em produção a cópia fica no disco do nó, e é
 # isso que a faz sobreviver à morte do volume do controller. Ver "Teto conhecido" em
-# `implementation/recovery.md`.
+# `docs/implementation/06-estado-e-recuperacao/f06-recuperacao.md`.
 set -uo pipefail
 
 NET=aic-net

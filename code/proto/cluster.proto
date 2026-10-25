@@ -29,7 +29,7 @@ message CapabilityReport {
   /// Classes de armazenamento em bloco detectadas no nó, da mais quente para a mais fria:
   /// "nvme", "ssd", "hdd". Vazio significa "não medido", não "sem armazenamento" — um nó
   /// que não expõe `/sys/block` reporta vazio. O tier HOT (RAM/VRAM) não aparece aqui:
-  /// `memory_bytes` é a medida dele. Ver docs/18-storage-intelligence.md.
+  /// `memory_bytes` é a medida dele. Ver docs/system/02-subsistemas/dados/storage-intelligence.md.
   repeated string storage_classes = 9;
   /// Compute remedido depois do registro, na mesma escala de `compute_score`.
   ///

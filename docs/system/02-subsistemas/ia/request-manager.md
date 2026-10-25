@@ -1,397 +1,123 @@
 ---
-title: "AI Cluster — Request Manager"
-type: spec
-status: decided
-tags: [spec, request-manager]
+title: "Request Manager"
+aliases: ["Gerenciador de requisições", "docs/24", "24 — Request Manager"]
+tags: [sistema/subsistema/ia]
+type: sistema/subsistema
+status: decidido
+implementacao: nao-iniciado
+fases: ["[[fase-11-request-manager]]"]
 ---
 
-# AI Cluster — Gerenciador de requisições
+# Request Manager
 
-Status: DECIDED baseline / v0.1
+O Request Manager controla o ciclo de vida **externo** de uma requisição, da entrada na [[inference-api]] até a criação de uma Execution. Decide **se e em que condições** uma request pode executar; o [[scheduler]] decide **como** os recursos concretos são usados. Voltar para [[ia]].
 
-## 1. Objetivo
+## Responsabilidades
 
-O Request Manager controla o ciclo de vida externo de uma requisição desde sua entrada na Inference API até a criação de uma Execution. Ele atua como fronteira entre API e o motor interno de execução.
+- Validar e normalizar requests; aplicar autorização trazida pelo gateway.
+- Aplicar quotas e limites por identidade, tenant ou application.
+- Estimar orçamento de tokens e recursos.
+- Decidir admissão, fila ou rejeição.
+- Criar `request_id` e `execution_id`; controlar cancelamento.
+- Manter o estado de alto nível da request.
+- Integrar [[edge-optimizer]], [[model-manager]], [[execution-planner]] e [[scheduler]].
+- Publicar métricas e eventos.
 
-Responsabilidades principais:
-
-- validar e normalizar requests;
-- aplicar autenticação/autorização resultante do gateway;
-- aplicar quotas e limites;
-- estimar orçamento de tokens e recursos;
-- decidir admissão, fila ou rejeição;
-- criar request e execution IDs;
-- controlar cancelamento;
-- manter estado de alto nível da request;
-- integrar Edge Optimizer, Model Manager, Planner e Scheduler;
-- publicar métricas e eventos.
-
-## 2. Fluxo
+## Fluxo
 
 ```text
-Client
-  -> Inference API
-  -> Request Manager
-  -> Admission Control
-  -> Token/Resource Budget
-  -> Edge Optimizer
-  -> Model Resolution
-  -> Execution Planner
-  -> Scheduler
-  -> Execution
+Client -> Inference API -> Request Manager
+  -> Admission Control -> Token/Resource Budget
+  -> Edge Optimizer -> Model Resolution
+  -> Execution Planner -> Scheduler -> Execution
 ```
 
-## 3. Estados da request
+## Estados da request
 
 ```text
-RECEIVED
-VALIDATING
-ADMITTED
-QUEUED
-OPTIMIZING
-PLANNING
-RUNNING
-STREAMING
-CANCELLING
-CANCELLED
-COMPLETED
-FAILED
-REJECTED
-EXPIRED
+RECEIVED  VALIDATING  ADMITTED  QUEUED  OPTIMIZING  PLANNING
+RUNNING   STREAMING   CANCELLING  CANCELLED  COMPLETED  FAILED  REJECTED  EXPIRED
 ```
 
-Estados devem ser idempotentes e persistíveis no control plane.
+Os estados são idempotentes e persistidos no control plane (ver [[state-manager]]).
 
-## 4. Requisição versus execução
+## Requisição versus execução
 
-Uma Request representa a intenção externa. Uma Execution representa uma tentativa concreta de executá-la.
+Request é a intenção externa; Execution é uma tentativa concreta. Cada execução tem seu plano, epochs, Work Units e trace. A request mantém o estado final observado pelo cliente. Em falha recuperável: [[state-manager]] recupera, nova Execution, novo plano, retomada; a request continua a mesma.
+
+## Admissão
+
+A request não vai ao Planner automaticamente. O Admission Controller avalia disponibilidade do modelo, capacidade do cluster, prioridade, quota, tamanho de contexto, saída estimada, deadline e carga atual.
+
+Saídas: `ADMIT`, `QUEUE`, `REJECT`, `FALLBACK`. Fallback de modelo só se a política do consumidor permitir.
+
+Rejeição antecipada, sem tocar o runtime: modelo não autorizado, requisição malformada, contexto grande demais, quota excedida, modalidade não suportada.
+
+## Fila
+
+Lógica, por classe de prioridade: `REALTIME`, `INTERACTIVE`, `NORMAL`, `BATCH`, `BACKGROUND`. Dentro da classe, aging contra starvation. Não é round-robin simples, porque jobs e recursos são heterogêneos.
+
+## Quotas e orçamentos
+
+- Quotas por identidade: requests simultâneas, tokens de entrada e saída por request, tokens por minuto, requests na fila, tempo de execução.
+- Orçamento de tokens antes da execução: entrada recebida, entrada após otimização, saída esperada e máxima, total estimado. A estimativa não é garantia; alimenta planejamento e observabilidade.
+- Orçamento de recursos: tempo de compute, memória, KV cache, tráfego de rede, staging de storage, latência esperada. Serve para rejeitar ou enfileirar o que claramente não cabe.
+- Estimativa de custo (compute units, energia, I/O, custo externo) não é cobrança sem um módulo de billing.
+
+## Edge, cancelamento e deadlines
+
+- Ordem: validação barata → otimização de borda → recálculo do orçamento → admissão final. Reduzir contexto pode tornar viável uma request antes inviável.
+- Cancelamento atravessa a cadeia (cliente → API → Request Manager → Execution → Scheduler → Work Units). Unidades não iniciadas são canceladas; em execução recebem sinal e o Worker escolhe o ponto seguro para parar.
+- Deadline: `remaining_budget = deadline - elapsed_time`, passado ao Planner e ao Scheduler. Sem tempo plausível: enfileirar, replanejar, cair para fallback (se permitido) ou rejeitar.
+
+## Backpressure e concorrência
 
 ```text
-Request
-  |
-  +-- Execution 1
-  +-- Execution 2 (retry/recovery)
+NORMAL         -> admit
+HIGH LOAD      -> queue
+CRITICAL       -> reject background/batch
 ```
 
-A Request mantém o estado final observado pelo cliente. Cada Execution possui seu próprio plano, epochs, work units e trace.
+O objetivo é proteger o cluster, não maximizar a fila. A concorrência considera requests, execuções, Work Units, capacidade do modelo, memória, KV cache e rede: limitar só o número de requests não basta, porque uma request longa consome muito mais que dezenas de pequenas.
 
-## 5. Controle de admissão
+## Prioridade e equidade
 
-A request não deve ser enviada ao Planner automaticamente.
+- Work Units herdam a classe de prioridade da request, sujeitas à política interna. Operação background nunca ganha prioridade de interactive sem política explícita.
+- Equidade entre classes e tenants considera prioridade, tempo de espera, tamanho do recurso, fairness por tenant e deadline.
 
-O Admission Controller avalia:
+## Streaming e tokens
 
-```text
-model availability
-cluster capacity
-priority
-quota
-context size
-estimated output
-deadline
-current load
-```
+Para streaming: `RUNNING → primeiro token → STREAMING → COMPLETED`. O Request Manager acompanha TTFT e a emissão de chunks, sem participar de cada token. Ao final consolida entrada recebida, entrada otimizada, tokens em cache, saída e tokens evitados, no formato público.
 
-Saídas possíveis:
+## Idempotência
 
-```text
-ADMIT
-QUEUE
-REJECT
-FALLBACK
-```
+Requests com `Idempotency-Key` evitam duplicação quando o cliente repete após timeout de rede: a chave busca a request existente. A semântica precisa ser definida antes da API pública.
 
-Fallback de modelo só pode ocorrer se permitido pela política do consumidor.
+## Observabilidade
 
-## 6. Fila
+Eventos por transição: `REQUEST_RECEIVED`, `REQUEST_ADMITTED`, `REQUEST_QUEUED`, `REQUEST_OPTIMIZED`, `REQUEST_PLANNED`, `REQUEST_STARTED`, `REQUEST_CANCELLED`, `REQUEST_COMPLETED`, `REQUEST_FAILED`, `REQUEST_REJECTED`.
 
-A fila deve ser lógica e orientada por classe de prioridade.
+Métricas mínimas: latência de admissão, latência de fila, requests em execução, profundidade da fila, rejeições, cancelamentos e taxa de conclusão.
 
-```text
-REALTIME
-INTERACTIVE
-NORMAL
-BATCH
-BACKGROUND
-```
+> [!info] O que já existe (MVP)
+> Não há Request Manager. Há peças isoladas, todas no gateway ou no controller:
+> - Gateway: admissão binária por semáforo. Embeddings com até 4 pedidos (`MAX_IN_FLIGHT`), chat com uma geração por vez (`llm_slot`); acima disso, 429 com `Retry-After`. Não há fila.
+> - Gateway: prazo fixo de 30 s (`DEADLINE`) para embeddings e chat; estourar o prazo gera 504 `TIMEOUT` e, no chat, sinaliza cancelamento da geração no próximo token.
+> - Controller: `EnqueueGraph` recusa com `ResourceExhausted` acima de 256 unidades na fila (`MAX_QUEUED_UNITS`); o gateway responde 429 com `Retry-After: 5`.
+> - Controller: `ShardMatmul` limitado a 8 chamadas simultâneas (`MAX_SHARD_CALLS`), 64 operações por chamada e prazo de 8 s (`SHARD_TIMEOUT`).
+> - Identificadores: `x-request-id` gerado no gateway. Uma request tem uma única execução; a recuperação de faixa re-chama o nó vivo dentro da mesma geração ([[f08-canal-residente-de-fatias]]).
+> - Sem estados persistidos, sem prioridade, sem quota, sem orçamento de tokens, sem `Idempotency-Key`, sem eventos `REQUEST_*`.
+>
+> Slices: [[f08-gateway-e-api]], [[f08-canal-residente-de-fatias]].
 
-Dentro de uma classe, o sistema pode usar aging para impedir starvation.
+> [!warning] Desvio do alvo e migração
+> A admissão e a execução estão acopladas no gateway, e o controller só conhece Work Units, não requests. O controle de entrada é contagem fixa, sem orçamento de tokens nem fila por classe. Migração: [[fase-11-request-manager]], entre a API e o Scheduler, com estados persistidos pelo [[state-manager]].
 
-A fila não deve ser round-robin simples, porque a capacidade dos jobs e dos recursos é heterogênea.
-
-## 7. Quotas
-
-O Request Manager deve aplicar limites por identidade/tenant/application.
-
-Exemplos:
-
-```text
-max concurrent requests
-max input tokens/request
-max output tokens/request
-max total tokens/minute
-max queued requests
-max execution time
-```
-
-## 8. Orçamento de tokens
-
-Antes da execução, o sistema calcula:
-
-```text
-input tokens received
-input tokens after edge optimization
-expected output tokens
-maximum output tokens
-estimated total
-```
-
-A estimativa não é garantia. Ela alimenta planejamento e observabilidade.
-
-## 9. Orçamento de recursos
-
-Além de tokens, pode haver estimativa de:
-
-```text
-compute time
-memory footprint
-KV cache
-network traffic
-storage staging
-expected latency
-```
-
-Isso permite rejeitar ou enfileirar requests que claramente não cabem na capacidade atual.
-
-## 10. Integração com Edge Optimization
-
-A otimização ocorre depois da validação inicial, mas antes da alocação pesada.
-
-Fluxo:
-
-```text
-received
-  -> cheap validation
-  -> edge optimization
-  -> recompute token/resource estimate
-  -> admission/planning final
-```
-
-Uma otimização que reduza o contexto pode tornar uma request anteriormente inviável executável.
-
-## 11. Rejeição antecipada
-
-Requests obviamente inválidas devem ser rejeitadas sem tocar o runtime de inferência.
-
-Exemplos:
-
-```text
-model not authorized
-malformed request
-context too large
-quota exceeded
-unsupported modality
-```
-
-## 12. Backpressure
-
-Quando a capacidade cai, o Request Manager controla entrada.
-
-Exemplo:
-
-```text
-NORMAL
-  -> admit
-
-HIGH LOAD
-  -> queue
-
-CRITICAL CAPACITY
-  -> reject low-priority/background
-```
-
-O objetivo é proteger o cluster contra sobrecarga, não apenas maximizar a fila.
-
-## 13. Cancelamento
-
-Cancelamento deve atravessar toda a cadeia:
-
-```text
-Client
-  -> API
-  -> Request Manager
-  -> Execution
-  -> Scheduler
-  -> Work Units
-```
-
-Work Units não iniciadas são canceladas. Work Units em execução recebem sinal de cancelamento; o Worker decide o ponto seguro para abortar.
-
-## 14. Deadlines
-
-A request pode trazer deadline. O Request Manager deve calcular:
-
-```text
-remaining_budget = deadline - elapsed_time
-```
-
-Esse valor é passado ao Planner/Scheduler.
-
-Se não houver tempo suficiente para completar de forma plausível, a request pode ser:
-
-```text
-queued
-replanned
-fallbacked, if policy allows
-rejected
-```
-
-## 15. Herança de prioridade
-
-Work Units criadas a partir de uma request devem herdar sua classe de prioridade, sujeitas às políticas internas.
-
-Uma operação background nunca deve ganhar prioridade de interactive apenas porque pertence a uma request de alto nível, salvo política explícita.
-
-## 16. Controle de concorrência
-
-A concorrência deve considerar:
-
-```text
-requests
-executions
-work units
-model capacity
-memory
-KV cache
-network
-```
-
-Não basta limitar apenas número de requests.
-
-Uma request longa pode consumir muito mais recursos que dezenas de requests pequenas.
-
-## 17. Ciclo de vida do streaming
-
-Para streaming:
-
-```text
-RUNNING
-  -> first token
-  -> STREAMING
-  -> more tokens
-  -> COMPLETED
-```
-
-O Request Manager acompanha TTFT e emissão de chunks, mas não participa de cada token individual além do necessário para controle.
-
-## 18. Contabilização de tokens
-
-Ao final, o Request Manager consolida:
-
-```text
-received input tokens
-optimized input tokens
-cached tokens
-output tokens
-tokens avoided
-```
-
-O valor retornado ao consumidor deve ser compatível com a API pública.
-
-## 19. Estimativa de custo
-
-Se houver um modelo de custo, o Request Manager pode estimar:
-
-```text
-compute units
-energy estimate
-storage I/O
-network transfer
-external model/provider cost
-```
-
-Esses valores não devem ser apresentados como cobrança real sem um módulo específico de billing.
-
-## 20. Recuperação
-
-Se a Execution falhar e for recuperável:
-
-```text
-Execution failed
-  -> State Manager recovery
-  -> new Execution
-  -> new plan
-  -> resume
-```
-
-A Request permanece a mesma.
-
-## 21. Idempotência
-
-Requests com chave de idempotência devem evitar duplicação acidental quando o cliente repetir uma chamada após timeout de rede.
-
-```text
-Idempotency-Key
-  -> existing request lookup
-```
-
-A semântica deve ser definida antes do MVP público.
-
-## 22. Equidade
-
-O Request Manager deve evitar starvation entre classes e tenants.
-
-O algoritmo exato poderá evoluir, mas deve considerar:
-
-```text
-priority
-waiting time
-resource size
-tenant fairness
-deadline
-```
-
-## 23. Observabilidade
-
-Cada transição importante gera evento:
-
-```text
-REQUEST_RECEIVED
-REQUEST_ADMITTED
-REQUEST_QUEUED
-REQUEST_OPTIMIZED
-REQUEST_PLANNED
-REQUEST_STARTED
-REQUEST_CANCELLED
-REQUEST_COMPLETED
-REQUEST_FAILED
-REQUEST_REJECTED
-```
-
-Métricas mínimas:
-
-```text
-admission latency
-queue latency
-running requests
-queue depth
-rejections
-cancellations
-completion rate
-```
-
-## 24. Separação do escalonador
-
-O Request Manager decide **se e em que condições uma request pode executar**.
-
-O Scheduler decide **como recursos concretos serão usados para executar o plano**.
-
-```text
-Request Manager
-  -> admission / queue / budget
-
-Scheduler
-  -> placement / ordering / resource assignment
-```
-
-Essa separação evita concentrar toda a lógica de controle em um único componente.
+> [!todo] Falta
+> - Admission Controller com orçamento de tokens e recursos.
+> - Fila lógica por classe com aging e equidade entre tenants.
+> - Quotas por identidade e ACL de modelo.
+> - Estados persistidos e eventos `REQUEST_*`.
+> - Cancelamento por `request_id` que propaga até as Work Units ([[inference-api]]).
+> - Deadline calculado (`remaining_budget`) em vez de prazo fixo.
+> - `Idempotency-Key`.

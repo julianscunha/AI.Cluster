@@ -97,7 +97,7 @@ pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 ///
 /// ponytail: one shared secret, sent in clear until TLS exists. It closes "anyone on the network
 /// can register a node or inject state"; it does not give a node its own identity, and it can
-/// be captured on the wire. Per-node credentials and mTLS (docs/19) are the next rungs.
+/// be captured on the wire. Per-node credentials and mTLS (`seguranca`) are the next rungs.
 pub const JOIN_TOKEN_ENV: &str = "AI_CLUSTER_JOIN_TOKEN";
 
 /// The join token from the environment; unset or blank is "none".

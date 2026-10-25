@@ -1,8 +1,24 @@
-# Descoberta de rede (Fase C1)
+---
+title: "F02 — Descoberta de rede"
+aliases: ["network-discovery", "C1 rede", "C2 rede", "C4 rede"]
+tags: [implementacao/fase/02, implementacao/fatia, implementacao/estado/parcial]
+type: implementacao/fatia
+status: parcial
+superado: false
+fase: "[[fase-02-capability-e-saude]]"
+codigos-antigos: ["C1", "C2", "C4", "network-discovery"]
+sistema: ["[[capability-engine]]", "[[camada-de-transporte]]"]
+evidencia: ["code/tests/phase-c-network.sh"]
+---
+# F02 — Descoberta de rede
+
+- [ ] Superado
+
+## Objetivo
 
 O perfil de capability carrega `network_score` desde o protocolo inicial, e o modelo de
 placement lê o campo desde G2 — mas nada o preenchia. Esta fatia fecha isso: o worker lê a
-velocidade do próprio link e reporta. É a metade "bandwidth" de `docs/05`; a metade "latency"
+velocidade do próprio link e reporta. É a metade "bandwidth" de [[capability-engine]]; a metade "latency"
 fica para a medição ativa.
 
 ## O que é medido
@@ -55,7 +71,7 @@ rápido numa única máquina, que é como o E2E prova o consumidor.
 A perna C é o que dá sentido à D: sem ela, a unidade ir para o nó de link rápido poderia ser
 acaso, não custo.
 
-## Teto conhecido
+## Limites
 
 **`network_score` é a velocidade nominal**: o que o link *é*, não o que ele *faz* sob carga.
 A taxa alcançada é a sonda do C2, abaixo.
@@ -64,9 +80,9 @@ A taxa alcançada é a sonda do C2, abaixo.
 Só passa a valer quando houver um segundo transporte ou uma política que a use.
 
 **Aceleradores não.** GPU/NPU não são detectados porque não há caminho de execução para eles:
-reportá-los seria anunciar hardware que o worker não usa. É a fase J.
+reportá-los seria anunciar hardware que o worker não usa. É a fase de aceleradores ([[fase-16-aceleradores]]).
 
-## Taxa alcançada (Fase C2)
+## Taxa alcançada (C2)
 
 No registro o worker chama `ProbeLink`: sobe 3 payloads de 2 MiB ao controller, cronometra cada
 RPC e fica com a **melhor** corrida (contenção só atrasa, então a mais rápida é a capacidade
@@ -79,7 +95,7 @@ a medida é o que ele entregou. Zero em qualquer um é "não medido" e sai da co
 Evidência: `phase-c-network.sh` A) nó real `rede_score=10.00 rede_alcancada=2.74`; B) pin,
 `rede_alcancada=-`.
 
-## Remedida e degradação (Fase C4)
+## Remedida e degradação (C4)
 
 O ramo ocioso do laço de trabalho repete a sonda na cadência do compute
 (`AI_CLUSTER_RECOMPUTE_INTERVAL_SECS`, 60 s por padrão) e o resultado viaja no perfil como
@@ -93,3 +109,9 @@ preenchida pelo nó ocioso. Que a degradação *muda a decisão* está só no te
 `transfer_rate`; não há E2E que degrade um link de verdade.
 
 Teto: só upload, e só até o controller. Worker e controller no mesmo host medem loopback; o teto nominal contém isso.
+
+## Próximos passos
+
+- E2E que degrade um link de verdade, para provar que a degradação muda a decisão fora do teste unitário.
+- Medida de latência por nó, quando houver um segundo transporte ou política que a use.
+- Sonda de download, para fechar o link nos dois sentidos.

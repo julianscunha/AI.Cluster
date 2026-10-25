@@ -1,123 +1,56 @@
 ---
-title: "AI Cluster — Inference API"
-type: spec
-status: decided
-tags: [spec, inference-api]
+title: "Inference API"
+aliases: ["API de inferência", "docs/23", "23 — Inference API", "AI Cluster — Inference API"]
+tags: [sistema/subsistema/ia]
+type: sistema/subsistema
+status: decidido
+implementacao: parcial
+fases: ["[[fase-08-inferencia]]"]
 ---
 
-# AI Cluster — API de inferência
+# Inference API
 
-Status: DECIDED baseline / v0.1
+A Inference API é a fronteira entre o **Application Plane** (agentes, orquestradores, aplicações, CLIs) e o **AI Compute Plane**. Todo consumo de capacidade de IA passa por ela; nenhum cliente fala com o controller, com workers, shards, tensores ou estado interno. Ver [[adr-007-fronteira-inference-api]]. Voltar para [[ia]].
 
-## 1. Objetivo
+## Objetivo
 
-A Inference API é a fronteira entre o **Application Plane** e o **AI Compute Plane**.
+Expor o cluster como um endpoint de inferência estável, enquanto a topologia interna evolui. Não expõe como a requisição foi distribuída.
 
-Aplicações, agentes e orquestradores não acessam diretamente Controller, Workers, shards, tensors ou estado interno do cluster. Todo consumo de capacidade de IA ocorre através da API.
+Não devem receber acesso direto ao Data Plane: Worker Runtime, Model Manager, State Manager, armazenamento interno e interfaces administrativas dos workers.
 
-Exemplos de consumidores:
-
-- agentes de IA;
-- orquestradores;
-- aplicações próprias;
-- IDE/CLI agents;
-- serviços internos.
-
-Exemplos de consumidores que não devem receber acesso direto ao Data Plane:
-
-- Worker Runtime;
-- Model Manager;
-- State Manager;
-- armazenamento interno;
-- interfaces administrativas dos workers.
-
-## 2. Separação de planos
+## Separação de planos
 
 ```text
 Application Plane
-  |
   | HTTPS / API
   v
-Inference API
-  |
+Inference API ........... autenticação, validação, normalização, streaming
   v
-Request Manager
-  |
-  +--> Edge Optimizer
-  +--> Graph Engine
-  +--> Model Manager
-  +--> Execution Planner
-  +--> Scheduler
-  +--> State Manager
-  |
+Request Manager ......... admissão, fila, quotas, orçamento (ver request-manager)
+  +--> Edge Optimizer, Model Manager, Execution Planner, Scheduler, State Manager
   v
 Distributed Inference
 ```
 
-A API não expõe como a requisição foi distribuída.
+Administração não usa esta API: nós, planos, workers, métricas, traces, provisionamento e recuperação ficam na Management API / CLI ([[operacao]]).
 
-## 3. Princípio de compatibilidade
+## Contrato público
 
-A primeira interface pública deve ser compatível com o padrão de APIs de inferência usado pelos principais clientes de LLM sempre que isso não comprometer a semântica do runtime.
+### Compatibilidade
 
-Interface inicial proposta:
+A primeira interface deve ser compatível com o padrão de APIs de inferência usado pelos clientes de LLM, desde que não comprometa a semântica do runtime. A compatibilidade é uma camada de adaptação: o protocolo interno do cluster não segue o externo.
 
 ```text
 POST /v1/chat/completions
 POST /v1/responses
 GET  /v1/models
 POST /v1/embeddings
+Futuro: POST /v1/rerank, POST /v1/transcriptions, POST /v1/generate
 ```
 
-Interfaces futuras podem incluir:
+### Objeto de requisição
 
-```text
-POST /v1/rerank
-POST /v1/transcriptions
-POST /v1/generate
-```
-
-A compatibilidade é uma camada de adaptação. O protocolo interno do cluster não precisa seguir o protocolo externo.
-
-## 4. Ciclo de vida da requisição
-
-```text
-Client
-  |
-  v
-API Gateway
-  |
-  v
-Authentication / Authorization
-  |
-  v
-Request Validation
-  |
-  v
-Normalization
-  |
-  v
-Edge Optimization
-  |
-  v
-Model Resolution
-  |
-  v
-Execution Planning
-  |
-  v
-Scheduling
-  |
-  v
-Inference
-  |
-  v
-Streaming / Response
-```
-
-## 5. Objeto de requisição
-
-Todo request recebe um identificador global:
+Toda requisição recebe um identificador global, usado em logs, métricas, traces, estado, grafo e auditoria.
 
 ```json
 {
@@ -130,337 +63,107 @@ Todo request recebe um identificador global:
 }
 ```
 
-O `request_id` é usado em logs, métricas, traces, estado, grafo e auditoria.
+Uma request pode ter várias execuções (retry, recovery). A resposta representa a request; a observabilidade guarda o histórico de cada `execution_id`.
 
-## 6. Identificadores de execução
+### Streaming
 
-Uma request pode possuir mais de uma execução lógica devido a retry ou recovery.
+Streaming é requisito de primeira classe. O consumidor não precisa saber em quais nós os tokens foram produzidos. Metadados de uso vão de forma compatível, sem expor métricas internas confidenciais na resposta padrão.
 
-```text
-request_id
-  |
-  +--> execution_id #1
-  +--> execution_id #2
-```
+### Cancelamento
 
-A resposta final representa a request, enquanto a observabilidade mantém o histórico de cada execução.
+O cliente pode cancelar uma execução. Fluxo interno: API → Request Manager → Execution Manager → cancelar Work Units pendentes → parar a geração → liberar reservas e estado → emitir evento. O cancelamento é idempotente.
 
-## 7. Streaming
+### Timeout, deadline e limites
 
-Streaming deve ser tratado como requisito de primeira classe.
+A request pode trazer `request timeout`, `execution deadline` e `max output tokens`. Esses valores alimentam o Scheduler, mas nunca violam garantias de integridade de estado.
 
-```text
-Client
-  |
-  +<-- token 1
-  +<-- token 2
-  +<-- token 3
-  +<-- token N
-```
+### Prioridades
 
-O consumidor não precisa saber em quais nodes os tokens foram produzidos.
+Classes controladas por política: `realtime`, `interactive`, `normal`, `batch`, `background`. O cliente não define prioridade crítica sem autorização.
 
-A API deve transportar metadados de uso de forma compatível com o cliente sem misturar métricas internas confidenciais na resposta padrão.
+### Contabilização de tokens
 
-## 8. Cancelamento
+Por request, o cluster registra `input_tokens_received`, `input_tokens_after_optimization`, `cached_tokens`, `output_tokens_generated`, `tokens_avoided` e `tokens_total_processed`.
 
-O cliente deve poder cancelar uma execução:
+### Latência
 
-```text
-POST/DELETE request cancellation
-```
+Correlacionáveis: latência total, TTFT, latência entre tokens, throughput de geração, latência de borda, de planejamento e de fila.
 
-Fluxo interno:
+### Modelo de erro
 
-```text
-Client cancel
-  -> API Gateway
-  -> Request Manager
-  -> Execution Manager
-  -> cancel pending Work Units
-  -> stop generation
-  -> release reservations/state
-  -> emit event
-```
+Categorias estáveis: `INVALID_REQUEST`, `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`, `MODEL_NOT_FOUND`, `MODEL_UNAVAILABLE`, `CAPACITY_UNAVAILABLE`, `TIMEOUT`, `CANCELLED`, `INTERNAL_ERROR`, `SERVICE_UNAVAILABLE`. Detalhes internos ficam em trace, evento e log.
 
-O cancelamento deve ser idempotente.
+### Descoberta de modelo
 
-## 9. Timeout e deadline
+`GET /v1/models` expõe só modelos e variantes autorizados ao consumidor. Existência física de shards e nós não faz parte do contrato.
 
-A request pode indicar:
+### Política de roteamento
 
-```text
-request timeout
-execution deadline
-max output tokens
-```
+O cliente pode pedir `model`, `quality target` e `latency target`. Não escolhe `node`, `shard`, `worker`, `transport` nem `placement`.
 
-Esses valores alimentam o Scheduler, mas não devem ser usados para violar garantias de integridade de estado.
+### Headers de observabilidade
 
-## 10. Prioridades
+Quando couber: `request_id`, `trace_id`, `model_id`, `model_version`, `usage`.
 
-A API deve aceitar uma classe de prioridade controlada por política:
+## Segurança e isolamento
 
-```text
-realtime
-interactive
-normal
-batch
-background
-```
+- Externa: TLS, autenticação, autorização, rate limiting, limite de tamanho de requisição, ACL de modelo e cota.
+- Acesso termina na API; endpoints de worker nunca são expostos.
+- Mesmo em deployment single-tenant, o modelo separa identidade por `tenant`, `application`, `API key`, quota, ACL de modelo e política de prioridade, para evitar migração futura.
 
-O cliente não pode definir arbitrariamente prioridade crítica sem autorização.
+Papéis de credencial (join, operador, inferência) e a chave de API são tratados em [[seguranca]].
 
-## 11. Contabilização de tokens
+## Responsabilidades
 
-Para cada request, o cluster deve registrar:
+| API | Cluster interno |
+|---|---|
+| Receber, autenticar, autorizar, validar, normalizar | Otimização de contexto e retrieval ([[edge-optimizer]], [[graph-engine]]) |
+| Iniciar e cancelar execução | Seleção de modelo ([[model-manager]]) e planejamento ([[execution-planner]]) |
+| Transmitir resposta | Escalonamento ([[scheduler]]), estado ([[state-manager]]), transporte e execução |
+| Expor uso e identificadores | Execução distribuída ([[inference-engine]]) |
 
-```text
-input_tokens_received
-input_tokens_after_optimization
-cached_tokens
-output_tokens_generated
-tokens_avoided
-tokens_total_processed
-```
+## Saúde
 
-Exemplo:
+A saúde da API é separada da do cluster (ex.: API verde, cluster amarelo, capacidade 72%). O endpoint de health não executa inferência real a cada chamada.
 
-```text
-Input received           18,420
-After optimization       5,210
-Tokens avoided          13,210
-Output generated         1,842
-```
+## Backpressure e fallback
 
-## 12. Métricas de latência
+Sem capacidade, a API aplica política explícita: `queue`, `reject`, `retry-after` ou `fallback model`. O cliente não deve abrir centenas de requisições em paralelo para contornar a capacidade.
 
-A API deve permitir correlacionar:
-
-```text
-request latency
-TTFT
-inter-token latency
-generation throughput
-edge latency
-planning latency
-queue latency
-```
+Fallback interno pode trocar de variante ou de placement. Fallback de modelo só ocorre com política explícita, porque altera qualidade e comportamento.
 
-## 13. Modelo de erro
+> [!info] O que já existe (MVP, fatias F08)
+> - Crate `code/crates/gateway` (binário `ai-cluster-gateway`). Fala com o controller como **operador** (`AI_CLUSTER_OPERATOR_TOKEN`) e herda o TLS de cliente (`AI_CLUSTER_TLS_CA`).
+> - Rotas: `GET /health` (sem chave, não toca o cluster); `GET /v1/models`; `POST /v1/embeddings` sobre o modelo sintético `matmul-diamond-v0` (grafo diamante 16×16 executado de verdade nos workers; vetor sem semântica, resposta com `"synthetic": true`); `POST /v1/chat/completions` sobre GPT-2 small e SmolLM2-135M (ids `gpt2`, `smollm2-135m` e `smollm2-135m-instruct`).
+> - Autenticação: `Authorization: Bearer` com `AI_CLUSTER_API_KEY`, comparada sem saída antecipada. A chave é obrigatória e diferente dos tokens de join, operador e inferência; o gateway não sobe se coincidirem.
+> - Limites: corpo máximo de 64 KiB; `input` de 1 a 8192 bytes; embeddings com 4 pedidos em andamento; chat com uma geração por vez (`llm_slot`), prompt até 512 tokens e 8 KiB, até 32 mensagens, `max_tokens` 1–64 (ajustado, não rejeitado), prazo de 30 s. Acima dos tetos: 429 com `Retry-After`.
+> - Erros emitidos: `AUTHENTICATION_FAILED` (401), `MODEL_NOT_FOUND` (404), `INVALID_REQUEST` (400/413), `CAPACITY_UNAVAILABLE` (429), `TIMEOUT` (504), `MODEL_UNAVAILABLE` (503), `SERVICE_UNAVAILABLE` (503). A causa interna vai para o log.
+> - Escuta em `127.0.0.1:8080`; outro endereço só com `AI_CLUSTER_INSECURE=1`.
+> - Correlação: cabeçalhos `x-request-id` e `x-model-id`; o `request_id` também vai no corpo e leva a `ai-cluster request trace <id>`.
+> - Chat com `stream: true`: `text/event-stream` no formato OpenAI; erro depois dos cabeçalhos chega como evento `{"error": ...}` seguido de `[DONE]`; cliente que sai cancela no próximo token. Sem `usage` no stream.
+> - Modelo base (GPT-2, SmolLM2) só continua texto (mensagens unidas por quebra de linha); instruct recebe ChatML com tokens especiais por id, e texto do usuário com `<|im_end|>` não fecha turno.
+> - Controller: `EnqueueGraph` com `keep_result` e RPC `GetOutput` (só operador), guardando as últimas 64 saídas; fila de no máximo 256 unidades (`ResourceExhausted`, 429 no gateway).
+> - Evidência: `code/tests/phase-j-inference.sh`, `code/tests/phase-j-chat.sh [gpt2|smollm2|instruct]`, `code/crates/engine/tests/smollm2_chat_parity.rs`.
+>
+> Slices: [[f08-gateway-e-api]], [[f08-chat-completions]].
 
-Os erros externos devem ser estáveis e simples, mesmo quando a causa interna for complexa.
+> [!warning] Desvios do alvo e migração
+> 1. **Sem fronteira entre API e motor.** O modelo roda dentro do gateway (cerca de 1,6 GB de RAM), que depende do crate `engine`. Só as projeções vão a workers, quando `AI_CLUSTER_*_SHARDS` está definido. Migração: [[fase-12-model-runtime]] (motor como serviço fora do gateway).
+> 2. **Sem Request Manager.** Não há admissão por orçamento, fila por classe, quota nem prioridade. O controle de entrada é um semáforo (4 embeddings; 1 geração de chat) que responde 429. Migração: [[fase-11-request-manager]].
+> 3. **Nós escolhidos por variável de ambiente.** `AI_CLUSTER_GPT2_SHARDS` e `AI_CLUSTER_SMOLLM2_SHARDS` listam os nós que recebem faixas; não há Planner nem Scheduler no caminho de inferência. Migração: [[fase-12-model-runtime]] com [[execution-planner]] e [[scheduler]].
+> 4. **Sem versão de modelo.** `model_version` não é retornado; os pesos são lidos do disco de cada worker, por caminho fixo (`model.safetensors`), sem checksum. Migração: registry e manifest em [[model-manager]].
+> 5. **Uma chave só.** Não há tenant, cota, ACL nem prioridade; `GET /v1/models` lista todos os modelos carregados.
+> 6. **Sem endpoint de cancelamento.** Geração de chat cancela ao desconectar ou estourar o prazo; grafo de embeddings já enfileirado continua na fila do controller e roda quando um worker aparece.
+> 7. **Perna HTTP sem TLS.** Fora de loopback (com `AI_CLUSTER_INSECURE=1`), a chave trafega em claro.
+> 8. **Endpoints e campos ausentes.** `/v1/responses` não existe; `/v1/embeddings` é sintético; `temperature`, `n` e `stop` são ignorados (geração gulosa, uma escolha); não há `usage` no stream.
+> 9. **Erros ausentes.** `CANCELLED`, `AUTHORIZATION_FAILED` e `INTERNAL_ERROR` não são emitidos.
+> 10. **Sem contabilização de tokens** (`tokens_avoided`, tokens após otimização) e sem `Idempotency-Key`.
 
-Categorias:
-
-```text
-INVALID_REQUEST
-AUTHENTICATION_FAILED
-AUTHORIZATION_FAILED
-MODEL_NOT_FOUND
-MODEL_UNAVAILABLE
-CAPACITY_UNAVAILABLE
-TIMEOUT
-CANCELLED
-INTERNAL_ERROR
-SERVICE_UNAVAILABLE
-```
-
-Detalhes internos permanecem em trace/event/log, e não devem vazar para o consumidor indiscriminadamente.
-
-## 14. Descoberta de modelo
-
-```http
-GET /v1/models
-```
-
-A resposta deve expor somente modelos/variantes autorizados:
-
-```json
-{
-  "id": "llama-x-3.2-q4",
-  "object": "model",
-  "owned_by": "ai-cluster",
-  "context_length": 131072
-}
-```
-
-A existência física dos shards e nodes não faz parte do contrato público.
-
-## 15. Política de roteamento
-
-O cliente pode solicitar:
-
-```text
-model
-quality target
-latency target
-```
-
-Mas o cliente não escolhe:
-
-```text
-node
-shard
-worker
-transport
-placement
-```
-
-Essas decisões pertencem ao cluster.
-
-## 16. Headers de observabilidade
-
-A API deve retornar, quando apropriado:
-
-```text
-request_id
-trace_id
-model_id
-model_version
-usage
-```
-
-O consumidor pode então correlacionar sua própria telemetria com o cluster.
-
-## 17. Segurança
-
-A API externa deve ter:
-
-```text
-TLS
-authentication
-authorization
-rate limiting
-request size limits
-model ACL
-quota enforcement
-```
-
-O acesso do cliente termina na API. Não deve haver exposição direta dos endpoints do Worker.
-
-## 18. Isolamento multi-tenant
-
-Mesmo que o primeiro deployment seja single-tenant, o modelo deve permitir isolamento por:
-
-```text
-tenant
-application
-API key / identity
-quota
-model ACL
-priority policy
-```
-
-Isso evita uma migração arquitetural futura caso múltiplos consumidores sejam adicionados.
-
-## 19. API de administração
-
-A administração não usa a Inference API.
-
-```text
-Inference API
-  -> workload
-
-Management API / CLI
-  -> infrastructure
-```
-
-Exemplos de operações administrativas:
-
-```text
-nodes
-health
-models
-plans
-workers
-metrics
-traces
-events
-provisioning
-recovery
-```
-
-## 20. Limites de responsabilidade
-
-### API
-
-Responsável por:
-
-- receber requisições;
-- autenticar e autorizar;
-- validar;
-- normalizar;
-- iniciar/cancelar execução;
-- transmitir resposta;
-- expor uso e identificadores.
-
-### Cluster interno
-
-Responsável por:
-
-- otimização de contexto;
-- graph retrieval;
-- model selection;
-- planning;
-- scheduling;
-- state;
-- transport;
-- execução distribuída.
-
-## 21. Saúde da API
-
-A saúde da API deve ser separada da saúde do cluster.
-
-Exemplo:
-
-```text
-API = GREEN
-Cluster = YELLOW
-Capacity = 72%
-```
-
-O endpoint de health não deve depender de executar inferência real em cada chamada.
-
-## 22. Backpressure
-
-Se não houver capacidade suficiente, a API deve usar política explícita:
-
-```text
-queue
-reject
-retry-after
-fallback model
-```
-
-O cliente não deve abrir centenas de requisições em paralelo apenas para contornar capacidade insuficiente.
-
-## 23. Fallback
-
-O fallback interno pode existir:
-
-```text
-primary variant
-  |
-  +--> alternate variant
-  +--> alternate placement
-  +--> alternate model, se política permitir
-```
-
-Mas fallback de modelo deve ser explícito, porque pode alterar qualidade e comportamento.
-
-## 24. Contrato com agentes
-
-Hermes, Codex e outros agentes devem enxergar o cluster como um endpoint de inferência, não como uma coleção de workers.
-
-```text
-Agent
-  |
-  v
-Inference API
-  |
-  v
-AI Cluster
-```
-
-A API deve permanecer estável enquanto a topologia interna evolui.
+> [!todo] Falta
+> - Request Manager (admissão, fila por classe, quotas, orçamento, prioridades): [[request-manager]], [[fase-11-request-manager]].
+> - Edge Optimizer antes da alocação pesada: [[edge-optimizer]], [[fase-14-edge-optimizer]].
+> - Tenants, quotas, ACL de modelo e autorização de prioridade.
+> - Cancelamento por `request_id` (`DELETE`) que propaga até as Work Units.
+> - Contabilização de tokens e `usage` no stream.
+> - `/v1/responses`, `/v1/rerank`, `/v1/transcriptions`.
+> - TLS e autenticação mútua na perna de aplicações (ver [[seguranca]]).

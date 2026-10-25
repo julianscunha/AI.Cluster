@@ -1,13 +1,22 @@
 ---
-title: "Estabilidade do benchmark de compute"
-type: implementation
-status: implemented
-tags: [implementation, capability, benchmark, observability, phase-c]
+title: "F02 — Estabilidade do benchmark de compute"
+aliases: ["benchmark-stability", "C3 mediana"]
+tags: [implementacao/fase/02, implementacao/fatia, implementacao/estado/implementado]
+type: implementacao/fatia
+status: implementado
+superado: false
+fase: "[[fase-02-capability-e-saude]]"
+codigos-antigos: ["C3", "benchmark-stability"]
+sistema: ["[[capability-engine]]", "[[modelo-de-desempenho]]"]
+evidencia: ["code/tests/phase-c-current.sh"]
 ---
+# F02 — Estabilidade do benchmark de compute
 
-# Estabilidade do benchmark de compute
+- [ ] Superado
 
-O H5 mediu o erro do modelo de custo e o número veio grande: ~30× de subestimação em unidades
+## Objetivo
+
+A medição previsto × real ([[f05-previsto-vs-real]]) mostrou erro grande: ~30× de subestimação em unidades
 pequenas. Grande demais para saber de bate-pronto se o problema era o **modelo** ou a
 **medição**. O benchmark de compute reportava só o melhor caso — a execução mais sortuda entre
 N — e uma previsão calibrada contra um extremo é um ajuste no escuro: não dá para dizer se o
@@ -16,7 +25,7 @@ benchmark reportar a distribuição inteira: a **mediana** (a execução típica
 relativo** (o quanto as execuções discordaram). É o pré-requisito que o usuário pediu antes de
 calibrar por faixa de tamanho — primeiro um número estável, depois as bandas.
 
-## O que mudou
+## O que foi feito
 
 - `CapabilityReport.compute_median_score` e `CapabilityReport.compute_deviation` no proto: a
   mediana do benchmark de registro e o desvio relativo das suas execuções, ao lado de
@@ -32,7 +41,7 @@ calibrar por faixa de tamanho — primeiro um número estável, depois as bandas
 - `ai-cluster node show <id>` mostra `compute_median_score` e `compute_deviation`.
 - `placement::typical_ratio` e `placement::UNIT_SETUP_US` consomem a distribuição: a previsão de
   tempo usa a mediana como taxa típica — com `compute_deviation` como **guarda** — e soma o setup
-  por unidade que um termo de `flops / rate` não vê (`predictions.md`).
+  por unidade que um termo de `flops / rate` não vê ([[f05-previsto-vs-real]]).
 
 Sem dependência nova: um `Vec`, um `sort` e uma divisão.
 
@@ -82,7 +91,7 @@ CAPABILITY
 - `compute_median_score` nunca passa de `compute_score`: mesmo conjunto de execuções, o melhor
   caso é o máximo e a mediana é o centro. O E2E pina esse invariante.
 
-## Teto conhecido
+## Limites
 
 **Uma passada, não um histórico.** As cinco execuções são de um instante. Não há série temporal:
 um nó ocioso vota com o que mediu naquela janela. Alargar a janela (mais execuções, mediana
@@ -92,7 +101,7 @@ corta o erro do H5 para poucos por cento, e as bandas por faixa ficam para quand
 
 **A distribuição já alimenta a previsão.** `predicted_compute_us` passou a usar a mediana como
 taxa típica — `typical_ratio = compute_median_score / compute_score` — mais um termo de setup por
-unidade, em vez do melhor caso puro (`predictions.md`). O `compute_deviation` virou a **guarda**
+unidade, em vez do melhor caso puro ([[f05-previsto-vs-real]]). O `compute_deviation` virou a **guarda**
 dessa razão: acima de `DEVIATION_TRUST_LIMIT` a mediana e o melhor caso discordaram demais para a
 razão valer, e a previsão volta ao melhor caso em vez de confiar num número ruidoso. O 0.41 medido
 aqui está abaixo do limite, então a razão é usada — mas o limite existe porque um 0.41 de host
@@ -103,7 +112,12 @@ globais; uma banda por tamanho usaria o mesmo par mediana/desvio para escolher a
 faixa. Agora há número estável para mirar.
 
 **Só compute.** Mediana e desvio existem para o compute; memória, storage e rede continuam sem
-medida. É o mesmo teto do `capability-benchmark.md`.
+medida. É o mesmo teto do [[f02-benchmark-de-capability]].
+
+## Próximos passos
+
+- Bandas de calibração por faixa de tamanho, quando o `compute_deviation` cair.
+- Alargar a janela de execuções (mediana móvel) se o desvio se mostrar grande demais em nós dedicados.
 
 **O desvio é do host, não do nó.** Numa máquina dedicada os cinco números seriam quase iguais e
 o desvio ficaria perto de zero. O 0.41 medido aqui diz mais sobre o host compartilhado do

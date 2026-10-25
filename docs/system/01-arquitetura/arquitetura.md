@@ -1,13 +1,18 @@
 ---
-title: "AI Cluster — Architecture"
-type: system
-status: decided
-tags: [system, architecture]
+title: "AI Cluster — Arquitetura"
+aliases: ["ARCHITECTURE", "AI Cluster — Architecture", "Arquitetura", "docs/ARCHITECTURE"]
+tags: [sistema/arquitetura, moc]
+type: sistema/arquitetura
+status: decidido
+implementacao: parcial
+fases: ["[[fase-00-fundacao]]", "[[fase-01-nucleo-do-cluster]]", "[[fase-02-capability-e-saude]]", "[[fase-03-execucao-distribuida]]", "[[fase-04-escalonamento]]", "[[fase-05-observabilidade]]", "[[fase-06-estado-e-recuperacao]]", "[[fase-07-seguranca-base]]", "[[fase-08-inferencia]]", "[[fase-09-transporte]]", "[[fase-10-inteligencia-de-storage]]", "[[fase-11-request-manager]]", "[[fase-12-model-runtime]]", "[[fase-13-graph-engine]]", "[[fase-14-edge-optimizer]]", "[[fase-15-ai-cluster-os]]", "[[fase-16-aceleradores]]", "[[fase-17-runtime-adaptativo]]", "[[fase-18-worker-movel]]", "[[fase-19-hardening-de-producao]]"]
 ---
 
-# AI Cluster — Architecture
+# AI Cluster — Arquitetura
 
-Status: DECIDED baseline / v0.1
+Voltar para [[system]]. Este é o **documento mestre** da arquitetura-alvo. Os subsistemas são detalhados em [[subsistemas]]; as decisões em [[decisoes]]; o estado de cada decisão em [[estado-das-decisoes]].
+
+Baseline DECIDIDO, v0.1.
 
 ## 1. Objetivo
 
@@ -48,9 +53,9 @@ O sistema não deve ser desenhado apenas como “LLM cluster”. LLM é um workl
                               +----> Planner
 ```
 
-## 3. Application Plane e API de inferência
+## 3. Application Plane e Inference API
 
-O AI Cluster é uma infraestrutura de computação. Agentes, aplicações e orquestradores consomem sua capacidade exclusivamente através da Inference API.
+O AI Cluster é uma infraestrutura de computação. Agentes, aplicações e orquestradores consomem sua capacidade exclusivamente através da Inference API ([[inference-api]], [[adr-007-fronteira-inference-api]]).
 
 ```text
 Application Plane
@@ -64,17 +69,23 @@ AI Cluster
 
 Nenhum consumidor externo acessa diretamente Controller, Worker, shards, tensors ou estado interno. A API abstrai completamente a topologia interna.
 
-A interface administrativa permanece separada: CLI/TUI e Management API são destinadas à operação da infraestrutura.
+A interface administrativa permanece separada: CLI/TUI e Management API são destinadas à operação da infraestrutura ([[cli-tui]]).
+
+> [!warning] Desvio do MVP: o gateway executa o modelo
+> Hoje o gateway (`code/crates/gateway`) roda o modelo dentro do próprio processo, fora do cluster, e escolhe os nós de execução pelas variáveis de ambiente `AI_CLUSTER_GPT2_SHARDS` e `AI_CLUSTER_SMOLLM2_SHARDS`. No alvo, o gateway apenas traduz a API; a admissão passa pelo Request Manager e a escolha de nós pelo Planner e Scheduler. Migração: [[fase-11-request-manager]] (admissão) e [[fase-12-model-runtime]] (modelo e placement).
 
 ## 4. Request Manager
 
-Entre a Inference API e o motor distribuído existe um Request Manager. Ele controla admissão, quotas, fila, orçamento de tokens/recursos, cancelamento e ciclo de vida da Request.
+Entre a Inference API e o motor distribuído existe um Request Manager. Ele controla admissão, quotas, fila, orçamento de tokens/recursos, cancelamento e ciclo de vida da Request ([[request-manager]]).
 
 ```text
 Client -> Inference API -> Request Manager -> Planner -> Scheduler -> Workers
 ```
 
 O Request Manager decide se a request pode entrar e em quais condições. O Scheduler continua responsável pelo placement e uso dos recursos concretos.
+
+> [!todo] Não implementado
+> Não há Request Manager. A admissão é feita diretamente pelo gateway, sem fila, quota ou orçamento. Ver [[fase-11-request-manager]].
 
 ## 5. Control Plane
 
@@ -105,7 +116,7 @@ Responsável por:
 
 ## 7. AI Cluster OS
 
-Cada node deve operar o mesmo runtime lógico em Linux, com imagens específicas por arquitetura/hardware apenas quando necessário.
+Cada node deve operar o mesmo runtime lógico em Linux, com imagens específicas por arquitetura/hardware apenas quando necessário ([[ai-cluster-os]]).
 
 Estrutura conceitual:
 
@@ -122,11 +133,14 @@ AI Cluster OS
 `- Security / Identity
 ```
 
-O OS é imutável ou controlado por imagens versionadas. O ingresso inicial reimaging deve poder apagar o sistema anterior e instalar uma imagem limpa.
+O OS é imutável ou controlado por imagens versionadas. O ingresso inicial reimaging deve poder apagar o sistema anterior e instalar uma imagem limpa ([[adr-002-os-imutavel]]).
+
+> [!todo] Não implementado
+> A imagem imutável, o bootstrap e o reimage ainda não existem. Ver [[fase-15-ai-cluster-os]].
 
 ## 8. Provisionamento
 
-Fluxo previsto:
+Fluxo previsto ([[provisionamento]]):
 
 ```text
 Existing Linux / bootstrap
@@ -143,11 +157,11 @@ Existing Linux / bootstrap
  -> READY
 ```
 
-PCs e servidores podem utilizar PXE/iPXE. Dispositivos móveis dependem de bootloader/firmware capazes de aceitar a estratégia de reimagem escolhida.
+PCs e servidores podem utilizar PXE/iPXE. Dispositivos móveis dependem de bootloader/firmware capazes de aceitar a estratégia de reimagem escolhida ([[fase-18-worker-movel]]).
 
-## 7. Modelo de execução
+## 9. Modelo de execução
 
-A unidade abstrata de trabalho é a `WorkUnit`. O fluxo é:
+A unidade abstrata de trabalho é a `WorkUnit` ([[work-unit]]). O fluxo é:
 
 ```text
 Request
@@ -167,11 +181,11 @@ Request
 
 A separação fundamental é:
 
-- **WHAT** — Execution Graph.
-- **WHERE** — Placement Plan.
-- **HOW** — Worker Runtime.
+- **WHAT** — Execution Graph ([[execution-graph]]).
+- **WHERE** — Placement Plan ([[execution-planner]], [[scheduler]]).
+- **HOW** — Worker Runtime ([[worker-runtime]]).
 
-## 8. Grafos
+## 10. Grafos
 
 O sistema terá pelo menos:
 
@@ -182,9 +196,9 @@ O sistema terá pelo menos:
 5. Dependency Graph.
 6. Observability/Incident Graph.
 
-O grafo é uma projeção operacional e/ou índice relacional de objetos do sistema. A perda do grafo não deve destruir a fonte de verdade primária.
+O grafo é uma projeção operacional e/ou índice relacional de objetos do sistema. A perda do grafo não deve destruir a fonte de verdade primária ([[adr-004-grafo-como-projecao]], [[modelo-de-grafo]], [[graph-engine]]).
 
-## 9. Memória e storage
+## 11. Memória e storage
 
 A hierarquia padrão é:
 
@@ -206,9 +220,9 @@ O AI Cluster OS deve detectar automaticamente:
 - temperatura;
 - desgaste/endurance.
 
-Em SSD/NVMe saudáveis, o sistema deve aproveitar o armazenamento para swap, model cache, tensor cache, checkpoint e staging, respeitando reserva operacional e desgaste. Swap é fallback de memória; cache é recurso de desempenho e deve ser tratado separadamente.
+Em SSD/NVMe saudáveis, o sistema deve aproveitar o armazenamento para swap, model cache, tensor cache, checkpoint e staging, respeitando reserva operacional e desgaste. Swap é fallback de memória; cache é recurso de desempenho e deve ser tratado separadamente ([[storage-intelligence]], [[adr-005-camadas-de-storage]]).
 
-## 10. Hot-plug
+## 12. Hot-plug
 
 Entrada:
 
@@ -240,11 +254,11 @@ ACTIVE
  -> replan
 ```
 
-A topologia lógica da execução pode continuar enquanto o placement é substituído.
+A topologia lógica da execução pode continuar enquanto o placement é substituído ([[hotplug-e-recuperacao]], [[adr-006-hotplug]]).
 
-## 11. Capacidade
+## 13. Capacidade
 
-Capacidade não deve ser um único score absoluto. O perfil é multidimensional:
+Capacidade não deve ser um único score absoluto. O perfil é multidimensional ([[capability-engine]]):
 
 ```text
 compute
@@ -272,9 +286,9 @@ COMPRESSION
 
 O desempenho real corrige o benchmark inicial.
 
-## 12. Modelo de desempenho
+## 14. Modelo de desempenho
 
-A previsão deve considerar, no mínimo:
+A previsão deve considerar, no mínimo ([[modelo-de-desempenho]]):
 
 ```text
 Ttotal = Tcompute + Tcommunication + Tserialization + Tmemory + Tqueue
@@ -292,9 +306,9 @@ O cluster deve expor:
 - expected throughput;
 - actual throughput.
 
-## 13. Inteligência de edge
+## 15. Inteligência de edge
 
-Antes de inferência pesada, o sistema deve tentar:
+Antes de inferência pesada, o sistema deve tentar ([[edge-optimizer]]):
 
 ```text
 classify
@@ -312,11 +326,11 @@ classify
 
 O princípio é maximizar **useful work**, não simplesmente tokens/second.
 
-## 14. Observabilidade
+## 16. Observabilidade
 
-Métricas, eventos e traces são separados.
+Métricas, eventos e traces são separados ([[observabilidade]]).
 
-O node terá estados de saúde, capacidade e confiança independentes.
+O node terá estados de saúde, capacidade e confiança independentes ([[saude-e-confianca]]).
 
 Exemplo:
 
@@ -327,36 +341,50 @@ Trust: TRUSTED
 State: ACTIVE
 ```
 
-## 15. Dependências tecnológicas iniciais
+## 17. Pilha tecnológica
 
-PROPOSED:
+A pilha inicial segue o [[adr-008-stack-inicial]]. São escolhas de implementação do primeiro protótipo, não contratos irreversíveis.
 
-- Linux como base do AI Cluster OS.
-- x86_64 e ARM64 como primeiras arquiteturas.
-- gRPC + Protobuf para control plane.
-- transporte abstrato com TCP/Ethernet, USB e possibilidade futura de RDMA.
-- TUI baseada em shell.
-- armazenamento de metadata em banco relacional.
-- armazenamento temporal para métricas.
-- object storage para artefatos grandes.
-- camada de grafo como projeção, não necessariamente como única base.
+| Camada | Escolha | Estado |
+|---|---|---|
+| Linguagem | Rust, edition 2024 | Decidido; implementado em `code/` |
+| Runtime assíncrono | tokio | Decidido; implementado |
+| RPC do control plane | gRPC sobre HTTP/2 (tonic 0.14) | Decidido; implementado |
+| Schema | Protocol Buffers (prost 0.14, tonic-prost); `protoc` vendorizado no build (`protoc-bin-vendored`) | Decidido; implementado (`code/proto/cluster.proto`) |
+| TLS | rustls via tonic (`tls-ring`) | Implementado em [[fase-07-seguranca-base]]; mTLS em [[fase-19-hardening-de-producao]] |
+| CLI | clap 4 | Decidido; implementado |
+| TUI | Dashboard de texto no CLI (`dashboard --watch`); TUI full-screen com ratatui | Dashboard implementado; ratatui planejado |
+| Base Linux | Distribuição a definir | Proposto ([[adr-001-base-linux]]) |
+| Transporte | TCP/Ethernet, USB, RDMA futuro | gRPC/TCP implementado; abstração em [[fase-09-transporte]] |
+| Metadados | banco relacional | Proposto; hoje snapshot em arquivo (`AI_CLUSTER_STATE`) |
+| Métricas temporais | time-series | Proposto; hoje roll-up em memória no controller |
+| Artefatos grandes | object storage | Proposto; não implementado |
+| Grafo | projeção, não necessariamente a única base | Decidido ([[adr-004-grafo-como-projecao]]); tecnologia aberta |
 
-Essas escolhas devem ser validadas durante o MVP.
+> [!warning] Desvio do MVP: estado em arquivo
+> O controller persiste o estado em um arquivo de snapshot (`AI_CLUSTER_STATE`) e não em banco relacional. A escolha definitiva de storage de metadados segue aberta ([[estado-das-decisoes]]).
 
-## 16. Estratégia de desenvolvimento
+Arquiteturas-alvo: x86_64 e ARM64 ([[fase-16-aceleradores]]). O núcleo do protocolo é neutro a arquitetura ([[principios]], P-013).
 
-O projeto deve começar com um cluster mínimo CPU-only, validando:
+> [!info] O que já existe
+> Resumo verificado em `code/`; detalhes em cada subsistema.
+> - Controller com registry, placement por custo (`code/crates/controller/src/placement.rs`), reservas, eventos, métricas e exporter: [[f04-placement]], [[f04-reservas]], [[f05-eventos]], [[f05-metricas]].
+> - Worker com execução de Work Units de matriz, checksum do resultado e classe de armazenamento por dispositivo (HDD como COLD, SSD/NVMe como WARM): [[f02-capability-corrente]], [[f10-classes-de-armazenamento]].
+> - Protocolo gRPC com `ShardChannel`, `ShardMatmul`, `ProbeLink`, `GetTrace` e `Reserve`: [[protocolo-controller-worker]], [[canal-de-fatias]].
+> - Gateway com chave de API e rotas `/v1/models`, `/v1/embeddings` e `/v1/chat/completions`: [[f08-gateway-e-api]].
+> - Inference Engine em CPU para GPT-2 small e SmolLM2-135M, com paridade contra `transformers` e KV cache: [[f08-engine-local]], [[f08-chat-completions]].
+> - CLI com comandos operacionais e dashboard: [[cli-tui]], [[f05-dashboard]].
 
-1. discovery;
-2. provisioning;
-3. identity;
-4. heartbeat;
-5. benchmark;
-6. Work Unit;
-7. transport;
-8. scheduler;
-9. telemetry;
-10. hot-plug;
-11. execução matemática distribuída.
+> [!todo] O que falta
+> - Request Manager ([[fase-11-request-manager]]).
+> - Model Runtime distribuído: registry, shards por variante, pipeline/tensor/híbrido ([[fase-12-model-runtime]]).
+> - Graph engine e Edge optimizer ([[fase-13-graph-engine]], [[fase-14-edge-optimizer]]).
+> - AI Cluster OS, provisionamento e reimage ([[fase-15-ai-cluster-os]]).
+> - Aceleradores, worker móvel, runtime adaptativo e hardening ([[fase-16-aceleradores]], [[fase-17-runtime-adaptativo]], [[fase-18-worker-movel]], [[fase-19-hardening-de-producao]]).
+> - Storage inteligente completo: alocação dinâmica de HOT/WARM/COLD ([[fase-10-inteligencia-de-storage]]).
 
-Somente depois devem entrar LLM, quantização, GPU/NPU e dispositivos móveis.
+## Navegação
+
+- [[estado-das-decisoes]] — decidido, proposto, experimental e aberto.
+- [[visao]] — visão, princípios e requisitos.
+- [[subsistemas]], [[protocolo]], [[modelo-de-dados]], [[decisoes]] — os demais MOCs da área de sistema.

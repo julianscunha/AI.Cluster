@@ -4,7 +4,7 @@
 # Critério verificado: o nó reporta a própria rede como capability, e esse número é o que o
 # modelo de placement usa para decidir onde a unidade roda. É descoberta, não benchmark: a
 # velocidade *nominal* do link, relativa à referência de 1 GbE. Medir a taxa alcançada sob
-# carga e a latência é a fatia de benchmark (docs/05), não esta.
+# carga e a latência é a fatia de benchmark (capability-engine), não esta.
 #
 # Sequência:
 #   A) nó real: o detalhe traz `rede_score=`, a velocidade do link sobre 1 GbE. Um veth de

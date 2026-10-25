@@ -1,27 +1,30 @@
 ---
 title: "ADR-007 — API como fronteira entre Application Plane e AI Cluster"
-type: adr
-status: decided
-tags: [adr, inference-api-boundary]
+aliases: ["ADR-007", "ADR-007 — API como fronteira entre Application Plane e AI Cluster"]
+tags: [sistema/adr, subsistema/ia]
+type: sistema/adr
+status: decidido
+implementacao: parcial
+fases: ["[[fase-08-inferencia]]"]
 ---
 
 # ADR-007 — API como fronteira entre Application Plane e AI Cluster
 
-Status: DECIDED
+Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
-O AI Cluster é uma infraestrutura especializada em otimização e execução de cargas de IA. Agentes, aplicações e orquestradores possuem responsabilidades diferentes, como interação com usuário, uso de ferramentas, workflows e lógica de negócio.
+O AI Cluster é uma infraestrutura especializada em otimização e execução de cargas de IA. Agentes, aplicações e orquestradores têm outras responsabilidades: interação com usuário, uso de ferramentas, workflows e lógica de negócio.
 
-Expor o Data Plane diretamente faria o cluster acumular responsabilidades que não são sua especialidade e criaria acoplamento com cada agente.
+Expor o Data Plane diretamente faria o cluster acumular responsabilidades fora da sua especialidade e criaria acoplamento com cada agente.
 
 ## Decisão
 
-O AI Cluster será consumido por meio de uma **Inference API**. Nenhum cliente externo acessará diretamente Controller, Worker, Model Shard, Tensor ou State Store.
+O AI Cluster é consumido por meio de uma **Inference API** ([[inference-api]]). Nenhum cliente externo acessa diretamente Controller, Worker, Model Shard, Tensor ou State Store.
 
-Agentes como Hermes, Codex, aplicações próprias e orquestradores poderão consumir o cluster através da API.
+Agentes como Hermes e Codex, aplicações próprias e orquestradores consomem o cluster pela API.
 
-A interface inicial buscará compatibilidade com APIs de inferência de LLM amplamente utilizadas, sem obrigar o protocolo interno a seguir a mesma representação.
+A interface inicial busca compatibilidade com APIs de inferência de LLM amplamente usadas, sem obrigar o protocolo interno a seguir a mesma representação.
 
 ## Consequências
 
@@ -42,4 +45,16 @@ Negativas:
 
 ## Regra
 
-A Inference API é a única fronteira suportada para workloads externos. Interfaces de administração e protocolos internos permanecem separados.
+A Inference API é a única fronteira suportada para cargas externas. Interfaces de administração e protocolos internos ficam separados.
+
+## Alternativas
+
+- Expor o Data Plane diretamente: descartado pelo acoplamento descrito no contexto.
+
+> [!warning] Desvio do MVP
+> O gateway hoje roda o modelo dentro do próprio processo (GPT-2 e SmolLM2, com as projeções opcionalmente nos workers) e não há Request Manager. A fronteira é respeitada para clientes, que só falam HTTP com a chave de API, mas o gateway ainda acumula o papel de engine. A migração prevista está em [[request-manager]] e [[inference-engine]].
+
+> [!info] O que já existe
+> Gateway HTTP com `/v1/models`, `/v1/embeddings` e `/v1/chat/completions` (streaming incluso), autenticado por chave de API separada dos tokens do cluster ([[f08-gateway-e-api]], [[fase-08-inferencia]]). Ver [[adr-010-papeis-de-credencial]].
+
+> [!todo] Request Manager (admissão, filas, cotas, prioridades) e ACL por modelo ficam em [[fase-11-request-manager]].

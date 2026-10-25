@@ -1,23 +1,17 @@
----
-title: "AI Cluster — Esqueleto da Fase 0"
-type: operational
-status: living
-tags: [operational, readme]
----
+# AI Cluster — workspace Rust
 
-# AI Cluster — Esqueleto da Fase 0
+Workspace do AI Cluster: controller, workers, CLI, gateway de inferência e o motor de inferência em CPU. A documentação (arquitetura, fases, status) está em [`../docs/inicio.md`](../docs/inicio.md); o estado do que está implementado, em [`../docs/implementation/status.md`](../docs/implementation/status.md).
 
-Este é o esqueleto de implementação da Fase 0 do projeto AI Cluster.
+## Comandos
 
-O primeiro objetivo não é inferência de LLM. É validar o substrato de execução distribuída:
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
 
-- protocolo Controller/Worker
-- identidade de nó
-- heartbeat
-- reporte de capabilities
-- ciclo de vida da Work Unit
-- abstração de transporte
-- harness de benchmark
-- fronteira CLI/TUI
+Testes E2E: `bash tests/<script>.sh` (mapa em [`../docs/implementation/transversal/evidencias-e2e.md`](../docs/implementation/transversal/evidencias-e2e.md)). Os de inferência com modelo exigem os pesos em `models/` (veja [`../docs/implementation/08-inferencia/f08-engine-local.md`](../docs/implementation/08-inferencia/f08-engine-local.md)).
 
-Nenhum runtime de LLM de produção está incluído nesta fase.
+## Layout
+
+`crates/{common,protocol,controller,worker,transport,benchmark,cli,engine,gateway}`, `proto/cluster.proto`, `tests/`, `os/` (imagem do AI Cluster OS, ainda não iniciada: fase F15).
