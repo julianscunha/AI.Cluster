@@ -51,6 +51,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// SSD, the same "1.0 is a reference device" scale as the compute and network scores.
 const STORAGE_PROBE_BYTES: usize = 16 * 1024 * 1024;
 const REFERENCE_STORAGE_MBPS: f64 = 500.0;
+/// Memory probe (C2): a 32 MiB copy, well past any cache, best of `PROBE_RUNS`. The reference
+/// is ~10 GB/s of single-thread copy, a common DDR4 desktop core.
+const MEMORY_PROBE_BYTES: usize = 32 * 1024 * 1024;
+const REFERENCE_MEMORY_MBPS: f64 = 10_000.0;
 
 /// The copy of the controller's state this node keeps, if it was asked to keep one (I4).
 ///
@@ -916,6 +920,24 @@ fn storage_score() -> f64 {
     best / REFERENCE_STORAGE_MBPS
 }
 
+/// Single-thread copy rate over the reference, or zero when the clock gave nothing usable.
+/// Best of N for the same reason as compute: contention only slows a run. Copy, not read,
+/// because a read the compiler can see is unused gets optimised away.
+/// shortcut: one thread, so it under-reports multi-channel nodes; upgrade when placement needs
+/// the aggregate bandwidth of a memory-bound unit.
+fn memory_bandwidth_score() -> f64 {
+    let source = vec![1u8; MEMORY_PROBE_BYTES];
+    let mut target = vec![1u8; MEMORY_PROBE_BYTES]; // non-zero: touches the pages now, no calloc faults in run 1
+    let mut best = 0.0f64;
+    for _ in 0..PROBE_RUNS {
+        let started = Instant::now();
+        target.copy_from_slice(std::hint::black_box(&source));
+        std::hint::black_box(&target);
+        best = best.max(achieved_mbps(MEMORY_PROBE_BYTES, started.elapsed()) / 8.0);
+    }
+    best / REFERENCE_MEMORY_MBPS
+}
+
 fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
@@ -946,6 +968,7 @@ fn capability() -> CapabilityReport {
         compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
         storage_score: storage_score(),
+        memory_bandwidth_score: memory_bandwidth_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
         ..Default::default()
@@ -1531,6 +1554,11 @@ mod tests {
         assert!((normalize_network_score(1000.0) - 1.0).abs() < 1e-9);
         assert!((normalize_network_score(10_000.0) - 10.0).abs() < 1e-9);
         assert!((normalize_network_score(100.0) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn memory_probe_reports_a_positive_rate() {
+        assert!(memory_bandwidth_score() > 0.0);
     }
 
     #[test]

@@ -38,7 +38,7 @@ Derivado de EP §4 (C1–C4), roadmap Fase 1 (capabilities e health) e `phases.m
 - [~] Compute medido no worker, com o matmul no próprio kernel das unidades ([[f02-benchmark-de-capability]]).
 - [~] Rede medida: sonda `ProbeLink` de upload no registro, em `network_achieved_score` ([[f02-descoberta-de-rede]]).
 - [~] Storage: escrita sequencial com fsync em `storage_score`; só o dispositivo do tmp, sem consumidor.
-- [ ] Memória não é medida sob carga.
+- [~] Memória: banda de cópia single-thread em `memory_bandwidth_score` ([[f02-benchmark-de-capability]]); sem consumidor no placement e sem medida sob carga concorrente.
 
 **C3 — Capability model**
 
@@ -55,12 +55,12 @@ Derivado de EP §4 (C1–C4), roadmap Fase 1 (capabilities e health) e `phases.m
 
 Critério de saída: **adicionar nó produz capability profile reproduzível**.
 
-- [~] O compute do perfil é reproduzível por benchmark. Memória, storage, rede e kernels de acelerador ainda não são medidos.
+- [~] O compute do perfil é reproduzível por benchmark. Storage e rede têm sonda de registro; a memória tem só a banda single-thread; kernels de acelerador não são medidos.
 
 Gate padrão de fase: código ✔ · benchmark ✔ (`code/tests/phase-c-benchmark.sh`, `phase-c-current.sh`) · telemetria ✔ (`CPU_%`, `TEMP_C`, `SWAP_%`, `rede_*` no detalhe do nó) · teste de falha ✔ (taxa absurda ou benchmark quebrado cai no fallback, nunca pontua alto) · documentação ✔ · ADR: pendente de registro específico.
 
 > [!todo] Pendente
-> Memória sob carga, storage health, baseline de temperatura por hardware, latência de rede e aceleradores. Bandas de calibração por faixa de tamanho ficaram para depois de existir desvio estável.
+> Memória sob carga concorrente, storage health, baseline de temperatura por hardware, latência de rede e aceleradores. Bandas de calibração por faixa de tamanho ficaram para depois de existir desvio estável.
 
 ## Slices
 

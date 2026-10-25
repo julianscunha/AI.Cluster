@@ -78,10 +78,21 @@ entre contêineres no mesmo host, não do hardware.
 Coberto por `a_reference_speed_core_scores_one`, `a_nonsensical_rate_falls_back_instead_of_scoring_high`
 e `the_compute_benchmark_reports_a_positive_rate` no worker.
 
+## Banda de memória
+
+`worker::memory_bandwidth_score` copia 32 MiB (além de qualquer cache) e fica com a melhor de 3
+corridas, como o compute. Normaliza sobre `REFERENCE_MEMORY_MBPS` = 10 GB/s (1.0 ≈ um core DDR4
+comum) e vai em `memory_bandwidth_score`; a CLI mostra `mem_bw=` no detalhe do nó. Zero é "não
+medido". Teste unitário `memory_probe_reports_a_positive_rate`; sem E2E e sem consumidor no
+placement ainda.
+
+> [!todo] Limite do atalho
+> Single-thread: subestima nós multicanal. Medir com várias threads e sob carga concorrente quando
+> o placement precisar da banda agregada de uma unidade limitada por memória.
+
 ## Limites
 
-**Só compute.** Memória, storage, rede e kernels de acelerador não são medidos — a fatia
-entrega o score de compute. O modelo de custo já lê `network_score` com fallback 1.0
+**Compute e banda de memória.** Storage e rede têm sonda própria; kernels de acelerador não são medidos. O modelo de custo já lê `network_score` com fallback 1.0
 enquanto não há medição.
 
 **Só um score.** [[capability-engine]] pede um perfil (`general_compute`, `matmul_int4`, `memory_bandwidth`,

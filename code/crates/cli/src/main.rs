@@ -470,8 +470,13 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
     } else {
         "-".to_string()
     };
+    let memory_score = if capability.memory_bandwidth_score > 0.0 {
+        format!("{:.2}", capability.memory_bandwidth_score)
+    } else {
+        "-".to_string()
+    };
     println!(
-        "  armazenamento={} armaz_score={storage_score} precisoes={} aceleradores={}",
+        "  armazenamento={} armaz_score={storage_score} mem_bw={memory_score} precisoes={} aceleradores={}",
         list_or_dash(&capability.storage_classes),
         list_or_dash(&capability.precisions),
         list_or_dash(&capability.accelerators),
