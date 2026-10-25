@@ -28,15 +28,16 @@ Responder, para qualquer requisição de teste, por que ela demorou: eventos de 
 | Traces por requisição (`request trace`) | [x] | [[f05-traces]] |
 | Painel de uma tela (`dashboard`) | [x] | [[f05-dashboard]] |
 | Previsto vs real (erro do modelo de custo) | [x] | [[f05-previsto-vs-real]] |
+| Métricas de inferência: TTFT, ITL, tokens/s, KV cache (`GET /metrics` no gateway) | [x] | [[f05-metricas-de-inferencia]] |
 
 ## Checklist
 
 Fonte: EP §9 (H1–H5), roadmap seção Observabilidade e EP §8/§9 "critério de saída".
 
-- [x] H1 Metrics: nós totais e disponíveis, fila, tempos de compute e latência com médias e percentis p50/p95, sinais de nó (CPU, swap, temperatura, IOPS) e exportador Prometheus. Rede nominal; storage score e métricas de LLM não.
+- [x] H1 Metrics: nós totais e disponíveis, fila, tempos de compute e latência com médias e percentis p50/p95, sinais de nó (CPU, swap, temperatura, IOPS) e exportador Prometheus. Rede nominal; storage score não. Métricas de LLM no gateway ([[f05-metricas-de-inferencia]]).
 - [x] H2 Events: lifecycle e incidentes, ring buffer de 256 eventos.
 - [x] H3 Traces: request → Work Unit → transferência → compute, com `request_id` ligando as unidades. Persistir a correlação além de restart não.
-- [x] H4 TUI / dashboard: painel em shell sobre as chamadas existentes. TTFT, ITL, tokens/s e KV cache não (sem fonte).
+- [x] H4 TUI / dashboard: painel em shell sobre as chamadas existentes. TTFT, ITL, tokens/s e KV cache existem no `/metrics` do gateway, mas o painel ainda não os lê.
 - [x] H5 Previsto vs real: o modelo de custo prevê tempo; trace e roll-up mostram a previsão ao lado da medição.
 - [x] Critério de saída: toda requisição de teste tem trace completo e métricas suficientes para explicar sua latência.
 
@@ -47,12 +48,12 @@ Gate padrão (EP §19): código, benchmark, telemetria, teste de falha, doc e AD
 - [x] Código: `code/crates/controller/src/{events,metrics,exporter}.rs`, CLI `ai-cluster`.
 - [x] Benchmark: `phase-h-predictions.sh` fixa a aritmética do modelo; `phase-h-traces.sh` mostra o erro em requisição real.
 - [x] Telemetria: esta fase é a telemetria.
-- [~] Teste de falha: a perda de nó é coberta por `code/tests/phase-2-failure.sh` (F03), mas nenhum script verifica o evento `node_offline` em `events` de ponta a ponta.
+- [x] Teste de falha: `code/tests/phase-2-failure.sh` mata um worker em voo e agora verifica o evento `node_offline` em `events`.
 - [x] Doc: os cinco slices desta pasta.
-- [ ] ADR: nenhum ADR específico da fase identificado; confirmar.
+- [x] ADR: [[adr-012-metricas-de-inferencia-no-gateway]].
 
 > [!warning] Tetos transversais
-> Nada de série temporal: métricas são instantâneos sobre o que o controller ainda retém. Métricas de inferência (TTFT, ITL, tokens) dependem de [[fase-08-inferencia]] e não existem. Rede e storage score são nominais ou ausentes.
+> Nada de série temporal: métricas são instantâneos sobre o que o controller ainda retém. As métricas de inferência vivem no gateway, sem histórico além das últimas 1024 amostras. Rede e storage score são nominais ou ausentes.
 
 ## Slices
 
@@ -60,6 +61,7 @@ Gate padrão (EP §19): código, benchmark, telemetria, teste de falha, doc e AD
 - [[f05-metricas]]: roll-up do cluster, percentis nearest-rank, sinais de nó do `/proc` e exportador Prometheus.
 - [[f05-traces]]: `request_id` no work unit, `GetTrace` e `ai-cluster request trace`.
 - [[f05-dashboard]]: painel `ai-cluster dashboard [--watch N]` sobre `ListNodes`, `GetMetrics` e `ListReservations`.
+- [[f05-metricas-de-inferencia]]: `Sampler` por geração, p50/p95 de TTFT e ITL, tokens/s e KV cache no `GET /metrics` do gateway.
 - [[f05-previsto-vs-real]]: previsão de tempo por unidade, correção por taxa típica e setup, erro percentual por requisição e no cluster.
 
 ## Códigos antigos

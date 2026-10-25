@@ -24,6 +24,8 @@ Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, de
 | [[adr-009-canal-residente-de-fatias]] | decidido | 2026-10-24 | Fatiar projeções com pesos residentes nos workers e canal bidirecional pelo controller |
 | [[adr-010-papeis-de-credencial]] | decidido | 2026-10-23 a 10-24 | Join, operador, inferência, credencial por nó e chave de API, cada um com segredo próprio e falha fechada |
 | [[adr-011-escalonamento-por-custo]] | decidido | 2026-10-25 | O nó pede, o controller decide por custo com histerese; prioridade com envelhecimento, slots no worker e quarentena por evidência |
+| [[adr-013-estado-do-controller-e-recuperacao]] | decidido | 2026-10-25 | Snapshot atômico do conjunto vivo, posse preguiçosa, dois relógios de recuperação, cópia num nó e eventos em arquivo |
+| [[adr-012-metricas-de-inferencia-no-gateway]] | decidido | 2026-10-25 | O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração e os expõe em `GET /metrics` |
 
 ## Notas
 

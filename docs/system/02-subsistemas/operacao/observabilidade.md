@@ -38,6 +38,9 @@ Alvo: tokens de entrada, de saída e em cache, tokens evitados, TTFT, ITL, throu
 geração, tamanho de contexto e uso do cache KV. Dependem do motor de inferência e do Request Manager
 ([[inference-engine]], [[request-manager]]).
 
+> [!info] O que já existe
+> O gateway mede TTFT, ITL, tokens por segundo, tokens de entrada e saída e o tamanho do cache KV de cada geração, e os expõe em `GET /metrics` ([[f05-metricas-de-inferencia]], [[adr-012-metricas-de-inferencia-no-gateway]]). Tokens em cache e evitados, throughput de prompt e o painel ainda não.
+
 ## Eventos
 
 Alvo: mudanças de estado do cluster, como entrada e saída de nó, degradação, perda de nó, alerta de

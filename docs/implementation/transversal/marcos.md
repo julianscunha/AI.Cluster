@@ -56,7 +56,7 @@ Parcial: a classificação existe; medição de latência, SMART e alocação po
 Fase: [[fase-12-model-runtime]] (com trabalho já feito em [[fase-08-inferencia]])
 
 - [~] modelo dividido entre vários nós CPU — só as projeções do GPT-2 e da SmolLM2 são distribuídas em workers ([[f08-canal-residente-de-fatias]], `code/tests/phase-j-shards.sh`);
-- [ ] métricas de inferência esperado/real coletadas — não há TTFT, ITL nem tokens/s;
+- [~] métricas de inferência coletadas: TTFT, ITL, tokens/s e KV cache no gateway ([[f05-metricas-de-inferencia]]); o esperado/real de tokens ainda não;
 - [~] overhead de comunicação visível — o gateway mede o tempo por chamada (rede + relay + cálculo), sem decompor no trace.
 
 ## M5 — Otimização de borda

@@ -10,6 +10,11 @@ pub trait LanguageModel {
 
     fn new_cache(&self) -> KvCache;
 
+    /// Bytes the KV cache holds per position (keys and values of every layer), zero if unknown.
+    fn kv_bytes_per_position(&self) -> usize {
+        0
+    }
+
     /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,
     /// and returns the logits for the token that follows the last of them.
     fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String>;

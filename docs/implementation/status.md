@@ -21,7 +21,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-02-capability-e-saude\|F02]] | Capability e saúde | `[~]` | perfil reproduzível | faltam memória sob carga, aceleradores e saúde de storage |
 | [[fase-03-execucao-distribuida\|F03]] | Execução distribuída | `[x]` | perder um worker não corrompe o DAG | — |
 | [[fase-04-escalonamento\|F04]] | Escalonamento | `[x]` | melhor que round-robin | G4 `[~]` (sem GPU/NPU); G1 trust `[~]` (quarentena automática `[x]`; níveis por enrollment `[ ]`) |
-| [[fase-05-observabilidade\|F05]] | Observabilidade | `[x]` | toda requisição com trace e métricas | sem TTFT, ITL, tokens/s, KV cache |
+| [[fase-05-observabilidade\|F05]] | Observabilidade | `[x]` | toda requisição com trace e métricas | métricas de LLM só no `/metrics` do gateway; painel não as lê |
 | [[fase-06-estado-e-recuperacao\|F06]] | Estado e recuperação | `[x]` | recupera de falha planejada e abrupta | estado por chave não replicado (vai para F12) |
 | [[fase-07-seguranca-base\|F07]] | Segurança base | `[x]` | nó desconhecido não recebe trabalho (NFR-011) | mTLS e attestation vão para F19 |
 | [[fase-08-inferencia\|F08]] | Inferência | `[~]` | logits idênticos local × fatiado; 503 sem pendurar | gateway concentra o modelo; sem Request Manager |
@@ -79,11 +79,13 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 - `[x]` [[f05-traces]] — `request_id` liga requisição às unidades. Não persiste além de restart.
 - `[x]` [[f05-dashboard]] — `ai-cluster dashboard [--watch N]`. Campos de LLM ausentes por falta de fonte.
 - `[x]` [[f05-previsto-vs-real]] — previsão de tempo por unidade e no roll-up; erro caiu de ~32× para poucos por cento.
+- `[x]` [[f05-metricas-de-inferencia]] — TTFT, ITL, tokens/s e KV cache no `GET /metrics` do gateway; o painel ainda não os lê.
 
 ### F06 — Estado e recuperação `[x]`
 
 - `[x]` [[f06-persistencia-e-checkpoint]] — snapshot da fila e dos donos em voo; checkpoint podado. Ainda é snapshot, não journal. Registry e eventos não sobrevivem a restart.
 - `[x]` [[f06-recuperacao]] — restart do controller com unidade em voo; cópia do estado num nó (promoção de réplica). Estado por chave (KV cache, execution state, model state) não existe.
+- `[x]` [[f06-eventos-persistidos]] — `AI_CLUSTER_EVENTS`: a linha do tempo de eventos atravessa o restart do controller.
 
 ### F07 — Segurança base `[x]`
 
@@ -128,7 +130,7 @@ Estes itens estavam defasados nas fontes antigas e foram corrigidos aqui:
 |---|---|---|
 | EP G1 | trust "sem identidade por nó, sem TLS" | S3b (credencial por nó) e S4 (TLS) existem. F07 `[x]`. |
 | EP K1 | detecção HDD/SSD/NVMe `[ ]` | `/sys/block` classifica por nó (I2, `phase-i-storage.sh`). |
-| EP H4 | "TUI" `[x]` sem detalhe | `ai-cluster dashboard`, sem TTFT/ITL/tokens/s. |
+| EP H4 | "TUI" `[x]` sem detalhe | `ai-cluster dashboard`; TTFT/ITL/tokens/s só no `/metrics` do gateway. |
 | STATUS | "TUI não iniciada" | existe (`dashboard`, F05). |
 | STATUS | "storage com detecção HDD/SSD/NVMe `[ ]`" | classes detectadas `[x]`; políticas `[ ]`. |
 | STATUS | "performance model expected vs actual `[ ]`" | `[x]` (F05, previsto vs real). |

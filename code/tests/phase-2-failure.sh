@@ -64,3 +64,8 @@ run "$R/ai-cluster nodes"
 
 echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -20
+
+echo "=== o evento node_offline e o reenfileiramento aparecem em events ==="
+EVENTS=$(run "$R/ai-cluster events --limit 100")
+echo "$EVENTS" | grep -E "node_offline|requeue|reenfileir"
+echo "$EVENTS" | grep -q node_offline && echo "OK: node_offline registrado" || { echo "FALHA: faltou node_offline em events"; teardown 2>/dev/null; exit 1; }

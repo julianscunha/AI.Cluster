@@ -36,10 +36,12 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-c-storage-health.sh` | disco degradado tem saúde pior e a unidade vai para o nó saudável, com capability idêntica | [[f02-modelo-de-saude]] | [[fase-02-capability-e-saude]] |
 | `phase-c-network-degrade.sh` | link estrangulado com `tc` depois do registro derruba `rede_atual` e a unidade vai para o nó intacto (exige `apt` no contêiner) | [[f02-descoberta-de-rede]] | [[fase-02-capability-e-saude]] |
 | `phase-h-metrics.sh` | agregado de métricas muda com o cluster e bate com as partes; `/metrics` | [[f05-metricas]] | [[fase-05-observabilidade]] |
+| `phase-h-inference-metrics.sh` | três gerações aparecem no `/metrics` do gateway com TTFT, ITL, tokens/s e KV cache | [[f05-metricas-de-inferencia]] | [[fase-05-observabilidade]] |
 | `phase-h-traces.sh` | `request_id` liga requisição às unidades, com nó e tempos de compute e transferência | [[f05-traces]] | [[fase-05-observabilidade]] |
 | `phase-h-predictions.sh` | previsão por unidade (score fixado) e soma no roll-up | [[f05-previsto-vs-real]] | [[fase-05-observabilidade]] |
 | `phase-h-dashboard.sh` | painel mostra nós, fila e reservas a partir de três chamadas do controller | [[f05-dashboard]] | [[fase-05-observabilidade]] |
 | `phase-i-state.sh` | estado sobrevive a interrupção abrupta; perder o primário carrega a cópia ao lado | [[f06-persistencia-e-checkpoint]] | [[fase-06-estado-e-recuperacao]] |
+| `phase-i-events.sh` | a linha do tempo de eventos sobrevive ao restart do controller | [[f06-eventos-persistidos]] | [[fase-06-estado-e-recuperacao]] |
 | `phase-i-checkpoint.sh` | snapshot proporcional ao trabalho que falta (8 unidades de 256³: 4.194.410 B → 2 B) | [[f06-persistencia-e-checkpoint]] | [[fase-06-estado-e-recuperacao]] |
 | `phase-i4-recovery.sh` | unidade em voo atravessa restart do controller; posse no disco; dono ausente → reoferecida | [[f06-recuperacao]] | [[fase-06-estado-e-recuperacao]] |
 | `phase-i4-replica.sh` | fila sobrevive à perda dos dois arquivos locais, recuperada da cópia de um nó | [[f06-recuperacao]] | [[fase-06-estado-e-recuperacao]] |
@@ -61,5 +63,5 @@ Slices declarados sem script próprio, ou sem prova E2E:
 - [[f02-descoberta-de-rede]] e [[fase-09-transporte]]: sem E2E que degrade o link (cenário de degradação de rede).
 - [[f04-scheduler-local]]: sem prova de filas de recurso, prioridades ou GPU (não implementados).
 - [[f10-classes-de-armazenamento]]: sem prova de políticas por classe (K4 e K5 não iniciados).
-- [[f05-dashboard]]: sem prova de TTFT, ITL, tokens/s ou KV cache (sem fonte).
+- [[f05-dashboard]]: o painel não lê TTFT, ITL, tokens/s ou KV cache; a prova deles está em `phase-h-inference-metrics.sh`, no `/metrics` do gateway.
 - Fases F11 a F19: nenhum script.

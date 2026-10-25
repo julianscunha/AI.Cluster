@@ -284,6 +284,10 @@ impl LanguageModel for Llama {
         KvCache::new(self.blocks.len())
     }
 
+    fn kv_bytes_per_position(&self) -> usize {
+        self.blocks.len() * 2 * self.kv_heads * self.head_dim * std::mem::size_of::<f64>()
+    }
+
     fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {
         if tokens.is_empty() {
             return Err("prompt vazio".into());

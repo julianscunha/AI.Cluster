@@ -192,6 +192,10 @@ impl LanguageModel for Gpt2 {
         KvCache::new(self.blocks.len())
     }
 
+    fn kv_bytes_per_position(&self) -> usize {
+        self.blocks.len() * 2 * self.wte.cols as usize * std::mem::size_of::<f64>()
+    }
+
     /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,
     /// and returns the logits for the token that follows the last of them.
     fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {

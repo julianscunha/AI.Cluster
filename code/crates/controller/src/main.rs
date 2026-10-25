@@ -78,7 +78,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) if !path.trim().is_empty() => WorkStore::with_state(path),
         _ => WorkStore::new(),
     });
-    let events = Arc::new(EventLog::new());
+    // AI_CLUSTER_EVENTS names a file where the event timeline survives a restart (F06).
+    let events = Arc::new(match std::env::var("AI_CLUSTER_EVENTS") {
+        Ok(path) if !path.trim().is_empty() => EventLog::new().persisted(path),
+        _ => EventLog::new(),
+    });
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
 

@@ -67,7 +67,7 @@ RESERVAS 0
 > Repintura com sequências ANSI simples. Sem navegação, paginação nem seleção de nó: detalhe de nó vem de `ai-cluster node show <id>`, e caminho de requisição de `ai-cluster request trace <id>`.
 
 > [!todo] Campos de inferência
-> TTFT, ITL, tokens/s, tokens evitados e KV cache ainda sem fonte; entram com [[fase-08-inferencia]].
+> TTFT, ITL, tokens/s e KV cache já têm fonte (`/metrics` do gateway, [[f05-metricas-de-inferencia]]), mas o painel só fala com o controller e ainda não os mostra. Tokens evitados não existem.
 
 ## Próximos passos
 

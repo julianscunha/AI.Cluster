@@ -42,8 +42,8 @@ roadmap (Fase 4): perda de nó não apaga estado recuperável de execução.
 | [x] | Roadmap Fase 4: recovery por reload no startup do controller | [[f06-persistencia-e-checkpoint]] |
 | [ ] | Replicação de estado por chave (KV cache, execution state, model state) | pendente, [[fase-12-model-runtime]] |
 | [ ] | Journal de deltas ou snapshot periódico (hoje o conjunto vivo é reescrito inteiro) | pendente, sem fase |
-| [ ] | Registry persistido (hoje nós reaparecem pelo heartbeat) | pendente, sem fase |
-| [ ] | Eventos persistidos (log começa vazio no reload) | pendente, sem fase |
+| [x] | Registry persistido: decidido não persistir o estado vivo; credencial, aprovação e quarentena já vão a disco | [[adr-013-estado-do-controller-e-recuperacao]] |
+| [x] | Eventos persistidos (`AI_CLUSTER_EVENTS`, recarga dos últimos 256) | [[f06-eventos-persistidos]] |
 | [~] | I2 HOT/WARM/COLD: classes detectadas por nó; alocação por camada não existe | ver [[fase-10-inteligencia-de-storage]] |
 | [ ] | Roadmap Fase 4: swap/cache policies | ver [[fase-10-inteligencia-de-storage]] |
 
@@ -58,14 +58,15 @@ de interrupção abrupta em ambiente controlado. **Atendido**, com a ressalva do
 | --- | --- |
 | Código | feito (`controller/src/work.rs`, `main.rs`, `registry.rs`, worker) |
 | Benchmark | feito: tamanho do checkpoint (4,19 MB → 2 bytes) |
-| Telemetria | parcial: eventos de recuperação existem; log não persiste |
+| Telemetria | feita: eventos de recuperação e log persistido (`phase-i-events.sh`) |
 | Teste de falha | feito: `phase-2-failure.sh`, `phase-i-state.sh`, `phase-i4-recovery.sh`, `phase-i4-replica.sh` |
 | Doc | feito (este conjunto) |
-| ADR | pendente: a decisão de posse preguiçosa e de cópia em nó não tem ADR |
+| ADR | feito: [[adr-013-estado-do-controller-e-recuperacao]] |
 
 ## Slices
 
 - [[f06-persistencia-e-checkpoint]]: fila, posse, cópia no volume e poda do checkpoint (I1, I3).
+- [[f06-eventos-persistidos]]: linha do tempo em arquivo que atravessa o restart.
 - [[f06-recuperacao]]: dois relógios, `requeue_for_node`, cópia num nó e época (I4).
 
 ## Códigos antigos
@@ -84,5 +85,5 @@ de interrupção abrupta em ambiente controlado. **Atendido**, com a ressalva do
 > todos em `code/crates/controller` e no worker (`AI_CLUSTER_STATE`, `AI_CLUSTER_STATE_REPLICA`).
 
 > [!todo] O que falta
-> Estado por chave, diretório `state://`, réplica fora do volume, journal de deltas, registry e
-> eventos persistidos. Ver os itens pendentes no checklist.
+> Estado por chave, diretório `state://`, réplica fora do volume, journal de deltas e registry
+> persistido (decidido não persistir o estado vivo, ver [[adr-013-estado-do-controller-e-recuperacao]]). Ver os itens pendentes no checklist.

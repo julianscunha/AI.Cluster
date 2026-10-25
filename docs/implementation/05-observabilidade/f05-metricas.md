@@ -126,7 +126,7 @@ Cobertura: `sums_and_averages_over_completed_units`, `sums_the_prediction_beside
 > `network_score` é a velocidade negociada do link sobre a referência de 1 GbE ([[f02-descoberta-de-rede]]), um teto; a taxa alcançada sob carga não é. `network_latency_ms`, `storage_health` e `memory_bandwidth_score` continuam sem preenchimento: exigem medição ativa, fatia própria.
 
 > [!todo] Métricas de LLM
-> Tokens, TTFT, ITL e KV cache não existem porque não há motor de inferência. Pertencem à [[fase-08-inferencia]].
+> Tokens, TTFT, ITL e KV cache são do gateway, não do controller: ver [[f05-metricas-de-inferencia]].
 
 ## Próximos passos
 

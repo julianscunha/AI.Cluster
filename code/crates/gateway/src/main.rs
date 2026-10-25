@@ -9,6 +9,8 @@
 //! mistakes it for a real model. A real model replaces this by changing what `run_graph` asks
 //! the controller for; the HTTP contract, auth and limits stay.
 
+mod metrics;
+
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -437,6 +439,18 @@ async fn health() -> impl IntoResponse {
     Json(json!({ "api": "green" }))
 }
 
+/// Generation metrics in Prometheus text, behind the same bearer key as the API (F05).
+async fn inference_metrics(State(gateway): State<Gateway>, headers: HeaderMap) -> Response {
+    if !authenticated(&headers, &gateway.api_key) {
+        return unauthorized();
+    }
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics::render(),
+    )
+        .into_response()
+}
+
 async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response {
     if !authenticated(&headers, &gateway.api_key) {
         return unauthorized();
@@ -839,9 +853,28 @@ async fn complete_chat(prepared: Prepared) -> Response {
     let task = tokio::task::spawn_blocking(move || {
         let _slot = slot;
         bind_cancel(&worker, &flag);
-        worker
-            .model
-            .generate(&prompt, new_tokens, Some(worker.end_of_text), &flag)
+        let mut sampler = metrics::Sampler::start();
+        let generated = worker.model.generate_with(
+            &prompt,
+            new_tokens,
+            Some(worker.end_of_text),
+            &flag,
+            &mut |token| {
+                if token != worker.end_of_text {
+                    sampler.token();
+                }
+            },
+        );
+        let stopped = generated
+            .as_ref()
+            .is_ok_and(|tokens| tokens.last() == Some(&worker.end_of_text));
+        sampler.finish(
+            generated.is_ok(),
+            prompt.len(),
+            stopped,
+            worker.model.kv_bytes_per_position(),
+        );
+        generated
     });
     let generated = match tokio::time::timeout(DEADLINE, task).await {
         Ok(Ok(Ok(tokens))) => tokens,
@@ -981,6 +1014,7 @@ fn stream_chat(prepared: Prepared) -> Response {
         bind_cancel(&worker, &flag);
         let stop = worker.end_of_text;
         let (mut tokens, mut sent) = (Vec::new(), 0);
+        let mut sampler = metrics::Sampler::start();
         let send = |text: &str| {
             if !text.is_empty()
                 && !push_blocking(&out, content(json!({ "content": text }), json!(null)))
@@ -996,6 +1030,7 @@ fn stream_chat(prepared: Prepared) -> Response {
                     if token == stop {
                         return;
                     }
+                    sampler.token();
                     tokens.push(token);
                     if let Ok(text) = worker.tokenizer.decode(&tokens) {
                         send(new_text(&text, &mut sent, false));
@@ -1005,6 +1040,15 @@ fn stream_chat(prepared: Prepared) -> Response {
         if let Ok(text) = worker.tokenizer.decode(&tokens) {
             send(new_text(&text, &mut sent, true));
         }
+        let stopped = generated
+            .as_ref()
+            .is_ok_and(|tokens| tokens.last() == Some(&stop));
+        sampler.finish(
+            generated.is_ok(),
+            prompt.len(),
+            stopped,
+            worker.model.kv_bytes_per_position(),
+        );
         generated
     });
     tokio::spawn(async move {
@@ -1154,6 +1198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let app = Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(inference_metrics))
         .route("/v1/models", get(models))
         .route("/v1/embeddings", post(embeddings))
         .route("/v1/chat/completions", post(chat_completions))
