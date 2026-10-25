@@ -106,11 +106,11 @@ refused() {
 
 echo "=== C) sem certificado de cliente ==="
 worker aic-w-mtls-none node-none
-refused aic-w-mtls-none node-none "sem certificado de cliente foi recusado" "transport|certificate|handshake"
+refused aic-w-mtls-none node-none "sem certificado de cliente foi recusado" "CertificateRequired"
 
 echo "=== D) certificado de cliente de outra CA ==="
 worker aic-w-mtls-other node-other /tls/other.pem /tls/other.key
-refused aic-w-mtls-other node-other "certificado de outra CA foi recusado" "transport|certificate|handshake"
+refused aic-w-mtls-other node-other "certificado de outra CA foi recusado" "UnknownCA"
 
 echo "=== E) metade do par ==="
 worker aic-w-mtls-half node-half /tls/ok.pem

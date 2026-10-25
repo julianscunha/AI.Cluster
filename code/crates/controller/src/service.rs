@@ -184,8 +184,19 @@ impl ClusterControlService {
     /// The audit trail (F19): one `audit` event per operator action, with the peer and the target.
     /// It goes into the same event log, so `AI_CLUSTER_EVENTS` keeps it across restarts.
     fn audit(&self, peer: &str, action: &str, target: &str) {
-        self.events
-            .record(unix_ms(), "audit", format!("{action} {target} de {peer}"));
+        // Ids come from the caller: control characters would forge lines on a terminal, and a
+        // huge one would bloat the log.
+        let clean = |text: &str| {
+            text.chars()
+                .take(160)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect::<String>()
+        };
+        self.events.record(
+            unix_ms(),
+            "audit",
+            format!("{action} {} de {}", clean(target), clean(peer)),
+        );
     }
 }
 

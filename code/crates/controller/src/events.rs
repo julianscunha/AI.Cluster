@@ -121,7 +121,13 @@ impl EventLog {
     pub fn record(&self, at_unix_ms: u64, kind: &str, detail: impl Into<String>) {
         let mut inner = self.lock();
         if inner.len() == CAPACITY {
-            inner.pop_front();
+            // The audit trail must outlive routine churn (a burst of joins and drops), so the
+            // oldest ordinary event goes first; only a buffer of pure audit loses its oldest.
+            let victim = inner.iter().position(|held| held.kind != "audit");
+            match victim {
+                Some(index) => inner.remove(index),
+                None => inner.pop_front(),
+            };
         }
         let event = Event {
             at_unix_ms,
@@ -154,6 +160,19 @@ impl EventLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_burst_of_ordinary_events_does_not_push_the_audit_trail_out() {
+        let log = EventLog::new();
+        log.record(0, "audit", "revoke node-x de 10.0.0.1");
+        for index in 1..=(CAPACITY * 2) {
+            log.record(index as u64, "node_online", format!("n{index}"));
+        }
+
+        let held = log.recent(0);
+        assert_eq!(held.len(), CAPACITY);
+        assert_eq!(held[0].kind, "audit");
+    }
 
     #[test]
     fn drops_the_oldest_once_full_and_keeps_the_newest() {

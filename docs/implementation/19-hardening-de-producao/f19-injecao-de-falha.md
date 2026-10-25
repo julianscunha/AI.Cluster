@@ -25,7 +25,7 @@ Falhas repetidas e alternadas, com carga em andamento, sem perder nem duplicar u
 
 ## O que o soak achou
 
-- Um worker marcado offline pelo controller (pausa ou partição maior que a graça) recebia `failed_precondition` no `request_work` e **saía do cluster para sempre**, sem esperar o heartbeat re-registrá-lo. Corrigido: só `PermissionDenied`/`Unauthenticated` (revogado, credencial ruim) encerram o worker; o resto espera 1 s e tenta de novo.
+- Um worker marcado offline pelo controller (pausa ou partição maior que a graça) recebia `failed_precondition` no `request_work` e **saía do cluster para sempre**, sem esperar o heartbeat re-registrá-lo. Corrigido: só `PermissionDenied`/`Unauthenticated` (revogado, credencial ruim) encerram o worker; o resto espera 1 s e tenta de novo, até 30 recusas seguidas; depois disso o worker sai (nó em drain, quarentena ou removido nunca se cura).
 
 ## Limites
 

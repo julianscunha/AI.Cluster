@@ -363,6 +363,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set when a unit's result could not be handed in. The unit stays in flight at the
     // controller, so the worker leaves and `leave_node` gives it to another node.
     let broken = Arc::new(AtomicBool::new(false));
+    // Consecutive refusals that are not final. An offline mark heals in a heartbeat or two; a
+    // node that is draining, quarantined or removed never does, so it gives up and leaves.
+    let mut refused = 0u32;
     loop {
         if shutdown.is_finished() || broken.load(Ordering::Relaxed) {
             break;
@@ -379,7 +382,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .await
         {
-            Ok(work) => work.into_inner(),
+            Ok(work) => {
+                refused = 0;
+                work.into_inner()
+            }
             // Refused for good (revoked, bad credential): leave cleanly instead of dropping
             // units that are still running.
             Err(err)
@@ -396,6 +402,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // back; keep asking instead of quitting for good (F19 soak).
             Err(err) => {
                 drop(permit);
+                refused += 1;
+                if refused >= MAX_REFUSED_REQUESTS {
+                    println!("pedido de trabalho falhou {refused} vezes: {err}; saindo");
+                    break;
+                }
                 println!("pedido de trabalho falhou: {err}; tentando de novo");
                 tokio::select! {
                     _ = time::sleep(Duration::from_secs(1)) => {}
@@ -651,6 +662,9 @@ fn meminfo_kb(key: &str) -> Option<u64> {
 /// the machine has does not oversubscribe and run slower than serial. Never zero.
 /// Tries to hand a finished unit's result to the controller before giving the node up.
 const SUBMIT_ATTEMPTS: u32 = 3;
+
+/// Work requests refused in a row (one second apart) before the worker leaves.
+const MAX_REFUSED_REQUESTS: u32 = 30;
 
 /// How many units this node runs at once. `AI_CLUSTER_WORK_SLOTS`; unset or unparsable means
 /// one, the behaviour before the local queue.
@@ -1545,9 +1559,12 @@ fn battery() -> Option<(f64, bool)> {
         if read_trimmed(&dir.join("type").to_string_lossy()).as_deref() != Some("Battery") {
             continue;
         }
-        let level = read_trimmed(&dir.join("capacity").to_string_lossy())?
-            .parse::<f64>()
-            .ok()?;
+        // A battery that reports no usable capacity is skipped, not the end of the search.
+        let Some(level) = read_trimmed(&dir.join("capacity").to_string_lossy())
+            .and_then(|text| text.parse::<f64>().ok())
+        else {
+            continue;
+        };
         let discharging =
             read_trimmed(&dir.join("status").to_string_lossy()).as_deref() == Some("Discharging");
         return Some(((level / 100.0).clamp(0.0, 1.0), discharging));

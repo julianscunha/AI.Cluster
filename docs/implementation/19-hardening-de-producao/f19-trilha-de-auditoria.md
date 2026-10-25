@@ -26,5 +26,9 @@ Saber quem fez o quê no cluster: cada ação de operador deixa um rastro que so
 
 ## Limites
 
+- Eventos `audit` não são expulsos do anel por eventos comuns (uma rajada de join/drop não apaga um revoke); só um anel inteiro de auditoria perde o mais antigo.
+- Alvo e peer são limpos de caracteres de controle e truncados em 160 caracteres.
+- A ação é registrada antes do efeito: um `approve` de nó inexistente aparece como tentativa, não como sucesso. Tentativas com token errado e `GetOutput` (leitura) não entram.
+- Com mTLS o peer ainda é o endereço; o CN do certificado não é gravado.
 - O peer é o endereço de rede, não uma identidade; identidade por operador vem com mTLS (F19, pendente).
 - A trilha não é à prova de adulteração: é o log de eventos, sem assinatura.
