@@ -188,8 +188,9 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
 - Divisão só por linhas de saída, entrada replicada: sem all-reduce, sem pipeline entre camadas.
 - Do review: o token de inferência escolhe nó, subdiretório, tensor e faixa (a contenção na raiz de
   modelos é do worker), então um token vazado pode encher o cache de fatias e gerar leituras com
-  `by_columns` (um `seek` por linha); falta lista de tensores permitidos e limite global de
-  `ShardMatmul` simultâneos. O prazo de 30 s do gateway é checado entre tokens, não dentro de um
+  `by_columns` (um `seek` por linha). O worker só lê projeções de camada (GPT-2 e Llama; embeddings
+  e normas são recusados) e o controller aceita 8 `ShardMatmul` simultâneos (`ResourceExhausted`
+  acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s do gateway é checado entre tokens, não dentro de um
   token (o `ShardMatmul` tem teto de 8 s por chamada, e cada chamada pode refazer até N vezes).
   Um erro determinístico de cálculo num worker (por exemplo, cache cheio) conta como falha do nó e o
   põe de lado por 30 s; se todos caem assim, o gateway tenta todos de novo em vez de recusar. Com

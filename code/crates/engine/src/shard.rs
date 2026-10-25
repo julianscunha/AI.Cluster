@@ -201,6 +201,9 @@ impl ShardStore {
         row_end: u32,
         by_columns: bool,
     ) -> Result<Arc<Matrix>, String> {
+        if !is_projection(tensor) {
+            return Err("tensor não permitido: só projeções de camada saem do disco".into());
+        }
         // "m", "m/" and "m//" are one directory: the key uses the components, not the raw string,
         // so spelling variants cannot fill the cache with copies of the same slice.
         let normal: Vec<_> = Path::new(subdir).components().collect();
@@ -283,6 +286,25 @@ impl ShardStore {
 }
 
 /// `[out, in]` -> `[in, out]`, the layout `x * w` needs.
+/// The only tensors a slice request may read: the per-layer projections of GPT-2 and Llama
+/// models. Embeddings, norms and anything else on the worker's disk stay out of reach.
+fn is_projection(name: &str) -> bool {
+    const SUFFIXES: [&str; 11] = [
+        ".attn.c_attn.weight",
+        ".attn.c_proj.weight",
+        ".mlp.c_fc.weight",
+        ".mlp.c_proj.weight",
+        ".self_attn.q_proj.weight",
+        ".self_attn.k_proj.weight",
+        ".self_attn.v_proj.weight",
+        ".self_attn.o_proj.weight",
+        ".mlp.gate_proj.weight",
+        ".mlp.up_proj.weight",
+        ".mlp.down_proj.weight",
+    ];
+    SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+}
+
 pub(crate) fn transposed(m: &Matrix) -> Matrix {
     let (rows, cols) = (m.rows as usize, m.cols as usize);
     let mut data = vec![0.0; m.data.len()];
@@ -338,7 +360,8 @@ mod tests {
     fn model_dir(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("aic-shard-{}-{name}", std::process::id()));
         std::fs::create_dir_all(root.join("m")).unwrap();
-        let header = r#"{"w":{"dtype":"F32","shape":[3,2],"data_offsets":[0,24]}}"#;
+        let header =
+            r#"{"h.0.mlp.c_fc.weight":{"dtype":"F32","shape":[3,2],"data_offsets":[0,24]}}"#;
         let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
         bytes.extend(header.as_bytes());
         for v in [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0] {
@@ -358,7 +381,9 @@ mod tests {
             cols: 2,
             data: vec![1.0, 1.0],
         };
-        let y = store.compute("m", "w", (1, 3), false, &x).unwrap();
+        let y = store
+            .compute("m", "h.0.mlp.c_fc.weight", (1, 3), false, &x)
+            .unwrap();
         assert_eq!((y.rows, y.cols, y.data), (1, 2, vec![7.0, 11.0]));
         // Wrong input width is an error, not a panic.
         let wrong = Matrix {
@@ -366,8 +391,31 @@ mod tests {
             cols: 3,
             data: vec![1.0; 3],
         };
-        assert!(store.compute("m", "w", (1, 3), false, &wrong).is_err());
+        assert!(
+            store
+                .compute("m", "h.0.mlp.c_fc.weight", (1, 3), false, &wrong)
+                .is_err()
+        );
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn only_layer_projections_can_be_read() {
+        let store = ShardStore::new(model_dir("allow"), 1 << 20, 1);
+        let x = Matrix {
+            rows: 1,
+            cols: 2,
+            data: vec![1.0, 1.0],
+        };
+        for name in [
+            "model.embed_tokens.weight",
+            "wte.weight",
+            "h.0.ln_1.weight",
+            "../x.weight",
+        ] {
+            let error = store.compute("m", name, (0, 1), false, &x).unwrap_err();
+            assert!(error.contains("não permitido"), "{name}: {error}");
+        }
     }
 
     #[test]
@@ -380,7 +428,9 @@ mod tests {
             cols: 3,
             data: vec![1.0, 1.0, 1.0],
         };
-        let y = store.compute("m", "w", (1, 2), true, &x).unwrap();
+        let y = store
+            .compute("m", "h.0.mlp.c_fc.weight", (1, 2), true, &x)
+            .unwrap();
         assert_eq!((y.rows, y.cols, y.data), (1, 1, vec![12.0]));
         std::fs::remove_dir_all(root).ok();
     }
@@ -432,11 +482,17 @@ mod tests {
             "\\\\host\\share",
         ] {
             assert!(
-                store.compute(bad, "w", (0, 1), false, &x).is_err(),
+                store
+                    .compute(bad, "h.0.mlp.c_fc.weight", (0, 1), false, &x)
+                    .is_err(),
                 "{bad:?}"
             );
         }
-        assert!(store.compute("absent", "w", (0, 1), false, &x).is_err());
+        assert!(
+            store
+                .compute("absent", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
+                .is_err()
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -450,10 +506,22 @@ mod tests {
             cols: 2,
             data: vec![1.0, 1.0],
         };
-        assert!(store.compute("m", "w", (0, 1), false, &x).is_ok());
-        assert!(store.compute("m", "w", (1, 2), false, &x).is_err());
+        assert!(
+            store
+                .compute("m", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
+                .is_ok()
+        );
+        assert!(
+            store
+                .compute("m", "h.0.mlp.c_fc.weight", (1, 2), false, &x)
+                .is_err()
+        );
         // The resident slice still answers.
-        assert!(store.compute("m", "w", (0, 1), false, &x).is_ok());
+        assert!(
+            store
+                .compute("m", "h.0.mlp.c_fc.weight", (0, 1), false, &x)
+                .is_ok()
+        );
         std::fs::remove_dir_all(root).ok();
     }
 }

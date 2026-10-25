@@ -35,6 +35,9 @@ const MAX_SHARD_X: usize = 2 * 1024 * 1024;
 const MAX_SHARD_ROWS: u32 = 1 << 20;
 /// f64 values one operation may return (64 MiB), and twice that across a call.
 const MAX_SHARD_OUT: usize = 8 * 1024 * 1024;
+/// `ShardMatmul` calls running at once. A generation makes one at a time, so this only bounds a
+/// token that is used by more callers than the gateway's single slot allows.
+const MAX_SHARD_CALLS: usize = 8;
 const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 use crate::events::EventLog;
@@ -50,6 +53,7 @@ pub struct ClusterControlService {
     events: Arc<EventLog>,
     cluster_id: String,
     shards: Arc<ShardHub>,
+    shard_calls: Arc<tokio::sync::Semaphore>,
 }
 
 impl ClusterControlService {
@@ -65,6 +69,7 @@ impl ClusterControlService {
             events,
             cluster_id: cluster_id.into(),
             shards: Arc::new(ShardHub::default()),
+            shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
         }
     }
 
@@ -709,6 +714,9 @@ impl ClusterControl for ClusterControlService {
         {
             return Err(Status::invalid_argument("operação de fatia inválida"));
         }
+        let _call = self.shard_calls.try_acquire().map_err(|_| {
+            Status::resource_exhausted("ShardMatmul demais em andamento; tente de novo")
+        })?;
         // The answers come back as f64 in one message each: bound them per operation and in total.
         let out_values = |op: &ai_cluster_protocol::cluster::ShardOp| {
             request.rows as usize * (op.row_end - op.row_start) as usize
@@ -1826,5 +1834,30 @@ mod tests {
             .unwrap()
             .into_inner();
         assert!(!again.released);
+    }
+
+    #[tokio::test]
+    async fn shard_matmul_refuses_beyond_the_global_limit() {
+        let service = service();
+        let held = service
+            .shard_calls
+            .clone()
+            .try_acquire_many_owned(MAX_SHARD_CALLS as u32)
+            .unwrap();
+        let request = op(ShardMatmulRequest {
+            rows: 1,
+            k: 1,
+            x: vec![1.0],
+            ops: vec![ai_cluster_protocol::cluster::ShardOp {
+                node_id: "n".into(),
+                tensor: "h.0.mlp.c_fc.weight".into(),
+                row_start: 0,
+                row_end: 1,
+                ..Default::default()
+            }],
+        });
+        let refused = service.shard_matmul(request).await.unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::ResourceExhausted);
+        drop(held);
     }
 }
