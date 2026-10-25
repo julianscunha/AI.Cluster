@@ -450,6 +450,7 @@ fn internal(err: tonic::Status) -> Failure {
 ///
 /// ponytail: a request that times out leaves its graph in the controller's queue — there is no
 /// cancellation yet (docs/23 §8). The concurrency cap bounds how fast that can pile up.
+/// Add a cancel RPC to the controller when abandoned graphs start to cost real capacity.
 async fn run_graph(mut client: MetadataClient, seed: u64) -> Result<(String, Vec<f64>), Failure> {
     let request_id = client
         .enqueue_graph(EnqueueGraphRequest {

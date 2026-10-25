@@ -720,7 +720,8 @@ impl WorkStore {
     /// Returns the record only when the unit was dispatched to the same node.
     ///
     /// ponytail: latency derives from millisecond timestamps, so total/transfer
-    /// resolution is ~1ms; fine while the workload runs for hundreds of ms.
+    /// resolution is ~1ms; fine while the workload runs for hundreds of ms. Move to
+    /// microsecond timestamps when units shorter than ~10ms matter.
     pub fn complete(&self, result: WorkResult, now_unix_ms: u64) -> Option<CompletedWork> {
         let mut inner = self.lock();
         let dispatched = inner.dispatched.get(&result.work_id)?;
