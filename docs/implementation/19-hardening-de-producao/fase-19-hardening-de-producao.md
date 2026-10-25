@@ -33,7 +33,7 @@ Verificado em `code/crates/protocol/src/metadata.rs` (TLS e comentário sobre mT
 
 - [x] TLS do canal (S4). Certificado e CA de servidor, herdados pelo cliente. Entregue em [[fase-07-seguranca-base]].
 - [x] Token de join, aprovação de nó, revogação e credencial por nó (S1, S2, S3, S5). Entregue em F07.
-- [ ] mTLS. Não existe; o próprio código marca mTLS como o próximo degrau.
+- [~] mTLS. [[f19-mtls]]: certificado de cliente exigido por `AI_CLUSTER_TLS_CLIENT_CA`. Falta ligar certificado a `node_id`, rotação e revogação.
 - [ ] Attestation de nó. Não existe.
 - [ ] Upgrade e rollback. Não existe.
 - [~] Auditoria. Os eventos são um ring buffer em memória (`events.rs`). Não há trilha persistente de approve, revoke e leave.

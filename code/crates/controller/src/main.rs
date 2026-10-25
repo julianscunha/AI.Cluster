@@ -9,11 +9,12 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
     INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV,
-    ServerMetadata, inference_gate, inference_token, insecure_allowed, join_token, operator_token,
+    ServerMetadata, TLS_CLIENT_CA_ENV, inference_gate, inference_token, insecure_allowed,
+    join_token, operator_token,
 };
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Identity, Server, ServerTlsConfig};
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -196,7 +197,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)));
     match identity {
         Some(identity) => {
-            builder = builder.tls_config(ServerTlsConfig::new().identity(identity))?;
+            let mut tls = ServerTlsConfig::new().identity(identity);
+            // mTLS (F19): with a client CA, a peer without a certificate it signed never gets
+            // past the handshake, before any token is looked at.
+            if let Ok(ca) = std::env::var(TLS_CLIENT_CA_ENV) {
+                tls = tls.client_ca_root(Certificate::from_pem(std::fs::read(ca)?));
+                println!("mTLS: só clientes com certificado assinado por {TLS_CLIENT_CA_ENV}");
+            }
+            builder = builder.tls_config(tls)?;
+        }
+        None if std::env::var(TLS_CLIENT_CA_ENV).is_ok() => {
+            return Err(format!("{TLS_CLIENT_CA_ENV} exige AI_CLUSTER_TLS_CERT/KEY").into());
         }
         None if insecure_allowed() => {
             println!("AVISO: sem TLS ({INSECURE_ENV}=1); os tokens trafegam em claro");

@@ -84,7 +84,9 @@ Hoje (S4): TLS de um sentido.
   troca o nome verificado quando o endpoint é um IP.
 - `http://` só com `AI_CLUSTER_INSECURE=1`, nos dois lados. Certificado vence o opt-out.
 
-Alvo: mTLS no plano de controle. Cada nó apresenta certificado emitido pela CA do cluster, e o
+mTLS (F19, [[adr-016-mtls-opcional-no-plano-de-controle]]): `AI_CLUSTER_TLS_CLIENT_CA` no controller exige certificado de cliente da CA; worker, CLI e gateway apresentam `AI_CLUSTER_TLS_CLIENT_CERT`/`AI_CLUSTER_TLS_CLIENT_KEY`.
+
+Alvo que falta: cada nó apresenta certificado emitido pela CA do cluster, e o
 controller associa o certificado ao `node_id`. A credencial por nó passa a ser complementar, não a
 única prova. Os tokens de papel continuam para operador e inferência.
 

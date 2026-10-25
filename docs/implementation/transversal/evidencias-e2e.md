@@ -49,6 +49,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-s1-join-token.sh` | controller fail-closed sem token; só aceita quem apresenta o token em toda chamada | [[f07-token-de-join]] | [[fase-07-seguranca-base]] |
 | `phase-s2-approval.sh` | nó novo fica pendente sem trabalho até `approve`; aprovação sobrevive a re-registro | [[f07-aprovacao-de-no]] | [[fase-07-seguranca-base]] |
 | `phase-c-battery.sh` | nó com bateria descarregando tem saúde pior e a unidade vai para o nó saudável | [[f18-bateria-na-saude]] | [[fase-18-worker-movel]] |
+| `phase-t-mtls.sh` | com CLIENT_CA só entra quem tem certificado da CA; sem certificado, com CA errada ou com meio par é recusado | [[f19-mtls]] | [[fase-19-hardening-de-producao]] |
 | `phase-t-soak.sh` | rodízio de kill/pause sob carga: todo lote fecha, uma unidade em voo é reenfileirada e o cluster volta a 3 nós | [[f19-injecao-de-falha]] | [[fase-19-hardening-de-producao]] |
 | `phase-s3-roles.sh` | token de join e de inferência não administram; operador sim; segredo inventado é recusado; ações de operador entram na trilha de auditoria e negadas não | [[f07-operador-e-credencial-por-no]] | [[fase-07-seguranca-base]] |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; http puro e CA errada recusados; sem certificado só com `AI_CLUSTER_INSECURE=1` | [[f07-tls]] | [[fase-07-seguranca-base]] |

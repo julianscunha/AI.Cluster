@@ -28,6 +28,13 @@ pub const AUTH_HEADER: &str = "x-ai-cluster-auth";
 pub const INSECURE_ENV: &str = "AI_CLUSTER_INSECURE";
 /// PEM file with the CA that signed the controller's certificate, for `https://` endpoints.
 pub const TLS_CA_ENV: &str = "AI_CLUSTER_TLS_CA";
+/// mTLS (F19), controller side: PEM with the CA that signs client certificates. Set, the controller
+/// refuses any connection that does not present one signed by it.
+pub const TLS_CLIENT_CA_ENV: &str = "AI_CLUSTER_TLS_CLIENT_CA";
+/// mTLS, client side: the certificate and key this process presents to the controller. They come
+/// as a pair.
+pub const TLS_CLIENT_CERT_ENV: &str = "AI_CLUSTER_TLS_CLIENT_CERT";
+pub const TLS_CLIENT_KEY_ENV: &str = "AI_CLUSTER_TLS_CLIENT_KEY";
 /// Name to verify the certificate against when the endpoint is an IP or an alias.
 pub const TLS_DOMAIN_ENV: &str = "AI_CLUSTER_TLS_DOMAIN";
 
@@ -50,6 +57,23 @@ async fn open_channel(
         );
         if let Ok(domain) = std::env::var(TLS_DOMAIN_ENV) {
             tls = tls.domain_name(domain);
+        }
+        match (
+            std::env::var(TLS_CLIENT_CERT_ENV),
+            std::env::var(TLS_CLIENT_KEY_ENV),
+        ) {
+            (Ok(cert), Ok(key)) => {
+                tls = tls.identity(tonic::transport::Identity::from_pem(
+                    std::fs::read(cert)?,
+                    std::fs::read(key)?,
+                ));
+            }
+            (Err(_), Err(_)) => {}
+            _ => {
+                return Err(
+                    format!("{TLS_CLIENT_CERT_ENV} e {TLS_CLIENT_KEY_ENV} vêm juntos").into(),
+                );
+            }
         }
         endpoint = endpoint.tls_config(tls)?;
     } else if !insecure_allowed() {

@@ -27,6 +27,7 @@ Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, de
 | [[adr-012-metricas-de-inferencia-no-gateway]] | decidido | 2026-10-25 | O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração e os expõe em `GET /metrics` |
 | [[adr-013-estado-do-controller-e-recuperacao]] | decidido | 2026-10-25 | Snapshot atômico do conjunto vivo, posse preguiçosa, dois relógios de recuperação, cópia num nó e eventos em arquivo |
 | [[adr-014-abstracao-de-transporte]] | decidido | 2026-10-25 | O transporte carrega bytes em frames sobre qualquer fluxo ordenado (TCP, Unix); o cluster segue em gRPC até a integração |
+| [[adr-016-mtls-opcional-no-plano-de-controle]] | decidido | 2026-10-25 | mTLS ligado por `AI_CLUSTER_TLS_CLIENT_CA`; certificado de cliente é a camada abaixo dos tokens |
 | [[adr-015-request-manager-no-gateway]] | decidido | 2026-10-25 | Tenants com ACL e cota de tokens, fila por classe com envelhecimento e cancelamento de grafo, dentro do gateway |
 
 ## Notas
