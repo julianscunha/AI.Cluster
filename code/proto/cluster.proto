@@ -65,6 +65,9 @@ message CapabilityReport {
   /// `network_achieved_score`. Se cair abaixo do baseline do registro, o link degradou, e o
   /// placement passa a ler esta no lugar do baseline. Zero é "não remedido", nunca "link zero".
   double current_network_score = 15;
+  /// Unidades que o worker roda ao mesmo tempo (fila local por recurso, G4). Os núcleos
+  /// concedidos se dividem entre elas. Zero é "não reportado" e vale 1, o comportamento de antes.
+  uint32 work_slots = 16;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.

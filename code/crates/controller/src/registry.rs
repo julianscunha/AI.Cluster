@@ -495,9 +495,14 @@ impl Registry {
         }
     }
 
-    /// Removes a node from the registry. Returns false when it was unknown.
+    /// Removes a node from the registry. Returns false when it was unknown. A quarantined node
+    /// stays listed (leaving is not a way to make the quarantine invisible); it counts as known.
     pub fn remove(&self, node_id: &str) -> bool {
-        self.lock().remove(node_id).is_some()
+        let mut nodes = self.lock();
+        if nodes.get(node_id).is_some_and(|record| record.quarantined) {
+            return true;
+        }
+        nodes.remove(node_id).is_some()
     }
 
     pub fn list(&self) -> Vec<NodeSnapshot> {

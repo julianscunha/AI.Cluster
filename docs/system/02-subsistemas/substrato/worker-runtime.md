@@ -85,6 +85,6 @@ EXPERIMENTAL: zero-copy e DMA quando hardware e driver suportarem.
 >
 > Fases: [[f08-canal-residente-de-fatias]], [[f08-engine-local]], [[f03-grafo-de-dependencias]].
 
-> [!todo] Backends GPU, ROCm, Vulkan/OpenCL e NPU; Memory Manager com teto por execução; Local Scheduler com prioridades e buffers (hoje o controller entrega uma unidade por vez e o worker usa todos os núcleos concedidos); Cache Manager para resultados; Checkpoint Manager do worker (o checkpoint existe só no controller); Telemetria própria do nó; zero-copy e DMA; decisão de recompute. Ver [[fase-17-runtime-adaptativo]] e [[fase-16-aceleradores]].
+> [!todo] Backends GPU, ROCm, Vulkan/OpenCL e NPU; Memory Manager com teto por execução; Local Scheduler com prioridades e buffers (hoje há `AI_CLUSTER_WORK_SLOTS` unidades concorrentes, com os núcleos divididos entre elas, e a prioridade vive na fila do controller); Cache Manager para resultados; Checkpoint Manager do worker (o checkpoint existe só no controller); Telemetria própria do nó; zero-copy e DMA; decisão de recompute. Ver [[fase-17-runtime-adaptativo]] e [[fase-16-aceleradores]].
 
 > [!warning] Divergência: o Local Scheduler do alvo decide núcleo, GPU/NPU e buffer. Hoje a única decisão local é quantos núcleos usar. A cópia de estado de I4 é um mecanismo do controller, guardado no worker, e não o Checkpoint Manager descrito no alvo.

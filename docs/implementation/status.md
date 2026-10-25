@@ -20,7 +20,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-01-nucleo-do-cluster\|F01]] | Núcleo do cluster | `[x]` | 2–4 máquinas sem operação manual | validado com containers; máquinas físicas pendentes |
 | [[fase-02-capability-e-saude\|F02]] | Capability e saúde | `[~]` | perfil reproduzível | faltam memória sob carga, aceleradores e saúde de storage |
 | [[fase-03-execucao-distribuida\|F03]] | Execução distribuída | `[x]` | perder um worker não corrompe o DAG | — |
-| [[fase-04-escalonamento\|F04]] | Escalonamento | `[x]` | melhor que round-robin | G4 `[~]` (sem filas de recurso); G1 trust `[~]` (quarentena automática `[x]`; níveis por enrollment `[ ]`) |
+| [[fase-04-escalonamento\|F04]] | Escalonamento | `[x]` | melhor que round-robin | G4 `[~]` (sem GPU/NPU); G1 trust `[~]` (quarentena automática `[x]`; níveis por enrollment `[ ]`) |
 | [[fase-05-observabilidade\|F05]] | Observabilidade | `[x]` | toda requisição com trace e métricas | sem TTFT, ITL, tokens/s, KV cache |
 | [[fase-06-estado-e-recuperacao\|F06]] | Estado e recuperação | `[x]` | recupera de falha planejada e abrupta | estado por chave não replicado (vai para F12) |
 | [[fase-07-seguranca-base\|F07]] | Segurança base | `[x]` | nó desconhecido não recebe trabalho (NFR-011) | mTLS e attestation vão para F19 |
@@ -69,7 +69,7 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 ### F04 — Escalonamento `[x]`
 
 - `[x]` [[f04-placement]] — filtro por capability e memória, custo com histerese, previsão de tempo. Locality não modelada; térmico entra pelo score de saúde.
-- `[~]` [[f04-scheduler-local]] — concede cores `[x]`; prioridade por unidade na fila do controller `[x]`; filas de recurso no worker e GPU/NPU `[ ]`.
+- `[~]` [[f04-scheduler-local]] — concede cores `[x]`; prioridade por unidade e slots de concorrência no worker `[x]`; GPU/NPU `[ ]`.
 - `[x]` [[f04-reservas]] — `Reserve`/`ListReservations`/`ReleaseReservation`. Não persiste após restart; retém o nó inteiro.
 
 ### F05 — Observabilidade `[x]`

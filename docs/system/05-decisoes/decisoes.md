@@ -23,6 +23,7 @@ Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, de
 | [[adr-008-stack-inicial]] | vivo | 2026-10-19 | Rust 2024, tokio, gRPC e Protobuf, tonic 0.14, axum 0.8 e clap 4 |
 | [[adr-009-canal-residente-de-fatias]] | decidido | 2026-10-24 | Fatiar projeções com pesos residentes nos workers e canal bidirecional pelo controller |
 | [[adr-010-papeis-de-credencial]] | decidido | 2026-10-23 a 10-24 | Join, operador, inferência, credencial por nó e chave de API, cada um com segredo próprio e falha fechada |
+| [[adr-011-escalonamento-por-custo]] | decidido | 2026-10-25 | O nó pede, o controller decide por custo com histerese; prioridade com envelhecimento, slots no worker e quarentena por evidência |
 
 ## Notas
 

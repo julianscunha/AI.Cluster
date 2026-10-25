@@ -57,7 +57,8 @@ fn compute_rate(capability: &CapabilityReport) -> f64 {
     } else {
         1.0
     };
-    threads * per_thread
+    // Each unit gets a slot's share of the cores, so that is the rate a unit really sees.
+    threads * per_thread / f64::from(capability.work_slots.max(1))
 }
 
 /// Per-thread rate for a time prediction: the node's current measurement when it has one,
@@ -168,7 +169,8 @@ pub fn decide(
     let mut held_here = false;
     for (id, capability, health) in candidates {
         let in_flight = in_flight(id);
-        if in_flight > 0 || !fits(unit, capability) {
+        // A node is busy only when every slot it runs units in is taken (G4).
+        if in_flight >= capability.work_slots.max(1) || !fits(unit, capability) {
             continue;
         }
         match held(id).as_deref() {
@@ -245,7 +247,9 @@ pub fn placement_cost(unit: &WorkUnit, candidate: &Candidate) -> f64 {
     let transfer =
         TRANSFER_WEIGHT * unit_footprint_bytes(unit) as f64 / transfer_rate(candidate.capability);
 
-    let queue = QUEUE_WEIGHT * f64::from(candidate.in_flight);
+    // A unit waiting behind a slot costs less on a node with many slots.
+    let queue = QUEUE_WEIGHT * f64::from(candidate.in_flight)
+        / f64::from(candidate.capability.work_slots.max(1));
 
     let health_penalty = if candidate.health.health_score > 0.0 {
         1.0 + HEALTH_WEIGHT * (1.0 - candidate.health.health_score.clamp(0.0, 1.0))
@@ -399,6 +403,43 @@ mod tests {
         let held_other = |id: &str| (id == "fast").then(|| "req-b".to_string());
         assert!(!decide(&unit, "fast", &pool(), idle, held_other, 0.1));
         assert!(decide(&unit, "slow", &pool(), idle, held_other, 0.1));
+    }
+
+    #[test]
+    fn a_node_with_free_slots_is_still_a_candidate() {
+        let unit = unit(64, 64, 64);
+        let mut pool = pool();
+        for (_, capability, _) in &mut pool {
+            capability.work_slots = 2;
+        }
+        let one_running = |id: &str| u32::from(id == "fast");
+        // The fast node runs one of its two slots: it still takes the unit, so the slow one yields.
+        assert!(decide(
+            &unit,
+            "fast",
+            &pool,
+            one_running,
+            |_: &str| None,
+            0.1
+        ));
+        assert!(!decide(
+            &unit,
+            "slow",
+            &pool,
+            one_running,
+            |_: &str| None,
+            0.1
+        ));
+        let two_running = |id: &str| 2 * u32::from(id == "fast");
+        // With both slots taken it is busy and the slow node is the best idle fit.
+        assert!(decide(
+            &unit,
+            "slow",
+            &pool,
+            two_running,
+            |_: &str| None,
+            0.1
+        ));
     }
 
     fn health(health_score: f64) -> HealthReport {

@@ -1,7 +1,8 @@
 mod shards;
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
@@ -12,6 +13,7 @@ use ai_cluster_protocol::cluster::{
 };
 use ai_cluster_protocol::metadata::{ProbeClient, connect_node, connect_probe};
 use prost::Message;
+use tokio::sync::Semaphore;
 use tokio::time;
 
 const DEFAULT_CONTROLLER: &str = "http://127.0.0.1:50051";
@@ -205,9 +207,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let mut capability = capability();
-    // Fase G4: the local scheduler decides how many cores this unit gets. One unit runs
-    // at a time here, so the unit gets the whole budget the node reports.
-    let cores = core_budget(capability.cpu_threads);
+    // Fase G4: the local scheduler decides how many cores each unit gets. The node runs up to
+    // `slots` units at once and splits the budget it reports between them, so one slot keeps
+    // the whole budget (the behaviour before slots existed).
+    let slots = work_slots();
+    capability.work_slots = slots as u32;
+    let cores = (core_budget(capability.cpu_threads) / slots).max(1);
+    let permits = Arc::new(Semaphore::new(slots));
 
     let (mut client, credential) = connect_node(endpoint.clone()).await?;
     // A restarted worker presents the credential it saved, so it keeps the approval it earned.
@@ -344,58 +350,111 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // interval, however fast the compute was: a worker that finished a unit sat idle
     // until the next heartbeat tick. A worker now asks again the moment it finishes,
     // and only waits a short backoff when it found nothing.
+    // Set when a unit's result could not be handed in. The unit stays in flight at the
+    // controller, so the worker leaves and `leave_node` gives it to another node.
+    let broken = Arc::new(AtomicBool::new(false));
     loop {
-        if shutdown.is_finished() {
+        if shutdown.is_finished() || broken.load(Ordering::Relaxed) {
             break;
         }
-        let work = client
+        // Wait for a free slot before asking: a unit taken with no slot to run it would sit
+        // here while another node could have started it.
+        let permit = tokio::select! {
+            permit = permits.clone().acquire_owned() => permit?,
+            _ = &mut shutdown => break,
+        };
+        let work = match client
             .request_work(RequestWorkRequest {
                 node_id: node_id.clone(),
             })
-            .await?
-            .into_inner();
+            .await
+        {
+            Ok(work) => work.into_inner(),
+            Err(err) => {
+                // Leave cleanly instead of dropping units that are still running.
+                println!("pedido de trabalho falhou: {err}; saindo");
+                break;
+            }
+        };
         match work.work {
             Some(unit) => {
-                let work_id = unit.work_id.clone();
-                // Test hook: hold the unit before computing it so a fault-injection run
-                // can kill this worker while the unit is in flight. Unset means no delay.
-                let delay = work_delay();
-                if !delay.is_zero() {
-                    time::sleep(delay).await;
-                }
-                match execute_work(&unit, &node_id, cores) {
-                    Some(mut result) => {
-                        // Test hook (G1): report a wrong checksum so a run can watch the
-                        // controller reject the answer and quarantine this node.
-                        if std::env::var_os("AI_CLUSTER_CORRUPT_RESULTS").is_some() {
-                            result.checksum += 1.0;
+                // The slot is held until the result is submitted, so `slots` bounds the units
+                // this node has in flight, and the controller counts it busy at that point.
+                let mut client = client.clone();
+                let node_id = node_id.clone();
+                let broken = broken.clone();
+                tokio::spawn(async move {
+                    let _slot = permit;
+                    let work_id = unit.work_id.clone();
+                    // Test hook: hold the unit before computing it so a fault-injection run
+                    // can kill this worker while the unit is in flight. Unset means no delay.
+                    let delay = work_delay();
+                    if !delay.is_zero() {
+                        time::sleep(delay).await;
+                    }
+                    let shape = (unit.rows, unit.shared, unit.cols);
+                    let computed =
+                        tokio::task::spawn_blocking(move || execute_work(&unit, &node_id, cores))
+                            .await;
+                    match computed {
+                        Err(err) => {
+                            println!("trabalho {work_id}: cálculo falhou: {err}");
+                            broken.store(true, Ordering::Relaxed);
                         }
-                        let accepted = client
-                            .submit_work_result(SubmitWorkResultRequest {
-                                result: Some(result),
-                            })
-                            .await?
-                            .into_inner()
-                            .accepted;
-                        println!(
-                            "trabalho {work_id} shape={}x{}x{} compute_done threads={cores} aceito={accepted}",
-                            unit.rows, unit.shared, unit.cols
-                        );
+                        Ok(Some(mut result)) => {
+                            // Test hook (G1): report a wrong checksum so a run can watch the
+                            // controller reject the answer and quarantine this node.
+                            if std::env::var_os("AI_CLUSTER_CORRUPT_RESULTS").is_some() {
+                                result.checksum += 1.0;
+                            }
+                            let mut sent = None;
+                            for attempt in 0..SUBMIT_ATTEMPTS {
+                                match client
+                                    .submit_work_result(SubmitWorkResultRequest {
+                                        result: Some(result.clone()),
+                                    })
+                                    .await
+                                {
+                                    Ok(reply) => {
+                                        sent = Some(reply.into_inner().accepted);
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        println!("trabalho {work_id}: envio falhou: {err}");
+                                        if attempt + 1 < SUBMIT_ATTEMPTS {
+                                            time::sleep(Duration::from_millis(500)).await;
+                                        }
+                                    }
+                                }
+                            }
+                            match sent {
+                                Some(accepted) => println!(
+                                    "trabalho {work_id} shape={}x{}x{} compute_done threads={cores} aceito={accepted}",
+                                    shape.0, shape.1, shape.2
+                                ),
+                                // Still in flight at the controller: leave so it is handed back.
+                                None => broken.store(true, Ordering::Relaxed),
+                            }
+                        }
+                        Ok(None) => {
+                            println!(
+                                "trabalho {work_id} payload não corresponde ao shape declarado; descartado"
+                            )
+                        }
                     }
-                    None => {
-                        println!(
-                            "trabalho {work_id} payload não corresponde ao shape declarado; descartado"
-                        )
-                    }
-                }
+                });
             }
             None => {
+                drop(permit);
                 // Nothing ready: use the idle time to refresh the current-compute estimate,
                 // then wait before asking again (Fase C3).
-                refresh_current_compute();
-                refresh_current_storage().await;
-                if let Some(probe) = probe_client.as_mut() {
-                    refresh_current_network(probe).await;
+                // The remeasurements steal cores, so they only run with no unit in flight.
+                if permits.available_permits() == slots {
+                    refresh_current_compute();
+                    refresh_current_storage().await;
+                    if let Some(probe) = probe_client.as_mut() {
+                        refresh_current_network(probe).await;
+                    }
                 }
                 // Wait before asking again, but wake at once on shutdown.
                 tokio::select! {
@@ -409,6 +468,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(task) = shard_channel {
         task.abort();
     }
+    // Let the units already running hand in their results before the node says goodbye.
+    // Bounded: a hung unit must not keep a SIGTERM from ever finishing; `leave_node` hands
+    // back whatever is still in flight.
+    let _ = time::timeout(Duration::from_secs(30), permits.acquire_many(slots as u32)).await;
     // Stop liveness before leaving: a beat that lands after LeaveNode would make the
     // controller re-register this node, undoing the departure.
     stop_tx.send(()).ok();
@@ -536,6 +599,18 @@ fn meminfo_kb(key: &str) -> Option<u64> {
 /// node reports is the ceiling — a node that reports 2 threads must not quietly run 8 —
 /// and the host's real parallelism caps it too, so a node that reports more threads than
 /// the machine has does not oversubscribe and run slower than serial. Never zero.
+/// Tries to hand a finished unit's result to the controller before giving the node up.
+const SUBMIT_ATTEMPTS: u32 = 3;
+
+/// How many units this node runs at once. `AI_CLUSTER_WORK_SLOTS`; unset or unparsable means
+/// one, the behaviour before the local queue.
+fn work_slots() -> usize {
+    std::env::var("AI_CLUSTER_WORK_SLOTS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map_or(1, |slots| slots.clamp(1, 64))
+}
+
 fn core_budget(reported_threads: u32) -> usize {
     let available = std::thread::available_parallelism()
         .map(|threads| threads.get())

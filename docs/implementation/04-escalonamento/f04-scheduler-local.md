@@ -8,7 +8,7 @@ superado: false
 fase: "[[fase-04-escalonamento]]"
 codigos-antigos: ["G4"]
 sistema: ["[[scheduler]]", "[[no-e-hardware]]"]
-evidencia: ["code/tests/phase-g-cores.sh", "code/tests/phase-g-priority.sh"]
+evidencia: ["code/tests/phase-g-cores.sh", "code/tests/phase-g-priority.sh", "code/tests/phase-g-slots.sh"]
 ---
 # F04 — Scheduler local
 
@@ -72,10 +72,19 @@ A decisão de **qual unidade sai primeiro** vive na fila do controller, não no 
 > [!todo] Classes nomeadas e autorização
 > É um número cru, não as classes `REALTIME`..`BACKGROUND`. Quem pode pedir prioridade alta é decisão da Request Manager ([[fase-11-request-manager]]); hoje só o papel de operador enfileira.
 
+## Fila local por recurso (slots)
+
+O worker roda até `AI_CLUSTER_WORK_SLOTS` unidades ao mesmo tempo (padrão 1, teto 64). Um semáforo é o recurso: o worker só pede trabalho quando há slot livre, segura o slot até o resultado ser entregue, e cada unidade recebe `core_budget / slots` núcleos (no mínimo 1). O nó anuncia `work_slots` no `CapabilityReport`; o controller o conta como ocupado só quando todos os slots têm unidade (`decide`), em vez de ao primeiro despacho. Remedições de compute, storage e rede só rodam com o nó vazio, para não roubar núcleos de uma unidade em voo. Na saída planejada o worker espera os slots devolvidos antes de avisar o controller.
+
+Evidência: `phase-g-slots.sh` — o mesmo lote de 8 unidades (cada uma segurada 600 ms) leva 6016 ms com 1 slot e 2014 ms com 4. Unitário: `a_node_with_free_slots_is_still_a_candidate`.
+
+> [!warning] Slots dividem os núcleos
+> Com unidades que já ocupam o nó inteiro, mais slots só reduzem o paralelismo de cada uma. O ganho aparece quando a unidade é curta frente à transferência e ao poll (esconde latência).
+
 ## Limites
 
 > [!todo] Filas de recursos e prioridades
-> O worker roda uma unidade por vez, então a concessão é sempre o orçamento inteiro do nó. Não há fila por recurso nem admissão local (a prioridade já existe na fila do controller, acima; classes CRITICAL..CACHE: [[worker-runtime]]). Unidade que chega enquanto outra roda espera no controller, não numa fila local.
+> O worker roda uma unidade por vez, então a concessão é sempre o orçamento inteiro do nó. A prioridade vive na fila do controller e os slots limitam a concorrência, mas não há fila local ordenada por classe nem admissão por memória (classes CRITICAL..CACHE: [[worker-runtime]]). Unidade que chega enquanto outra roda espera no controller, não numa fila local.
 
 > [!todo] GPU e NPU
 > Só CPU. GPU/NPU não existem no runtime; começar por CPU x86_64/ARM64. Buffers e memória local não são decididos aqui.
@@ -85,6 +94,10 @@ A decisão de **qual unidade sai primeiro** vive na fila do controller, não no 
 
 ## Próximos passos
 
-- Filas de recursos locais e classes nomeadas de prioridade.
+- Fila local ordenada por classe e admissão por memória; classes nomeadas de prioridade.
 - Concessão de cores baseada em benchmark, não só em `available_parallelism`.
 - Dispositivos de aceleração (GPU/NPU), em [[fase-16-aceleradores]].
+
+## Falhas com slots
+
+Se o resultado de uma unidade não chega ao controller (3 tentativas) ou o cálculo entra em pânico, o worker marca-se quebrado e sai: `leave_node` devolve a unidade em voo a outro nó, em vez de ela ficar presa ocupando um slot. Um erro em `request_work` também sai pelo caminho limpo. A espera pelos slots na saída tem teto de 30 s. No custo do placement, a taxa de compute e a fila são divididas por `work_slots` (cada unidade vê só a fatia dos núcleos).

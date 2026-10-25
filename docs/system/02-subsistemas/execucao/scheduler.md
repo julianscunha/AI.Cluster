@@ -88,7 +88,7 @@ Usar apenas para stragglers e quando a economia de latência esperada justifica 
 > - Confiança em níveis (UNKNOWN → TRUSTED). Hoje é binária.
 > - Rebalanceamento: trabalho só muda de nó quando o nó sai ou falha.
 > - Execução especulativa.
-> - Fila local por recurso no worker, com ordem e admissão locais. O worker roda uma unidade por vez.
+> - Fila local ordenada por classe e admissão por memória no worker. Hoje há só slots de concorrência (`AI_CLUSTER_WORK_SLOTS`, [[f04-scheduler-local]]).
 > - Escolha da unidade de melhor encaixe para o nó que pergunta (a G4). Hoje só a primeira unidade elegível é avaliada.
 > - Reserva de fração de nó (cores ou memória). A reserva retém o nó inteiro.
 > - Reserva que sobrevive a restart. Hoje é só em memória.

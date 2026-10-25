@@ -23,7 +23,7 @@ Até aqui o controller aceitava qualquer resultado de um nó aprovado. Um worker
 - `WorkStore::result_is_valid` confere o resultado contra a unidade despachada: mesma forma, `rows*cols` números, todos finitos e o checksum igual à soma que o worker calcularia (mesma ordem, igualdade exata).
 - `submit_work_result` não registra um resultado inválido: devolve `accepted=false`, grava `work_rejected` e chama `WorkStore::reject`, que volta a unidade à fila **sem gastar** a tentativa dela (a culpa é do nó, não da unidade).
 - `Registry::strike`: 3 inválidos seguidos (`QUARANTINE_STRIKES`) marcam `quarantined`. Um resultado válido zera a contagem. O nó em quarentena sai de `eligible`, o controller devolve as unidades que ele ainda segura, derruba seus canais de fatias e registra `node_quarantined`. A CLI mostra o estado `QUARANTINED`.
-- Libera-se com `ai-cluster approve <nó>` (operador). Registrar de novo não cura.
+- Libera-se com `ai-cluster approve <nó>` (operador). Registrar de novo não cura, e sair (`leave_node`) não apaga o registro: o nó segue listado como `QUARANTINED`.
 
 ## Evidência
 
