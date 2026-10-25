@@ -312,6 +312,7 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
+            priority: 0,
         }
     }
 

@@ -78,10 +78,11 @@ Usar apenas para stragglers e quando a economia de latência esperada justifica 
 > - **Ranking só entre ociosos** e **histerese** de 10% (`AI_CLUSTER_PLACEMENT_TOLERANCE`). `AI_CLUSTER_PLACEMENT=off` volta ao primeiro que pergunta. Ver [[f04-placement]].
 > - **Reservas** (`code/crates/controller/src/reservations.rs`): por nó, com TTL padrão de 60 s, vencimento lido na consulta. RPCs `Reserve`, `ListReservations`, `ReleaseReservation`. Ver [[f04-reservas]].
 > - **Local**: `worker::core_budget` concede `min(threads reportadas, cores do host)`, e o produto é dividido por linhas. Ver [[f04-scheduler-local]].
-> - Evidências: `bash code/tests/phase-g-placement.sh`, `bash code/tests/phase-g-memory.sh`, `bash code/tests/phase-g-reservations.sh`, `bash code/tests/phase-g-cores.sh`.
+> - **Prioridade na fila do controller**: `WorkUnit.priority` define o ranking `priority*64 + passagens` (`work.rs::best_position`), com FIFO como desempate. Ver [[f04-scheduler-local]].
+> - Evidências: `bash code/tests/phase-g-priority.sh`, `bash code/tests/phase-g-placement.sh`, `bash code/tests/phase-g-memory.sh`, `bash code/tests/phase-g-reservations.sh`, `bash code/tests/phase-g-cores.sh`.
 
 > [!todo] Não implementado
-> - Prioridades entre unidades ou requisições (classes CRITICAL a CACHE, ver [[worker-runtime]]). A fila é FIFO com filtros.
+> - Classes nomeadas de prioridade (CRITICAL a CACHE, ver [[worker-runtime]]) e autorização por papel. Hoje a prioridade é um inteiro por unidade (`WorkUnit.priority`, maior primeiro, FIFO dentro da classe, envelhecimento de 64 passagens por classe); a Request Manager ([[fase-11-request-manager]]) é quem deve herdá-la da requisição.
 > - Dimensões de pontuação ausentes: localidade, folga térmica, custo de mover estado, confiabilidade e prazo. O registro não carrega esses dados.
 > - Filtros de precisão, acelerador e armazenamento. O worker reporta, mas nenhuma unidade pode exigir.
 > - Confiança em níveis (UNKNOWN → TRUSTED). Hoje é binária.

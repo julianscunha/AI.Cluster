@@ -68,6 +68,9 @@ enum Command {
         /// Pass a reservation's request id so its units land on the held node (G6).
         #[arg(long, default_value = "")]
         request_id: String,
+        /// Priority class of the enqueued units: higher dispatches first, 0 is the default (G4).
+        #[arg(long, default_value_t = 0)]
+        priority: u32,
     },
     /// Dispatch a dependency graph (diamond) and watch the branches gate.
     Graph {
@@ -151,6 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             local,
             min_threads,
             request_id,
+            priority,
         } => {
             run_benchmark(
                 &cli.controller,
@@ -159,6 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 local,
                 min_threads,
                 &request_id,
+                priority,
             )
             .await?
         }
@@ -190,6 +195,7 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
             seed: 42,
             request_id: String::new(),
             keep_result: false,
+            priority: 0,
         })
         .await?
         .into_inner();
@@ -759,6 +765,7 @@ async fn run_benchmark(
     local: bool,
     min_threads: u32,
     request_id: &str,
+    priority: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Version and parameters travel with the output so two runs are comparable.
     println!(
@@ -779,6 +786,7 @@ async fn run_benchmark(
             repetitions,
             min_cpu_threads: min_threads,
             request_id: request_id.to_string(),
+            priority,
         })
         .await?
         .into_inner();

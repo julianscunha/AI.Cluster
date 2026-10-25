@@ -69,7 +69,7 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 ### F04 — Escalonamento `[x]`
 
 - `[x]` [[f04-placement]] — filtro por capability e memória, custo com histerese, previsão de tempo. Locality não modelada; térmico entra pelo score de saúde.
-- `[~]` [[f04-scheduler-local]] — concede cores `[x]`; filas de recurso, prioridades e GPU/NPU `[ ]`.
+- `[~]` [[f04-scheduler-local]] — concede cores `[x]`; prioridade por unidade na fila do controller `[x]`; filas de recurso no worker e GPU/NPU `[ ]`.
 - `[x]` [[f04-reservas]] — `Reserve`/`ListReservations`/`ReleaseReservation`. Não persiste após restart; retém o nó inteiro.
 
 ### F05 — Observabilidade `[x]`

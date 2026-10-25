@@ -212,6 +212,9 @@ message WorkUnit {
   /// numa mesma chamada carregam o mesmo id, então um trace reconstrói o caminho
   /// requisição → unidades sem guardar a relação em paralelo.
   string request_id = 11;
+  /// Classe de prioridade (G4): maior é despachada antes. 0 é a classe padrão; a fila continua
+  /// FIFO dentro da classe, e o envelhecimento impede que uma classe alta mate a baixa de fome.
+  uint32 priority = 12;
 }
 
 message WorkResult {
@@ -253,6 +256,8 @@ message EnqueueWorkRequest {
   /// Id de requisição que agrupa as unidades desta chamada (H3). Vazio faz o controller
   /// gerar um, que volta na resposta.
   string request_id = 7;
+  /// Classe de prioridade das unidades desta chamada (G4). 0 é a padrão; maior vai antes.
+  uint32 priority = 8;
 }
 
 message EnqueueWorkResponse {
@@ -270,6 +275,8 @@ message EnqueueGraphRequest {
   /// Guarda a saída da unidade final do grafo para `GetOutput` (Fase J1). Sem isto a saída é
   /// descartada assim que nada mais a lê.
   bool keep_result = 4;
+  /// Classe de prioridade das unidades do grafo (G4). 0 é a padrão; maior vai antes.
+  uint32 priority = 5;
 }
 
 /// Uma fatia de pesos: as linhas [row_start, row_end) do tensor `[out, in]` de

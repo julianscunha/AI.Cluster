@@ -56,6 +56,10 @@ pub struct ClusterControlService {
     shard_calls: Arc<tokio::sync::Semaphore>,
 }
 
+/// Highest priority class an enqueue may ask for. Aging is 64 passes per class, so an
+/// unbounded `u32` would make a low class wait effectively forever.
+const MAX_PRIORITY: u32 = 9;
+
 impl ClusterControlService {
     pub fn new(
         registry: Arc<Registry>,
@@ -490,6 +494,7 @@ impl ClusterControl for ClusterControlService {
                 matrix_b_from: String::new(),
                 min_cpu_threads: request.min_cpu_threads,
                 request_id: request_id.clone(),
+                priority: request.priority.min(MAX_PRIORITY),
             }
         });
         let enqueued = self.work.enqueue(units);
@@ -573,6 +578,7 @@ impl ClusterControl for ClusterControlService {
                 // Graph units carry no requirement; size is the same for all of them.
                 min_cpu_threads: 0,
                 request_id: request_id.clone(),
+                priority: request.priority.min(MAX_PRIORITY),
             }
         };
         let units = vec![
@@ -1038,6 +1044,7 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
+            priority: 0,
         }
     }
 
@@ -1054,6 +1061,7 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
+            priority: 0,
         }
     }
 
@@ -1246,6 +1254,7 @@ mod tests {
                 repetitions: 2,
                 min_cpu_threads: 0,
                 request_id: String::new(),
+                priority: 0,
             }))
             .await
             .unwrap()
@@ -1277,6 +1286,7 @@ mod tests {
                 repetitions: 1,
                 min_cpu_threads: 0,
                 request_id: String::new(),
+                priority: 0,
             }))
             .await
             .unwrap_err();
@@ -1424,6 +1434,7 @@ mod tests {
                 seed: 1,
                 request_id: String::new(),
                 keep_result: false,
+                priority: 0,
             })
         };
         // Four units per graph: the ceiling is crossed after 65 of them.
@@ -1443,6 +1454,7 @@ mod tests {
                 seed: 7,
                 request_id: String::new(),
                 keep_result: false,
+                priority: 0,
             }))
             .await
             .unwrap()
@@ -1460,6 +1472,7 @@ mod tests {
                 seed: 7,
                 request_id: String::new(),
                 keep_result: false,
+                priority: 0,
             }))
             .await
             .unwrap_err();
@@ -1649,6 +1662,7 @@ mod tests {
                 repetitions: 1,
                 min_cpu_threads: 0,
                 request_id: String::new(),
+                priority: 0,
             }))
             .await
             .unwrap()

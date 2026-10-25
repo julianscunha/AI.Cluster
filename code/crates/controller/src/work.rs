@@ -99,6 +99,9 @@ struct Inner {
     /// after a restart. The same ceiling as completed units, which are not persisted at
     /// all; persist the correlation when traces need to outlive a restart.
     failed: HashMap<String, String>,
+    /// Dispatches that went to another unit while a queued unit waited (G4 aging). Not
+    /// persisted: a restart resets the age, which only delays an overtake by one span.
+    passed: HashMap<String, u32>,
 }
 
 /// One row of a request trace (H3). A unit only has timings once it has completed; the
@@ -235,6 +238,7 @@ fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
             continue;
         }
         inner.attempts.remove(&id);
+        inner.passed.remove(&id);
         // A failed unit will never complete, so a kept result for it would wait forever (J1).
         inner.keep.remove(&id);
         failed += 1;
@@ -254,6 +258,33 @@ fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
     failed
 }
 
+/// How many passes-over one priority class is worth (G4 aging). A unit's rank is
+/// `priority * PRIORITY_SPAN + passed`, where `passed` counts the dispatches that went to
+/// another unit while it waited. A low-class unit therefore overtakes a stream of higher-class
+/// ones after `PRIORITY_SPAN` passes and cannot starve. With every priority equal the oldest
+/// unit ranks highest (ties go to the lower index), which is the FIFO order the queue had.
+const PRIORITY_SPAN: u32 = 64;
+
+/// Indices of the units that pass `eligible`, best first: highest rank, FIFO among equal ranks.
+fn ranked_positions(
+    queue: &VecDeque<WorkUnit>,
+    passed: &HashMap<String, u32>,
+    eligible: impl Fn(&WorkUnit) -> bool,
+) -> Vec<usize> {
+    let mut ranked: Vec<(u64, usize)> = queue
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| eligible(unit))
+        .map(|(index, unit)| {
+            let rank = u64::from(unit.priority) * u64::from(PRIORITY_SPAN)
+                + u64::from(passed.get(&unit.work_id).copied().unwrap_or(0));
+            (rank, index)
+        })
+        .collect();
+    ranked.sort_by_key(|&(rank, index)| (std::cmp::Reverse(rank), index));
+    ranked.into_iter().map(|(_, index)| index).collect()
+}
+
 /// Removes the unit at `index` and records the dispatch against `node_id`, with
 /// any bound inputs substituted from their sources' outputs. Shared by `claim`
 /// and `claim_placed` so both dispatch the same way.
@@ -268,6 +299,16 @@ fn take_locked(
         .queue
         .remove(index)
         .expect("index comes from a successful position()");
+    // Every unit left behind ages, so a low class eventually outranks a stream of high ones.
+    for waiting in &inner.queue {
+        match inner.passed.get_mut(&waiting.work_id) {
+            Some(count) => *count += 1,
+            None => {
+                inner.passed.insert(waiting.work_id.clone(), 1);
+            }
+        }
+    }
+    inner.passed.remove(&unit.work_id);
     // Substitute dependency outputs for bound inputs before dispatch.
     if let Some(data) = inner.outputs.get(&unit.matrix_a_from) {
         unit.matrix_a = data.clone();
@@ -607,7 +648,7 @@ impl WorkStore {
         count
     }
 
-    /// Hands out the first unit whose dependencies have all completed and whose
+    /// Hands out the best-ranked unit (priority, then FIFO) whose dependencies have all completed and whose
     /// minimum-threads requirement the asking node satisfies, with any bound inputs
     /// substituted from the outputs of those dependencies.
     ///
@@ -633,13 +674,14 @@ impl WorkStore {
         let held = self.reservations.held_for(node_id, now_unix_ms);
         let index = {
             let outputs = &inner.outputs;
-            inner.queue.iter().position(|unit| {
+            *ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
                     && held
                         .as_deref()
                         .is_none_or(|request| request == unit.request_id)
-            })?
+            })
+            .first()?
         };
         let predicted = predicted_compute_us(&inner.queue[index], capability);
         Some(take_locked(
@@ -689,32 +731,45 @@ impl WorkStore {
         let mut inner = self.lock();
         // G6: a node held for a request takes only that request's units.
         let held = self.reservations.held_for(node_id, now_unix_ms);
-        let index = {
+        let ranked = {
             let outputs = &inner.outputs;
-            inner.queue.iter().position(|unit| {
+            ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
                     && held
                         .as_deref()
                         .is_none_or(|request| request == unit.request_id.as_str())
-            })?
+            })
         };
-        let predicted = predicted_compute_us(&inner.queue[index], capability);
-        let takes = decide(
-            &inner.queue[index],
-            node_id,
-            candidates,
-            |id| {
-                inner
-                    .dispatched
-                    .values()
-                    .filter(|record| record.node_id.as_str() == id)
-                    .count() as u32
-            },
-            |id| self.reservations.held_for(id, now_unix_ms),
-            tolerance,
-        );
-        takes.then(|| take_locked(&mut inner, index, node_id, now_unix_ms, predicted))
+        // Best rank first, but a unit this node is not the right home for (a better node, or
+        // a hold for another node) must not block a lower-ranked unit it would take.
+        for index in ranked {
+            let predicted = predicted_compute_us(&inner.queue[index], capability);
+            let takes = decide(
+                &inner.queue[index],
+                node_id,
+                candidates,
+                |id| {
+                    inner
+                        .dispatched
+                        .values()
+                        .filter(|record| record.node_id.as_str() == id)
+                        .count() as u32
+                },
+                |id| self.reservations.held_for(id, now_unix_ms),
+                tolerance,
+            );
+            if takes {
+                return Some(take_locked(
+                    &mut inner,
+                    index,
+                    node_id,
+                    now_unix_ms,
+                    predicted,
+                ));
+            }
+        }
+        None
     }
 
     /// Returns the record only when the unit was dispatched to the same node.
@@ -955,7 +1010,63 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
+            priority: 0,
         }
+    }
+
+    fn with_priority(work_id: &str, priority: u32) -> WorkUnit {
+        WorkUnit {
+            priority,
+            ..unit(work_id)
+        }
+    }
+
+    #[test]
+    fn a_higher_priority_unit_is_claimed_before_an_older_lower_one() {
+        let store = WorkStore::new();
+        store.enqueue([with_priority("low", 0), with_priority("high", 2)]);
+        let first = store.claim("n", &CapabilityReport::default(), 1).unwrap();
+        assert_eq!(first.work_id, "high");
+        let second = store.claim("n", &CapabilityReport::default(), 2).unwrap();
+        assert_eq!(second.work_id, "low");
+    }
+
+    #[test]
+    fn equal_priority_stays_fifo() {
+        let store = WorkStore::new();
+        store.enqueue([unit("a"), unit("b"), unit("c")]);
+        let order: Vec<String> = (0..3)
+            .map(|t| {
+                store
+                    .claim("n", &CapabilityReport::default(), t)
+                    .unwrap()
+                    .work_id
+            })
+            .collect();
+        assert_eq!(order, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn aging_lets_an_old_low_priority_unit_overtake_a_stream_of_high_ones() {
+        let store = WorkStore::new();
+        store.enqueue([with_priority("old-low", 0)]);
+        // A fresh high-priority unit arrives before every claim, so without aging the low
+        // one would wait forever. Each pass-over is worth one point against PRIORITY_SPAN.
+        let mut claimed = Vec::new();
+        for i in 0..=PRIORITY_SPAN {
+            store.enqueue([with_priority(&format!("h{i}"), 1)]);
+            claimed.push(
+                store
+                    .claim("n", &CapabilityReport::default(), 0)
+                    .unwrap()
+                    .work_id,
+            );
+        }
+        let at = claimed.iter().position(|id| id == "old-low");
+        assert!(
+            at.is_some_and(|at| at > 0 && at <= PRIORITY_SPAN as usize),
+            "{at:?}"
+        );
     }
 
     fn unit(work_id: &str) -> WorkUnit {
@@ -971,6 +1082,7 @@ mod tests {
             matrix_b_from: String::new(),
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
+            priority: 0,
         }
     }
 
@@ -1933,6 +2045,29 @@ mod tests {
                 .work_id,
             "w1"
         );
+    }
+
+    #[test]
+    fn a_high_priority_unit_that_yields_does_not_block_a_lower_one() {
+        let store = WorkStore::new();
+        store.enqueue([
+            WorkUnit {
+                priority: 3,
+                ..unit_for("high", "req-x")
+            },
+            unit_for("low", "req-y"),
+        ]);
+        store.reserve("node-weak", "req-x", 0, 1_000);
+        let candidates = [
+            ("node-weak".to_string(), capability(2, 0.0), healthy()),
+            ("node-strong".to_string(), capability(8, 0.0), healthy()),
+        ];
+
+        // `high` waits for its held node, so node-strong goes on to take `low`.
+        let taken = store
+            .claim_placed("node-strong", &capability(8, 0.0), 1_001, &candidates, 0.0)
+            .expect("the free node takes the lower-ranked unit");
+        assert_eq!(taken.work_id, "low");
     }
 
     #[test]

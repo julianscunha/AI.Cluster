@@ -500,6 +500,7 @@ async fn run_graph(mut client: MetadataClient, seed: u64) -> Result<(String, Vec
             seed,
             request_id: String::new(),
             keep_result: true,
+            priority: 0,
         })
         .await
         .map_err(internal)?

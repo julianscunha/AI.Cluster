@@ -8,7 +8,7 @@ superado: false
 fase: "[[fase-04-escalonamento]]"
 codigos-antigos: ["G4"]
 sistema: ["[[scheduler]]", "[[no-e-hardware]]"]
-evidencia: ["code/tests/phase-g-cores.sh"]
+evidencia: ["code/tests/phase-g-cores.sh", "code/tests/phase-g-priority.sh"]
 ---
 # F04 — Scheduler local
 
@@ -60,10 +60,22 @@ OK: compute caiu de 226607us para 32497us ao conceder mais cores
 > [!warning] Host ocioso
 > A comparação só vale com o host ocioso: é tempo de parede, e carga concorrente tira cores justamente do lado que depende de paralelismo.
 
+## Prioridade na fila (G4)
+
+A decisão de **qual unidade sai primeiro** vive na fila do controller, não no worker (que roda uma unidade por vez). `WorkUnit.priority` (campo 12; também em `EnqueueWorkRequest` e `EnqueueGraphRequest`; CLI `benchmark --priority N`) é um inteiro: maior despacha antes, 0 é a classe padrão.
+
+- `work.rs::best_position` escolhe, entre as unidades prontas, que cabem no nó e que a reserva permite, a de maior `priority * 64 + passed`, com FIFO no empate. `claim` e `claim_placed` usam o mesmo ranking; todas com prioridade 0 reproduzem a ordem FIFO anterior.
+- Envelhecimento: `passed` conta quantos despachos passaram por cima da unidade enquanto ela esperava (`take_locked`). Uma classe vale 64 passagens, então uma unidade baixa ultrapassa um fluxo contínuo de altas depois de ~64 despachos. Não persiste: um restart zera a idade, e uma unidade devolvida por queda de nó volta com idade zero. A classe é limitada a 9 no enfileiramento (`MAX_PRIORITY`), para o envelhecimento sempre alcançar.
+- Sem bloqueio de cabeça de fila: `claim_placed` percorre as unidades por ranking e leva a primeira que o `decide()` aceita para este nó, então uma unidade alta que espera por um nó reservado não segura as baixas (`a_high_priority_unit_that_yields_does_not_block_a_lower_one`).
+- Teste: `a_higher_priority_unit_is_claimed_before_an_older_lower_one`, `equal_priority_stays_fifo`, `aging_lets_an_old_low_priority_unit_overtake_a_stream_of_high_ones`; E2E `code/tests/phase-g-priority.sh` (w-4, prioridade 5 enfileirada por último, completa primeiro).
+
+> [!todo] Classes nomeadas e autorização
+> É um número cru, não as classes `REALTIME`..`BACKGROUND`. Quem pode pedir prioridade alta é decisão da Request Manager ([[fase-11-request-manager]]); hoje só o papel de operador enfileira.
+
 ## Limites
 
 > [!todo] Filas de recursos e prioridades
-> O worker roda uma unidade por vez, então a concessão é sempre o orçamento inteiro do nó. Não há fila por recurso, prioridade (prioridades CRITICAL..CACHE, ver [[worker-runtime]]) nem admissão local. Unidade que chega enquanto outra roda espera no controller, não numa fila local.
+> O worker roda uma unidade por vez, então a concessão é sempre o orçamento inteiro do nó. Não há fila por recurso nem admissão local (a prioridade já existe na fila do controller, acima; classes CRITICAL..CACHE: [[worker-runtime]]). Unidade que chega enquanto outra roda espera no controller, não numa fila local.
 
 > [!todo] GPU e NPU
 > Só CPU. GPU/NPU não existem no runtime; começar por CPU x86_64/ARM64. Buffers e memória local não são decididos aqui.
@@ -73,6 +85,6 @@ OK: compute caiu de 226607us para 32497us ao conceder mais cores
 
 ## Próximos passos
 
-- Filas de recursos e prioridades locais.
+- Filas de recursos locais e classes nomeadas de prioridade.
 - Concessão de cores baseada em benchmark, não só em `available_parallelism`.
 - Dispositivos de aceleração (GPU/NPU), em [[fase-16-aceleradores]].

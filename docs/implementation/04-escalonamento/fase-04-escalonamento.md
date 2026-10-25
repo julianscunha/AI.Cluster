@@ -38,7 +38,7 @@ Fonte: EP §8 (G1–G6), EP §7 (F3), roadmap Fase 2 e EP §8 "critério de saí
 - [~] G1 Candidate filtering: capabilities (`cpu_threads`) [x]; memória (footprint) [x]; saúde (heartbeat) [x]; trust [~] (exclusão por estado e token de join; sem identidade por nó, sem TLS; níveis UNKNOWN→TRUSTED dependem de enrollment, ver [[saude-e-confianca]]).
 - [x] G2 Cost model: compute, transferência, fila e saúde. Locality ainda não modelada.
 - [x] G3 Global scheduler: `WorkStore::claim_placed` rankeia candidatos ociosos pelo custo.
-- [~] G4 Local scheduler: concessão de cores [x]; filas de recursos, prioridades e GPU/NPU [ ].
+- [~] G4 Local scheduler: concessão de cores [x]; prioridade por unidade na fila do controller [x] (`phase-g-priority.sh`); filas de recursos no worker e GPU/NPU [ ].
 - [x] G5 Rebalancing (threshold + histerese): o nó só cede quando o outro é mais barato além da banda. Rebalanceamento de trabalho já em voo não existe.
 - [x] G6 Reservations: `Reserve`, `ListReservations`, `ReleaseReservation`.
 - [x] F3 Placement abstraction: a política de ranking saiu de `WorkStore::claim_placed` para `placement::decide`.
