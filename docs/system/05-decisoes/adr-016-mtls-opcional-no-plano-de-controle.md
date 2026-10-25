@@ -26,5 +26,5 @@ O TLS de um sentido (S4) prova o controller ao cliente, mas qualquer um que alca
 ## Consequências
 
 - Um peer sem certificado, ou com certificado de outra CA, cai no handshake (`CertificateRequired`, `UnknownCA`) sem chegar a nenhum token.
-- **Exceção conhecida:** o exportador de métricas (`:9101`, HTTP puro, bearer com o token de operador) não passa pelo mTLS. Quem escuta a rede lê o token de operador. Mitigação pendente: ligá-lo só em `127.0.0.1`, servi-lo com o mesmo TLS ou dar-lhe um token só de leitura.
+- **Exceção conhecida:** o exportador de métricas (`:9101`, HTTP puro, bearer com o token de operador) não passa pelo mTLS. Quem escuta a rede lê o token de operador. Mitigação: o exportador agora liga por padrão só em `127.0.0.1:9101`; abrir para a rede (`AI_CLUSTER_METRICS_ADDR=0.0.0.0:9101`) é escolha do operador e expõe o token em claro. Servi-lo com o mesmo TLS ou dar-lhe um token só de leitura ficam pendentes.
 - Fica fora desta decisão: associar o certificado ao `node_id` (hoje o certificado prova "faz parte do cluster", não "é este nó"), rotação e revogação de certificados (sem CRL), e a emissão automática pela CA do cluster.

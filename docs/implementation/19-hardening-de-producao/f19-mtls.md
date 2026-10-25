@@ -27,5 +27,5 @@ Um peer sem certificado de cliente da CA do cluster não passa nem do handshake,
 
 - O certificado prova "pertence ao cluster", não "é o nó X": a ligação com o `node_id` falta.
 - Sem rotação, sem revogação (CRL) e sem emissão automática; os certificados são gerados à mão.
-- O exportador de métricas (`:9101`) segue em HTTP puro com o token de operador como bearer: fora do mTLS (ver ADR-016).
+- O exportador de métricas (`:9101`) liga por padrão só em `127.0.0.1`; aberto para a rede, segue em HTTP puro com o token de operador como bearer, fora do mTLS (ver ADR-016).
 - Só o canal controller↔clientes; a perna HTTP do gateway segue sem TLS.

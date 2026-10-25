@@ -75,7 +75,7 @@ O worker mede no próprio `/proc` a cada heartbeat:
 ## Exportador
 
 ```text
-GET http://<controller>:9101/metrics     # AI_CLUSTER_METRICS_ADDR, padrão 0.0.0.0:9101
+GET http://<controller>:9101/metrics     # AI_CLUSTER_METRICS_ADDR, padrão 127.0.0.1:9101; use 0.0.0.0:9101 para raspar de outra máquina
 ```
 
 Nomes prefixados `ai_cluster_`, e no resto iguais aos campos do proto: um número lido no `/metrics` e o mesmo em `ai-cluster metrics` se reconhecem. Cada nó vira uma série com rótulo `node=`. `HELP`/`TYPE` saem uma vez por métrica, não por amostra, porque um parser Prometheus estrito recusa tipo declarado duas vezes.

@@ -36,7 +36,7 @@ switch ($Action) {
         $Workers = if ($Rest.Count -gt 0) { [int]$Rest[0] } else { 2 }
         docker network create $Net 2>$null | Out-Null
         docker rm -f aic-controller 2>$null | Out-Null
-        docker run -d --name aic-controller @Common -e AI_CLUSTER_AUTO_APPROVE=1 -p 9101:9101 $Img sh -c "exec $R/ai-cluster-controller" | Out-Null
+        docker run -d --name aic-controller @Common -e AI_CLUSTER_AUTO_APPROVE=1 -e AI_CLUSTER_METRICS_ADDR=0.0.0.0:9101 -p 9101:9101 $Img sh -c "exec $R/ai-cluster-controller" | Out-Null
         if ($LASTEXITCODE -ne 0) { exit 1 }
         foreach ($i in 1..$Workers) {
             docker rm -f "aic-worker-$i" 2>$null | Out-Null

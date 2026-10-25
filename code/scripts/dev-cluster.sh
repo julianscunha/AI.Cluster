@@ -33,7 +33,7 @@ up)
   workers=${2:-2}
   docker network create "$NET" >/dev/null 2>&1
   docker rm -f aic-controller >/dev/null 2>&1
-  docker run -d --name aic-controller "${common[@]}" -e AI_CLUSTER_AUTO_APPROVE=1 \
+  docker run -d --name aic-controller "${common[@]}" -e AI_CLUSTER_AUTO_APPROVE=1 -e AI_CLUSTER_METRICS_ADDR=0.0.0.0:9101 \
     -p 9101:9101 "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null || exit 1
   for i in $(seq 1 "$workers"); do
     docker rm -f "aic-worker-$i" >/dev/null 2>&1

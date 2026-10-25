@@ -153,8 +153,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exporter_work = work.clone();
     let exporter_token: Arc<str> = operator.as_str().into();
     tokio::spawn(async move {
-        let metrics_addr =
-            std::env::var("AI_CLUSTER_METRICS_ADDR").unwrap_or_else(|_| "0.0.0.0:9101".to_string());
+        let metrics_addr = std::env::var("AI_CLUSTER_METRICS_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9101".to_string());
         println!("exportador de métricas em http://{metrics_addr}/metrics");
         if let Err(err) = ai_cluster_controller::exporter::serve(
             metrics_addr,
