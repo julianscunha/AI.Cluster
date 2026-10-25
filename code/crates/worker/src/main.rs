@@ -380,10 +380,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
         {
             Ok(work) => work.into_inner(),
-            Err(err) => {
-                // Leave cleanly instead of dropping units that are still running.
+            // Refused for good (revoked, bad credential): leave cleanly instead of dropping
+            // units that are still running.
+            Err(err)
+                if matches!(
+                    err.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                ) =>
+            {
                 println!("pedido de trabalho falhou: {err}; saindo");
                 break;
+            }
+            // Anything else (the controller marked this node offline during a pause or a
+            // partition, or is briefly away) heals through the heartbeat, which brings the node
+            // back; keep asking instead of quitting for good (F19 soak).
+            Err(err) => {
+                drop(permit);
+                println!("pedido de trabalho falhou: {err}; tentando de novo");
+                tokio::select! {
+                    _ = time::sleep(Duration::from_secs(1)) => {}
+                    _ = &mut shutdown => break,
+                }
+                continue;
             }
         };
         match work.work {

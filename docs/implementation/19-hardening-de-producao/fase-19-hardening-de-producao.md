@@ -37,8 +37,8 @@ Verificado em `code/crates/protocol/src/metadata.rs` (TLS e comentário sobre mT
 - [ ] Attestation de nó. Não existe.
 - [ ] Upgrade e rollback. Não existe.
 - [~] Auditoria. Os eventos são um ring buffer em memória (`events.rs`). Não há trilha persistente de approve, revoke e leave.
-- [~] Injeção de falhas. Há E2E ad hoc: worker morto em `phase-2-failure.sh` e em meio à geração em `phase-j-shards.sh`. Não há framework.
-- [ ] Soak tests de longa duração. Não existem.
+- [~] Injeção de falhas. [[f19-injecao-de-falha]]: kill e pause em rodízio sob carga (`phase-t-soak.sh`). Faltam partição de rede e controller reiniciado.
+- [~] Soak. `phase-t-soak.sh` com `ROUNDS` configurável; falta uma rodada longa (horas) com medição de recurso.
 - [ ] TLS na perna HTTP do gateway. Pendente, também listado em [[fase-11-request-manager]].
 
 ## Gate

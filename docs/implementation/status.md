@@ -35,7 +35,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[~]` | M7 | Q6 (bateria) feito; resto precisa de celulares |
-| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria feita; mTLS e soak pendentes |
+| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria e soak curto feitos; mTLS, attestation e upgrade pendentes |
 
 Marcos (M0–M7) e seus critérios: [[marcos]].
 
@@ -148,7 +148,8 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 
 ### F19 `[~]`
 
-- `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. mTLS, soak, attestation e upgrade/rollback pendentes.
+- `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. mTLS, attestation e upgrade/rollback pendentes.
+- `[~]` [[f19-injecao-de-falha]] — soak com kill/pause em rodízio; achou e corrigiu worker que saía para sempre ao ser marcado offline.
 
 ### Pontos de partida
 
