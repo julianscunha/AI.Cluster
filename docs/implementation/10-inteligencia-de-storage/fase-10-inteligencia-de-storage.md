@@ -33,7 +33,7 @@ Verificado em `code/crates/worker/src/main.rs` (`storage_classes`, storage probe
 
 - [x] K1 Detecção de HDD, SSD e NVMe. Lê `/sys/block/*/queue/rotational` e usa o prefixo `nvme` do nome. SSD SATA e NVMe não se separam só por `rotational`; é heurística, não medida.
 - [~] I2 Classes HOT/WARM/COLD por nó. O nó reporta `storage_classes` (ordem: mais quente primeiro). Alocação por camada não existe.
-- [~] K2 Benchmark de storage. Mede escrita com `fsync` (16 MiB, melhor de 3) e reporta `storage_score`. Latência, leitura e medida por classe não existem.
+- [~] K2 Benchmark de storage. Mede escrita sequencial com `fsync` (16 MiB, melhor de 3, `storage_score`) e a latência de escrita de 4 KiB com `fsync` (menor de 16, `storage_latency_ms`, `armaz_lat_ms` na CLI). Leitura (o page cache a mascara sem O_DIRECT) e medida por dispositivo não existem.
 - [ ] K3 Saúde SMART/NVMe. Não existe.
 - [ ] K4 Alocação dinâmica (swap, cache de modelo, cache de tensor, checkpoint, reserva). Não existe; nada coloca estado em disco por camada.
 - [ ] K5 Adaptação de política (reduzir escrita quando o desgaste piora). Não existe.
@@ -42,7 +42,7 @@ Verificado em `code/crates/worker/src/main.rs` (`storage_classes`, storage probe
 
 > [!warning] Tetos atuais
 > - Um dispositivo gera uma classe: um nó com dois NVMe não se distingue de um com um.
-> - Sem latência nem leitura; o `storage_score` é só escrita e não tem consumidor de placement.
+> - Sem leitura; `storage_score` e `storage_latency_ms` são só escrita, do diretório temporário, e não têm consumidor de placement.
 > - Em contêiner, `/sys/block` mostra os discos do host, não os do contêiner.
 
 ## Gate
@@ -59,7 +59,6 @@ Notas desta pasta (esta nota é o MOC):
 
 Slices a criar:
 
-- `f10-benchmark-de-storage`: K2 completo, com latência, leitura e medida por classe.
 - `f10-saude-de-storage`: K3, SMART e NVMe onde houver suporte.
 - `f10-alocacao-por-camada`: K4, reserva, swap, cache e checkpoint por classe.
 - `f10-politica-por-classe`: K5, política distinta para HDD e NVMe.

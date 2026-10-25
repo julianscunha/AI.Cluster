@@ -52,6 +52,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Disk probe (K2): 16 MiB written and fsynced, best of `PROBE_RUNS`. The reference is a SATA
 /// SSD, the same "1.0 is a reference device" scale as the compute and network scores.
 const STORAGE_PROBE_BYTES: usize = 16 * 1024 * 1024;
+/// Latency probe: small synced writes, the fastest of `LATENCY_PROBE_RUNS` kept.
+const LATENCY_PROBE_BYTES: usize = 4096;
+const LATENCY_PROBE_RUNS: usize = 16;
 const REFERENCE_STORAGE_MBPS: f64 = 500.0;
 /// Memory probe (C2): a 32 MiB copy, well past any cache, best of `PROBE_RUNS`. The reference
 /// is ~10 GB/s of single-thread copy, a common DDR4 desktop core.
@@ -1019,6 +1022,40 @@ fn memory_bandwidth_score() -> f64 {
     best / REFERENCE_MEMORY_MBPS
 }
 
+/// Latency of a 4 KiB write followed by `fsync`, in milliseconds, or zero when the probe could
+/// not write. Small synced writes expose what sequential throughput hides: a seek on a HDD, the
+/// flush on a SATA SSD, almost nothing on NVMe.
+/// shortcut: write latency only, read latency would hit the page cache; upgrade with O_DIRECT.
+fn storage_latency_ms() -> f64 {
+    use std::io::{Seek, Write};
+    static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path =
+        std::env::temp_dir().join(format!("ai-cluster-latency-{}-{seq}", std::process::id()));
+    let block = vec![0u8; LATENCY_PROBE_BYTES];
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    else {
+        return 0.0;
+    };
+    let mut best = f64::MAX;
+    for _ in 0..LATENCY_PROBE_RUNS {
+        let started = Instant::now();
+        let written = file
+            .seek(std::io::SeekFrom::Start(0))
+            .and_then(|_| file.write_all(&block))
+            .and_then(|_| file.sync_data());
+        if written.is_err() {
+            break;
+        }
+        best = best.min(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    let _ = std::fs::remove_file(&path);
+    if best == f64::MAX { 0.0 } else { best }
+}
+
 fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
@@ -1059,6 +1096,7 @@ fn capability() -> CapabilityReport {
         compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
         storage_score,
+        storage_latency_ms: storage_latency_ms(),
         memory_bandwidth_score: memory_bandwidth_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
@@ -1776,6 +1814,23 @@ mod tests {
         assert!((health_score(0.0, 0.0, 40.0, 0.25) - 0.25).abs() < 1e-9);
         assert!((health_score(0.0, 0.0, 40.0, 0.0) - 1.0).abs() < 1e-9);
         assert!((health_score(0.0, 0.0, 40.0, 1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_latency_probe_measures_the_temp_dir_and_cleans_up() {
+        let latency = storage_latency_ms();
+        assert!(latency > 0.0 && latency < 60_000.0, "{latency}");
+        let leftovers = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("ai-cluster-latency-{}-", std::process::id()))
+            })
+            .count();
+        assert_eq!(leftovers, 0);
     }
 
     #[test]

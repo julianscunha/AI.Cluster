@@ -68,6 +68,10 @@ message CapabilityReport {
   /// Unidades que o worker roda ao mesmo tempo (fila local por recurso, G4). Os núcleos
   /// concedidos se dividem entre elas. Zero é "não reportado" e vale 1, o comportamento de antes.
   uint32 work_slots = 16;
+  /// Latência de uma escrita de 4 KiB com fsync no disco onde o worker roda, em milissegundos
+  /// (menor de várias, como as outras sondas). É o que separa HDD de SSD de NVMe quando a vazão
+  /// sequencial engana. Zero é "não medido", nunca "disco instantâneo". Menor é melhor.
+  double storage_latency_ms = 17;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.

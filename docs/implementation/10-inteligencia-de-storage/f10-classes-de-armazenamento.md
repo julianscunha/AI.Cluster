@@ -63,9 +63,9 @@ Sem dependência nova: `/sys/block` é um `read_dir` e um `read_to_string`, o me
 
 - Um dispositivo, uma classe: um nó com NVMe e HDD reporta `nvme,hdd`; dois NVMe não são distinguidos de um. Contagem e capacidade por dispositivo ficam para a fatia de alocação.
 - `/sys/block` é do host em contêiner comum, como `/proc` nas métricas de nó. Em nó real, onde o worker roda no host, isso deixa de valer.
-- O benchmark mede o dispositivo do diretório temporário, não um por classe; só escrita, sem latência.
+- O benchmark mede o dispositivo do diretório temporário, não um por classe; só escrita. A latência de escrita de 4 KiB com `fsync` (`storage_latency_ms`) já existe: num contêiner com disco rotativo mediu-se ~39 ms. NVMe e SATA SSD seguem na mesma camada WARM por nome; a latência é o dado que poderá separá-los.
 
 ## Próximos passos
 
-- Benchmark de storage por classe com latência e leitura (`f10-benchmark-de-storage`).
+- Benchmark de leitura (com O_DIRECT) e por dispositivo.
 - Alocação por camada e política por classe (`f10-alocacao-por-camada`, `f10-politica-por-classe`), na fase [[fase-10-inteligencia-de-storage]].

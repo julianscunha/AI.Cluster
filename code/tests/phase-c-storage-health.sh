@@ -70,6 +70,16 @@ else
   exit 1
 fi
 
+# F10 K2: o worker também mede a latência de escrita com fsync e a anuncia no registro.
+LAT=$(run "$R/ai-cluster node show node-ok" | grep -o 'armaz_lat_ms=[^ ]*' | cut -d= -f2)
+if [ -n "$LAT" ] && [ "$LAT" != "-" ]; then
+  echo "OK: armaz_lat_ms de node-ok = $LAT"
+else
+  echo "FALHA: node-ok deveria anunciar armaz_lat_ms, veio '$LAT'"
+  teardown
+  exit 1
+fi
+
 echo "=== B) o score de saúde do nó ok é maior ==="
 OK_H=$(field "$NODES" node-ok 7)
 SLOW_H=$(field "$NODES" node-slow 7)

@@ -481,8 +481,13 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
     } else {
         "-".to_string()
     };
+    let storage_latency = if capability.storage_latency_ms > 0.0 {
+        format!("{:.3}", capability.storage_latency_ms)
+    } else {
+        "-".to_string()
+    };
     println!(
-        "  armazenamento={} armaz_score={storage_score} mem_bw={memory_score} precisoes={} aceleradores={}",
+        "  armazenamento={} armaz_score={storage_score} armaz_lat_ms={storage_latency} mem_bw={memory_score} precisoes={} aceleradores={}",
         list_or_dash(&capability.storage_classes),
         list_or_dash(&capability.precisions),
         list_or_dash(&capability.accelerators),
