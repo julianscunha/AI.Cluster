@@ -81,6 +81,30 @@ struct RemoteStats {
     compute_us: AtomicU64,
     /// Calls that had to be redone on other nodes after one failed.
     retries: AtomicU64,
+    /// The running generation's cancel flag (timeout, client gone); a call in flight watches it.
+    /// One generation runs at a time, so a single slot is enough.
+    cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+impl RemoteStats {
+    fn bind(&self, flag: &Arc<AtomicBool>) {
+        *self.cancel.lock().unwrap_or_else(|p| p.into_inner()) = Some(flag.clone());
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
+}
+
+/// Binds the generation's cancel flag to the model's remote calls, if it has any.
+fn bind_cancel(llm: &Llm, flag: &Arc<AtomicBool>) {
+    if let Some(stats) = &llm.remote {
+        stats.bind(flag);
+    }
 }
 
 /// How long a node that failed is left out before it is tried again.
@@ -286,7 +310,22 @@ impl Executor for GrpcExecutor {
             };
             // Called from a blocking thread (generation runs in `spawn_blocking`), so blocking on
             // the runtime handle is safe.
-            match self.runtime.block_on(client.shard_matmul(request)) {
+            // Dropping the call when the generation is cancelled aborts the RPC, and the controller
+            // forgets its operations: a timeout does not wait out a slow worker.
+            let call = async {
+                tokio::select! {
+                    result = client.shard_matmul(request) => Some(result),
+                    () = async {
+                        while !self.stats.cancelled() {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                    } => None,
+                }
+            };
+            let Some(result) = self.runtime.block_on(call) else {
+                return Err("fatias: geração cancelada".into());
+            };
+            match result {
                 Ok(response) => break response.into_inner(),
                 Err(status) => {
                     let blamed = status
@@ -795,6 +834,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
     let flag = cancel.clone();
     let task = tokio::task::spawn_blocking(move || {
         let _slot = slot;
+        bind_cancel(&worker, &flag);
         worker
             .model
             .generate(&prompt, new_tokens, Some(worker.end_of_text), &flag)
@@ -934,6 +974,7 @@ fn stream_chat(prepared: Prepared) -> Response {
     let (worker, flag, out, content) = (llm.clone(), cancel.clone(), tx.clone(), event.clone());
     let task = tokio::task::spawn_blocking(move || {
         let _slot = slot;
+        bind_cancel(&worker, &flag);
         let stop = worker.end_of_text;
         let (mut tokens, mut sent) = (Vec::new(), 0);
         let send = |text: &str| {
@@ -1151,6 +1192,17 @@ mod tests {
         // With nobody live, every node is tried again.
         assert_eq!(nodes(roster.assign(&slices).unwrap()), ["a", "b", "c"]);
         assert!(Roster::new(vec![]).assign(&slices).is_err(), "sem nós");
+    }
+
+    #[test]
+    fn remote_calls_see_the_generation_being_cancelled() {
+        let stats = RemoteStats::default();
+        assert!(!stats.cancelled(), "sem geração ligada");
+        let flag = Arc::new(AtomicBool::new(false));
+        stats.bind(&flag);
+        assert!(!stats.cancelled());
+        flag.store(true, Ordering::Relaxed);
+        assert!(stats.cancelled());
     }
 
     #[test]

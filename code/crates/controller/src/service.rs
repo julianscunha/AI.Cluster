@@ -134,6 +134,12 @@ fn authorize_node<T>(
     }
 }
 
+/// A worker that answered "no" is alive: the request or the node's resources are at fault, not
+/// its reachability. No node is blamed, so the gateway does not bench it or retry elsewhere.
+fn compute_failure(error: String) -> Status {
+    Status::invalid_argument(error)
+}
+
 /// Marks `status` with the node that caused it (see `FAILED_NODE_HEADER`).
 fn blame(mut status: Status, node: &str) -> Status {
     if let Ok(value) = node.parse() {
@@ -784,10 +790,7 @@ impl ClusterControl for ClusterControlService {
             };
             let cols = spec.row_end - spec.row_start;
             if !result.ok {
-                return Err(blame(
-                    Status::failed_precondition(result.error),
-                    &spec.node_id,
-                ));
+                return Err(compute_failure(result.error));
             }
             if result.rows != request.rows
                 || result.cols != cols
@@ -1859,5 +1862,17 @@ mod tests {
         let refused = service.shard_matmul(request).await.unwrap_err();
         assert_eq!(refused.code(), tonic::Code::ResourceExhausted);
         drop(held);
+    }
+
+    #[test]
+    fn a_compute_error_blames_no_node() {
+        let status = compute_failure("memória de fatias esgotada neste nó".into());
+        assert!(
+            status
+                .metadata()
+                .get(ai_cluster_protocol::metadata::FAILED_NODE_HEADER)
+                .is_none()
+        );
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
     }
 }

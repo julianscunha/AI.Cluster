@@ -190,9 +190,11 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
   modelos é do worker), então um token vazado pode encher o cache de fatias e gerar leituras com
   `by_columns` (um `seek` por linha). O worker só lê projeções de camada (GPT-2 e Llama; embeddings
   e normas são recusados) e o controller aceita 8 `ShardMatmul` simultâneos (`ResourceExhausted`
-  acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s do gateway é checado entre tokens, não dentro de um
-  token (o `ShardMatmul` tem teto de 8 s por chamada, e cada chamada pode refazer até N vezes).
-  Um erro determinístico de cálculo num worker (por exemplo, cache cheio) conta como falha do nó e o
-  põe de lado por 30 s; se todos caem assim, o gateway tenta todos de novo em vez de recusar. Com
+  acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s e o cancelamento
+  (cliente que sai) valem também dentro de um token: a chamada em voo é abandonada e o controller
+  esquece as operações. Um erro de cálculo que o worker devolve (por exemplo, cache cheio) não acusa
+  nenhum nó: o pedido falha com 503, sem pôr o worker de lado nem refazer em outro. Só queda,
+  canal fechado e falta de resposta contam como falha do nó; se todos caem, o gateway tenta todos de
+  novo em vez de recusar. Com
   muitos nós e poucos vivos, as faixas movidas podem passar de 64 operações em voo por nó (503).
 

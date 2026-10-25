@@ -126,6 +126,17 @@ rm -f "$OUT"
 docker logs aic-gateway 2>&1 | grep -q "refazendo nos demais" || fail "o gateway deveria ter refeito a chamada"
 echo "OK: a geração terminou com a continuação idêntica depois de perder worker-2"
 
+echo "=== B2) o último worker travado: o prazo corta a chamada em voo e libera a vaga ==="
+docker pause aic-worker-1 >/dev/null
+CODE=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY"   -H "Content-Type: application/json" --max-time 60   -d "{\"model\":\"$ID\",\"max_tokens\":15,\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"   $GATEWAY/v1/chat/completions)
+# As tentativas de 8 s do controller esgotam antes do prazo de 30 s (503); se o prazo vencer antes, 504.
+[ "$CODE" = 504 ] || [ "$CODE" = 503 ] || { docker unpause aic-worker-1 >/dev/null; fail "worker travado deveria dar 503/504, deu: $CODE"; }
+sleep 2
+AFTER=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY"   -H "Content-Type: application/json" --max-time 60   -d "{\"model\":\"$ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"   $GATEWAY/v1/chat/completions)
+docker unpause aic-worker-1 >/dev/null
+[ "$AFTER" != 429 ] || fail "a vaga de geração deveria estar livre 2 s depois do 504"
+echo "OK: falha sem pendurar e a vaga liberada logo depois"
+
 echo "=== C) o último worker some: o pedido falha rápido, sem pendurar ==="
 docker rm -f aic-worker-1 >/dev/null 2>&1
 sleep 2
