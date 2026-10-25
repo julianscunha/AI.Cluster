@@ -1,9 +1,9 @@
 ---
 title: "F12 — Model Runtime distribuído"
 aliases: ["Fase N — Model Runtime", "docs/14 (model manager)", "M4"]
-tags: [implementacao/fase/12, implementacao/estado/planejado]
+tags: [implementacao/fase/12, implementacao/estado/parcial]
 type: implementacao/fase
-status: planejado
+status: parcial
 codigos-antigos: ["EP N1–N9", "roadmap 6", "M4"]
 sistema: ["[[model-manager]]", "[[inference-engine]]", "[[adr-007-fronteira-inference-api]]", "[[adr-009-canal-residente-de-fatias]]", "[[canal-de-fatias]]"]
 ---
@@ -31,9 +31,9 @@ Tratar modelos como artefatos versionados e executá-los em vários nós: regist
 
 Verificado em `code/crates/engine`, `gateway/src/main.rs` (`shard_nodes`, `AI_CLUSTER_*_SHARDS`), `controller/src/shards.rs` e `worker/src/shards.rs`.
 
-- [ ] N1 Model registry. Modelos são diretórios apontados por variável de ambiente (`AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR`). Não há registro.
-- [ ] N2 Manifest. Não existe. A configuração vem do `config.json` do modelo, sem versão, lista de tensores nem checksum.
-- [ ] Checksum e versão dos pesos. Nenhum hash é verificado. Cada worker lê os pesos do próprio disco.
+- [ ] N1 Model registry. Modelos são diretórios apontados por variável de ambiente (`AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR`). Não há registro central; o manifest vive ao lado dos pesos.
+- [~] N2 Manifest. `manifest.json` com nome, versão, tamanho e SHA-256 por arquivo ([[f12-manifest-de-modelo]]). Sem lista de tensores nem assinatura.
+- [x] Checksum e versão dos pesos. Gateway e workers verificam o manifest no start e recusam pesos que não conferem; a versão sai em `/v1/models` e em `x-model-version`. A checagem é só no start.
 - [ ] N3 Variantes e precisão. Só `fp32`; o worker reporta `precisions = ["fp32"]` fixo. Não há quantizados.
 - [~] N4 Sharding. Projeções de camada são divididas por linhas de saída entre workers (`ShardChannel`, GPT-2 e SmolLM2). Fatias não são pré-carregadas, porque não há réplica.
 - [~] N5 Cache de modelo. O worker tem cache de fatias com despejo LRU (`AI_CLUSTER_SHARD_CACHE_MB`). Não há cache de modelo no controller nem prefetch.
@@ -59,12 +59,14 @@ Gate específico (manifesto): overhead medido e M4 completo. O critério do EP (
 
 Notas desta pasta (esta nota é o MOC). Entregas já existentes que pertencem a esta fase:
 
+- [[f12-manifest-de-modelo]]: N1/N2 parcial, versão e checksum dos pesos.
+
 - [[f08-engine-local]]: engine CPU (N6).
 - [[f08-canal-residente-de-fatias]]: sharding residente (N4, N8 parcial).
 
 Slices a criar:
 
-- `f12-registry-e-manifest`: N1 e N2, com versão e checksum dos pesos.
+- `f12-registry`: N1, registry consultável pelo controller e comparação de versões entre gateway e workers.
 - `f12-variantes-de-precisao`: N3, quantizados e precisão declarada por nó.
 - `f12-placement-pelo-controller`: placement movido do gateway para o controller.
 - `f12-execucao-fora-do-gateway`: runtime do modelo fora do processo do gateway.

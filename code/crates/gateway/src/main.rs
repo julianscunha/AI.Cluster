@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_engine::{
-    Executor, LanguageModel, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer,
+    Executor, LanguageModel, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama,
+    manifest::verified_version, tokenizer::Tokenizer,
 };
 use ai_cluster_protocol::cluster::{
     CancelRequestRequest, EnqueueGraphRequest, GetOutputRequest, GetTraceRequest,
@@ -65,6 +66,8 @@ const MAX_MESSAGES: usize = 32;
 /// A language model and what it needs to serve a request.
 struct Llm {
     id: &'static str,
+    /// From the model's `manifest.json`, checked at startup; `None` when it has none.
+    version: Option<String>,
     description: &'static str,
     model: Box<dyn LanguageModel + Send + Sync>,
     tokenizer: Tokenizer,
@@ -242,11 +245,19 @@ const LLAMAS: &[LlamaSpec] = &[
     },
 ];
 
+/// `AI_CLUSTER_REQUIRE_MANIFEST=1`: a model directory without `manifest.json` is refused.
+fn manifest_required() -> bool {
+    std::env::var("AI_CLUSTER_REQUIRE_MANIFEST")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true"))
+}
+
 fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, String> {
     let Some(dir) = std::env::var_os(format!("{}_DIR", spec.prefix)) else {
         return Ok(None);
     };
     let dir = std::path::PathBuf::from(dir);
+    let version =
+        verified_version(&dir, manifest_required()).map_err(|err| format!("{}: {err}", spec.id))?;
     let shards = shard_nodes(&format!("{}_SHARDS", spec.prefix));
     let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
         (
@@ -280,6 +291,7 @@ fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, 
     };
     Ok(Some(Llm {
         id: spec.id,
+        version,
         description: spec.description,
         model,
         end_of_text: chat.as_ref().map_or(0, |chat| chat.end),
@@ -465,6 +477,7 @@ async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response 
             "object": "model",
             "owned_by": "ai-cluster",
             "kind": "language-model",
+            "version": llm.version,
             "description": llm.description,
         }));
     }
@@ -1002,6 +1015,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
         [
             ("x-request-id", id.clone()),
             ("x-model-id", llm.id.to_string()),
+            ("x-model-version", llm.version.clone().unwrap_or_default()),
         ],
         Json(json!({
             "id": id,
@@ -1080,6 +1094,7 @@ fn stream_chat(prepared: Prepared) -> Response {
     let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
     let created = unix_seconds();
     let model_id = llm.id;
+    let model_version = llm.version.clone();
     let event = {
         let (id, model) = (id.clone(), llm.id);
         move |delta: serde_json::Value, finish: serde_json::Value| -> Result<Bytes, Infallible> {
@@ -1185,6 +1200,9 @@ fn stream_chat(prepared: Prepared) -> Response {
     headers.insert(header::CACHE_CONTROL, "no-cache".parse().expect("ascii"));
     headers.insert("x-request-id", id.parse().expect("ascii"));
     headers.insert("x-model-id", model_id.parse().expect("ascii"));
+    if let Some(version) = model_version.and_then(|version| version.parse().ok()) {
+        headers.insert("x-model-version", version);
+    }
     response
 }
 
@@ -1284,6 +1302,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut llms = Vec::new();
     if let Some(dir) = std::env::var_os("AI_CLUSTER_GPT2_DIR") {
         let dir = std::path::PathBuf::from(dir);
+        let version =
+            verified_version(&dir, manifest_required()).map_err(|err| format!("gpt2: {err}"))?;
         // AI_CLUSTER_GPT2_SHARDS: see the SmolLM2 block below; GPT-2's slices are column bands.
         let shards = shard_nodes("AI_CLUSTER_GPT2_SHARDS");
         let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
@@ -1304,6 +1324,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         llms.push(Arc::new(Llm {
             id: "gpt2",
+            version,
             description: "GPT-2 small (124M) no gateway, com as projeções nos workers se houver \
                 AI_CLUSTER_GPT2_SHARDS; modelo base, sem template de chat. Só /v1/chat/completions.",
             model,

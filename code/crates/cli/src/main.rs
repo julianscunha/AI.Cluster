@@ -44,6 +44,11 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Model files: manifest with version and checksums, and its verification (F12). Local.
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
     /// Follow a client request through the cluster (H3).
     Request {
         #[command(subcommand)]
@@ -115,6 +120,21 @@ enum Command {
 
 /// The `request` subcommands, matching the `request trace <id>` surface in the spec.
 #[derive(Subcommand, Debug)]
+enum ModelAction {
+    /// Writes `manifest.json` in a model directory: name, version and the SHA-256 of each file (F12).
+    Manifest {
+        /// Model directory (the one the gateway and the workers read).
+        dir: std::path::PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: String,
+    },
+    /// Checks the files of a model directory against its `manifest.json`.
+    Verify { dir: std::path::PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
 enum RequestAction {
     /// The units a request produced, where each is in its life, and what it cost.
     Trace {
@@ -147,6 +167,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             NodeAction::Show { id } => print_node(&cli.controller, &id).await?,
         },
         Command::Metrics => print_metrics(&cli.controller).await?,
+        Command::Model { action } => match action {
+            ModelAction::Manifest { dir, name, version } => {
+                let manifest = ai_cluster_engine::manifest::Manifest::build(&dir, &name, &version)?;
+                std::fs::write(
+                    dir.join(ai_cluster_engine::manifest::FILE),
+                    manifest.to_json(),
+                )?;
+                for file in &manifest.files {
+                    println!("{}  {:>12}  {}", file.sha256, file.bytes, file.path);
+                }
+                println!(
+                    "manifest de {name} {version} gravado ({} arquivos)",
+                    manifest.files.len()
+                );
+            }
+            ModelAction::Verify { dir } => {
+                match ai_cluster_engine::manifest::Manifest::load(&dir)? {
+                    Some(manifest) => {
+                        manifest.verify(&dir)?;
+                        println!(
+                            "ok: {} {} confere ({} arquivos)",
+                            manifest.name,
+                            manifest.version,
+                            manifest.files.len()
+                        );
+                    }
+                    None => return Err(format!("{}: sem manifest.json", dir.display()).into()),
+                }
+            }
+        },
         Command::Events { limit } => print_events(&cli.controller, limit).await?,
         Command::Request { action } => match action {
             RequestAction::Trace { request_id } => {

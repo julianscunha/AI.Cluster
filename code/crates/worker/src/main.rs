@@ -263,6 +263,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // F12: weights that no longer match their manifest are refused before the channel opens, so
+    // a node never serves slices of a file that changed on disk.
+    if let Some(root) = std::env::var_os("AI_CLUSTER_MODEL_DIR") {
+        let root = PathBuf::from(root);
+        tokio::task::spawn_blocking(move || verify_model_dirs(&root)).await??;
+    }
+
     // Resident weight slices (J5): only a node that was told where the models live opens the
     // channel. The cap bounds the memory the slices may hold.
     let shard_channel = std::env::var_os("AI_CLUSTER_MODEL_DIR").map(|root| {
@@ -490,6 +497,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "saiu do cluster node_id={node_id} aceito={} requeued={}",
         left.accepted, left.requeued
     );
+    Ok(())
+}
+
+/// Verifies the manifest of every model directory under `root` that has one. A directory without
+/// manifest is served as before; one whose files do not match stops the worker.
+fn verify_model_dirs(root: &Path) -> Result<(), String> {
+    // `AI_CLUSTER_REQUIRE_MANIFEST=1` makes a model directory without a manifest an error too.
+    let required = std::env::var("AI_CLUSTER_REQUIRE_MANIFEST")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true"));
+    let entries = std::fs::read_dir(root).map_err(|err| format!("{}: {err}", root.display()))?;
+    for entry in entries {
+        let dir = entry.map_err(|err| err.to_string())?.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Some(version) = ai_cluster_engine::manifest::verified_version(&dir, required)? {
+            println!(
+                "modelo {} versão {version} confere com o manifest",
+                dir.display()
+            );
+        }
+    }
     Ok(())
 }
 

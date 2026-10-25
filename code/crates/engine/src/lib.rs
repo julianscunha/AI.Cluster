@@ -6,6 +6,7 @@ mod cache;
 pub mod chat;
 pub mod gpt2;
 pub mod llama;
+pub mod manifest;
 pub mod model;
 pub mod safetensors;
 pub mod shard;
