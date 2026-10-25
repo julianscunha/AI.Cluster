@@ -383,7 +383,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// custa uma ida a mais ao controller. Um id desconhecido é informativo, não erro — o mesmo
 /// tratamento de um trace de requisição desconhecida.
 ///
-/// Os campos de saúde que o worker nunca preenche — `storage_health`, `network_latency_ms`,
+/// Os campos de saúde que o worker nunca preenche — `network_latency_ms`,
 /// `thermal_throttling` — ficam de fora. Imprimi-los zerados diria que valem zero, que é
 /// diferente de não existirem.
 async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -500,8 +500,14 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         health.memory_utilization * 100.0,
         health.swap_utilization * 100.0,
     );
+    // Zero is "not measured" (no idle remeasurement yet), never a dead disk.
+    let storage_health = if health.storage_health > 0.0 {
+        format!("{:.2}", health.storage_health)
+    } else {
+        "-".to_string()
+    };
     println!(
-        "  temperatura_c={:.2} iops={:.2}",
+        "  temperatura_c={:.2} iops={:.2} armaz_saude={storage_health}",
         health.temperature_c, health.disk_io_ops
     );
     match reservation {

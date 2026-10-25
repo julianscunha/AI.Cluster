@@ -49,7 +49,7 @@ Derivado de EP §4 (C1–C4), roadmap Fase 1 (capabilities e health) e `phases.m
 
 - [x] Liveness (heartbeat e grace) e score de saúde com pressão de memória, swap e térmica ([[f02-modelo-de-saude]]).
 - [~] Degradação de rede: sonda repetida no ocioso (`current_network_score`); sem E2E que degrade o link.
-- [ ] Storage health: sem baseline de dispositivo.
+- [~] Storage health: taxa atual sobre o baseline do registro entra no score (`phase-c-storage-health.sh`); sem SMART, latência nem erros ([[f02-modelo-de-saude]]).
 
 ## Gate
 
@@ -60,7 +60,7 @@ Critério de saída: **adicionar nó produz capability profile reproduzível**.
 Gate padrão de fase: código ✔ · benchmark ✔ (`code/tests/phase-c-benchmark.sh`, `phase-c-current.sh`) · telemetria ✔ (`CPU_%`, `TEMP_C`, `SWAP_%`, `rede_*` no detalhe do nó) · teste de falha ✔ (taxa absurda ou benchmark quebrado cai no fallback, nunca pontua alto) · documentação ✔ · ADR: pendente de registro específico.
 
 > [!todo] Pendente
-> Memória sob carga concorrente, storage health, baseline de temperatura por hardware, latência de rede e aceleradores. Bandas de calibração por faixa de tamanho ficaram para depois de existir desvio estável.
+> Memória sob carga concorrente, SMART/erros de disco, baseline de temperatura por hardware, latência de rede e aceleradores. Bandas de calibração por faixa de tamanho ficaram para depois de existir desvio estável.
 
 ## Slices
 

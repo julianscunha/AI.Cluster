@@ -8,7 +8,7 @@ superado: false
 fase: "[[fase-02-capability-e-saude]]"
 codigos-antigos: ["C4", "health-model"]
 sistema: ["[[saude-e-confianca]]"]
-evidencia: ["code/tests/phase-c4-health.sh"]
+evidencia: ["code/tests/phase-c4-health.sh", "code/tests/phase-c-storage-health.sh"]
 ---
 # F02 — Modelo de saúde do nó
 
@@ -36,13 +36,14 @@ Sem dependência nova: `max`, `clamp` e uma subtração.
 
 O score é **o pior domínio**, não a média. Um nó sem swap e com a memória em 90% está em
 apuros; a média com um domínio saudável esconderia exatamente o domínio que importa. Hoje
-entram três domínios medidos:
+entram quatro domínios medidos:
 
 | domínio | medida | onde |
 | --- | --- | --- |
 | pressão de memória | `1 - MemAvailable/MemTotal` | `/proc/meminfo` |
 | pressão de swap | `1 - SwapFree/SwapTotal` | `/proc/meminfo` |
 | pressão térmica | rampa de 80 °C a 100 °C | `/sys/class/thermal` ou override |
+| saúde de storage | `1 - atual/baseline` da taxa de escrita com fsync | sonda do registro e remedida no ocioso |
 
 **CPU não entra.** O [[saude-e-confianca]] lista CPU como domínio de saúde e o score a deixa de fora
 porque utilização mede *carga*, não *condição*: um nó que acabou de terminar uma unidade lê
@@ -85,10 +86,9 @@ em `worker/src/main.rs`.
 núcleo de laptop ferve antes. O [[saude-e-confianca]] pede uma baseline por hardware e o worker ainda
 não tem como saber qual é — a detecção de hardware é a fase C1.
 
-**Saúde de storage e degradação de rede não medidas.** Nenhuma das duas tem baseline de
-dispositivo para comparar: o [[f10-classes-de-armazenamento]] classifica camadas, mas não mede latência, e
-o worker não faz probe de rede. Entram quando existirem as medidas (o análogo do
-[[f02-benchmark-de-capability]]).
+**Saúde de storage é só lentidão.** A taxa de escrita com fsync é remedida no ocioso (cadência do compute) e comparada com o baseline do registro; `storage_health` = atual/baseline (razão ≥ 0,8 conta como 1.0, por causa do ruído do fsync), 1.0 = como ao entrar, 0 = não medido (fora da conta). `AI_CLUSTER_STORAGE_HEALTH` fixa o valor, como a temperatura. Mede só o dispositivo do tmp e não vê desgaste nem erros (SMART), e o [[f10-classes-de-armazenamento]] ainda não mede latência. Evidência: `bash code/tests/phase-c-storage-health.sh` (saúde 0.80 × 0.20, unidade vai para o nó saudável); coberta também por `a_slowed_disk_lowers_health_and_unmeasured_does_not`.
+
+**Degradação de rede fora do score.** A sonda repetida existe (`current_network_score`, [[f02-descoberta-de-rede]]), mas não entra no `health_score`.
 
 **Termo de rede do [[saude-e-confianca]] ausente.** Sem latência de rede medida por nó, não há como
 distinguir um nó atrás de um link saturado.
@@ -100,4 +100,4 @@ memória — são uma mudança no modelo de custo, não no de saúde, e não tê
 ## Próximos passos
 
 - Baseline térmica por hardware, quando a detecção de hardware (C1) existir para isso.
-- Saúde de storage e latência de rede, quando houver medida de referência para cada uma.
+- SMART/erros de disco e latência de rede, quando houver medida de referência para cada uma.

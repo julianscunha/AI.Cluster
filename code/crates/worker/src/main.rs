@@ -388,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Nothing ready: use the idle time to refresh the current-compute estimate,
                 // then wait before asking again (Fase C3).
                 refresh_current_compute();
+                refresh_current_storage().await;
                 if let Some(probe) = probe_client.as_mut() {
                     refresh_current_network(probe).await;
                 }
@@ -960,6 +961,16 @@ fn capability() -> CapabilityReport {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or_else(|| meminfo_kb("MemTotal:").map(|kb| kb * 1024).unwrap_or(0));
     let measurement = baseline_measurement();
+    let storage_score = storage_score();
+    // Only the first measurement is the baseline: a later capability() on a degraded disk
+    // must not hide the degradation by re-baselining.
+    let mut baseline = BASELINE_STORAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if *baseline == 0.0 {
+        *baseline = storage_score;
+    }
+    drop(baseline);
     CapabilityReport {
         cpu_threads,
         memory_bytes,
@@ -967,7 +978,7 @@ fn capability() -> CapabilityReport {
         compute_median_score: measurement.median_score,
         compute_deviation: measurement.deviation,
         storage_classes: storage_classes(),
-        storage_score: storage_score(),
+        storage_score,
         memory_bandwidth_score: memory_bandwidth_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
@@ -1055,6 +1066,73 @@ async fn refresh_current_network(client: &mut ProbeClient) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let kept = guard.map_or(0.0, |(previous, _)| previous);
     *guard = Some((if score > 0.0 { score } else { kept }, Instant::now()));
+}
+
+/// Baseline disk rate taken at registration, and the latest idle remeasurement with when it
+/// was taken (storage health). Zero baseline means the probe failed: nothing to compare with.
+const STORAGE_NOISE_FLOOR: f64 = 0.8;
+static BASELINE_STORAGE: Mutex<f64> = Mutex::new(0.0);
+static CURRENT_STORAGE: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
+
+/// Re-runs the disk probe while idle, on the compute cadence. A failed probe (zero) keeps
+/// the previous estimate, like the link probe. `AI_CLUSTER_STORAGE_HEALTH` pins the health, so
+/// the probe is skipped then. The fsync runs on a blocking thread and with no lock held, so a
+/// slow disk delays neither the runtime nor the heartbeat that reads `storage_health`.
+async fn refresh_current_storage() {
+    if pinned_storage_health().is_some() {
+        return;
+    }
+    let interval = recompute_interval();
+    let previous = *CURRENT_STORAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if previous.is_some_and(|(_, at)| interval != 0 && at.elapsed().as_secs() < interval) {
+        return;
+    }
+    let score = tokio::task::spawn_blocking(storage_score)
+        .await
+        .unwrap_or(0.0);
+    let kept = previous.map_or(0.0, |(score, _)| score);
+    *CURRENT_STORAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some((if score > 0.0 { score } else { kept }, Instant::now()));
+}
+
+fn pinned_storage_health() -> Option<f64> {
+    std::env::var("AI_CLUSTER_STORAGE_HEALTH")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|health| (0.0..=1.0).contains(health))
+}
+
+/// Disk rate now over the registration baseline, 0..1 (1 = as fast as when it joined), or
+/// zero when either side was not measured. Zero is "not measured", never "dead disk".
+/// shortcut: compares the temp dir's device with itself, so it sees slowdown but not SMART
+/// wear or errors; upgrade when a node exposes them.
+fn storage_health() -> f64 {
+    if let Some(pinned) = pinned_storage_health() {
+        return pinned;
+    }
+    let baseline = *BASELINE_STORAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let current = CURRENT_STORAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .map_or(0.0, |(score, _)| score);
+    if baseline > 0.0 && current > 0.0 {
+        // fsync rates are noisy (best of 3 on both sides), so a drop under 20% is noise, not
+        // a sick disk: it reads as healthy.
+        let ratio = (current / baseline).clamp(0.0, 1.0);
+        if ratio >= STORAGE_NOISE_FLOOR {
+            1.0
+        } else {
+            ratio
+        }
+    } else {
+        0.0
+    }
 }
 
 /// The idle remeasurement cadence in seconds. Unset or unparsable means the default.
@@ -1277,11 +1355,22 @@ fn thermal_pressure(temperature_c: f64) -> f64 {
 /// load, not condition: a node that just finished a unit reads as busy at the exact moment it
 /// becomes the best place to send the next one. Placement already asks that question — it
 /// ranks idle candidates — so load belongs to the placement model, not here. Storage health
-/// and network degradation are also unmeasured: neither has a device baseline to compare
-/// against yet (`storage-intelligence`, `saude-e-confianca`).
-fn health_score(memory_utilization: f64, swap_utilization: f64, temperature_c: f64) -> f64 {
+/// is the disk rate now over its registration baseline; network degradation is still unmeasured.
+fn health_score(
+    memory_utilization: f64,
+    swap_utilization: f64,
+    temperature_c: f64,
+    storage_health: f64,
+) -> f64 {
+    // Zero storage health is "not measured": it does not count against the node.
+    let storage_pressure = if storage_health > 0.0 {
+        1.0 - storage_health
+    } else {
+        0.0
+    };
     let worst = memory_utilization
         .max(swap_utilization)
+        .max(storage_pressure)
         .max(thermal_pressure(temperature_c))
         .clamp(0.0, 1.0);
     (1.0 - worst).max(MIN_HEALTH_SCORE)
@@ -1312,8 +1401,15 @@ fn health() -> HealthReport {
     let (cpu_utilization, disk_io_ops) = node_load(Instant::now());
     let temperature_c = temperature_c();
     let swap_utilization = swap_utilization();
+    let storage_health = storage_health();
     HealthReport {
-        health_score: health_score(memory_utilization, swap_utilization, temperature_c),
+        health_score: health_score(
+            memory_utilization,
+            swap_utilization,
+            temperature_c,
+            storage_health,
+        ),
+        storage_health,
         memory_utilization,
         cpu_utilization,
         temperature_c,
@@ -1557,6 +1653,13 @@ mod tests {
     }
 
     #[test]
+    fn a_slowed_disk_lowers_health_and_unmeasured_does_not() {
+        assert!((health_score(0.0, 0.0, 40.0, 0.25) - 0.25).abs() < 1e-9);
+        assert!((health_score(0.0, 0.0, 40.0, 0.0) - 1.0).abs() < 1e-9);
+        assert!((health_score(0.0, 0.0, 40.0, 1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn memory_probe_reports_a_positive_rate() {
         assert!(memory_bandwidth_score() > 0.0);
     }
@@ -1624,29 +1727,29 @@ mod tests {
     #[test]
     fn the_worst_domain_decides_the_health_score() {
         // Memory under pressure with everything else free.
-        assert!((health_score(0.9, 0.0, 40.0) - 0.1).abs() < 1e-9);
+        assert!((health_score(0.9, 0.0, 40.0, 0.0) - 0.1).abs() < 1e-9);
         // Swap under pressure with memory free — an average would have hidden this one.
-        assert!((health_score(0.1, 0.9, 40.0) - 0.1).abs() < 1e-9);
+        assert!((health_score(0.1, 0.9, 40.0, 0.0) - 0.1).abs() < 1e-9);
         // Thermal under pressure with memory and swap free.
-        assert!((health_score(0.1, 0.0, THERMAL_CRITICAL_C) - MIN_HEALTH_SCORE).abs() < 1e-9);
+        assert!((health_score(0.1, 0.0, THERMAL_CRITICAL_C, 0.0) - MIN_HEALTH_SCORE).abs() < 1e-9);
         // A pristine node scores a full 1.0.
-        assert!((health_score(0.0, 0.0, 40.0) - 1.0).abs() < 1e-9);
+        assert!((health_score(0.0, 0.0, 40.0, 0.0) - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn a_measured_node_never_scores_as_unreported() {
         // Placement reads a score of exactly 0 as "not reported" and skips the penalty, so the
         // worst possible readings must still land above it.
-        let worst = health_score(1.0, 1.0, THERMAL_CRITICAL_C);
+        let worst = health_score(1.0, 1.0, THERMAL_CRITICAL_C, 0.0);
         assert!(worst > 0.0, "worst score was {worst}");
         assert_eq!(worst, MIN_HEALTH_SCORE);
         // Values past their ranges cannot push it through the floor either.
-        assert_eq!(health_score(1.5, 2.0, 200.0), MIN_HEALTH_SCORE);
+        assert_eq!(health_score(1.5, 2.0, 200.0, 0.0), MIN_HEALTH_SCORE);
     }
 
     #[test]
     fn a_hot_node_scores_worse_than_a_cool_one_with_equal_memory() {
         // The whole point of the thermal term: same memory, worse condition.
-        assert!(health_score(0.2, 0.0, 95.0) < health_score(0.2, 0.0, 45.0));
+        assert!(health_score(0.2, 0.0, 95.0, 0.0) < health_score(0.2, 0.0, 45.0, 0.0));
     }
 }
