@@ -1513,6 +1513,40 @@ fn temperature_c() -> f64 {
     0.0
 }
 
+/// Battery charge (0..1) and whether the node is draining it, from the kernel's power supply
+/// class, or `None` for a machine with no battery. `AI_CLUSTER_BATTERY=<percent>:<charging|
+/// discharging>` stands in for the hardware, like the temperature override.
+fn battery() -> Option<(f64, bool)> {
+    if let Ok(value) = std::env::var("AI_CLUSTER_BATTERY") {
+        let (percent, state) = value.split_once(':')?;
+        let level = percent.trim().parse::<f64>().ok()? / 100.0;
+        return Some((level.clamp(0.0, 1.0), state.trim() == "discharging"));
+    }
+    for entry in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+        let dir = entry.path();
+        if read_trimmed(&dir.join("type").to_string_lossy()).as_deref() != Some("Battery") {
+            continue;
+        }
+        let level = read_trimmed(&dir.join("capacity").to_string_lossy())?
+            .parse::<f64>()
+            .ok()?;
+        let discharging =
+            read_trimmed(&dir.join("status").to_string_lossy()).as_deref() == Some("Discharging");
+        return Some(((level / 100.0).clamp(0.0, 1.0), discharging));
+    }
+    None
+}
+
+/// How much a draining battery counts against the node, 0..1: nothing above half charge, rising
+/// to 1 at 5%. A node on the wall, or with no battery, pays nothing. The limit is the one the
+/// EP asks of a mobile node: it must not be drained for the cluster's sake.
+fn battery_pressure(battery: Option<(f64, bool)>) -> f64 {
+    match battery {
+        Some((level, true)) if level.is_finite() => ((0.5 - level) / (0.5 - 0.05)).clamp(0.0, 1.0),
+        _ => 0.0,
+    }
+}
+
 /// How much the temperature counts against the node, 0..1.
 ///
 /// Zero below the warning threshold and when no sensor is visible, ramping to 1 at the
@@ -1583,13 +1617,19 @@ fn health() -> HealthReport {
     let temperature_c = temperature_c();
     let swap_utilization = swap_utilization();
     let storage_health = storage_health();
+    let battery = battery();
+    // The worst domain decides, so a draining battery only ever lowers the score.
+    let battery_cap = (1.0 - battery_pressure(battery)).max(MIN_HEALTH_SCORE);
     HealthReport {
         health_score: health_score(
             memory_utilization,
             swap_utilization,
             temperature_c,
             storage_health,
-        ),
+        )
+        .min(battery_cap),
+        battery_level: battery.map_or(0.0, |(level, _)| level),
+        on_battery: battery.is_some_and(|(_, draining)| draining),
         storage_health,
         memory_utilization,
         cpu_utilization,
@@ -1836,6 +1876,18 @@ mod tests {
         assert!((normalize_network_score(1000.0) - 1.0).abs() < 1e-9);
         assert!((normalize_network_score(10_000.0) - 10.0).abs() < 1e-9);
         assert!((normalize_network_score(100.0) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_draining_battery_costs_health_and_the_wall_costs_nothing() {
+        assert_eq!(battery_pressure(None), 0.0);
+        assert_eq!(battery_pressure(Some((0.1, false))), 0.0);
+        assert_eq!(battery_pressure(Some((0.8, true))), 0.0);
+        assert_eq!(battery_pressure(Some((0.5, true))), 0.0);
+        assert!((battery_pressure(Some((0.275, true))) - 0.5).abs() < 1e-9);
+        assert_eq!(battery_pressure(Some((0.05, true))), 1.0);
+        assert_eq!(battery_pressure(Some((0.0, true))), 1.0);
+        assert_eq!(battery_pressure(Some((f64::NAN, true))), 0.0);
     }
 
     #[test]

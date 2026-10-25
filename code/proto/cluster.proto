@@ -98,6 +98,11 @@ message HealthReport {
   /// report, which has no previous sample to difference against. Sums every entry the
   /// kernel lists, so partitions of the same disk are counted twice.
   double disk_io_ops = 9;
+  /// Carga da bateria, 0..1, quando o nó tem uma (F18 Q6). Zero com `on_battery` falso é "sem
+  /// bateria visível", nunca "bateria vazia".
+  double battery_level = 10;
+  /// O nó está rodando na bateria (descarregando), não na tomada.
+  bool on_battery = 11;
 }
 
 message NodeSnapshot {

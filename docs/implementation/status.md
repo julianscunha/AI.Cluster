@@ -34,8 +34,8 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-15-ai-cluster-os\|F15]] | AI Cluster OS e provisionamento | `[~]` | máquina limpa vira worker; M2 | — |
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
-| [[fase-18-worker-movel\|F18]] | Worker móvel | `[ ]` | M7 | — |
-| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[ ]` | soak e failure injection | — |
+| [[fase-18-worker-movel\|F18]] | Worker móvel | `[~]` | M7 | Q6 (bateria) feito; resto precisa de celulares |
+| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria feita; mTLS e soak pendentes |
 
 Marcos (M0–M7) e seus critérios: [[marcos]].
 
@@ -142,9 +142,17 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 
 - `[~]` [[f17-modelo-aprendido]] — P1: razão real/previsto aprendida por nó corrige as previsões (erro 33,5 → 0,08). P2 a P6 não iniciados.
 
-### F18 a F19 `[ ]`
+### F18 `[~]`
 
-Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
+- `[~]` [[f18-bateria-na-saude]] — Q6: bateria descarregando reduz a saúde do nó. Q1 a Q5 precisam de celulares.
+
+### F19 `[~]`
+
+- `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. mTLS, soak, attestation e upgrade/rollback pendentes.
+
+### Pontos de partida
+
+Pontos de partida já existentes:
 
 - F12: projeções sharded e CPU forward estão em F08 (N4 e N6 parciais).
 - F15: nada de OS; `code/os/README.md` define só a fronteira.

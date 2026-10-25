@@ -591,8 +591,22 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
     } else {
         "-".to_string()
     };
+    // No battery in view is not an empty one.
+    let battery = if health.battery_level > 0.0 || health.on_battery {
+        format!(
+            "{:.0}%{}",
+            health.battery_level * 100.0,
+            if health.on_battery {
+                " descarregando"
+            } else {
+                ""
+            }
+        )
+    } else {
+        "-".to_string()
+    };
     println!(
-        "  temperatura_c={:.2} iops={:.2} armaz_saude={storage_health} latencia_ms={latency}",
+        "  temperatura_c={:.2} iops={:.2} armaz_saude={storage_health} latencia_ms={latency} bateria={battery}",
         health.temperature_c, health.disk_io_ops
     );
     match reservation {

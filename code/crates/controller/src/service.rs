@@ -172,6 +172,23 @@ impl Drop for ShardGuard<'_> {
     }
 }
 
+/// The operator check plus who is calling: the peer address, or `?` when the transport has none.
+fn operator_peer<T>(request: &Request<T>) -> Result<String, Status> {
+    require_operator(request)?;
+    Ok(request
+        .remote_addr()
+        .map_or_else(|| "?".to_string(), |addr| addr.to_string()))
+}
+
+impl ClusterControlService {
+    /// The audit trail (F19): one `audit` event per operator action, with the peer and the target.
+    /// It goes into the same event log, so `AI_CLUSTER_EVENTS` keeps it across restarts.
+    fn audit(&self, peer: &str, action: &str, target: &str) {
+        self.events
+            .record(unix_ms(), "audit", format!("{action} {target} de {peer}"));
+    }
+}
+
 #[tonic::async_trait]
 impl ClusterControl for ClusterControlService {
     async fn register_node(
@@ -224,11 +241,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ApproveNodeRequest>,
     ) -> Result<Response<ApproveNodeResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let node_id = request.into_inner().node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
+        self.audit(&peer, "approve", &node_id);
         let approved = self.registry.approve(&node_id);
         if approved {
             self.events.record(unix_ms(), "node_approved", node_id);
@@ -241,11 +259,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<RevokeNodeRequest>,
     ) -> Result<Response<RevokeNodeResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let node_id = request.into_inner().node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
+        self.audit(&peer, "revoke", &node_id);
         let revoked = self.registry.revoke(&node_id);
         self.shards.drop_node(&node_id);
         let requeued = if revoked {
@@ -493,13 +512,18 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<EnqueueWorkRequest>,
     ) -> Result<Response<EnqueueWorkResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let request = request.into_inner();
         if request.rows == 0 || request.shared == 0 || request.cols == 0 {
             return Err(Status::invalid_argument(
                 "todas as dimensões da matriz devem ser maiores que zero",
             ));
         }
+        self.audit(
+            &peer,
+            "enqueue_work",
+            &format!("{}x{}x{}", request.rows, request.shared, request.cols),
+        );
         let repetitions = request.repetitions.max(1);
         let request_id = if request.request_id.is_empty() {
             self.work.next_request_id()
@@ -552,11 +576,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<EnqueueGraphRequest>,
     ) -> Result<Response<EnqueueGraphResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let request = request.into_inner();
         // Without cancellation, graphs nobody waits for any more pile up in the queue (a gateway
         // request that timed out leaves its graph behind). A ceiling turns that into an error
         // the caller can see instead of unbounded growth.
+        self.audit(&peer, "enqueue_graph", &format!("size={}", request.size));
         if self.work.pending() > MAX_QUEUED_UNITS {
             return Err(Status::resource_exhausted(
                 "a fila do controller está cheia; tente de novo em instantes",
@@ -918,11 +943,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<CancelRequestRequest>,
     ) -> Result<Response<CancelRequestResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let request_id = request.into_inner().request_id;
         if request_id.trim().is_empty() {
             return Err(Status::invalid_argument("request_id é obrigatório"));
         }
+        self.audit(&peer, "cancel_request", &request_id);
         let (removed, in_flight) = self.work.cancel_request(&request_id);
         if removed > 0 {
             self.events.record(
@@ -946,7 +972,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ReserveRequest>,
     ) -> Result<Response<ReserveResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -954,6 +980,11 @@ impl ClusterControl for ClusterControlService {
         if request.request_id.trim().is_empty() {
             return Err(Status::invalid_argument("request_id é obrigatório"));
         }
+        self.audit(
+            &peer,
+            "reserve",
+            &format!("{} para {}", request.node_id, request.request_id),
+        );
         if !self.registry.is_available(&request.node_id) {
             return Ok(Response::new(ReserveResponse {
                 granted: false,
@@ -1001,11 +1032,12 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ReleaseReservationRequest>,
     ) -> Result<Response<ReleaseReservationResponse>, Status> {
-        require_operator(&request)?;
+        let peer = operator_peer(&request)?;
         let node_id = request.into_inner().node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
+        self.audit(&peer, "release_reservation", &node_id);
         let released = self.work.release_reservation(&node_id);
         if released {
             self.events
