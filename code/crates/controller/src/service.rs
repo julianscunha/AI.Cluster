@@ -60,6 +60,9 @@ pub struct ClusterControlService {
 /// unbounded `u32` would make a low class wait effectively forever.
 const MAX_PRIORITY: u32 = 9;
 
+/// Invalid results in a row that quarantine a node (G1).
+const QUARANTINE_STRIKES: u32 = 3;
+
 impl ClusterControlService {
     pub fn new(
         registry: Arc<Registry>,
@@ -426,6 +429,31 @@ impl ClusterControl for ClusterControlService {
         if result.work_id.trim().is_empty() {
             return Err(Status::invalid_argument("work_id é obrigatório"));
         }
+        // G1: a wrong answer is not recorded. The unit goes back to the queue and the node
+        // takes a strike; enough in a row quarantines it and hands back what it still holds.
+        if self.work.result_is_valid(&result) == Some(false) {
+            let (work_id, node_id) = (result.work_id.clone(), result.node_id.clone());
+            self.work.reject(&work_id, &node_id);
+            self.events.record(
+                unix_ms(),
+                "work_rejected",
+                format!("{work_id} de {node_id}: resultado inválido"),
+            );
+            if self.registry.strike(&node_id, QUARANTINE_STRIKES) {
+                let requeued = self.work.requeue_for_node(&node_id).requeued;
+                self.shards.drop_node(&node_id);
+                self.events.record(
+                    unix_ms(),
+                    "node_quarantined",
+                    format!("{node_id} reenfileiradas={requeued}"),
+                );
+            }
+            return Ok(Response::new(SubmitWorkResultResponse {
+                accepted: false,
+                message: "resultado inválido".to_string(),
+            }));
+        }
+        self.registry.clear_strikes(&result.node_id);
         match self.work.complete(result, unix_ms()) {
             Some(completed) => {
                 println!(
@@ -1204,6 +1232,65 @@ mod tests {
         assert!(accepted.accepted);
         assert_eq!(work_store.completed().len(), 1);
         assert_eq!(work_store.completed()[0].work_id, "w1");
+    }
+
+    #[tokio::test]
+    async fn three_invalid_results_in_a_row_quarantine_the_node() {
+        let (service, work_store) = service_with_work();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+                replica: None,
+            }))
+            .await
+            .unwrap();
+        work_store.enqueue([unit("w1")]);
+        let bad = |checksum: f64| {
+            op(SubmitWorkResultRequest {
+                result: Some(WorkResult {
+                    work_id: "w1".to_string(),
+                    node_id: "node-a".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    matrix_c: vec![19.0, 22.0, 43.0, 50.0],
+                    checksum,
+                    compute_time_us: 1,
+                }),
+            })
+        };
+        for _ in 0..QUARANTINE_STRIKES {
+            // Each wrong answer sends the unit back; the node asks for it again.
+            let claimed = service
+                .request_work(op(RequestWorkRequest {
+                    node_id: "node-a".to_string(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(claimed.has_work);
+            let reply = service
+                .submit_work_result(bad(1.0))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(!reply.accepted);
+        }
+        assert!(work_store.completed().is_empty());
+        assert_eq!(work_store.pending(), 1);
+        let listed = service
+            .list_nodes(op(ListNodesRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(listed.nodes[0].state, "QUARANTINED");
+        // A quarantined node is no longer offered work.
+        let denied = service
+            .request_work(op(RequestWorkRequest {
+                node_id: "node-a".to_string(),
+            }))
+            .await;
+        assert!(denied.is_err() || !denied.unwrap().into_inner().has_work);
     }
 
     #[tokio::test]

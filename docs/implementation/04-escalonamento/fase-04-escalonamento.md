@@ -35,7 +35,7 @@ Decidir **qual nó** recebe cada Work Unit (scheduler global: filtro, custo, his
 
 Fonte: EP §8 (G1–G6), EP §7 (F3), roadmap Fase 2 e EP §8 "critério de saída".
 
-- [~] G1 Candidate filtering: capabilities (`cpu_threads`) [x]; memória (footprint) [x]; saúde (heartbeat) [x]; trust [~] (exclusão por estado e token de join; sem identidade por nó, sem TLS; níveis UNKNOWN→TRUSTED dependem de enrollment, ver [[saude-e-confianca]]).
+- [~] G1 Candidate filtering: capabilities (`cpu_threads`) [x]; memória (footprint) [x]; saúde (heartbeat) [x]; trust [~] (aprovação, credencial por nó, TLS e **quarentena automática** por resultado inválido, ver [[f04-quarentena]]; os níveis UNKNOWN→TRUSTED dependem de enrollment, ver [[saude-e-confianca]]).
 - [x] G2 Cost model: compute, transferência, fila e saúde. Locality ainda não modelada.
 - [x] G3 Global scheduler: `WorkStore::claim_placed` rankeia candidatos ociosos pelo custo.
 - [~] G4 Local scheduler: concessão de cores [x]; prioridade por unidade na fila do controller [x] (`phase-g-priority.sh`); filas de recursos no worker e GPU/NPU [ ].
@@ -62,6 +62,7 @@ Gate padrão (EP §19): código, benchmark, telemetria, teste de falha, doc e AD
 
 - [[f04-placement]]: filtro duro por threads e memória, modelo de custo, `placement::decide`, scheduler global e histerese.
 - [[f04-scheduler-local]]: concessão de cores pelo worker e checksum idêntico entre 1 e N threads.
+- [[f04-quarentena]]: resultado inválido rejeitado, strikes por nó e `QUARANTINED`.
 - [[f04-reservas]]: retenção de um nó para uma requisição futura, com TTL e recusa a outras requisições.
 
 ## Códigos antigos

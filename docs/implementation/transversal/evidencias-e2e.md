@@ -26,6 +26,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-g-placement.sh` | custo decide o placement: mesma unidade roda no nó capaz (18.000 µs) e não no fraco (2.020.000 µs) | [[f04-placement]] | [[fase-04-escalonamento]] |
 | `phase-g-cores.sh` | o scheduler local concede cores e o worker os usa (~7× menos compute com 4 cores que com 1) | [[f04-scheduler-local]] | [[fase-04-escalonamento]] |
 | `phase-g-priority.sh` | unidade de prioridade 5 enfileirada por último completa antes das de prioridade 0 | [[f04-scheduler-local]] | [[fase-04-escalonamento]] |
+| `phase-g-quarantine.sh` | worker que mente no checksum é posto em `QUARANTINED` e o trabalho termina no honesto | [[f04-quarentena]] | [[fase-04-escalonamento]] |
 | `phase-g-reservations.sh` | nó retido recusa unidades de outras requisições e roda as do dono, mesmo sendo o pior | [[f04-reservas]] | [[fase-04-escalonamento]] |
 | `phase-c-benchmark.sh` | adicionar um nó produz perfil com compute medido, não só contagem de threads | [[f02-benchmark-de-capability]] | [[fase-02-capability-e-saude]] |
 | `phase-c-current.sh` | perfil com current + confiança; a medida instável tem confiança menor | [[f02-capability-corrente]] | [[fase-02-capability-e-saude]] |

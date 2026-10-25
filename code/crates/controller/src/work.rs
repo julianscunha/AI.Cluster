@@ -772,6 +772,44 @@ impl WorkStore {
         None
     }
 
+    /// Whether `result` is a plausible answer to the unit dispatched under its id: same shape,
+    /// a payload of that size, only finite numbers, and the checksum the worker would have
+    /// computed (same sum, same order). `None` when no such unit is in flight.
+    pub fn result_is_valid(&self, result: &WorkResult) -> Option<bool> {
+        let inner = self.lock();
+        let unit = &inner.dispatched.get(&result.work_id)?.unit;
+        let size = (unit.rows as usize).checked_mul(unit.cols as usize);
+        Some(
+            result.rows == unit.rows
+                && result.cols == unit.cols
+                && size == Some(result.matrix_c.len())
+                && result.matrix_c.iter().all(|value| value.is_finite())
+                && result.checksum == result.matrix_c.iter().sum::<f64>(),
+        )
+    }
+
+    /// Takes an in-flight unit back after its node answered wrongly. The blame is the node's,
+    /// so the dispatch does not count against the unit's retry budget: a lying node must not
+    /// be able to fail work an honest one would finish. The loop is bounded by the node's
+    /// quarantine. False when the unit was not in flight on that node.
+    pub fn reject(&self, work_id: &str, node_id: &str) -> bool {
+        let mut inner = self.lock();
+        if inner
+            .dispatched
+            .get(work_id)
+            .is_none_or(|record| record.node_id != node_id)
+        {
+            return false;
+        }
+        let record = inner.dispatched.remove(work_id).expect("checked above");
+        if let Some(attempts) = inner.attempts.get_mut(work_id) {
+            *attempts = attempts.saturating_sub(1);
+        }
+        inner.queue.push_back(record.unit);
+        self.save_locked(&mut inner);
+        true
+    }
+
     /// Returns the record only when the unit was dispatched to the same node.
     ///
     /// ponytail: latency derives from millisecond timestamps, so total/transfer
@@ -1019,6 +1057,60 @@ mod tests {
             priority,
             ..unit(work_id)
         }
+    }
+
+    fn answer(work_id: &str, node_id: &str, data: Vec<f64>, checksum: f64) -> WorkResult {
+        WorkResult {
+            work_id: work_id.to_string(),
+            node_id: node_id.to_string(),
+            rows: 2,
+            cols: 2,
+            matrix_c: data,
+            checksum,
+            compute_time_us: 1,
+        }
+    }
+
+    #[test]
+    fn a_result_is_valid_only_with_the_right_shape_finite_numbers_and_checksum() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        store.claim("n", &CapabilityReport::default(), 1).unwrap();
+        let good = vec![1.0, 2.0, 3.0, 4.0];
+        assert_eq!(
+            store.result_is_valid(&answer("w1", "n", good.clone(), 10.0)),
+            Some(true)
+        );
+        assert_eq!(
+            store.result_is_valid(&answer("w1", "n", good.clone(), 11.0)),
+            Some(false)
+        );
+        assert_eq!(
+            store.result_is_valid(&answer("w1", "n", vec![1.0], 1.0)),
+            Some(false)
+        );
+        let nan = vec![f64::NAN, 0.0, 0.0, 0.0];
+        assert_eq!(
+            store.result_is_valid(&answer("w1", "n", nan, f64::NAN)),
+            Some(false)
+        );
+        assert_eq!(
+            store.result_is_valid(&answer("ghost", "n", good, 10.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_rejected_unit_goes_back_to_the_queue_without_spending_its_attempts() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        for _ in 0..MAX_ATTEMPTS * 2 {
+            store.claim("n", &CapabilityReport::default(), 1).unwrap();
+            assert!(!store.reject("w1", "someone-else"));
+            assert!(store.reject("w1", "n"));
+        }
+        assert_eq!(store.pending(), 1);
+        assert!(store.failed_units().is_empty());
     }
 
     #[test]

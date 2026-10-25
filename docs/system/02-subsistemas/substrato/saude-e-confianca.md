@@ -74,6 +74,8 @@ Detecta aviso de saúde (SMART), desgaste, anomalia de latência e regressão de
 > - **Confiança** hoje é um booleano `trusted` (`NodeSnapshot`): um nó novo nasce não confiável e só recebe trabalho após `ApproveNode`; `RevokeNode` o tira de circulação. A confiança persiste com a credencial do nó em arquivo (`AI_CLUSTER_NODE_CREDENTIAL_FILE` no worker, registro no controller).
 > - Fases: [[f02-modelo-de-saude]], [[f07-aprovacao-de-no]], [[f07-token-de-join]], [[f07-operador-e-credencial-por-no]], [[f07-tls]].
 
-> [!todo] Estados de confiança `UNKNOWN`, `BOOTSTRAPPED`, `VALIDATED`, `QUARANTINED` e `REVOKED` como máquina de estados (hoje só `trusted` sim/não); transições de `DEGRADED`, `ACTIVE`, `FAILED` e `QUARANTINED`; attestation ([[fase-19-hardening-de-producao]]); diagnóstico automatizado; limite térmico por hardware; saúde de armazenamento (SMART) e de rede.
+> - **Quarentena** (`QUARANTINED`): o controller confere cada resultado de Work Unit (forma, números finitos, checksum); 3 inválidos seguidos tiram o nó de circulação, devolvem suas unidades à fila e registram `node_quarantined`. `approve` libera. Ver [[f04-quarentena]].
+
+> [!todo] Estados de confiança `UNKNOWN`, `BOOTSTRAPPED`, `VALIDATED` e `REVOKED` como máquina de estados (hoje `trusted` sim/não, mais `QUARANTINED`); transições de `DEGRADED`, `ACTIVE`, `FAILED` e `QUARANTINED`; attestation ([[fase-19-hardening-de-producao]]); diagnóstico automatizado; limite térmico por hardware; saúde de armazenamento (SMART) e de rede.
 
 > [!warning] Divergência: `HealthReport` declara `storage_health`, `network_latency_ms` e `thermal_throttling`, mas o worker nunca os preenche (ficam em zero). O CLI os omite de propósito para não exibir zero como medida. O limite térmico é genérico (80 °C e 100 °C), não o baseline do hardware.

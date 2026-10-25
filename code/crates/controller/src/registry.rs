@@ -39,6 +39,7 @@ fn new_credential() -> String {
 /// is not a candidate, so it never wins a unit; neither is one nobody approved yet (S2).
 fn eligible(record: &NodeRecord) -> bool {
     record.trusted
+        && !record.quarantined
         && !matches!(
             record.state,
             NodeState::Draining | NodeState::Quarantined | NodeState::Failed | NodeState::Offline
@@ -54,6 +55,12 @@ pub struct NodeRecord {
     /// False until someone approves the node (S2). Liveness and health still flow for an
     /// untrusted node so an operator can see it; it just never receives work or state.
     pub trusted: bool,
+    /// Set after repeated invalid results (G1): alive and visible, but never a candidate, like
+    /// an untrusted node. Cleared only by an operator's `approve`. Not persisted: a controller
+    /// restart forgives the node, which then re-earns the quarantine in a few more bad results.
+    pub quarantined: bool,
+    /// Invalid results in a row; a valid one resets it.
+    pub strikes: u32,
     /// Secret issued at registration (S3b). Only the node that registered it knows it; the
     /// snapshot shown to readers leaves it out.
     pub credential: String,
@@ -67,7 +74,11 @@ impl NodeRecord {
             identity: Some(self.identity.clone()),
             capability: Some(self.capability.clone()),
             health: Some(self.health),
-            state: self.state.as_str().to_string(),
+            state: if self.quarantined {
+                NodeState::Quarantined.as_str().to_string()
+            } else {
+                self.state.as_str().to_string()
+            },
             registered_at_unix_ms: self.registered_at_unix_ms,
             last_heartbeat_unix_ms: self.last_heartbeat_unix_ms,
             trusted: self.trusted,
@@ -82,6 +93,8 @@ impl NodeRecord {
 struct Known {
     credential: String,
     trusted: bool,
+    /// Survives `leave_node` and a restart, so neither is a way out of a quarantine.
+    quarantined: bool,
 }
 
 #[derive(Debug)]
@@ -141,6 +154,8 @@ impl Registry {
                         Known {
                             credential: credential.to_string(),
                             trusted: trusted == "1",
+                            // Optional fourth column; files from before G1 do not have it.
+                            quarantined: fields.next() == Some("1"),
                         },
                     );
                 }
@@ -156,14 +171,25 @@ impl Registry {
 
     fn remember(&self, node_id: &str, credential: &str, trusted: bool) {
         let mut known = self.lock_known();
+        let quarantined = known.get(node_id).is_some_and(|prior| prior.quarantined);
         known.insert(
             node_id.to_string(),
             Known {
                 credential: credential.to_string(),
                 trusted,
+                quarantined,
             },
         );
         self.save(&known);
+    }
+
+    /// Records the quarantine flag next to the credential, so it outlives the live record.
+    fn remember_quarantine(&self, node_id: &str, quarantined: bool) {
+        let mut known = self.lock_known();
+        if let Some(entry) = known.get_mut(node_id) {
+            entry.quarantined = quarantined;
+            self.save(&known);
+        }
     }
 
     fn save(&self, known: &HashMap<String, Known>) {
@@ -175,7 +201,12 @@ impl Registry {
             .filter(|id| !id.contains(['\t', '\n']))
             .map(|id| {
                 let entry = &known[id];
-                format!("{id}\t{}\t{}\n", entry.credential, u8::from(entry.trusted))
+                format!(
+                    "{id}\t{}\t{}\t{}\n",
+                    entry.credential,
+                    u8::from(entry.trusted),
+                    u8::from(entry.quarantined)
+                )
             })
             .collect();
         let tmp = path.with_extension("tmp");
@@ -212,6 +243,33 @@ impl Registry {
         existed
     }
 
+    /// Counts an invalid result against a node; at `limit` in a row it is quarantined.
+    /// True only for the strike that quarantines it. False for an unknown node.
+    pub fn strike(&self, node_id: &str, limit: u32) -> bool {
+        let tripped = match self.lock().get_mut(node_id) {
+            Some(record) => {
+                record.strikes += 1;
+                let tripped = record.strikes >= limit && !record.quarantined;
+                if tripped {
+                    record.quarantined = true;
+                }
+                tripped
+            }
+            None => false,
+        };
+        if tripped {
+            self.remember_quarantine(node_id, true);
+        }
+        tripped
+    }
+
+    /// A valid result forgives the strikes before it.
+    pub fn clear_strikes(&self, node_id: &str) {
+        if let Some(record) = self.lock().get_mut(node_id) {
+            record.strikes = 0;
+        }
+    }
+
     /// A registry where a new node is untrusted until `approve` is called (S2).
     pub fn requiring_approval() -> Self {
         Self {
@@ -225,7 +283,11 @@ impl Registry {
         match self.lock().get_mut(node_id) {
             Some(record) => {
                 record.trusted = true;
+                // Approving is also how an operator releases a quarantined node.
+                record.quarantined = false;
+                record.strikes = 0;
                 self.remember(node_id, &record.credential, true);
+                self.remember_quarantine(node_id, false);
                 true
             }
             None => false,
@@ -293,6 +355,8 @@ impl Registry {
                     health: HealthReport::default(),
                     state: NodeState::Offline,
                     trusted: prior.trusted,
+                    quarantined: prior.quarantined,
+                    strikes: 0,
                     credential: prior.credential,
                     registered_at_unix_ms: now,
                     last_heartbeat_unix_ms: now,
@@ -318,6 +382,8 @@ impl Registry {
                 state: NodeState::Ready,
                 // Re-registration keeps the trust a node already earned (and_modify above).
                 trusted,
+                quarantined: false,
+                strikes: 0,
                 credential: fresh,
                 registered_at_unix_ms: now,
                 last_heartbeat_unix_ms: now,
@@ -503,6 +569,31 @@ mod tests {
             os_version: "linux".to_string(),
             runtime_version: "0.1.0".to_string(),
         }
+    }
+
+    #[test]
+    fn repeated_invalid_results_quarantine_a_node_until_approved_again() {
+        let registry = Registry::new();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        assert!(!registry.strike("node-a", 3));
+        registry.clear_strikes("node-a");
+        // A valid result in between forgave the earlier strike.
+        assert!(!registry.strike("node-a", 3));
+        assert!(!registry.strike("node-a", 3));
+        assert!(registry.is_available("node-a"));
+        assert!(registry.strike("node-a", 3));
+        assert!(!registry.is_available("node-a"));
+        assert_eq!(registry.list()[0].state, "QUARANTINED");
+        // Re-registering does not cure it, and neither does leaving first.
+        registry.register(identity("node-a"), CapabilityReport::default(), 2_000);
+        assert!(!registry.is_available("node-a"));
+        registry.remove("node-a");
+        registry.register(identity("node-a"), CapabilityReport::default(), 3_000);
+        assert!(!registry.is_available("node-a"));
+        // Only an operator's approve releases it.
+        assert!(registry.approve("node-a"));
+        assert!(registry.is_available("node-a"));
+        assert_ne!(registry.list()[0].state, "QUARANTINED");
     }
 
     #[test]
@@ -739,6 +830,28 @@ mod tests {
         registry.mark_stale_offline(11_000, 10_000);
         assert!(!registry.is_available("node-a"));
         assert!(!registry.is_available("ghost"));
+    }
+
+    #[test]
+    fn a_quarantine_survives_a_controller_restart() {
+        let path = std::env::temp_dir().join(format!("aic-quarantine-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let registry = Registry::new().persisted(&path);
+        let first = registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        assert!(registry.strike("node-a", 1));
+
+        let restarted = Registry::new().persisted(&path);
+        let back = restarted
+            .register_as(
+                identity("node-a"),
+                CapabilityReport::default(),
+                2_000,
+                first.credential.as_bytes(),
+            )
+            .unwrap();
+        assert!(back.quarantined);
+        assert!(!restarted.is_available("node-a"));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

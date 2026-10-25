@@ -364,7 +364,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     time::sleep(delay).await;
                 }
                 match execute_work(&unit, &node_id, cores) {
-                    Some(result) => {
+                    Some(mut result) => {
+                        // Test hook (G1): report a wrong checksum so a run can watch the
+                        // controller reject the answer and quarantine this node.
+                        if std::env::var_os("AI_CLUSTER_CORRUPT_RESULTS").is_some() {
+                            result.checksum += 1.0;
+                        }
                         let accepted = client
                             .submit_work_result(SubmitWorkResultRequest {
                                 result: Some(result),

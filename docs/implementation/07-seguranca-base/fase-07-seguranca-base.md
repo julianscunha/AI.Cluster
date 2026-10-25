@@ -44,7 +44,7 @@ revogação sobrevivem a restart. Gate do requisito NFR-011: nó desconhecido n�
 | [ ] | mTLS e attestation de nó | pendente, [[fase-19-hardening-de-producao]] |
 | [ ] | Rotação periódica e revogação de operador e de tokens de join | pendente, [[fase-19-hardening-de-producao]] |
 | [ ] | Segredos fora de claro (arquivo em claro, variável visível em `docker inspect`) | pendente, [[fase-19-hardening-de-producao]] |
-| [ ] | Níveis intermediários de trust (quarentena por confiança) | pendente, [[fase-02-capability-e-saude]] |
+| [~] | Níveis intermediários de trust: quarentena automática feita ([[f04-quarentena]]); `UNKNOWN`/`BOOTSTRAPPED`/`VALIDATED` pendentes | [[fase-19-hardening-de-producao]] |
 | [ ] | Auditoria e exposição de leitura conforme o [[seguranca]] | pendente, [[fase-19-hardening-de-producao]] |
 
 Legenda: `[x]` implementado e validado · `[~]` parcial · `[ ]` não iniciado.
