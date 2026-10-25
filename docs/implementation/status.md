@@ -25,7 +25,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-06-estado-e-recuperacao\|F06]] | Estado e recuperação | `[x]` | recupera de falha planejada e abrupta | estado por chave não replicado (vai para F12) |
 | [[fase-07-seguranca-base\|F07]] | Segurança base | `[x]` | nó desconhecido não recebe trabalho (NFR-011) | mTLS e attestation vão para F19 |
 | [[fase-08-inferencia\|F08]] | Inferência | `[~]` | logits idênticos local × fatiado; 503 sem pendurar | gateway concentra o modelo; sem Request Manager |
-| [[fase-09-transporte\|F09]] | Transporte | `[~]` | mesma Work Unit em transportes distintos | só gRPC/TCP; trait `Transport` é esqueleto |
+| [[fase-09-transporte\|F09]] | Transporte | `[~]` | mesma Work Unit em transportes distintos | cluster só em gRPC/TCP; `Transport` com TCP e Unix fora do caminho do cluster |
 | [[fase-10-inteligencia-de-storage\|F10]] | Inteligência de storage | `[~]` | políticas HDD × NVMe mensuráveis | classes detectadas; sem políticas dinâmicas |
 | [[fase-11-request-manager\|F11]] | Request Manager | `[ ]` | quotas e fila sob carga | — |
 | [[fase-12-model-runtime\|F12]] | Model Runtime distribuído | `[ ]` | overhead medido; M4 | N4 (sharding) e N6 (CPU) adiantados em F08 |
@@ -103,11 +103,11 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 
 ### F09 — Transporte `[~]`
 
-Sem slices próprios no manifesto. Estado em [[fase-09-transporte]].
+Estado em [[fase-09-transporte]].
 
 - `[x]` E2 — gRPC sobre TCP.
-- `[~]` E1 — `crates/transport` tem só `enum TransportKind` e `trait Transport { fn kind() }`; o cliente gRPC é usado direto.
-- `[~]` E5 — sonda de upload do registro (`ProbeLink`); sem métricas adaptativas de latência ou perda.
+- `[~]` [[f09-abstracao-de-transporte]] — E1: `Transport`/`Link` com TCP e socket Unix, frames, probe e benchmark da mesma Work Unit nos dois meios. O cluster ainda passa por gRPC.
+- `[~]` [[f09-metricas-de-enlace]] — E5: vazão de upload e latência até o controller; perda e congestionamento não.
 - `[ ]` E3 (memória compartilhada) e E4 (USB, que vai para F18).
 
 ### F10 — Inteligência de storage `[~]`

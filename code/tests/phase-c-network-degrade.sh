@@ -70,6 +70,16 @@ docker exec aic-worker-a sh -c 'apt-get update -qq >/dev/null 2>&1; apt-get inst
   || { echo "FALHA: não consegui aplicar tc em node-a"; teardown; exit 1; }
 sleep 15
 
+# F09 E5: o worker também mede a latência até o controller e a reporta na saúde.
+LAT=$(run "$R/ai-cluster node show node-b" | grep -o 'latencia_ms=[^ ]*' | cut -d= -f2)
+if [ -n "$LAT" ] && [ "$LAT" != "-" ]; then
+  echo "OK: latencia_ms de node-b = $LAT"
+else
+  echo "FALHA: node-b deveria reportar latencia_ms, veio '$LAT'"
+  teardown
+  exit 1
+fi
+
 echo "=== B) depois do tc, rede_atual de node-a cai bem abaixo da de node-b ==="
 A1=$(current node-a); B1=$(current node-b)
 echo "rede_atual node-a=$A1 node-b=$B1"

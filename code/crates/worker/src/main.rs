@@ -1117,6 +1117,34 @@ fn refresh_current_compute() {
     *guard = Some((measurement, Instant::now()));
 }
 
+/// Round trip to the controller in milliseconds, from the latest idle probe (F09 E5). Zero is
+/// "not measured". Reported in `HealthReport.network_latency_ms`.
+static LATENCY_MS: Mutex<f64> = Mutex::new(0.0);
+
+/// Empty probes per latency measurement; the fastest is kept, like the other probes.
+const LATENCY_RUNS: usize = 5;
+
+/// Round trip of an empty `ProbeLink`, in milliseconds, best of `LATENCY_RUNS`. Zero when the
+/// controller never answered. An empty payload keeps bandwidth out of the number.
+async fn probe_latency(client: &mut ProbeClient) -> f64 {
+    let mut best = f64::MAX;
+    for _ in 0..LATENCY_RUNS {
+        let started = Instant::now();
+        let sent = time::timeout(
+            PROBE_TIMEOUT,
+            client.probe_link(ProbeLinkRequest {
+                payload: Vec::new(),
+            }),
+        )
+        .await;
+        if !matches!(sent, Ok(Ok(_))) {
+            break;
+        }
+        best = best.min(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    if best == f64::MAX { 0.0 } else { best }
+}
+
 /// Latest idle remeasurement of the achieved link rate (Fase C4), with when it was taken.
 static CURRENT_NETWORK: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
 
@@ -1139,6 +1167,12 @@ async fn refresh_current_network(client: &mut ProbeClient) {
         return;
     }
     let score = probe_link(client).await;
+    let latency = probe_latency(client).await;
+    if latency > 0.0 {
+        *LATENCY_MS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = latency;
+    }
     // The attempt is stamped even when it failed, so a flaky controller is retried on the
     // interval and not on every idle poll; the last good estimate stays.
     let mut guard = CURRENT_NETWORK
@@ -1495,6 +1529,9 @@ fn health() -> HealthReport {
         temperature_c,
         swap_utilization,
         disk_io_ops,
+        network_latency_ms: *LATENCY_MS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
         ..Default::default()
     }
 }

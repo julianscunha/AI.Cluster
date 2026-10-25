@@ -81,6 +81,11 @@ dependencies = [
 [[package]]
 name = "ai-cluster-transport"
 version = "0.1.0"
+dependencies = [
+ "ai-cluster-protocol",
+ "prost",
+ "tokio",
+]
 
 [[package]]
 name = "ai-cluster-worker"

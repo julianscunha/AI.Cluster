@@ -30,11 +30,11 @@ Separar a operação (Work Unit, fatia de modelo) do meio que a carrega. Uma API
 
 Verificado em `code/crates/transport` e `code/crates/worker`, `code/crates/controller`.
 
-- [ ] E1 Abstração `send`/`receive`/`stream`/`probe`. Não existe. `crates/transport` tem só o trait `Transport` com `kind()` e nenhuma implementação; os clientes gRPC são chamados direto.
+- [~] E1 Abstração `send`/`receive`/`stream`/`probe`. O trait `Transport` e o `Link` genérico existem em `crates/transport`, com TCP e socket Unix e testes; o cluster ainda não passa por eles, os clientes gRPC são chamados direto ([[f09-abstracao-de-transporte]], [[adr-014-abstracao-de-transporte]]).
 - [x] E2 TCP (gRPC sobre TCP). É o baseline de todo o tráfego: RPCs do controller, `ProbeLink`, `ShardChannel`.
-- [ ] E3 Memória compartilhada. A variante `TransportKind::SharedMemory` está declarada, sem implementação.
-- [~] E5 Métricas adaptativas de enlace. `ProbeLink` mede a vazão de upload até o controller (melhor de algumas rodadas, 2 MiB, referência 1 GbE) e alimenta `network_achieved_score`. Latência, perda e congestionamento não são medidos.
-- [ ] Critério de saída: mesma Work Unit em transportes distintos sem alterar a operação.
+- [ ] E3 Memória compartilhada. A variante `TransportKind::SharedMemory` está declarada, sem implementação; o meio `Unix` (intra-host, sem pilha de rede) é o degrau anterior.
+- [~] E5 Métricas adaptativas de enlace. `ProbeLink` mede a vazão de upload até o controller (melhor de algumas rodadas, 2 MiB, referência 1 GbE) e alimenta `network_achieved_score`; a latência (cinco probes vazios, o menor) vai em `HealthReport.network_latency_ms` ([[f09-metricas-de-enlace]]). Perda e congestionamento não são medidos.
+- [x] Critério de saída: a mesma Work Unit serializada passa por transportes distintos (TCP e Unix) sem alterar a operação, com o custo de cada um medido (`examples/bench.rs`, [[adr-014-abstracao-de-transporte]]). Vale para a camada de transporte; o caminho de Work Unit do cluster segue em gRPC.
 
 > [!warning] Tetos atuais
 > - O probe mede só o upload e só o caminho até o controller; não há perna de download.
