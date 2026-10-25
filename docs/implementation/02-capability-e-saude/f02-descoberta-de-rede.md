@@ -8,7 +8,7 @@ superado: false
 fase: "[[fase-02-capability-e-saude]]"
 codigos-antigos: ["C1", "C2", "C4", "network-discovery"]
 sistema: ["[[capability-engine]]", "[[camada-de-transporte]]"]
-evidencia: ["code/tests/phase-c-network.sh"]
+evidencia: ["code/tests/phase-c-network.sh", "code/tests/phase-c-network-degrade.sh"]
 ---
 # F02 — Descoberta de rede
 
@@ -105,13 +105,11 @@ depois de entrar; o placement lê a atual no lugar do baseline do registro, ent�
 transferência acompanha o que o link entrega agora. Nó fixado não sonda.
 
 Evidência: `phase-c-network.sh` A) `rede_alcancada=2.73 rede_atual=2.34`, com a atual
-preenchida pelo nó ocioso. Que a degradação *muda a decisão* está só no teste unitário de
-`transfer_rate`; não há E2E que degrade um link de verdade.
+preenchida pelo nó ocioso. Que a degradação *muda a decisão* é provado por `phase-c-network-degrade.sh`: `tc tbf` a 20 Mbit/s no egress de `node-a` depois do registro derruba `rede_atual` de 3.51 para 0.02 (node-b: 4.40) e a unidade vai para `node-b`, embora `node-a` fosse o melhor antes do tc. Também há o teste unitário de `transfer_rate`.
 
 Teto: só upload, e só até o controller. Worker e controller no mesmo host medem loopback; o teto nominal contém isso.
 
 ## Próximos passos
 
-- E2E que degrade um link de verdade, para provar que a degradação muda a decisão fora do teste unitário.
 - Medida de latência por nó, quando houver um segundo transporte ou política que a use.
 - Sonda de download, para fechar o link nos dois sentidos.

@@ -48,7 +48,7 @@ Derivado de EP §4 (C1–C4), roadmap Fase 1 (capabilities e health) e `phases.m
 **C4 — Health model**
 
 - [x] Liveness (heartbeat e grace) e score de saúde com pressão de memória, swap e térmica ([[f02-modelo-de-saude]]).
-- [~] Degradação de rede: sonda repetida no ocioso (`current_network_score`); sem E2E que degrade o link.
+- [~] Degradação de rede: sonda repetida no ocioso (`current_network_score`); `phase-c-network-degrade.sh` estrangula o link com `tc` e a unidade muda de nó.
 - [~] Storage health: taxa atual sobre o baseline do registro entra no score (`phase-c-storage-health.sh`); sem SMART, latência nem erros ([[f02-modelo-de-saude]]).
 
 ## Gate

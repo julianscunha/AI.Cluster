@@ -31,6 +31,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-c-network.sh` | link nominal descoberto e usado pelo placement | [[f02-descoberta-de-rede]] | [[fase-02-capability-e-saude]] |
 | `phase-c4-health.sh` | nó quente tem saúde pior e a unidade vai para o frio, com capability idêntica | [[f02-modelo-de-saude]] | [[fase-02-capability-e-saude]] |
 | `phase-c-storage-health.sh` | disco degradado tem saúde pior e a unidade vai para o nó saudável, com capability idêntica | [[f02-modelo-de-saude]] | [[fase-02-capability-e-saude]] |
+| `phase-c-network-degrade.sh` | link estrangulado com `tc` depois do registro derruba `rede_atual` e a unidade vai para o nó intacto (exige `apt` no contêiner) | [[f02-descoberta-de-rede]] | [[fase-02-capability-e-saude]] |
 | `phase-h-metrics.sh` | agregado de métricas muda com o cluster e bate com as partes; `/metrics` | [[f05-metricas]] | [[fase-05-observabilidade]] |
 | `phase-h-traces.sh` | `request_id` liga requisição às unidades, com nó e tempos de compute e transferência | [[f05-traces]] | [[fase-05-observabilidade]] |
 | `phase-h-predictions.sh` | previsão por unidade (score fixado) e soma no roll-up | [[f05-previsto-vs-real]] | [[fase-05-observabilidade]] |
