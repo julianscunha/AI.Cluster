@@ -125,7 +125,7 @@ Hoje (S5), `ai-cluster revoke <nó>` (operador):
 - retira a aprovação e troca a credencial do nó;
 - devolve as unidades em voo à fila e tira o nó do mapa de fatias do controller;
 - gera o evento `node_revoked`;
-- o worker revogado encerra com `Unauthenticated`; se subir de novo, nasce `pendente`.
+- o worker revogado passa a receber `Unauthenticated` nas chamadas (o script `phase-s5-persist.sh` verifica); se subir de novo, nasce `pendente`.
 
 Revogação também serve de rotação de credencial de um nó. Não há revogação de certificado (não
 existe), nem de token de join ou de operador: trocá-los é reiniciar o controller com valores novos.

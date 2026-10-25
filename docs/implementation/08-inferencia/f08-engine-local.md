@@ -102,7 +102,7 @@ Num contêiner de 4 núcleos (Docker no Windows), prompt de 8 tokens:
   multiplicações-soma em 156 ms, ou seja, **cerca de 1 GMAC/s: uma thread só**. O produto divide o
   trabalho por linhas de saída (`multiply_with_threads`); com 1 linha (decodificação) não há o que
   dividir.
-- Para distribuir um modelo deste tamanho, o custo de rede por token (210 idas e voltas) supera o
+- Para distribuir um modelo deste tamanho, o custo de rede por token (120 idas e voltas por token na SmolLM2; ~210 antes da fusão das projeções) supera o
   custo local inteiro. A análise completa está em [[f08-canal-residente-de-fatias]], "Motivação".
 - RTT real entre nós não foi medido aqui (o contêiner único não representa uma rede).
 

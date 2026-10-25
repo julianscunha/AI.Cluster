@@ -77,8 +77,8 @@ workers → resposta, com autenticação própria e erros estáveis.
   multi-tenant são da [[fase-11-request-manager]].
 - **Resultado por `request_id`.** O `GetOutput` é do operador; o gateway só devolve ao cliente o
   resultado do pedido que ele mesmo criou.
-- **Sem TLS na perna HTTP.** A chave trafega em claro fora de loopback. O gateway só aceita outro
-  endereço que `127.0.0.1:8080` com `AI_CLUSTER_INSECURE=1`. TLS para essa perna está pendente em
+- **Sem TLS na perna HTTP.** A chave trafega em claro fora de loopback. O gateway só escuta fora
+  de loopback com `AI_CLUSTER_INSECURE=1`. TLS para essa perna está pendente em
   [[fase-19-hardening-de-producao]].
 - **Entrada arbitrária no grafo** não existe: o grafo é o sintético. Ver
   [[f08-chat-completions]] para o modelo de linguagem real.

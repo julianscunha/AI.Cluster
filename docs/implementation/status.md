@@ -94,10 +94,10 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 
 ### F08 — Inferência `[~]`
 
-- `[~]` [[f08-gateway-e-api]] — gateway HTTP com chave de API, `/v1/models`, `/v1/embeddings` (modelo sintético sobre matmul nos workers). Gateway roda o modelo; nós escolhidos por variável de ambiente; sem Request Manager.
+- `[x]` [[f08-gateway-e-api]] — gateway HTTP com chave de API, `/v1/models`, `/v1/embeddings` (modelo sintético sobre matmul nos workers). Gateway roda o modelo; nós escolhidos por variável de ambiente; sem Request Manager.
 - `[x]` [[f08-engine-local]] — forward do GPT-2 small e da SmolLM2-135M em CPU com paridade contra `transformers`; geração gulosa com KV cache. (J2, J4; J4 confirmado pelo commit `8c58489`.)
 - `[x]` [[f08-chat-completions]] — `/v1/chat/completions` com streaming SSE, cancelamento ao desconectar, template ChatML. Roda no gateway, fora do cluster.
-- `[~]` [[f08-canal-residente-de-fatias]] — projeções em workers (GPT-2 por colunas, SmolLM2 por linhas), reatribuição de faixas se um worker cai, 503 sem pendurar, papel de inferência separado. Só as projeções são distribuídas.
+- `[x]` [[f08-canal-residente-de-fatias]] — projeções em workers (GPT-2 por colunas, SmolLM2 por linhas), reatribuição de faixas se um worker cai, 503 sem pendurar, papel de inferência separado. Só as projeções são distribuídas.
 
 ### F09 — Transporte `[~]`
 
@@ -117,7 +117,7 @@ Sem slices próprios no manifesto. Estado em [[fase-09-transporte]].
 Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
 
 - F12: projeções sharded e CPU forward estão em F08 (N4 e N6 parciais).
-- F15: nada de OS; `os/README.md` define só a fronteira.
+- F15: nada de OS; `code/os/README.md` define só a fronteira.
 - F16: não há caminho de execução de acelerador; C1 `accelerators` `[ ]`.
 
 ## Itens corrigidos em relação às fontes antigas

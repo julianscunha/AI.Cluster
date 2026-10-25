@@ -40,7 +40,7 @@ um decode.
 **Enviar pesos (inviável).** 28 MB por camada em f64 a cada chamada.
 
 **Pesos residentes (o caminho).** Cada worker guarda uma fatia de colunas ou linhas e só as ativações
-trafegam (~4,6 KB). Mesmo assim são ~210 idas e voltas por token: com RTT de 0,3–1 ms em LAN isso
+trafegam (~4,6 KB). Mesmo assim são 120 idas e voltas por token na SmolLM2 (4 por camada; eram ~210 antes de fundir as projeções): com RTT de 0,3–1 ms em LAN isso
 soma 60–210 ms por token, mais que o custo local inteiro; em Wi-Fi, segundos. Para um modelo deste
 tamanho distribuir **não ganha tempo** numa LAN; o ganho aparece quando o modelo não cabe num nó ou
 há lote e prefill grande. Por isso o canal é um caminho de **capacidade**, não de velocidade, e a
@@ -71,7 +71,7 @@ gateway --ShardMatmul(x, ops)--> controller --ShardCompute--> worker (stream res
   fixo.
 - **Relay.** O controller só repassa: `op_id` próprio, uma resposta só vale para a operação enviada
   àquele nó, fila de 64 quadros e 64 operações em voo por nó. `ShardMatmul` é limitado a 64
-  operações e 2 Mi valores de entrada, com prazo de 60 s no controller e operações descartadas ao
+  operações e 2 Mi valores de entrada, com prazo de 8 s por chamada no controller e operações descartadas ao
   falhar uma irmã.
 - **Gateway.** `AI_CLUSTER_SMOLLM2_SHARDS=worker-1,worker-2` (e `AI_CLUSTER_SMOLLM2_SUBDIR`, padrão
   `smollm2`) liga o modo remoto para o modelo base; `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` (subdiretório
@@ -96,8 +96,8 @@ gateway --ShardMatmul(x, ops)--> controller --ShardCompute--> worker (stream res
   carrega de novo sob demanda, em vez de recusar o pedido.
 - **Flag `invalid`.** O worker marca `invalid` quando recusa o próprio pedido (tensor fora da lista,
   entrada incoerente). Isso falha com 503 sem acusar o nó nem pôr o nó de lado.
-- **Prazo e cancelamento dentro do token.** O prazo de 30 s e o cancelamento (cliente que sai) valem
-  também dentro de um `ShardMatmul`: a chamada em voo é abandonada e o controller esquece as operações.
+- **Prazo e cancelamento dentro do token.** O prazo de 30 s do pedido (gateway) e o cancelamento (cliente que sai) valem
+  também dentro de um `ShardMatmul` (que tem o seu próprio teto de 8 s por chamada): a chamada em voo é abandonada e o controller esquece as operações.
 
 ### Tolerância a falha de worker
 
