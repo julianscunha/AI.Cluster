@@ -134,8 +134,8 @@ fn authorize_node<T>(
     }
 }
 
-/// A worker that answered "no" is alive: the request or the node's resources are at fault, not
-/// its reachability. No node is blamed, so the gateway does not bench it or retry elsewhere.
+/// A worker that refused the request itself (`invalid`) is not at fault, and another node would
+/// refuse it too: no node is blamed, so the gateway neither benches it nor retries elsewhere.
 fn compute_failure(error: String) -> Status {
     Status::invalid_argument(error)
 }
@@ -790,7 +790,12 @@ impl ClusterControl for ClusterControlService {
             };
             let cols = spec.row_end - spec.row_start;
             if !result.ok {
-                return Err(compute_failure(result.error));
+                return Err(if result.invalid {
+                    compute_failure(result.error)
+                } else {
+                    // The node's own trouble (model missing, disk): the others may be fine.
+                    blame(Status::failed_precondition(result.error), &spec.node_id)
+                });
             }
             if result.rows != request.rows
                 || result.cols != cols
@@ -1866,7 +1871,7 @@ mod tests {
 
     #[test]
     fn a_compute_error_blames_no_node() {
-        let status = compute_failure("memória de fatias esgotada neste nó".into());
+        let status = compute_failure("tensor não permitido".into());
         assert!(
             status
                 .metadata()

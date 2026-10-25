@@ -192,9 +192,10 @@ de trabalho. Os dois workers dividem os mesmos 4 núcleos; numa rede real o RTT 
   e normas são recusados) e o controller aceita 8 `ShardMatmul` simultâneos (`ResourceExhausted`
   acima disso); o nó, o subdiretório e a faixa continuam à escolha do token. O prazo de 30 s e o cancelamento
   (cliente que sai) valem também dentro de um token: a chamada em voo é abandonada e o controller
-  esquece as operações. Um erro de cálculo que o worker devolve (por exemplo, cache cheio) não acusa
-  nenhum nó: o pedido falha com 503, sem pôr o worker de lado nem refazer em outro. Só queda,
-  canal fechado e falta de resposta contam como falha do nó; se todos caem, o gateway tenta todos de
+  esquece as operações. O worker marca `invalid` quando recusa o próprio pedido
+  (tensor fora da lista, entrada incoerente): isso falha com 503 sem acusar nem pôr nó de lado.
+  Um erro do nó (modelo ausente no disco dele, leitura) acusa o nó, e o gateway refaz nos outros.
+  Queda, canal fechado e falta de resposta contam como falha do nó; se todos caem, o gateway tenta todos de
   novo em vez de recusar. Com
   muitos nós e poucos vivos, as faixas movidas podem passar de 64 operações em voo por nó (503).
 

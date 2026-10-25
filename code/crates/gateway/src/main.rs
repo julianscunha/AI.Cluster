@@ -312,6 +312,9 @@ impl Executor for GrpcExecutor {
             // the runtime handle is safe.
             // Dropping the call when the generation is cancelled aborts the RPC, and the controller
             // forgets its operations: a timeout does not wait out a slow worker.
+            if self.stats.cancelled() {
+                return Err("fatias: geração cancelada".into());
+            }
             let call = async {
                 tokio::select! {
                     result = client.shard_matmul(request) => Some(result),

@@ -78,10 +78,18 @@ fn answer(store: &ShardStore, frame: ShardCompute) -> ShardResult {
         error,
         ..Default::default()
     };
+    // Refusals of the request itself: another node would refuse them too.
+    let refused = |error: &str| ShardResult {
+        invalid: true,
+        ..failed(error.into())
+    };
     if frame.x.len() > MAX_X
         || (frame.rows as usize).checked_mul(frame.k as usize) != Some(frame.x.len())
     {
-        return failed("entrada com tamanho incoerente".into());
+        return refused("entrada com tamanho incoerente");
+    }
+    if !ai_cluster_engine::is_projection(&frame.tensor) {
+        return refused("tensor não permitido: só projeções de camada saem do disco");
     }
     let started = Instant::now();
     let x = Matrix {
@@ -104,6 +112,7 @@ fn answer(store: &ShardStore, frame: ShardCompute) -> ShardResult {
             cols: y.cols,
             data: y.data,
             compute_us: started.elapsed().as_micros() as u64,
+            invalid: false,
         },
         Err(error) => failed(error),
     }

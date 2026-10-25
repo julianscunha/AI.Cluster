@@ -313,10 +313,9 @@ impl ShardStore {
     }
 }
 
-/// `[out, in]` -> `[in, out]`, the layout `x * w` needs.
 /// The only tensors a slice request may read: the per-layer projections of GPT-2 and Llama
 /// models. Embeddings, norms and anything else on the worker's disk stay out of reach.
-fn is_projection(name: &str) -> bool {
+pub fn is_projection(name: &str) -> bool {
     const SUFFIXES: [&str; 11] = [
         ".attn.c_attn.weight",
         ".attn.c_proj.weight",
@@ -333,6 +332,7 @@ fn is_projection(name: &str) -> bool {
     SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
 }
 
+/// `[out, in]` -> `[in, out]`, the layout `x * w` needs.
 pub(crate) fn transposed(m: &Matrix) -> Matrix {
     let (rows, cols) = (m.rows as usize, m.cols as usize);
     let mut data = vec![0.0; m.data.len()];

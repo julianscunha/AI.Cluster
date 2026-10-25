@@ -326,6 +326,8 @@ message ShardResult {
   uint32 cols = 5;
   repeated double data = 6;
   uint64 compute_us = 7;
+  // The request itself was refused (not the node): the caller should not retry elsewhere.
+  bool invalid = 8;
 }
 
 message GetOutputRequest {

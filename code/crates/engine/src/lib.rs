@@ -13,4 +13,4 @@ pub mod tokenizer;
 
 pub use cache::KvCache;
 pub use model::LanguageModel;
-pub use shard::{Executor, LocalExecutor, ShardStore, Slice};
+pub use shard::{Executor, LocalExecutor, ShardStore, Slice, is_projection};
