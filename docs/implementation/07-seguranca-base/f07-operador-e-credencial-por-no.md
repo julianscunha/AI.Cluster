@@ -67,15 +67,13 @@ Separar quem administra do que é só nó, e dar a cada nó uma credencial próp
 
 ## Evidência
 
-- Não há script E2E dedicado a S3a e S3b. A verificação é de código: `require_operator` e
-  `authorize_node` (`code/crates/protocol/src/metadata.rs`, `code/crates/controller/src/service.rs`).
+- `bash code/tests/phase-s3-roles.sh` prova a negação de papel de S3a: com o token de join no lugar do de operador, `approve`, o enfileiramento e `revoke` voltam `PermissionDenied` (leitura passa); com o de inferência nada passa, nem leitura; um segredo inventado é `Unauthenticated`; o de operador administra. S3b segue verificada por código (`authorize_node`).
 - Os scripts `phase-s2-approval.sh` e `phase-s5-persist.sh` usam `approve` e `revoke` pela CLI, que
   envia o token de operador, e os workers que eles sobem se registram com a credencial própria. O
   caminho feliz dos dois papéis passa por eles.
 
-> [!todo] Evidência a criar
-> Um E2E de negação: nó com o token de join chamando `ApproveNode` ou `LeaveNode` de outro
-> `node_id` deve receber `PermissionDenied`. Hoje só há a leitura do código.
+> [!todo] Evidência que falta
+> Um nó com credencial própria chamando `LeaveNode` ou `SubmitWorkResult` em nome de outro `node_id`. A CLI não tem esse comando, então a prova exigiria um cliente gRPC de teste.
 
 ## Limites e próximos passos
 

@@ -102,7 +102,7 @@ estado:
 | --- | --- |
 | Código | feito, em `code/crates/gateway`, `engine`, `controller` e `worker` |
 | Benchmark | feito: custo local e custo do canal (3× mais lento que local numa máquina) |
-| Telemetria | parcial: trace por `request_id`; não há métricas nem eventos próprios de inferência (por modelo, TTFT, tokens) |
+| Telemetria | feita: trace por `request_id` e métricas de geração (TTFT, ITL, tokens/s, KV cache) no `/metrics` do gateway ([[f05-metricas-de-inferencia]]); sem eventos próprios por modelo |
 | Teste de falha | feito: worker morto no meio da geração, worker ausente, token de inferência limitado |
 | Doc | feito (este conjunto); desvios registrados acima |
 | ADR | feito: [[adr-007-fronteira-inference-api]], [[adr-009-canal-residente-de-fatias]] |

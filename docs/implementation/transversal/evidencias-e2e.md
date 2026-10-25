@@ -48,6 +48,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-i-storage.sh` | nó classifica armazenamento em WARM (SSD/NVMe) e COLD (HDD) lendo `/sys/block` | [[f10-classes-de-armazenamento]] | [[fase-10-inteligencia-de-storage]] |
 | `phase-s1-join-token.sh` | controller fail-closed sem token; só aceita quem apresenta o token em toda chamada | [[f07-token-de-join]] | [[fase-07-seguranca-base]] |
 | `phase-s2-approval.sh` | nó novo fica pendente sem trabalho até `approve`; aprovação sobrevive a re-registro | [[f07-aprovacao-de-no]] | [[fase-07-seguranca-base]] |
+| `phase-s3-roles.sh` | token de join e de inferência não administram; operador sim; segredo inventado é recusado | [[f07-operador-e-credencial-por-no]] | [[fase-07-seguranca-base]] |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; http puro e CA errada recusados; sem certificado só com `AI_CLUSTER_INSECURE=1` | [[f07-tls]] | [[fase-07-seguranca-base]] |
 | `phase-s5-persist.sh` | aprovação persiste em restarts; `revoke` devolve o nó a pendente e derruba o worker | [[f07-aprovacao-de-no]] | [[fase-07-seguranca-base]] |
 | `phase-j-inference.sh` | gateway autentica por chave, lista modelo, `/v1/embeddings` sobre matmul nos workers, erros estáveis | [[f08-gateway-e-api]] | [[fase-08-inferencia]] |

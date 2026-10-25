@@ -40,7 +40,7 @@ revogação sobrevivem a restart. Gate do requisito NFR-011: nó desconhecido n�
 | [x] | S3b credencial por nó emitida no registro | [[f07-operador-e-credencial-por-no]] |
 | [x] | S4 TLS de um sentido no canal gRPC | [[f07-tls]] |
 | [x] | S5 persistência da aprovação e revogação (`revoke`, rotação de credencial) | [[f07-aprovacao-de-no]] |
-| [ ] | Evidência E2E de negação de papel (nó tentando RPC de operador) | [[f07-operador-e-credencial-por-no]] |
+| [x] | Evidência E2E de negação de papel (`phase-s3-roles.sh`: join e inferência não administram) | [[f07-operador-e-credencial-por-no]] |
 | [ ] | mTLS e attestation de nó | pendente, [[fase-19-hardening-de-producao]] |
 | [ ] | Rotação periódica e revogação de operador e de tokens de join | pendente, [[fase-19-hardening-de-producao]] |
 | [ ] | Segredos fora de claro (arquivo em claro, variável visível em `docker inspect`) | pendente, [[fase-19-hardening-de-producao]] |
