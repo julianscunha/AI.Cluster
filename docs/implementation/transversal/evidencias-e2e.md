@@ -53,6 +53,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-s5-persist.sh` | aprovação persiste em restarts; `revoke` devolve o nó a pendente e derruba o worker | [[f07-aprovacao-de-no]] | [[fase-07-seguranca-base]] |
 | `phase-j-inference.sh` | gateway autentica por chave, lista modelo, `/v1/embeddings` sobre matmul nos workers, erros estáveis | [[f08-gateway-e-api]] | [[fase-08-inferencia]] |
 | `phase-j-chat.sh` | `/v1/chat/completions` (`gpt2`, `smollm2`, `instruct`): continuação determinística, 401 sem chave | [[f08-chat-completions]] | [[fase-08-inferencia]] |
+| `phase-m-request-manager.sh` | ACL e 401 por tenant, cota 429, interactive passa na frente do batch, grafo abandonado é cancelado | [[f11-tenants-quotas-e-fila]] | [[fase-11-request-manager]] |
 | `phase-j-shards.sh` | projeções da SmolLM2 em 2 workers com fatias próprias; mesma continuação; 503 sem worker | [[f08-canal-residente-de-fatias]] | [[fase-08-inferencia]] |
 
 ## Lacunas

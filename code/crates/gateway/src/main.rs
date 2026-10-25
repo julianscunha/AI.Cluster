@@ -10,6 +10,7 @@
 //! the controller for; the HTTP contract, auth and limits stay.
 
 mod metrics;
+mod request_manager;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -22,12 +23,13 @@ use ai_cluster_engine::{
     Executor, LanguageModel, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama, tokenizer::Tokenizer,
 };
 use ai_cluster_protocol::cluster::{
-    EnqueueGraphRequest, GetOutputRequest, GetTraceRequest, ShardMatmulRequest, ShardOp,
+    CancelRequestRequest, EnqueueGraphRequest, GetOutputRequest, GetTraceRequest,
+    ShardMatmulRequest, ShardOp,
 };
 use ai_cluster_protocol::metadata::{
     FAILED_NODE_HEADER, INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient,
     OPERATOR_TOKEN_ENV, connect_inference, connect_operator, inference_token, insecure_allowed,
-    join_token, operator_token, same_token,
+    join_token, operator_token,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::JsonRejection;
@@ -36,6 +38,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use request_manager::{Admission, Class, Permit, Tenant, Tenants};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -390,12 +393,12 @@ struct Gateway {
     /// Operator connection, for the synthetic embeddings graph; absent when the gateway was
     /// given only the inference token.
     client: Option<MetadataClient>,
-    api_key: Arc<str>,
+    tenants: Arc<Tenants>,
     slots: Arc<Semaphore>,
     llms: Arc<Vec<Arc<Llm>>>,
-    /// One generation at a time across all models: it is CPU-bound and every thread is already
-    /// used by the matmul.
-    llm_slot: Arc<Semaphore>,
+    /// One generation at a time across all models, handed out by priority class: it is CPU-bound
+    /// and every thread is already used by the matmul.
+    admission: Arc<Admission>,
 }
 
 /// The external error model (`inference-api` §13): a stable category and a short message. The cause
@@ -406,16 +409,6 @@ fn error(status: StatusCode, kind: &str, message: &str) -> Response {
         Json(json!({ "error": { "type": kind, "message": message } })),
     )
         .into_response()
-}
-
-/// Whether the call carries `Authorization: Bearer <api key>`.
-fn authenticated(headers: &HeaderMap, key: &str) -> bool {
-    let given = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or("");
-    !key.is_empty() && same_token(key.as_bytes(), given.as_bytes())
 }
 
 fn unauthorized() -> Response {
@@ -441,29 +434,32 @@ async fn health() -> impl IntoResponse {
 
 /// Generation metrics in Prometheus text, behind the same bearer key as the API (F05).
 async fn inference_metrics(State(gateway): State<Gateway>, headers: HeaderMap) -> Response {
-    if !authenticated(&headers, &gateway.api_key) {
+    let Some(tenant) = gateway.tenants.authenticate(&headers) else {
         return unauthorized();
-    }
+    };
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        metrics::render(),
+        metrics::render() + &gateway.tenants.render(&tenant),
     )
         .into_response()
 }
 
 async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response {
-    if !authenticated(&headers, &gateway.api_key) {
+    let Some(tenant) = gateway.tenants.authenticate(&headers) else {
         return unauthorized();
+    };
+    let mut data = Vec::new();
+    if tenant.allows(MODEL_ID) {
+        data.push(json!({
+            "id": MODEL_ID,
+            "object": "model",
+            "owned_by": "ai-cluster",
+            "kind": "synthetic-matmul",
+            "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
+                cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
+        }));
     }
-    let mut data = vec![json!({
-        "id": MODEL_ID,
-        "object": "model",
-        "owned_by": "ai-cluster",
-        "kind": "synthetic-matmul",
-        "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
-            cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
-    })];
-    for llm in gateway.llms.iter() {
+    for llm in gateway.llms.iter().filter(|llm| tenant.allows(llm.id)) {
         data.push(json!({
             "id": llm.id,
             "object": "model",
@@ -507,19 +503,30 @@ fn internal(err: tonic::Status) -> Failure {
 /// ponytail: a request that times out leaves its graph in the controller's queue — there is no
 /// cancellation yet (`request-manager` §8). The concurrency cap bounds how fast that can pile up.
 /// Add a cancel RPC to the controller when abandoned graphs start to cost real capacity.
-async fn run_graph(mut client: MetadataClient, seed: u64) -> Result<(String, Vec<f64>), Failure> {
+async fn run_graph(
+    mut client: MetadataClient,
+    seed: u64,
+    priority: u32,
+) -> Result<(String, Vec<f64>), Failure> {
     let request_id = client
         .enqueue_graph(EnqueueGraphRequest {
             size: DIMENSIONS,
             seed,
             request_id: String::new(),
             keep_result: true,
-            priority: 0,
+            priority,
         })
         .await
         .map_err(internal)?
         .into_inner()
         .request_id;
+    // However this ends (timeout, a failed poll, the client leaving and the future being dropped),
+    // what the graph has not started is taken off the controller's queue.
+    let mut abandon = AbandonGraph {
+        client: client.clone(),
+        request_id: request_id.clone(),
+        armed: true,
+    };
 
     let deadline = Instant::now() + DEADLINE;
     loop {
@@ -559,7 +566,30 @@ async fn run_graph(mut client: MetadataClient, seed: u64) -> Result<(String, Vec
     if !embedding.iter().all(|value| value.is_finite()) {
         return Err(Failure::Failed);
     }
+    abandon.armed = false;
     Ok((request_id, embedding))
+}
+
+/// Asks the controller to cancel a graph nobody is waiting for any more, unless disarmed.
+struct AbandonGraph {
+    client: MetadataClient,
+    request_id: String,
+    armed: bool,
+}
+
+impl Drop for AbandonGraph {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut client = self.client.clone();
+        let request_id = std::mem::take(&mut self.request_id);
+        tokio::spawn(async move {
+            let _ = client
+                .cancel_request(CancelRequestRequest { request_id })
+                .await;
+        });
+    }
 }
 
 async fn embeddings(
@@ -567,9 +597,9 @@ async fn embeddings(
     headers: HeaderMap,
     body: Result<Json<EmbeddingRequest>, JsonRejection>,
 ) -> Response {
-    if !authenticated(&headers, &gateway.api_key) {
+    let Some(tenant) = gateway.tenants.authenticate(&headers) else {
         return unauthorized();
-    }
+    };
     let request = match body {
         Ok(Json(request)) => request,
         // Keeps the rejection's own status: 413 past the body limit, 415 for a wrong type.
@@ -588,6 +618,9 @@ async fn embeddings(
             "modelo desconhecido; veja GET /v1/models",
         );
     }
+    if !tenant.allows(MODEL_ID) {
+        return model_forbidden();
+    }
     if request.input.is_empty() || request.input.len() > MAX_INPUT_BYTES {
         return error(
             StatusCode::BAD_REQUEST,
@@ -595,8 +628,12 @@ async fn embeddings(
             "`input` deve ter de 1 a 8192 bytes",
         );
     }
+    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+        return quota_exceeded(retry);
+    }
     // Backpressure with an explicit policy (`inference-api` §22): reject and say when to retry.
     let Ok(_slot) = gateway.slots.clone().try_acquire_owned() else {
+        tenant.note_rejected();
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,
             "CAPACITY_UNAVAILABLE",
@@ -615,8 +652,12 @@ async fn embeddings(
             "embeddings exigem o token de operador, que este gateway não tem",
         );
     };
-    match run_graph(client, seed_of(&request.input)).await {
-        Ok((request_id, embedding)) => (
+    let priority = tenant.class_for(requested_class(&headers)) as u32;
+    match run_graph(client, seed_of(&request.input), priority).await {
+        Ok((request_id, embedding)) => {
+            // Roughly four bytes to a token, at least one: embeddings spend the quota too.
+            tenant.charge(request.input.len().div_ceil(4).max(1) as u64);
+            (
             [
                 ("x-request-id", request_id.clone()),
                 ("x-model-id", MODEL_ID.to_string()),
@@ -631,7 +672,8 @@ async fn embeddings(
                 "usage": { "prompt_tokens": 0, "total_tokens": 0 },
             })),
         )
-            .into_response(),
+            .into_response()
+        }
         Err(Failure::Timeout) => error(
             StatusCode::GATEWAY_TIMEOUT,
             "TIMEOUT",
@@ -689,7 +731,37 @@ struct Prepared {
     prompt: Vec<u32>,
     new_tokens: usize,
     stream: bool,
-    slot: tokio::sync::OwnedSemaphorePermit,
+    slot: Permit,
+    tenant: Arc<Tenant>,
+}
+
+/// The class a call asks for in `x-priority`, if it names one.
+fn requested_class(headers: &HeaderMap) -> Option<Class> {
+    headers
+        .get("x-priority")
+        .and_then(|value| value.to_str().ok())
+        .and_then(Class::parse)
+}
+
+fn model_forbidden() -> Response {
+    error(
+        StatusCode::FORBIDDEN,
+        "MODEL_FORBIDDEN",
+        "esta chave não tem acesso ao modelo; veja GET /v1/models",
+    )
+}
+
+fn quota_exceeded(retry_after_secs: u64) -> Response {
+    let mut response = error(
+        StatusCode::TOO_MANY_REQUESTS,
+        "QUOTA_EXCEEDED",
+        "a cota de tokens desta chave acabou; tente de novo quando a janela renovar",
+    );
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        retry_after_secs.to_string().parse().expect("ascii"),
+    );
+    response
 }
 
 static NEXT_CHAT_ID: AtomicU64 = AtomicU64::new(1);
@@ -705,14 +777,14 @@ fn unix_seconds() -> u64 {
 /// joined by newlines and it continues the text. The reply is then a continuation, not an answer.
 // The error is the HTTP response itself, sent straight back; boxing it would only add noise.
 #[allow(clippy::result_large_err)]
-fn prepare(
+async fn prepare(
     gateway: &Gateway,
     headers: &HeaderMap,
     body: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Prepared, Response> {
-    if !authenticated(headers, &gateway.api_key) {
+    let Some(tenant) = gateway.tenants.authenticate(headers) else {
         return Err(unauthorized());
-    }
+    };
     let request = match body {
         Ok(Json(request)) => request,
         Err(rejection) => {
@@ -735,6 +807,9 @@ fn prepare(
             "modelo desconhecido; veja GET /v1/models",
         ));
     };
+    if !tenant.allows(llm.id) {
+        return Err(model_forbidden());
+    }
     let total: usize = request.messages.iter().map(|m| m.content.len()).sum();
     if request.messages.is_empty()
         || request.messages.len() > MAX_MESSAGES
@@ -753,8 +828,14 @@ fn prepare(
         .max_tokens
         .unwrap_or(DEFAULT_NEW_TOKENS)
         .clamp(1, MAX_NEW_TOKENS) as usize;
+    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+        return Err(quota_exceeded(retry));
+    }
     // The slot comes first so a busy gateway spends no CPU tokenizing for a request it refuses.
-    let Ok(slot) = gateway.llm_slot.clone().try_acquire_owned() else {
+    // A request waits in line by class, up to the gateway's limit, and is refused past it.
+    let class = tenant.class_for(requested_class(headers));
+    let Ok(slot) = gateway.admission.acquire(class).await else {
+        tenant.note_rejected();
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,
             "CAPACITY_UNAVAILABLE",
@@ -765,6 +846,11 @@ fn prepare(
             .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
         return Err(response);
     };
+    // Checked again now that the wait is over: a burst that queued behind an empty quota would
+    // otherwise all be let through, each spending up to a full generation.
+    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+        return Err(quota_exceeded(retry));
+    }
     let built = match &llm.chat {
         Some(chat) => {
             let turns: Vec<(&str, &str)> = request
@@ -794,6 +880,7 @@ fn prepare(
         new_tokens,
         stream: request.stream,
         slot,
+        tenant,
     })
 }
 
@@ -818,7 +905,7 @@ async fn chat_completions(
     headers: HeaderMap,
     body: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Response {
-    match prepare(&gateway, &headers, body) {
+    match prepare(&gateway, &headers, body).await {
         Ok(prepared) if prepared.stream => stream_chat(prepared),
         Ok(prepared) => complete_chat(prepared).await,
         Err(response) => response,
@@ -840,6 +927,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
         prompt,
         new_tokens,
         slot,
+        tenant,
         ..
     } = prepared;
     let prompt_tokens = prompt.len();
@@ -868,6 +956,7 @@ async fn complete_chat(prepared: Prepared) -> Response {
         let stopped = generated
             .as_ref()
             .is_ok_and(|tokens| tokens.last() == Some(&worker.end_of_text));
+        tenant.charge((prompt.len() + sampler.tokens()) as u64);
         sampler.finish(
             generated.is_ok(),
             prompt.len(),
@@ -985,6 +1074,7 @@ fn stream_chat(prepared: Prepared) -> Response {
         prompt,
         new_tokens,
         slot,
+        tenant,
         ..
     } = prepared;
     let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
@@ -1043,6 +1133,7 @@ fn stream_chat(prepared: Prepared) -> Response {
         let stopped = generated
             .as_ref()
             .is_ok_and(|tokens| tokens.last() == Some(&stop));
+        tenant.charge((prompt.len() + sampler.tokens()) as u64);
         sampler.finish(
             generated.is_ok(),
             prompt.len(),
@@ -1099,22 +1190,60 @@ fn stream_chat(prepared: Prepared) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("AI_CLUSTER_API_KEY")
+    // Who may call: the single `AI_CLUSTER_API_KEY` (tenant "default", every model, no quota) and/or
+    // the tenants of `AI_CLUSTER_TENANTS` (F11): `name=key[,models=a|b][,tokens=N][,class=c];...`.
+    let mut list = Vec::new();
+    if let Some(key) = std::env::var("AI_CLUSTER_API_KEY")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or("AI_CLUSTER_API_KEY é obrigatório; o gateway não sobe sem chave")?;
-    // The key faces applications; the join and operator tokens face the cluster. Reusing one
-    // would let an application's key act as a node or as the operator.
-    if [join_token(), operator_token(), inference_token()]
-        .iter()
-        .any(|token| token.as_ref() == Some(&api_key))
     {
-        return Err(format!(
-            "AI_CLUSTER_API_KEY deve ser diferente de {JOIN_TOKEN_ENV}, {OPERATOR_TOKEN_ENV} e {INFERENCE_TOKEN_ENV}"
-        )
-        .into());
+        list.push(Tenant::new("default", &key));
     }
+    if let Ok(spec) = std::env::var("AI_CLUSTER_TENANTS") {
+        list.extend(request_manager::parse_tenants(&spec)?);
+    }
+    if list.is_empty() {
+        return Err(
+            "AI_CLUSTER_API_KEY ou AI_CLUSTER_TENANTS é obrigatório; o gateway não sobe sem chave"
+                .into(),
+        );
+    }
+    // The keys face applications; the join and operator tokens face the cluster. Reusing one
+    // would let an application's key act as a node or as the operator.
+    let cluster_tokens = [join_token(), operator_token(), inference_token()];
+    for (index, tenant) in list.iter().enumerate() {
+        if cluster_tokens
+            .iter()
+            .any(|token| token.as_deref() == Some(tenant.key()))
+        {
+            return Err(format!(
+                "a chave de '{}' deve ser diferente de {JOIN_TOKEN_ENV}, {OPERATOR_TOKEN_ENV} e {INFERENCE_TOKEN_ENV}",
+                tenant.name
+            )
+            .into());
+        }
+        if list[..index]
+            .iter()
+            .any(|other| other.key() == tenant.key())
+        {
+            return Err(format!("a chave de '{}' repete a de outro tenant", tenant.name).into());
+        }
+    }
+    let env_number = |name: &str, default: u64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(default)
+    };
+    let tenants = Arc::new(Tenants::new(
+        list,
+        Duration::from_secs(env_number("AI_CLUSTER_QUOTA_WINDOW_SECS", 3600)),
+    ));
+    let admission = Admission::new(
+        env_number("AI_CLUSTER_QUEUE_MAX", 8) as usize,
+        Duration::from_secs(env_number("AI_CLUSTER_QUEUE_WAIT_SECS", 10)),
+    );
     // The operator token runs the synthetic embeddings graph; the inference token is enough for
     // the language models. With both, the models still use the narrower one.
     if operator_token().is_none() && inference_token().is_none() {
@@ -1191,10 +1320,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let gateway = Gateway {
         client: operator_client,
-        api_key: api_key.into(),
+        tenants,
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),
-        llm_slot: Arc::new(Semaphore::new(1)),
+        admission,
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -1277,20 +1406,5 @@ mod tests {
         // FNV-1a of the empty string is the offset basis; a drift here would change every
         // vector ever returned.
         assert_eq!(seed_of(""), 0xcbf2_9ce4_8422_2325);
-    }
-
-    #[test]
-    fn only_the_exact_bearer_key_passes() {
-        let with = |value: &str| {
-            let mut headers = HeaderMap::new();
-            headers.insert(header::AUTHORIZATION, value.parse().unwrap());
-            headers
-        };
-        assert!(authenticated(&with("Bearer k"), "k"));
-        for bad in ["Bearer K", "Bearer ", "k", "Basic k", "Bearer kk"] {
-            assert!(!authenticated(&with(bad), "k"), "{bad:?}");
-        }
-        assert!(!authenticated(&HeaderMap::new(), "k"));
-        assert!(!authenticated(&with("Bearer "), ""));
     }
 }

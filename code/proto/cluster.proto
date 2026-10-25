@@ -344,6 +344,19 @@ message ShardResult {
   bool invalid = 8;
 }
 
+/// Cancela uma requisição (F11): as unidades dela que ainda estão na fila saem dela, e as que
+/// dependiam delas saem juntas. Unidades já despachadas a um worker terminam normalmente.
+message CancelRequestRequest {
+  string request_id = 1;
+}
+
+message CancelRequestResponse {
+  /// Unidades retiradas da fila.
+  uint32 removed = 1;
+  /// Unidades que já estavam num worker e seguem até o fim.
+  uint32 in_flight = 2;
+}
+
 message GetOutputRequest {
   string request_id = 1;
 }
@@ -590,6 +603,7 @@ service ClusterControl {
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
   rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
   rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
+  rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
   rpc Reserve(ReserveRequest) returns (ReserveResponse);
   rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
   rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);

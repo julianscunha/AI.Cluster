@@ -4,17 +4,18 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
-    ApproveNodeRequest, ApproveNodeResponse, EnqueueGraphRequest, EnqueueGraphResponse,
-    EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetOutputRequest,
-    GetOutputResponse, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
-    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
-    ListEventsRequest, ListEventsResponse, ListNodesRequest, ListNodesResponse,
-    ListReservationsRequest, ListReservationsResponse, MetricsResponse, ProbeLinkRequest,
-    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
-    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, ShardCompute,
-    ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    ApproveNodeRequest, ApproveNodeResponse, CancelRequestRequest, CancelRequestResponse,
+    EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
+    GetMetricsRequest, GetOutputRequest, GetOutputResponse, GetTraceRequest, GetTraceResponse,
+    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
+    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
+    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
+    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
+    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
+    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
+    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
+    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
+    WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, node_credential, require_inference, require_operator,
@@ -909,6 +910,30 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(GetTraceResponse {
             units: self.work.trace(&request_id),
             request_id,
+        }))
+    }
+
+    /// Cancela uma requisição (F11): tira da fila o que ela ainda não despachou.
+    async fn cancel_request(
+        &self,
+        request: Request<CancelRequestRequest>,
+    ) -> Result<Response<CancelRequestResponse>, Status> {
+        require_operator(&request)?;
+        let request_id = request.into_inner().request_id;
+        if request_id.trim().is_empty() {
+            return Err(Status::invalid_argument("request_id é obrigatório"));
+        }
+        let (removed, in_flight) = self.work.cancel_request(&request_id);
+        if removed > 0 {
+            self.events.record(
+                unix_ms(),
+                "request_cancelled",
+                format!("{request_id} removidas={removed} em_voo={in_flight}"),
+            );
+        }
+        Ok(Response::new(CancelRequestResponse {
+            removed: removed as u32,
+            in_flight: in_flight as u32,
         }))
     }
 

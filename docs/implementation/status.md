@@ -27,7 +27,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-08-inferencia\|F08]] | Inferência | `[~]` | logits idênticos local × fatiado; 503 sem pendurar | gateway concentra o modelo; sem Request Manager |
 | [[fase-09-transporte\|F09]] | Transporte | `[~]` | mesma Work Unit em transportes distintos | cluster só em gRPC/TCP; `Transport` com TCP e Unix fora do caminho do cluster |
 | [[fase-10-inteligencia-de-storage\|F10]] | Inteligência de storage | `[~]` | políticas HDD × NVMe mensuráveis | classes e latência de escrita medidas; sem SMART nem políticas |
-| [[fase-11-request-manager\|F11]] | Request Manager | `[ ]` | quotas e fila sob carga | — |
+| [[fase-11-request-manager\|F11]] | Request Manager | `[~]` | quotas e fila sob carga | no gateway; sem estados, idempotência nem cancelamento no worker |
 | [[fase-12-model-runtime\|F12]] | Model Runtime distribuído | `[ ]` | overhead medido; M4 | N4 (sharding) e N6 (CPU) adiantados em F08 |
 | [[fase-13-graph-engine\|F13]] | Graph engine | `[ ]` | só adotar com ganho medido | — |
 | [[fase-14-edge-optimizer\|F14]] | Edge optimizer | `[ ]` | ganho > custo; M5 | — |
@@ -114,7 +114,11 @@ Estado em [[fase-09-transporte]].
 
 - `[~]` [[f10-classes-de-armazenamento]] — classes HOT/WARM/COLD por nó lidas de `/sys/block` (NVMe/SSD → WARM, HDD → COLD) `[x]`; escrita sequencial com fsync `[~]`; latência, SMART, alocação dinâmica e políticas `[ ]`.
 
-### F11 a F19 `[ ]`
+### F11 — Request Manager `[~]`
+
+- `[~]` [[f11-tenants-quotas-e-fila]] — tenants, ACL de modelo, cota de tokens, fila por classe e cancelamento do grafo, no gateway. Sem estados, idempotência nem cancelamento no worker.
+
+### F12 a F19 `[ ]`
 
 Não iniciados. Ver as notas de fase. Pontos de partida já existentes:
 

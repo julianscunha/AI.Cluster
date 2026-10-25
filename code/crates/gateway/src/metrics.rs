@@ -72,6 +72,11 @@ impl Sampler {
         }
     }
 
+    /// Tokens the client has seen so far.
+    pub fn tokens(&self) -> usize {
+        self.tokens
+    }
+
     /// Call when a token has just been chosen.
     pub fn token(&mut self) {
         self.tokens += 1;

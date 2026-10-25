@@ -859,6 +859,39 @@ impl WorkStore {
         Some(completed)
     }
 
+    /// Cancels a request (F11): every unit of it still in the queue is dropped, whatever it waits
+    /// for. Units already on a worker run to the end (the worker has no way to be told), and their
+    /// results are discarded when they come in. Returns `(removed, in_flight)`.
+    pub fn cancel_request(&self, request_id: &str) -> (usize, usize) {
+        let mut inner = self.lock();
+        let before = inner.queue.len();
+        let mut dropped = Vec::new();
+        inner.queue.retain(|unit| {
+            let keep = unit.request_id != request_id;
+            if !keep {
+                dropped.push(unit.work_id.clone());
+            }
+            keep
+        });
+        for work_id in &dropped {
+            inner.passed.remove(work_id);
+            inner.attempts.remove(work_id);
+            inner.keep.remove(work_id);
+        }
+        let in_flight = inner
+            .dispatched
+            .values()
+            .filter(|record| record.unit.request_id == request_id)
+            .count();
+        let removed = before - inner.queue.len();
+        if removed > 0 {
+            // A kept intermediate output nothing can read any more is dead weight.
+            drop_unreferenced_outputs(&mut inner);
+            self.save_locked(&mut inner);
+        }
+        (removed, in_flight)
+    }
+
     /// Asks the store to keep the output of `work_id` for `kept_output` (J1).
     pub fn keep_output(&self, work_id: &str) {
         self.lock().keep.insert(work_id.to_string());
@@ -1111,6 +1144,28 @@ mod tests {
         }
         assert_eq!(store.pending(), 1);
         assert!(store.failed_units().is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_request_drops_its_queued_units_and_leaves_others() {
+        let store = WorkStore::new();
+        store.enqueue([
+            unit_for("a1", "req-a"),
+            unit_for("b1", "req-b"),
+            unit_for("a2", "req-a"),
+        ]);
+        // One unit of req-a is already on a worker.
+        let claimed = store.claim("n", &CapabilityReport::default(), 1).unwrap();
+        assert_eq!(claimed.work_id, "a1");
+
+        let (removed, in_flight) = store.cancel_request("req-a");
+        assert_eq!((removed, in_flight), (1, 1));
+        assert_eq!(store.cancel_request("req-a"), (0, 1));
+        assert_eq!(store.cancel_request("ghost"), (0, 0));
+        // Only req-b's unit is left to claim.
+        let next = store.claim("n", &CapabilityReport::default(), 2).unwrap();
+        assert_eq!(next.work_id, "b1");
+        assert!(store.claim("n", &CapabilityReport::default(), 3).is_none());
     }
 
     #[test]

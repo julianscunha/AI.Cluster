@@ -2,10 +2,10 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    ApproveNodeRequest, EnqueueGraphRequest, EnqueueWorkRequest, GetMetricsRequest,
-    GetTraceRequest, ListEventsRequest, ListNodesRequest, ListReservationsRequest,
-    ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest, WorkReportRequest,
-    WorkReportResponse,
+    ApproveNodeRequest, CancelRequestRequest, EnqueueGraphRequest, EnqueueWorkRequest,
+    GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListNodesRequest,
+    ListReservationsRequest, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
+    WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_operator;
 use clap::{Parser, Subcommand};
@@ -121,6 +121,11 @@ enum RequestAction {
         /// Request id, as printed by `benchmark` or `graph`.
         request_id: String,
     },
+    /// Takes a request's units out of the queue. Units already on a worker finish (F11).
+    Cancel {
+        /// Request id, as printed by `benchmark` or `graph`.
+        request_id: String,
+    },
 }
 
 /// The `node` subcommands, matching the `node show <id>` surface in the spec (B4).
@@ -146,6 +151,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Request { action } => match action {
             RequestAction::Trace { request_id } => {
                 print_trace(&cli.controller, &request_id).await?
+            }
+            RequestAction::Cancel { request_id } => {
+                let mut client = connect_operator(cli.controller.clone()).await?;
+                let reply = client
+                    .cancel_request(CancelRequestRequest {
+                        request_id: request_id.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                println!(
+                    "requisicao={request_id} removidas={} em_voo={}",
+                    reply.removed, reply.in_flight
+                );
             }
         },
         Command::Benchmark {
