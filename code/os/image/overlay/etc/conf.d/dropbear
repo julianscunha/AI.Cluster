@@ -1,0 +1,2 @@
+# Só chave pública (as chaves vivem em /data/ssh/authorized_keys); sem senha.
+DROPBEAR_OPTS="-s -g"

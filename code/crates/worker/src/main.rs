@@ -1067,7 +1067,7 @@ fn ram_backed(mounts: &str, path: &std::path::Path) -> bool {
             path.starts_with(point).then_some((point.len(), kind))
         })
         .max_by_key(|(len, _)| *len)
-        .is_some_and(|(_, kind)| matches!(kind, "tmpfs" | "ramfs"))
+        .is_some_and(|(_, kind)| matches!(kind, "tmpfs" | "ramfs" | "rootfs"))
 }
 
 /// Sequential write rate of the disk under the temp dir over the reference, or zero when the
@@ -2005,6 +2005,11 @@ tmpfs /run tmpfs rw 0 0
         assert!(!ram_backed(mounts, std::path::Path::new("/var/tmp")));
         assert!(!ram_backed(mounts, std::path::Path::new("/tmpfoo")));
         assert!(!ram_backed("", std::path::Path::new("/tmp")));
+        // The root of an initramfs is RAM too.
+        assert!(ram_backed(
+            "rootfs / rootfs rw 0 0",
+            std::path::Path::new("/var/tmp")
+        ));
     }
 
     #[test]

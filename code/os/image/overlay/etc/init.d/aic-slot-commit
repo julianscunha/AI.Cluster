@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+# Confirma o slot (F15 J5): o slot em teste só vira o definitivo depois que o worker se registrou no
+# controller. Sem isso, em até COMMIT_TIMEOUT segundos o nó reinicia e o u-boot, que conta as
+# tentativas no setor de estado, volta ao slot anterior depois de duas.
+name="aic-slot-commit"
+description="Confirma o slot A/B depois que o worker se registra"
+COMMIT_TIMEOUT=300
+
+depend() {
+	need ai-cluster-worker
+}
+
+start() {
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	[ -n "$slot" ] || { einfo "sem aic.slot na linha de comando; nada a confirmar"; return 0; }
+	(
+		waited=0
+		until grep -q "registrado node_id=.* aceito=true" /var/log/ai-cluster-worker.log 2>/dev/null; do
+			if [ "$waited" -ge "$COMMIT_TIMEOUT" ]; then
+				# Controller fora do ar (queda de energia geral, rede) não é falha da imagem: o worker
+				# está de pé e tentando. Só reinicia quando o controller responde e o worker não entra.
+				controller=$(sed -n 's/^AI_CLUSTER_CONTROLLER=//p' /data/worker.env | head -n 1)
+				hostport=${controller#*://}; host=${hostport%%:*}; port=${hostport##*:}
+				if nc -z -w 3 "$host" "$port" 2>/dev/null; then
+					logger -t aic-slot-commit "controller responde e o worker não se registrou em ${COMMIT_TIMEOUT}s; reiniciando"
+					reboot
+					exit 0
+				fi
+				logger -t aic-slot-commit "controller inalcançável: confirmando o slot mesmo assim"
+				break
+			fi
+			sleep 5
+			waited=$((waited + 5))
+		done
+		# Estado do A/B: setor cru 2016 (o u-boot não escreve na FAT); conv=sync completa o setor com zeros.
+		printf 'aic_slot=%s\naic_try=\naic_tries=\naic_boots=\n' "$slot" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || exit 1
+		logger -t aic-slot-commit "slot $slot confirmado"
+	) &
+}

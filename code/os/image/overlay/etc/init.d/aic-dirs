@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Diretórios graváveis de que os serviços dependem; a raiz é somente leitura e /data é o disco.
+description="Cria os diretorios em /data (chaves do host SSH e estado do worker)"
+
+depend() {
+	need localmount
+	before dropbear ai-cluster-worker
+}
+
+start() {
+	mkdir -p /data/ssh/dropbear /data/state && chmod 700 /data/ssh /data/ssh/dropbear
+}
