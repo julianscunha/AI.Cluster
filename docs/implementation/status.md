@@ -152,7 +152,8 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 
 - `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. attestation e upgrade/rollback pendentes.
 - `[~]` [[f19-mtls]] — mTLS opcional: o controller exige certificado de cliente de uma CA (ADR-016). Falta ligar o certificado ao `node_id`.
-- `[~]` [[f19-upgrade-e-rollback]] — `bootstrap.sh` troca o binário, só aceita se o nó voltar saudável e desfaz sozinho; manual, sem rollout pelo controller.
+- `[~]` [[f19-upgrade-e-rollback]] — `bootstrap.sh` troca o binário, só aceita se o nó voltar saudável e desfaz sozinho; manual; o rollout pelo controller está em [[f19-rollout-de-release]].
+- `[~]` [[f19-rollout-de-release]] — `ai-cluster rollout`: o controller anuncia a release pelo heartbeat, um canário atualiza o slot inativo (A/B) e os demais seguem; validado no Orange Pi. Sem assinatura.
 - `[~]` [[f19-injecao-de-falha]] — soak com kill/pause em rodízio; achou e corrigiu worker que saía para sempre ao ser marcado offline.
 
 ### Pontos de partida

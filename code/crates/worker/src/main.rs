@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
-    NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, RequestWorkRequest, StateReplica,
+    NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, Release, RequestWorkRequest, StateReplica,
     SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{ProbeClient, connect_node, connect_probe};
@@ -197,6 +197,39 @@ fn state_replica_epoch() -> u64 {
         .map_or(0, |replica| replica.epoch_unix_ms)
 }
 
+/// Release aceita para instalar: o worker só age se `AI_CLUSTER_UPDATE_CMD` estiver definido, a versão
+/// difere da que roda, ainda não foi tentada (evita laço quando a nova volta por rollback) e tudo
+/// o que vai ao comando está em caracteres seguros. Downgrade não é detectado aqui (sem ordem
+/// total de versões): quem define a release é o operador; assinatura virá depois.
+fn accept_update(release: &Release, current: &str, tried: &str) -> bool {
+    let safe = |text: &str, extra: &str| {
+        !text.is_empty()
+            && text.len() <= 200
+            && text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+    };
+    release.version != current
+        && release.version != tried.trim()
+        && safe(&release.version, "._-+")
+        && safe(&release.url, ":/._-%+")
+        && release.sha256.len() == 64
+        && release.sha256.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn update_mark_path() -> PathBuf {
+    std::env::var_os("AI_CLUSTER_UPDATE_MARK")
+        .map_or_else(|| "/data/state/update-tried".into(), Into::into)
+}
+
+/// Roda o comando de atualização (sem shell) com versão, URL e SHA-256. Numa imagem A/B ele grava o
+/// slot inativo e reinicia; se voltar, a atualização falhou.
+fn run_update(command: &str, release: &Release) -> std::io::Result<std::process::ExitStatus> {
+    std::process::Command::new(command)
+        .args([&release.version, &release.url, &release.sha256])
+        .status()
+}
+
 /// A versão que o nó roda: a da imagem (`/etc/aic-release`, gravada no build) ou, sem ela, a do
 /// binário. O rollout compara este valor com a release desejada.
 fn runtime_version() -> String {
@@ -302,12 +335,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and the controller reaps a healthy worker and hands its unit to another node
     // while this one is still computing it.
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    // Set when a unit's result could not be handed in. The unit stays in flight at the
+    // controller, so the worker leaves and `leave_node` gives it to another node.
+    let broken = Arc::new(AtomicBool::new(false));
+    // Release que o controller mandou instalar (F19): o worker drena, sai e só então roda o comando.
+    let update: Arc<Mutex<Option<Release>>> = Arc::new(Mutex::new(None));
+    let update_cmd = std::env::var("AI_CLUSTER_UPDATE_CMD")
+        .ok()
+        .filter(|c| !c.is_empty());
     let heartbeat_task = tokio::spawn({
         let mut client = client.clone();
         let node_id = node_id.clone();
         let identity = identity.clone();
         let capability = capability.clone();
         let credential = credential.clone();
+        let (broken, update, update_cmd) = (broken.clone(), update.clone(), update_cmd.clone());
         async move {
             let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
             loop {
@@ -331,6 +373,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // with no replica path configured ignores it.
                         if let Some(replica) = beat.replica {
                             store_state_replica(&replica);
+                        }
+                        if let Some(release) = beat.release
+                            && update_cmd.is_some()
+                        {
+                            let tried =
+                                std::fs::read_to_string(update_mark_path()).unwrap_or_default();
+                            if accept_update(&release, &runtime_version(), &tried) {
+                                println!("atualização pedida versão={}", release.version);
+                                *update.lock().unwrap_or_else(|p| p.into_inner()) = Some(release);
+                                broken.store(true, Ordering::Relaxed);
+                            }
                         }
                         if !beat.acknowledged {
                             println!("controller não conhece {node_id}; re-registrando");
@@ -372,9 +425,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // interval, however fast the compute was: a worker that finished a unit sat idle
     // until the next heartbeat tick. A worker now asks again the moment it finishes,
     // and only waits a short backoff when it found nothing.
-    // Set when a unit's result could not be handed in. The unit stays in flight at the
-    // controller, so the worker leaves and `leave_node` gives it to another node.
-    let broken = Arc::new(AtomicBool::new(false));
     // Consecutive refusals that are not final. An offline mark heals in a heartbeat or two; a
     // node that is draining, quarantined or removed never does, so it gives up and leaves.
     let mut refused = 0u32;
@@ -538,6 +588,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "saiu do cluster node_id={node_id} aceito={} requeued={}",
         left.accepted, left.requeued
     );
+    let pending = update.lock().unwrap_or_else(|p| p.into_inner()).take();
+    if let (Some(release), Some(command)) = (pending, update_cmd) {
+        // Marca antes: se o nó voltar por rollback, não tenta a mesma versão de novo.
+        let _ = std::fs::write(update_mark_path(), &release.version);
+        println!("atualizando para {}", release.version);
+        let status = run_update(&command, &release);
+        if status.as_ref().is_ok_and(|s| s.success()) {
+            // O pedido foi aceito e a máquina vai reiniciar: ficar fora do cluster até lá, em vez de
+            // voltar a pegar trabalho (o supervisor reiniciaria o processo).
+            time::sleep(Duration::from_secs(3600)).await;
+        }
+        println!(
+            "atualização não concluiu versão={} resultado={status:?}",
+            release.version
+        );
+        return Err("atualização falhou".into());
+    }
     Ok(())
 }
 
@@ -1852,6 +1919,29 @@ mod tests {
         assert_eq!(measurement_confidence(&[1.0]), 1.0);
         // No runs at all is no confidence, not a perfect one.
         assert_eq!(measurement_confidence(&[]), 0.0);
+    }
+
+    #[test]
+    fn so_aceita_release_nova_e_segura() {
+        let release = |version: &str, url: &str| Release {
+            version: version.into(),
+            url: url.into(),
+            sha256: "a".repeat(64),
+        };
+        let ok = release("2", "http://h:8080/x.gz");
+        assert!(accept_update(&ok, "1", ""));
+        // já roda essa versão, ou já tentou (voltou por rollback): não repete
+        assert!(!accept_update(&ok, "2", ""));
+        assert!(!accept_update(
+            &ok, "1", "2
+"
+        ));
+        // nada de caracteres que um comando poderia interpretar
+        assert!(!accept_update(&release("2; reboot", "http://h/x"), "1", ""));
+        assert!(!accept_update(&release("2", "http://h/x y"), "1", ""));
+        let mut bad = ok.clone();
+        bad.sha256 = "xyz".into();
+        assert!(!accept_update(&bad, "1", ""));
     }
 
     #[test]

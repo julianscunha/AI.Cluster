@@ -114,6 +114,7 @@ def main():
         f'AI_CLUSTER_NODE_ID={args.node_id}\n'
         'AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\n'
         'AI_CLUSTER_MODEL_DIR=/data/models\n'
+        'AI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request\n'
         + ('AI_CLUSTER_INSECURE=1\n' if args.insecure and args.controller.startswith('http://') else '')
     )
     cmds = ['mkdir -p /mnt/data /mnt/boot', f'mount -t ext4 {DEVICE}p4 /mnt/data',

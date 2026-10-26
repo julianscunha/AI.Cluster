@@ -1,0 +1,45 @@
+#!/bin/sh
+# Aplica a release pedida (F19): baixa para /data, confere o SHA-256, grava o slot inativo, marca-o em
+# teste (aic_try) e reinicia. A confirmação e o rollback são do u-boot e do aic-slot-commit.
+REQ=/data/state/update-request
+TMP=/data/update.gz
+log() { logger -t aic-updater "$*"; }
+
+safe() { case "$1" in ''|*[!A-Za-z0-9._:/%+-]*) return 1;; esac; }
+
+apply() {
+	# o pedido é escrito pelo worker (sem privilégio): link simbólico não vale
+	if [ -L "$REQ" ]; then rm -f "$REQ"; return; fi
+	read -r version url sha < "$REQ"
+	rm -f "$REQ"
+	safe "$version" && safe "$url" && safe "$sha" && [ ${#sha} -eq 64 ] || { log "pedido inválido, ignorado"; return; }
+	# o URL só pode apontar para o host do controller (worker.env é do root): um worker comprometido
+	# não escolhe de onde vem a imagem
+	controller=$(sed -n 's/^AI_CLUSTER_CONTROLLER=//p' /data/worker.env | head -n 1)
+	chost=${controller#*://}; chost=${chost%%[:/]*}
+	uhost=${url#*://}; uhost=${uhost%%[:/]*}
+	[ -n "$chost" ] && [ "$chost" = "$uhost" ] || { log "URL fora do host do controller; ignorado"; return; }
+	# em boot de teste (aic_try pendente) o slot atual não é o confirmado: gravar no outro destruiria o bom
+	if dd if=/dev/mmcblk0 bs=512 skip=2016 count=1 2>/dev/null | tr '\0' ' ' | grep -q 'aic_try=[AB]'; then log "slot ainda em teste; atualização adiada"; return; fi
+	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt 700000 ] || { log "pouco espaço em /data"; return; }
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	case "$slot" in A) target=B; dev=/dev/mmcblk0p3;; B) target=A; dev=/dev/mmcblk0p2;; *) log "sem aic.slot; não é uma imagem A/B"; return;; esac
+	log "baixando $version para o slot $target"
+	rm -f "$TMP"
+	wget -q -T 60 -O "$TMP" "$url" || { log "download falhou"; rm -f "$TMP"; return; }
+	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { log "SHA-256 não confere; descartado"; rm -f "$TMP"; return; }
+	gunzip -t "$TMP" 2>/dev/null || { log "gzip corrompido; descartado"; rm -f "$TMP"; return; }
+	log "gravando $dev"
+	if ! gunzip -c "$TMP" | dd of="$dev" bs=1M conv=fsync 2>/dev/null; then log "gravação falhou; o slot $target ficou inconsistente mas não é o confirmado"; rm -f "$TMP"; return; fi
+	rm -f "$TMP"
+	# slot atual continua o confirmado; o novo entra em teste com duas tentativas (boot.cmd)
+	printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$slot" "$target" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || { log "não gravou o estado"; return; }
+	log "slot $target em teste; reiniciando"
+	sync
+	reboot
+}
+
+while :; do
+	[ -f "$REQ" ] && apply
+	sleep 5
+done

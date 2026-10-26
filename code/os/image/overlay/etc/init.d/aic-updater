@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Atualização de release pelo controller (F19): ver /usr/sbin/aic-updater.
+name="aic-updater"
+description="Grava o slot inativo quando o worker pede uma release"
+command="/usr/sbin/aic-updater"
+command_background=true
+pidfile="/run/aic-updater.pid"
+
+depend() {
+	need localmount
+	after ai-cluster-worker
+}
