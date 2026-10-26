@@ -3,7 +3,7 @@
 #
 #   sudo ./bootstrap.sh --controller https://controller:50051 --join-token-file /raiz/token \
 #        [--binary ./ai-cluster-worker] [--node-id nome] [--prefix /opt/ai-cluster] \
-#        [--model-dir /var/lib/ai-cluster/models] [--insecure] [--force]
+#        [--model-dir /var/lib/ai-cluster/models] [--insecure] [--force] [--health-timeout 90]
 #
 # O que faz: cria o usuário `ai-cluster`, instala o binário do worker (dono root), grava o
 # ambiente em `<prefix>/worker.env` (root:ai-cluster, 0640: o token de join mora ali) e sobe o
@@ -11,6 +11,11 @@
 # ambiente. Trocar o --node-id de uma máquina já instalada exige --force (o nó antigo ficaria
 # órfão no controller). O worker entra no cluster pelo caminho de sempre (join + aprovação);
 # este script não aprova.
+#
+# Atualização (F19): rodar de novo com outro binário troca o worker e guarda o anterior em
+# `bin/ai-cluster-worker.prev`. Com systemd, a versão nova só vale se o serviço ficar ativo e
+# o worker se registrar no controller dentro de --health-timeout segundos (0 desliga a espera);
+# senão o anterior volta, o serviço reinicia e o script sai com código 3.
 #
 # Todos os valores são validados contra uma lista de caracteres permitidos antes de qualquer
 # escrita: eles entram em um arquivo de ambiente, numa unit systemd e num comando, e um
@@ -26,6 +31,7 @@ PREFIX="/opt/ai-cluster"
 MODEL_DIR=""
 INSECURE=0
 FORCE=0
+HEALTH_TIMEOUT=90
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,6 +44,7 @@ while [ $# -gt 0 ]; do
     --model-dir) MODEL_DIR=$2; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
     --force) FORCE=1; shift ;;
+    --health-timeout) HEALTH_TIMEOUT=$2; shift 2 ;;
     *) echo "argumento desconhecido: $1" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +62,7 @@ fi
 [ -f "$BINARY" ] || die "binário não encontrado: $BINARY"
 [ "$(id -u)" = 0 ] || { echo "rode como root" >&2; exit 1; }
 [ -n "$NODE_ID" ] || NODE_ID=$(hostname)
+case "$HEALTH_TIMEOUT" in ''|*[!0-9]*) die "--health-timeout deve ser um número de segundos" ;; esac
 
 # Lista de permitidos: letras, dígitos e . _ : / @ = + - (sem espaço, aspas, $, `, \, # ou ;).
 # `case` com um conjunto negado recusa qualquer caractere de fora, quebra de linha incluída.
@@ -106,6 +114,12 @@ chown ai-cluster "$PREFIX/state"
 chmod 0700 "$PREFIX/state"
 
 install -o root -g root -m 0755 "$BINARY" "$PREFIX/bin/ai-cluster-worker.new"
+# A versão em uso vira a de volta: só ela, a anterior a essa se perde.
+HAS_PREV=0
+if [ -f "$PREFIX/bin/ai-cluster-worker" ]; then
+  install -o root -g root -m 0755 "$PREFIX/bin/ai-cluster-worker" "$PREFIX/bin/ai-cluster-worker.prev"
+  HAS_PREV=1
+fi
 mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
 
 # O ambiente é do root e legível pelo grupo do worker: o serviço lê o token, não o reescreve.
@@ -155,8 +169,34 @@ WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
   systemctl enable ai-cluster-worker
+  SINCE=$(date '+%Y-%m-%d %H:%M:%S')
   systemctl restart ai-cluster-worker
   echo "worker $NODE_ID instalado e iniciado pelo systemd"
+  # Saudável é: ativo e registrado no controller depois deste restart. Um binário que cai em
+  # laço de reinício nunca chega ao registro.
+  healthy() {
+    systemctl is-active --quiet ai-cluster-worker       && journalctl -u ai-cluster-worker --since "$SINCE" --no-pager 2>/dev/null         | grep -q "registrado node_id=.* aceito=true"
+  }
+  if [ "$HEALTH_TIMEOUT" -gt 0 ]; then
+    waited=0
+    until healthy; do
+      if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
+        if [ "$HAS_PREV" = 1 ]; then
+          echo "a versão nova não ficou saudável em ${HEALTH_TIMEOUT}s; voltando à anterior" >&2
+          install -o root -g root -m 0755 "$PREFIX/bin/ai-cluster-worker.prev" "$PREFIX/bin/ai-cluster-worker.new"
+          mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
+          systemctl restart ai-cluster-worker
+          echo "rollback feito" >&2
+        else
+          echo "o worker não ficou saudável em ${HEALTH_TIMEOUT}s e não há versão anterior para voltar" >&2
+        fi
+        exit 3
+      fi
+      sleep 2
+      waited=$((waited + 2))
+    done
+    echo "worker saudável (registrado no controller)"
+  fi
 else
   # Sem systemd (contêiner, sistema mínimo): sobe em segundo plano, com o mesmo ambiente. Log e
   # pid ficam em `state/`, a única pasta que o usuário do worker pode escrever.

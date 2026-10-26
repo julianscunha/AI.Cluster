@@ -35,7 +35,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[~]` | M7 | Q6 (bateria) feito; resto precisa de celulares |
-| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto e mTLS feitos; attestation e upgrade pendentes |
+| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto, mTLS e upgrade/rollback local feitos; rollout automático e attestation pendentes |
 
 Marcos (M0–M7) e seus critérios: [[marcos]].
 
@@ -151,6 +151,7 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 
 - `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. attestation e upgrade/rollback pendentes.
 - `[~]` [[f19-mtls]] — mTLS opcional: o controller exige certificado de cliente de uma CA (ADR-016). Falta ligar o certificado ao `node_id`.
+- `[~]` [[f19-upgrade-e-rollback]] — `bootstrap.sh` troca o binário, só aceita se o nó voltar saudável e desfaz sozinho; manual, sem rollout pelo controller.
 - `[~]` [[f19-injecao-de-falha]] — soak com kill/pause em rodízio; achou e corrigiu worker que saía para sempre ao ser marcado offline.
 
 ### Pontos de partida

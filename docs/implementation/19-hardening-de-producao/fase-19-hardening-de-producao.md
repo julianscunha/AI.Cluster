@@ -35,7 +35,7 @@ Verificado em `code/crates/protocol/src/metadata.rs` (TLS e comentário sobre mT
 - [x] Token de join, aprovação de nó, revogação e credencial por nó (S1, S2, S3, S5). Entregue em F07.
 - [~] mTLS. [[f19-mtls]]: certificado de cliente exigido por `AI_CLUSTER_TLS_CLIENT_CA`. Falta ligar certificado a `node_id`, rotação e revogação.
 - [ ] Attestation de nó. Não existe.
-- [ ] Upgrade e rollback. Não existe.
+- [~] Upgrade e rollback. [[f19-upgrade-e-rollback]]: troca do binário com gate de saúde e rollback local, validado em hardware real. Falta o rollout automático pelo controller.
 - [~] Auditoria. Os eventos são um ring buffer em memória (`events.rs`). Não há trilha persistente de approve, revoke e leave.
 - [~] Injeção de falhas. [[f19-injecao-de-falha]]: kill e pause em rodízio sob carga (`phase-t-soak.sh`). Faltam partição de rede e controller reiniciado.
 - [~] Soak. `phase-t-soak.sh` com `ROUNDS` configurável; falta uma rodada longa (horas) com medição de recurso.
