@@ -879,12 +879,21 @@ fn normalize_compute_score(gflops: f64, reference: f64) -> f64 {
 /// A classificação é por dispositivo, não por tier: HDD é COLD, SSD/NVMe são WARM, e o HOT
 /// é RAM — que já vem em `memory_bytes`. Ver `storage-intelligence`.
 fn storage_class(name: &str, rotational: &str) -> Option<&'static str> {
-    if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+    // zram is compressed RAM used as swap: memory, not storage, and it reports rotational=0.
+    if name.starts_with("loop")
+        || name.starts_with("ram")
+        || name.starts_with("zram")
+        || name.starts_with("dm-")
+    {
         return None;
     }
     match rotational.trim() {
+        // SD cards and eMMC (`mmcblk`) also report rotational=0 but sit well below a SATA SSD
+        // on random IO, so they get their own class between SSD and HDD.
         "0" => Some(if name.starts_with("nvme") {
             "nvme"
+        } else if name.starts_with("mmcblk") {
+            "mmc"
         } else {
             "ssd"
         }),
@@ -909,7 +918,8 @@ fn storage_classes_from(pairs: impl IntoIterator<Item = (String, String)>) -> Ve
     classes.sort_by_key(|class| match *class {
         "nvme" => 0,
         "ssd" => 1,
-        _ => 2,
+        "mmc" => 2,
+        _ => 3,
     });
     classes.into_iter().map(str::to_string).collect()
 }
@@ -1028,6 +1038,38 @@ async fn probe_link(client: &mut ProbeClient) -> f64 {
     normalize_network_score(best)
 }
 
+/// Where the storage probes write. `AI_CLUSTER_STORAGE_PROBE_DIR` wins; otherwise the temp dir,
+/// unless that is RAM (many embedded images mount `/tmp` as tmpfs, and the probe then measured
+/// memory: an SD card doing 6 MB/s scored as 780 MB/s), in which case `/var/tmp`.
+fn probe_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("AI_CLUSTER_STORAGE_PROBE_DIR") {
+        return dir.into();
+    }
+    let temp = std::env::temp_dir();
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    if ram_backed(&mounts, &temp) {
+        let fallback = std::path::PathBuf::from("/var/tmp");
+        if fallback.is_dir() && !ram_backed(&mounts, &fallback) {
+            return fallback;
+        }
+    }
+    temp
+}
+
+/// Whether `path` lives on a RAM filesystem, from the text of `/proc/self/mounts`: the longest
+/// mount point that contains it decides.
+fn ram_backed(mounts: &str, path: &std::path::Path) -> bool {
+    mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (_device, point, kind) = (fields.next()?, fields.next()?, fields.next()?);
+            path.starts_with(point).then_some((point.len(), kind))
+        })
+        .max_by_key(|(len, _)| *len)
+        .is_some_and(|(_, kind)| matches!(kind, "tmpfs" | "ramfs"))
+}
+
 /// Sequential write rate of the disk under the temp dir over the reference, or zero when the
 /// probe could not write. The fsync is what makes it a disk number: without it the page cache
 /// answers and every node looks like RAM. Write only; read-back would hit the cache again.
@@ -1037,7 +1079,7 @@ fn storage_score() -> f64 {
     use std::io::{Seek, Write};
     static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("ai-cluster-probe-{}-{seq}", std::process::id()));
+    let path = probe_dir().join(format!("ai-cluster-probe-{}-{seq}", std::process::id()));
     let block = vec![0u8; STORAGE_PROBE_BYTES];
     // create_new refuses a pre-planted path or symlink in a shared temp dir; the one handle
     // is rewritten from the start on each run.
@@ -1091,8 +1133,7 @@ fn storage_latency_ms() -> f64 {
     use std::io::{Seek, Write};
     static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path =
-        std::env::temp_dir().join(format!("ai-cluster-latency-{}-{seq}", std::process::id()));
+    let path = probe_dir().join(format!("ai-cluster-latency-{}-{seq}", std::process::id()));
     let block = vec![0u8; LATENCY_PROBE_BYTES];
     let Ok(mut file) = std::fs::OpenOptions::new()
         .write(true)
@@ -1876,6 +1917,9 @@ mod tests {
         assert_eq!(storage_class("nvme0n1", "0"), Some("nvme"));
         assert_eq!(storage_class("sda", "0"), Some("ssd"));
         assert_eq!(storage_class("sdb", "1"), Some("hdd"));
+        // An SD card is not an SSD, and compressed RAM is not storage at all.
+        assert_eq!(storage_class("mmcblk0", "0"), Some("mmc"));
+        assert_eq!(storage_class("zram0", "0"), None);
         // The trailing newline the kernel appends must not turn a disk into "not measured".
         assert_eq!(storage_class("sdc", "1\n"), Some("hdd"));
         // Loop, ram and device-mapper exist on every node and are not usable storage.
@@ -1936,7 +1980,7 @@ mod tests {
     fn the_latency_probe_measures_the_temp_dir_and_cleans_up() {
         let latency = storage_latency_ms();
         assert!(latency > 0.0 && latency < 60_000.0, "{latency}");
-        let leftovers = std::fs::read_dir(std::env::temp_dir())
+        let leftovers = std::fs::read_dir(probe_dir())
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| {
@@ -1950,6 +1994,20 @@ mod tests {
     }
 
     #[test]
+    fn a_tmpfs_temp_dir_is_ram_and_a_disk_is_not() {
+        let mounts = "/dev/mmcblk0p1 / ext4 rw 0 0
+tmpfs /tmp tmpfs rw 0 0
+tmpfs /run tmpfs rw 0 0
+";
+        assert!(ram_backed(mounts, std::path::Path::new("/tmp")));
+        assert!(ram_backed(mounts, std::path::Path::new("/tmp/sub/file")));
+        // The longest mount point decides, so a disk mounted under a tmpfs is still a disk.
+        assert!(!ram_backed(mounts, std::path::Path::new("/var/tmp")));
+        assert!(!ram_backed(mounts, std::path::Path::new("/tmpfoo")));
+        assert!(!ram_backed("", std::path::Path::new("/tmp")));
+    }
+
+    #[test]
     fn memory_probe_reports_a_positive_rate() {
         assert!(memory_bandwidth_score() > 0.0);
     }
@@ -1957,7 +2015,7 @@ mod tests {
     #[test]
     fn storage_probe_measures_the_temp_dir_and_cleans_up() {
         assert!(storage_score() > 0.0);
-        let leftovers = std::fs::read_dir(std::env::temp_dir())
+        let leftovers = std::fs::read_dir(probe_dir())
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| {
