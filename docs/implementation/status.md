@@ -134,6 +134,7 @@ Não iniciado de propósito: sem corpus nem tarefa de recuperação, o gate ("s�
 ### F15 — AI Cluster OS e provisionamento `[~]`
 
 - `[~]` [[f15-bootstrap-e-imagem]] — `os/bootstrap.sh` põe o worker num Linux existente e ele entra READY; imagem de contêiner de 33 MB. Validado também num Ubuntu 18.04 real (armv7). Sem imagem de disco, reimage, A/B nem ARM64.
+- `[~]` [[f15-imagem-ab-e-reimage]] — J4/J5 em hardware real (Orange Pi armv7): imagem Alpine imutável com slots A/B, boot pelo u-boot, confirmação do slot pelo worker, rollback e recuperação por boot de rede; instalador com travas. Só armv7, sem assinatura de boot.
 
 ### F16 — Aceleradores `[ ]`
 
@@ -159,7 +160,7 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 Pontos de partida já existentes:
 
 - F12: projeções sharded e CPU forward estão em F08 (N4 e N6 parciais).
-- F15: nada de OS; `code/os/README.md` define só a fronteira.
+- F15: imagem A/B e boot de rede só para armv7 (Orange Pi); sem ARM64/x86 nem assinatura.
 - F16: não há caminho de execução de acelerador; C1 `accelerators` `[ ]`.
 
 ## Itens corrigidos em relação às fontes antigas
@@ -186,7 +187,7 @@ Estas marcas vão para `[[estado-das-decisoes]]` (decisões) e para cá (marcas 
 |---|---|---|
 | Linux em todos os nodes | `[x]` | F00 |
 | Mesmo AI Cluster OS lógico com hardware distinto | `[ ]` | F15 |
-| Reimage após ingresso | `[ ]` | F15 |
+| Reimage após ingresso | `[~]` | F15 (instalação limpa validada no Orange Pi; sem reimage automático pelo controller) |
 | PCs, servidores, SBCs e celulares | `[ ]` | F15–F18 |
 | Hardware heterogêneo | `[~]` | F02, F04 |
 | Hot-plug / hot-remove | `[~]` | F01, F06 |

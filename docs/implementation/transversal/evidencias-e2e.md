@@ -52,6 +52,7 @@ Rodar a partir de `code/`: `bash tests/<script>.sh`. Os scripts `phase-j-*` prec
 | `phase-t-mtls.sh` | com CLIENT_CA só entra quem tem certificado da CA; sem certificado, com CA errada ou com meio par é recusado | [[f19-mtls]] | [[fase-19-hardening-de-producao]] |
 | `phase-t-soak.sh` | rodízio de kill/pause sob carga: todo lote fecha, uma unidade em voo é reenfileirada e o cluster volta a 3 nós | [[f19-injecao-de-falha]] | [[fase-19-hardening-de-producao]] |
 | `phase-r-lan.sh` | cluster físico x86 + ARM já montado: nós de duas arquiteturas READY, lote em mais de um nó, checksum idêntico entre arquiteturas | [[f00-validacao-em-hardware-real]] | [[fase-00-fundacao]] |
+| `phase-u-netboot.sh` | bancada com nó u-boot real: o nó reinicia, baixa a imagem pelo TFTP e fica READY em RAM; vencido o prazo, volta sozinho ao cartão; o limite de boots segura a segunda entrega | [[f15-imagem-ab-e-reimage]] | [[fase-15-ai-cluster-os]] |
 | `phase-s3-roles.sh` | token de join e de inferência não administram; operador sim; segredo inventado é recusado; ações de operador entram na trilha de auditoria e negadas não | [[f07-operador-e-credencial-por-no]] | [[fase-07-seguranca-base]] |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; http puro e CA errada recusados; sem certificado só com `AI_CLUSTER_INSECURE=1` | [[f07-tls]] | [[fase-07-seguranca-base]] |
 | `phase-s5-persist.sh` | aprovação persiste em restarts; `revoke` devolve o nó a pendente e derruba o worker | [[f07-aprovacao-de-no]] | [[fase-07-seguranca-base]] |
