@@ -20,7 +20,7 @@ setenv consoleargs "console=ttyS0,115200 console=tty1"
 # u-boot de 2018 corrompe arquivos vizinhos. Setor em branco = estado padrão acima.
 setenv aic_state_lba 0x7e0
 if mmc read ${load_addr} ${aic_state_lba} 1; then
-	env import -t ${load_addr} 0x200
+	env import -t ${load_addr} 0x200 aic_slot aic_try aic_tries aic_boots
 fi
 
 setenv aic_boot ${aic_slot}
@@ -75,6 +75,22 @@ if test -n "${nb_server}"; then
 		fi
 	fi
 fi
-echo "aic: sem recuperacao disponivel; tentando de novo em 10 s"
+# Sem recuperacao (servidor ausente, fora do ar ou com o limite esgotado): nao prender o no num ciclo
+# de reset. Zera o contador e tenta o slot confirmado.
+echo "aic: sem recuperacao disponivel; tentando o slot ${aic_slot}"
+setenv aic_boots ""
+setenv aic_try ""
+setenv aic_tries ""
+mw.b ${load_addr} 0 0x200
+env export -t -s 0x200 ${load_addr} aic_slot aic_try aic_tries aic_boots
+mmc write ${load_addr} ${aic_state_lba} 1
+if test "${aic_slot}" = "B"; then setenv aic_part 3; else setenv aic_part 2; fi
+if fatload mmc 0:1 ${kernel_addr_r} zImage; then
+	if fatload mmc 0:1 ${fdt_addr_r} dtb; then
+		setenv bootargs "root=/dev/mmcblk0p${aic_part} ro rootwait rootfstype=ext4 ${consoleargs} panic=10 loglevel=4 aic.slot=${aic_slot}"
+		bootz ${kernel_addr_r} - ${fdt_addr_r}
+	fi
+fi
+echo "aic: nada iniciou; reiniciando em 10 s"
 sleep 10
 reset

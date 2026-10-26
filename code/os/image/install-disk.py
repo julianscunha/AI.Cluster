@@ -12,6 +12,7 @@ isto é, nunca no sistema que está em uso. Apaga o cartão inteiro; exige --yes
 Precisa do paramiko (pip install paramiko). Roda no PC; o nó só precisa de busybox.
 """
 import argparse
+import ipaddress
 import os
 import shlex
 import sys
@@ -45,6 +46,8 @@ def main():
     ap.add_argument('--yes', action='store_true', help='confirma que o cartão inteiro será apagado')
     args = ap.parse_args()
 
+    if args.recovery_server:
+        ipaddress.ip_address(args.recovery_server)  # sem isto, uma quebra de linha injetaria comandos no boot.scr
     password = os.environ.get('AIC_SSH_PASSWORD')
     if not password:
         sys.exit('defina AIC_SSH_PASSWORD (a senha não vai na linha de comando)')
@@ -76,7 +79,8 @@ def main():
     # 2) Grava a imagem inteira (o gzip viaja comprimido; o nó descomprime).
     print('gravando a imagem...', flush=True)
     channel = client.get_transport().open_session()
-    channel.exec_command(f'gunzip -c | dd of={DEVICE} bs=1M conv=fsync 2>&1')
+    # o status do gunzip vai a um arquivo: num pipe, só o do dd chegaria a quem chamou
+    channel.exec_command(f'{{ gunzip -c; echo $? > /tmp/gz.status; }} | dd of={DEVICE} bs=1M conv=fsync 2>&1')
     sent = 0
     started = time.time()
     with open(args.image, 'rb') as f:
@@ -92,8 +96,8 @@ def main():
     out += channel.recv(65536)
     code = channel.recv_exit_status()
     print(out.decode(errors='replace').strip().splitlines()[-1:] or '', f'(saida {code}, {time.time() - started:.0f}s)')
-    if code != 0:
-        sys.exit('falha ao gravar a imagem')
+    if code != 0 or run(client, 'cat /tmp/gz.status')[1].strip() != '0':
+        sys.exit('falha ao gravar a imagem (dd ou gunzip falhou); refaça antes de reiniciar')
     run(client, 'sync; echo 1 > /proc/sys/vm/drop_caches 2>/dev/null; true')
     run(client, f'echo 1 > /sys/block/{DEVICE.split("/")[-1]}/device/rescan 2>/dev/null; true')
     # Relê a tabela de partições para o kernel enxergar o layout novo.
@@ -114,7 +118,7 @@ def main():
     )
     cmds = ['mkdir -p /mnt/data /mnt/boot', f'mount -t ext4 {DEVICE}p4 /mnt/data',
             'mkdir -p /mnt/data/state /mnt/data/ssh /mnt/data/models',
-            f'printf %s {shlex.quote(worker_env)} > /mnt/data/worker.env', 'chmod 600 /mnt/data/worker.env']
+            f'(umask 077; printf %s {shlex.quote(worker_env)} > /mnt/data/worker.env)', 'chmod 600 /mnt/data/worker.env']
     if args.ssh_key:
         key = open(os.path.expanduser(args.ssh_key), encoding='utf-8').read().strip()
         cmds += [f'printf "%s\\n" {shlex.quote(key)} > /mnt/data/ssh/authorized_keys',

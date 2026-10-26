@@ -26,8 +26,16 @@ start() {
 					reboot
 					exit 0
 				fi
-				logger -t aic-slot-commit "controller inalcançável: confirmando o slot mesmo assim"
-				break
+				# Controller fora do ar com a rede da imagem funcionando (gateway responde) não é culpa do slot.
+				# Se nem o gateway responde, a imagem nova está sem rede: reinicia para o rollback agir.
+				gateway=$(ip route | sed -n 's/^default via \([0-9.]*\).*//p' | head -n 1)
+				if [ -n "$gateway" ] && ping -c 1 -W 3 "$gateway" >/dev/null 2>&1; then
+					logger -t aic-slot-commit "controller inalcançável, rede ok: confirmando o slot mesmo assim"
+					break
+				fi
+				logger -t aic-slot-commit "sem rede (gateway não responde) em ${COMMIT_TIMEOUT}s; reiniciando"
+				reboot
+				exit 0
 			fi
 			sleep 5
 			waited=$((waited + 5))

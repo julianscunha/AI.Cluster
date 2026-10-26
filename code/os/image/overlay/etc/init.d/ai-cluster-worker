@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# Serviço do worker (F15). A identidade do nó mora em /data/worker.env, escrito pelo instalador.
+name="ai-cluster-worker"
+description="AI Cluster worker"
+command="/usr/bin/ai-cluster-worker"
+command_user="ai-cluster:ai-cluster"
+supervisor="supervise-daemon"
+respawn_delay=3
+directory="/data/state"
+output_log="/var/log/ai-cluster-worker.log"
+error_log="/var/log/ai-cluster-worker.log"
+
+depend() {
+	need net localmount
+	after chronyd
+}
+
+start_pre() {
+	if [ ! -r /data/worker.env ]; then
+		eerror "falta /data/worker.env (controller, token, id do nó)"
+		return 1
+	fi
+	set -a
+	. /data/worker.env
+	set +a
+	[ -n "$AI_CLUSTER_NODE_ID" ] && hostname "$AI_CLUSTER_NODE_ID"
+	checkpath -d -o ai-cluster:ai-cluster -m 0700 /data/state
+}

@@ -32,7 +32,7 @@ import threading
 RRQ, DATA, ACK, ERROR, OACK = 1, 3, 4, 5, 6
 DELIVERED = {}  # imagens entregues por IP
 TIMEOUT = 1.0
-RETRIES = 120
+RETRIES = 30
 BLKSIZE_MAX = 512  # blocos menores toleram melhor o EMAC do u-boot do H3 (travava no bloco ~200 com 1468)
 
 
@@ -114,6 +114,18 @@ def serve(request, addr, root, allowed, boots):
         sock.close()
 
 
+SLOTS = threading.BoundedSemaphore(4)  # transferências simultâneas
+
+
+def guarded(*args):
+    try:
+        serve(*args)
+    except Exception as exc:  # pedido malformado (nome com NUL, opção inválida) não derruba nem vaza traceback
+        print(f"{args[1][0]}: pedido recusado ({type(exc).__name__})", flush=True)
+    finally:
+        SLOTS.release()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=os.path.join(os.path.dirname(__file__), "srv"))
@@ -130,10 +142,13 @@ def main():
     print(f"TFTP servindo {root} em {args.bind}:{args.port} para {sorted(allowed)}", flush=True)
     while True:
         request, addr = server.recvfrom(2048)
-        if len(request) >= 4 and struct.unpack("!H", request[:2])[0] == RRQ:
-            threading.Thread(target=serve, args=(request, addr, root, allowed, args.boots), daemon=True).start()
-        else:
-            error(server, addr, 4, "so leitura")
+        # Quem não está em --allow (ou não pede leitura) é descartado em silêncio, sem thread nem resposta:
+        # responder a origem forjada serviria de reflexão contra a vítima.
+        if addr[0] not in allowed or len(request) < 4 or struct.unpack("!H", request[:2])[0] != RRQ:
+            continue
+        if not SLOTS.acquire(blocking=False):
+            continue  # muitas transferências em curso; o u-boot repete o pedido
+        threading.Thread(target=guarded, args=(request, addr, root, allowed, args.boots), daemon=True).start()
 
 
 if __name__ == "__main__":
