@@ -414,6 +414,13 @@ impl Registry {
         })
     }
 
+    /// The version a registered node runs (`runtime_version` of its last registration).
+    pub fn version(&self, node_id: &str) -> Option<String> {
+        self.lock()
+            .get(node_id)
+            .map(|record| record.identity.runtime_version.clone())
+    }
+
     /// Returns false when the node is unknown, so the caller can ask it to re-register.
     pub fn heartbeat(&self, node_id: &str, now: u64) -> bool {
         let mut nodes = self.lock();

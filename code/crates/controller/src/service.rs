@@ -13,9 +13,9 @@ use ai_cluster_protocol::cluster::{
     ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
     ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
     Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
-    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
-    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
-    WorkReportResponse, WorkUnit,
+    SetReleaseRequest, SetReleaseResponse, ShardCompute, ShardMatmulRequest, ShardMatmulResponse,
+    ShardOutput, ShardResult, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
+    WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, node_credential, require_inference, require_operator,
@@ -44,6 +44,7 @@ const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 use crate::events::EventLog;
 use crate::metrics;
 use crate::registry::{Registry, unix_ms};
+use crate::rollout::{self, Rollout};
 use crate::shards::ShardHub;
 use crate::work::WorkStore;
 
@@ -55,6 +56,7 @@ pub struct ClusterControlService {
     cluster_id: String,
     shards: Arc<ShardHub>,
     shard_calls: Arc<tokio::sync::Semaphore>,
+    rollout: Rollout,
 }
 
 /// Highest priority class an enqueue may ask for. Aging is 64 passes per class, so an
@@ -78,6 +80,8 @@ impl ClusterControlService {
             cluster_id: cluster_id.into(),
             shards: Arc::new(ShardHub::default()),
             shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
+            // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
+            rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into)),
         }
     }
 
@@ -293,6 +297,24 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RevokeNodeResponse { revoked, requeued }))
     }
 
+    /// Define a release que os nós devem rodar (F19); version em branco cancela.
+    async fn set_release(
+        &self,
+        request: Request<SetReleaseRequest>,
+    ) -> Result<Response<SetReleaseResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let release = request.into_inner().release.unwrap_or_default();
+        if release.version.trim().is_empty() {
+            self.audit(&peer, "set_release", "(cancelado)");
+            self.rollout.set(None);
+        } else {
+            rollout::validate(&release).map_err(Status::invalid_argument)?;
+            self.audit(&peer, "set_release", &release.version);
+            self.rollout.set(Some(release));
+        }
+        Ok(Response::new(SetReleaseResponse {}))
+    }
+
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,
@@ -313,9 +335,21 @@ impl ClusterControl for ClusterControlService {
             .state_replica()
             .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms)
             .map(|replica| (*replica).clone());
+        let now = unix_ms();
+        let version = self.registry.version(&request.node_id).unwrap_or_default();
+        let (release, event) = self.rollout.announce(
+            &request.node_id,
+            &version,
+            |node| self.registry.version(node),
+            now,
+        );
+        if let Some(event) = event {
+            self.events.record(now, "rollout", event);
+        }
         Ok(Response::new(HeartbeatResponse {
             acknowledged,
             replica,
+            release,
         }))
     }
 
@@ -1115,6 +1149,74 @@ mod tests {
 
     fn service() -> ClusterControlService {
         service_with_work().0
+    }
+
+    #[tokio::test]
+    async fn heartbeat_anuncia_a_release_desejada_so_a_quem_difere() {
+        let service = service();
+        let register = |version: &str| {
+            Request::new(RegisterNodeRequest {
+                identity: Some(NodeIdentity {
+                    runtime_version: version.to_string(),
+                    ..identity("n1")
+                }),
+                capability: None,
+                replica: None,
+            })
+        };
+        service.register_node(register("1")).await.unwrap();
+        let beat = || {
+            op(HeartbeatRequest {
+                node_id: "n1".into(),
+                ..Default::default()
+            })
+        };
+        let release = ai_cluster_protocol::cluster::Release {
+            version: "2".into(),
+            url: "http://h/x.gz".into(),
+            sha256: "a".repeat(64),
+        };
+        // sem release definida, nada a anunciar
+        assert!(
+            service
+                .heartbeat(beat())
+                .await
+                .unwrap()
+                .into_inner()
+                .release
+                .is_none()
+        );
+        // sem o token de operador não se define release
+        let denied = service
+            .set_release(Request::new(SetReleaseRequest {
+                release: Some(release.clone()),
+            }))
+            .await;
+        assert!(denied.is_err());
+        service
+            .set_release(op(SetReleaseRequest {
+                release: Some(release),
+            }))
+            .await
+            .unwrap();
+        let got = service
+            .heartbeat(beat())
+            .await
+            .unwrap()
+            .into_inner()
+            .release;
+        assert_eq!(got.unwrap().version, "2");
+        // o nó volta já na versão desejada: nada mais a anunciar
+        service.register_node(register("2")).await.unwrap();
+        assert!(
+            service
+                .heartbeat(beat())
+                .await
+                .unwrap()
+                .into_inner()
+                .release
+                .is_none()
+        );
     }
 
     fn identity(node_id: &str) -> NodeIdentity {

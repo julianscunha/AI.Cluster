@@ -11,6 +11,9 @@ RUN apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev
 
 COPY overlay/ /
 COPY ai-cluster-worker /usr/bin/ai-cluster-worker
+# versão da imagem: o worker a reporta ao controller (rollout, F19)
+ARG AIC_RELEASE=dev
+RUN echo "$AIC_RELEASE" > /etc/aic-release
 
 # O rootfs sai de um contêiner, mas roda em hardware: sem isto o OpenRC se acha num contêiner e pula
 # localmount, networking e outros (keyword -docker).

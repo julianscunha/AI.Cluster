@@ -28,7 +28,7 @@ start() {
 				fi
 				# Controller fora do ar com a rede da imagem funcionando (gateway responde) não é culpa do slot.
 				# Se nem o gateway responde, a imagem nova está sem rede: reinicia para o rollback agir.
-				gateway=$(ip route | sed -n 's/^default via \([0-9.]*\).*//p' | head -n 1)
+				gateway=$(ip route | sed -n 's/^default via \([0-9.]*\).*/\1/p' | head -n 1)
 				if [ -n "$gateway" ] && ping -c 1 -W 3 "$gateway" >/dev/null 2>&1; then
 					logger -t aic-slot-commit "controller inalcançável, rede ok: confirmando o slot mesmo assim"
 					break

@@ -4,8 +4,8 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, CancelRequestRequest, EnqueueGraphRequest, EnqueueWorkRequest,
     GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListNodesRequest,
-    ListReservationsRequest, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
-    WorkReportRequest, WorkReportResponse,
+    ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
+    SetReleaseRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_operator;
 use clap::{Parser, Subcommand};
@@ -104,6 +104,21 @@ enum Command {
     Revoke {
         /// Nó a revogar.
         node: String,
+    },
+    /// Define a release que os nós devem rodar: um canário primeiro, os demais depois (F19).
+    Rollout {
+        /// Versão (ex.: 1.2.0). Vazia, com --cancel, encerra o rollout.
+        #[arg(default_value = "")]
+        version: String,
+        /// URL do artefato (http/https, sem usuário nem query).
+        #[arg(long, default_value = "")]
+        url: String,
+        /// SHA-256 do artefato (64 hexadecimais).
+        #[arg(long, default_value = "")]
+        sha256: String,
+        /// Cancela o rollout em andamento.
+        #[arg(long)]
+        cancel: bool,
     },
     /// Libera a reserva de um nó antes do vencimento.
     Release {
@@ -244,6 +259,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Reservations => print_reservations(&cli.controller).await?,
         Command::Approve { node } => approve_node(&cli.controller, &node).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
+        Command::Rollout {
+            version,
+            url,
+            sha256,
+            cancel,
+        } => {
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let release = (!cancel).then_some(Release {
+                version: version.clone(),
+                url,
+                sha256,
+            });
+            client.set_release(SetReleaseRequest { release }).await?;
+            println!(
+                "ROLLOUT {}",
+                if cancel {
+                    "cancelado".into()
+                } else {
+                    format!("versão={version}")
+                }
+            );
+        }
         Command::Release { node } => release_reservation(&cli.controller, &node).await?,
         Command::Dashboard { watch } => print_dashboard(&cli.controller, watch).await?,
     }

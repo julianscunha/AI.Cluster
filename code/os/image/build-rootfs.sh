@@ -13,7 +13,7 @@ mkdir -p build
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-armv7:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/armv7-unknown-linux-musleabihf/release/ai-cluster-worker /out/ai-cluster-worker
 cp build/ai-cluster-worker ai-cluster-worker
-docker build --platform linux/arm/v7 -t aic-os-rootfs:dev .
+docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs:dev .
 rm -f ai-cluster-worker
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar

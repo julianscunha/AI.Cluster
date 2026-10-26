@@ -197,6 +197,18 @@ fn state_replica_epoch() -> u64 {
         .map_or(0, |replica| replica.epoch_unix_ms)
 }
 
+/// A versão que o nó roda: a da imagem (`/etc/aic-release`, gravada no build) ou, sem ela, a do
+/// binário. O rollout compara este valor com a release desejada.
+fn runtime_version() -> String {
+    let path =
+        std::env::var("AI_CLUSTER_RELEASE_FILE").unwrap_or_else(|_| "/etc/aic-release".into());
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty() && text.len() <= 64)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint =
@@ -207,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_id: device_id(),
         architecture: std::env::consts::ARCH.to_string(),
         os_version: os_version(),
-        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+        runtime_version: runtime_version(),
     };
     let mut capability = capability();
     // Fase G4: the local scheduler decides how many cores each unit gets. The node runs up to

@@ -169,7 +169,25 @@ message HeartbeatResponse {
   /// Cópia do estado do controller para o nó guardar (I4). Presente só quando a época do
   /// controller avançou além da que o nó reportou; ausente na maioria das batidas.
   StateReplica replica = 2;
+  /// Release que este nó deve passar a rodar (F19). Presente só quando difere da versão que o
+  /// nó registrou e o rollout o liberou; ausente na maioria das batidas.
+  Release release = 3;
 }
+
+/// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato; quem confia no controller
+/// confia nesta release (assinatura é trabalho futuro).
+message Release {
+  string version = 1;
+  string url = 2;
+  string sha256 = 3;
+}
+
+message SetReleaseRequest {
+  /// Vazia (version em branco) cancela o rollout.
+  Release release = 1;
+}
+
+message SetReleaseResponse {}
 
 /// Uma cópia do estado do controller guardada fora do volume dele (I4).
 ///
@@ -590,6 +608,7 @@ service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
   rpc RevokeNode(RevokeNodeRequest) returns (RevokeNodeResponse);
+  rpc SetRelease(SetReleaseRequest) returns (SetReleaseResponse);
   rpc GetOutput(GetOutputRequest) returns (GetOutputResponse);
   /// Canal residente de um worker (J5): o worker abre o stream e recebe operações de fatia de
   /// peso; o nó vem no metadata `x-ai-cluster-node-id`, com a credencial do nó.
