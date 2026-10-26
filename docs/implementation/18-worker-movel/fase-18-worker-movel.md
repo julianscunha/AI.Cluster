@@ -37,7 +37,7 @@ Verificado em `code/crates/worker/src/main.rs` (score térmico em `health`) e `c
 - [ ] Q3 Imagem ARM64. Não existe.
 - [ ] Q4 Transporte USB. Não existe (variante do enum sem implementação).
 - [ ] Q5 Backend de acelerador móvel. Não existe.
-- [~] Q6 Limites térmicos e de bateria. Térmico entra no score de saúde (pressão térmica, C4). Bateria não é medida.
+- [~] Q6 Limites térmicos e de bateria. Térmico entra no score de saúde (pressão térmica, C4) e foi lido em hardware real (42 a 69 °C sob carga num Orange Pi, [[f00-validacao-em-hardware-real]]). Bateria entra no score ([[f18-bateria-na-saude]]), validada só com sensor simulado.
 - [ ] Critério de saída: celular compatível reimaged, conectado por USB e contribuindo com compute mensurável sem comprometer o cluster (M7).
 
 ## Gate

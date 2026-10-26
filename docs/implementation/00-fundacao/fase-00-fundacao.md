@@ -35,7 +35,7 @@ Derivado de EP §2 (A1–A3), roadmap Fase 0 e M0.
 - [x] Harness de benchmark e workload de matriz local.
 - [x] Esquema de telemetria (eventos e métricas).
 - [x] Esqueleto do protocolo e do node agent.
-- [~] Critério de saída: dois nós Linux trocam uma Work Unit e comparam compute contra transferência. Mecânica provada com dois containers no mesmo host; a comparação que importa exige duas máquinas físicas ([[f00-runbook-duas-maquinas]]).
+- [x] Critério de saída: dois nós Linux trocam uma Work Unit e comparam compute contra transferência. Provado entre o PC (x86) e um Orange Pi (ARM) na LAN, com paridade numérica ([[f00-validacao-em-hardware-real]]). O nó x86 é um container num Docker Desktop.
 - [x] M0 (aceite) — dois nós Linux, descobertos pelo controller, um envia operação de matriz ao outro, telemetria registrada. Ressalva: validado com dois containers; máquinas físicas pendentes ([[marcos]]).
 - [x] Primeiro experimento de EP §20 executado (1/2/3 nós × 32–256), com gargalo de poll corrigido ([[f00-mvp]]).
 

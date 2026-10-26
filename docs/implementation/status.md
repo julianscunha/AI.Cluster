@@ -16,7 +16,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 
 | Fase | Nome | Status | Gate (critério de saída) | Ressalva principal |
 |---|---|---|---|---|
-| [[fase-00-fundacao\|F00]] | Fundação | `[~]` | dois nós trocam uma Work Unit | provado só com containers no mesmo host |
+| [[fase-00-fundacao\|F00]] | Fundação | `[x]` | dois nós trocam uma Work Unit | provado entre PC e Orange Pi na LAN |
 | [[fase-01-nucleo-do-cluster\|F01]] | Núcleo do cluster | `[x]` | 2–4 máquinas sem operação manual | validado com containers; máquinas físicas pendentes |
 | [[fase-02-capability-e-saude\|F02]] | Capability e saúde | `[~]` | perfil reproduzível | faltam memória sob carga, aceleradores e saúde de storage |
 | [[fase-03-execucao-distribuida\|F03]] | Execução distribuída | `[x]` | perder um worker não corrompe o DAG | — |
@@ -44,7 +44,8 @@ Marcos (M0–M7) e seus critérios: [[marcos]].
 ### F00 — Fundação `[~]`
 
 - `[x]` [[f00-estrutura-do-repositorio]] — estrutura, builds, CI, unit test harness, tipos comuns (A1–A3).
-- `[~]` [[f00-mvp]] — dois nós trocam Work Unit e a varredura roda (§20 executado); a prova entre máquinas físicas não.
+- `[x]` [[f00-validacao-em-hardware-real]] — cluster PC (x86) + Orange Pi (armv7) na LAN: unidades, paridade numérica, falha real, térmico, inferência fatiada e bootstrap em systemd real.
+- `[~]` [[f00-mvp]] — dois nós trocam Work Unit e a varredura roda (§20 executado).
 - `[ ]` [[f00-runbook-duas-maquinas]] — runbook escrito; execução em duas máquinas físicas não feita.
 - `[~]` [[f00-testes-iniciais]] — provável superado pela suíte atual ([[estrategia-de-testes]]).
 
@@ -132,7 +133,7 @@ Não iniciado de propósito: sem corpus nem tarefa de recuperação, o gate ("s�
 
 ### F15 — AI Cluster OS e provisionamento `[~]`
 
-- `[~]` [[f15-bootstrap-e-imagem]] — `os/bootstrap.sh` põe o worker num Linux existente e ele entra READY; imagem de contêiner de 33 MB. Sem imagem de disco, reimage, A/B nem ARM64 (exigem VM ou hardware).
+- `[~]` [[f15-bootstrap-e-imagem]] — `os/bootstrap.sh` põe o worker num Linux existente e ele entra READY; imagem de contêiner de 33 MB. Validado também num Ubuntu 18.04 real (armv7). Sem imagem de disco, reimage, A/B nem ARM64.
 
 ### F16 — Aceleradores `[ ]`
 

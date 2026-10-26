@@ -28,13 +28,13 @@ Backends na ordem do EP: CPU x86_64 → CPU ARM64 → GPU NVIDIA → GPU AMD/Int
 Verificado em `code/proto/cluster.proto` e `code/crates/worker/src/main.rs`.
 
 - [x] CPU x86_64. Backend de matmul e engine CPU em uso no cluster de contêineres.
-- [ ] CPU ARM64. Não existe (nenhuma referência a `aarch64` ou `target_arch` em `code/crates`).
+- [~] CPU ARM. O worker roda em ARM 32 bits (armv7, Orange Pi) com paridade numérica contra x86 ([[f00-validacao-em-hardware-real]]). ARM64 não foi testado: falta hardware.
 - [ ] GPU NVIDIA. Não existe.
 - [ ] GPU AMD ou Intel. Não existe.
 - [ ] Abstração de NPU. Não existe.
 - [ ] NPU móvel. Não existe.
 - [~] Descoberta de aceleradores. `CapabilityReport.accelerators` existe no proto, mas o worker nunca o preenche; `precisions` é `fp32` fixo.
-- [ ] Critério de saída: cluster x86 + ARM com scores por workload (M6). Não atendido.
+- [~] Critério de saída: cluster x86 + ARM com scores por workload (M6). Cluster x86 + ARM (armv7) com scores de compute e armazenamento por nó e placement que os usa; falta ARM64 e scores por workload.
 
 ## Gate
 

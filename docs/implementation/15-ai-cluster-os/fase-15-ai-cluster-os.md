@@ -37,10 +37,10 @@ Verificado em `code/os/README.md` (só define a fronteira do runtime; o trabalho
 
 - [~] J1 Imagem base Linux. Imagem de contêiner mínima do worker (30 MB, `os/Dockerfile.worker`); imagem de disco não existe ([[f15-bootstrap-e-imagem]]).
 - [~] J2 Serviços mínimos. O worker é o único serviço da imagem; a unit systemd do bootstrap restringe o processo. Sem imagem de SO.
-- [~] J3 Bootstrap de Linux existente até o enrollment. `os/bootstrap.sh` instala o worker e ele entra READY num Debian limpo (`phase-p-bootstrap.sh`); a aprovação segue manual e não foi testado com systemd real.
+- [~] J3 Bootstrap de Linux existente até o enrollment. `os/bootstrap.sh` instala o worker e ele entra READY num Debian limpo (`phase-p-bootstrap.sh`); a aprovação segue manual. Validado também num Ubuntu 18.04 real com systemd 237 (armv7), serviço `enabled` e nó READY ([[f00-validacao-em-hardware-real]]).
 - [ ] J4 Reimage em instalação limpa. Não iniciado.
 - [ ] J5 Boot e recuperação A/B. Não iniciado.
-- [ ] J6 Multi-arquitetura. Não iniciado.
+- [~] J6 Multi-arquitetura. O worker armv7 é cross-compilado (`scripts/build-armv7.sh`) e entra READY num cluster com x86 ([[f00-validacao-em-hardware-real]]). Falta ARM64 e uma imagem por arquitetura.
 - [ ] Critério de saída: reprovisionamento automático e retorno READY. Não atendido: o bootstrap parte de um Linux já instalado, e sem VM ou hardware não há como testar imagem de disco, reimage nem A/B.
 
 ## Gate
