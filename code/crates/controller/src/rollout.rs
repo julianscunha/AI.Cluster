@@ -162,9 +162,8 @@ impl Rollout {
             }
             Some(canary) => {
                 // o canário concluiu quando roda a versão e, se mede o slot, a medida bate
-                let done = canary_version(&canary).is_some_and(|(v, m)| {
-                    v == desired.version && (m.is_empty() || m == desired.image_sha256)
-                });
+                let done = canary_version(&canary)
+                    .is_some_and(|(v, m)| v == desired.version && m == desired.image_sha256);
                 if done {
                     (Some(desired), None)
                 } else {
@@ -222,7 +221,7 @@ mod tests {
         // outro nó espera enquanto o canário não reporta a versão nova
         assert!(rollout.announce(true, "b", "1", none, 1).0.is_none());
         // o canário reporta "2": libera os demais
-        let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), String::new()));
+        let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), "b".repeat(64)));
         // medida errada: o canário não concluiu
         let a_errado = |n: &str| (n == "a").then(|| ("2".to_string(), "c".repeat(64)));
         assert!(rollout.announce(true, "b", "1", a_errado, 2).0.is_none());

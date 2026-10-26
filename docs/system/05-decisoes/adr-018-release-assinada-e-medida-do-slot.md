@@ -27,7 +27,7 @@ O rollout pelo controller ([[f19-rollout-de-release]]) manda os nós gravarem um
 ## Consequências
 
 - Um controller ou worker comprometido, ou um MITM no download, não instala uma imagem que o operador não assinou. Quem tem a chave privada continua podendo tudo.
-- A medida **não** protege contra um nó comprometido (ele mente): detecta slot corrompido, gravação ruim e slot errado. `attested` não é prova de integridade. O caminho para integridade real é dm-verity com root hash assinado e hardware com raiz de confiança.
+- A medida **não** protege contra um nó comprometido (ele mente): detecta slot corrompido, gravação ruim e slot errado. `attested` (no CLI, `MEDIDA confere`) não é prova de integridade. O caminho para integridade real é dm-verity com root hash assinado e hardware com raiz de confiança.
 - A imagem ext4 sai sem journal (`^has_journal`) e o fstab sem fsck (passno 0): a raiz é somente leitura e o hash precisa ser estável entre boots (verificado: com journal, o mount ro alterava um bloco).
 - O boot espera a medida (~25–40 s no SD) antes do worker subir; o `aic-slot-commit` tem prazo de 300 s e absorve isso.
 - Trocar a chave exige uma imagem nova com a pública nova, gravada por instalação ou por rollout assinado com a chave antiga.

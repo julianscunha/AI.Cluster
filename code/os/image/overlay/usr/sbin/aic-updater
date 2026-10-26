@@ -3,12 +3,13 @@
 # slot inativo, relê o slot e compara com a medida assinada, marca-o em teste (aic_try) e reinicia.
 # A confirmação e o rollback são do u-boot e do aic-slot-commit.
 REQ=/data/state/update-request
-TMP=/data/update.gz
+DL=/data/.update   # só do root: o worker grava em /data/state, não aqui
 PUB=/etc/aic-release.pub
 . /etc/aic-board   # board=… slot_mib=…
 log() { logger -t aic-updater "$*"; }
 # a recusa vai para um arquivo que o worker lê: ele não fica esperando um reinício que não vem
-fail() { log "$*"; echo "$*" > /data/state/update-result; chmod 644 /data/state/update-result; }
+# noclobber (O_EXCL) não segue link simbólico plantado pelo worker no diretório dele
+fail() { log "$*"; rm -f /data/state/update-result; ( set -C; umask 022; echo "$*" > /data/state/update-result ) 2>/dev/null; }
 
 safe() { case "$1" in ''|*[!A-Za-z0-9._:/%+=-]*) return 1;; esac; }
 hex64() { case "$1" in *[!0-9a-fA-F]*) return 1;; esac; [ ${#1} -eq 64 ]; }
@@ -21,18 +22,22 @@ apply() {
 	if [ -L "$REQ" ]; then rm -f "$REQ"; return; fi
 	read -r version url sha image_sha signature < "$REQ"
 	rm -f "$REQ"
+	case "$version" in ''|*[!0-9.]*) fail "versão inválida (só números e pontos)"; return;; esac
 	safe "$version" && safe "$url" && safe "$signature" && hex64 "$sha" && hex64 "$image_sha" && [ ${#signature} -eq 88 ] \
 		|| { fail "pedido inválido, ignorado"; return; }
 
 	# Assinatura do operador sobre placa, versão e as duas somas (a chave pública é da imagem, somente leitura):
 	# nem o controller nem o worker comprometidos escolhem o que vai para o slot.
-	printf 'aic-release-v1\n%s\n%s\n%s\n%s\n' "$board" "$version" "$sha" "$image_sha" > /tmp/aic-release.msg
-	printf '%s' "$signature" | base64 -d > /tmp/aic-release.sig 2>/dev/null
-	if ! openssl pkeyutl -verify -pubin -inkey "$PUB" -rawin -in /tmp/aic-release.msg -sigfile /tmp/aic-release.sig >/dev/null 2>&1; then
-		fail "assinatura inválida para $board $version; ignorado"; rm -f /tmp/aic-release.msg /tmp/aic-release.sig; return
+	# a mensagem e a assinatura ficam num diretório do root (0700), nunca em /tmp
+	w=$(mktemp -d /run/aic-upd.XXXXXX) || { fail "sem diretório de trabalho"; return; }
+	printf 'aic-release-v1\n%s\n%s\n%s\n%s\n' "$board" "$version" "$sha" "$image_sha" > "$w/msg"
+	printf '%s' "$signature" | base64 -d > "$w/sig" 2>/dev/null
+	if ! openssl pkeyutl -verify -pubin -inkey "$PUB" -rawin -in "$w/msg" -sigfile "$w/sig" >/dev/null 2>&1; then
+		fail "assinatura inválida para $board $version; ignorado"; rm -rf "$w"; return
 	fi
-	rm -f /tmp/aic-release.msg /tmp/aic-release.sig
+	rm -rf "$w"
 	current=$(cat /etc/aic-release 2>/dev/null)
+	case "$current" in ''|*[!0-9.]*) fail "versão instalada ilegível; recuso atualizar"; return;; esac
 	if [ "$version" = "$current" ] || older "$version" "$current"; then fail "versão $version não é mais nova que $current; recusada"; return; fi
 
 	# o URL só pode apontar para o host do controller (worker.env é do root)
@@ -46,13 +51,14 @@ apply() {
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
 	case "$slot" in A) target=B; dev=/dev/mmcblk0p3;; B) target=A; dev=/dev/mmcblk0p2;; *) fail "sem aic.slot; não é uma imagem A/B"; return;; esac
 	log "baixando $version para o slot $target"
-	rm -f "$TMP"
-	wget -q -T 60 -O "$TMP" "$url" || { fail "download falhou"; rm -f "$TMP"; return; }
-	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { fail "SHA-256 não confere; descartado"; rm -f "$TMP"; return; }
-	gunzip -t "$TMP" 2>/dev/null || { fail "gzip corrompido; descartado"; rm -f "$TMP"; return; }
+	rm -rf "$DL"; mkdir -m 700 "$DL" || { fail "sem diretório de download"; return; }
+	TMP=$DL/update.gz
+	wget -q -T 60 -O "$TMP" "$url" || { fail "download falhou"; rm -rf "$DL"; return; }
+	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { fail "SHA-256 não confere; descartado"; rm -rf "$DL"; return; }
+	gunzip -t "$TMP" 2>/dev/null || { fail "gzip corrompido; descartado"; rm -rf "$DL"; return; }
 	log "gravando $dev"
-	if ! gunzip -c "$TMP" | dd of="$dev" bs=1M conv=fsync 2>/dev/null; then fail "gravação falhou; o slot $target ficou inconsistente mas não é o confirmado"; rm -f "$TMP"; return; fi
-	rm -f "$TMP"
+	if ! gunzip -c "$TMP" | dd of="$dev" bs=1M conv=fsync 2>/dev/null; then fail "gravação falhou; o slot $target ficou inconsistente mas não é o confirmado"; rm -rf "$DL"; return; fi
+	rm -rf "$DL"
 	# relê o que ficou no slot: pega gravação ruim com o mesmo código que a mediu
 	echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
 	written=$(dd if="$dev" bs=1M count="$slot_mib" 2>/dev/null | sha256sum | cut -d' ' -f1)

@@ -8,6 +8,8 @@
 #   aic-release-v1 \n placa \n versão \n sha256(gz) \n sha256(ext4) \n
 set -euo pipefail
 VERSION=$1; GZ=$2; EXT4=$3; BOARD=${4:-armv7-opipc}; KEY=${5:-$HOME/.aic/release.key}
+case "$VERSION$BOARD" in *[!0-9.A-Za-z_-]*) echo "versão/placa com caracteres inválidos" >&2; exit 2;; esac
+case "$VERSION" in ""|*[!0-9.]*) echo "versão: só números e pontos" >&2; exit 2;; esac
 [ -f "$KEY" ] || { echo "falta a chave $KEY (rode release-keys.sh)" >&2; exit 2; }
 SHA=$(sha256sum "$GZ" | cut -d' ' -f1); IMG=$(sha256sum "$EXT4" | cut -d' ' -f1)
 # openssl nativo do Windows não lê caminhos /d/…: converte quando há cygpath

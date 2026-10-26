@@ -458,7 +458,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "ARMAZ",
         "ARMAZ_SCORE",
         "VERSÃO",
-        "ATESTADO"
+        "MEDIDA"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -496,7 +496,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 &identity.runtime_version
             },
-            if node.attested { "sim" } else { "-" },
+            if node.attested { "confere" } else { "-" },
         );
     }
     Ok(())
