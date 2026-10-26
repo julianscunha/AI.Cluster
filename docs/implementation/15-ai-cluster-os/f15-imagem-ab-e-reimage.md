@@ -45,4 +45,4 @@ J4: reimage de uma máquina em instalação limpa. J5: boot e recuperação A/B.
 ## Limites
 
 > [!warning] Ainda não é o gate da F15
-> Só armv7 (Orange Pi); ARM64 e x86 não têm imagem nem instalador (J6, F16). Sem assinatura de boot. O servidor TFTP é um script de bancada. O rollout automático pelo controller (versão desejada, SHA-256, comando de operador) é da F19. O `boot.scr` leva o join token em claro. Teste em um só nó.
+> Só armv7 (Orange Pi); ARM64 e x86 não têm imagem nem instalador (J6, F16). Sem assinatura de boot. O servidor TFTP é um script de bancada. O rollout automático pelo controller (release assinada, canário, medida do slot) está em [[f19-rollout-de-release]]. O `boot.scr` leva o join token em claro. Teste em um só nó.

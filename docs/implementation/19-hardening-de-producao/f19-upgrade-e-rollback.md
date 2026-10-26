@@ -25,7 +25,7 @@ Trocar a versão do worker numa máquina sem derrubá-la: a versão nova só fic
 
 ## Limites
 
-- **Não é automático.** Quem dispara é uma pessoa rodando o script na máquina. O controller não conhece a versão de cada nó, não publica release nem empurra atualização. É o bloco que um rollout automático vai usar.
+- **Manual.** Quem dispara é uma pessoa rodando o script na máquina. O rollout pelo controller (release assinada, canário, A/B) é outro caminho, em [[f19-rollout-de-release]]; este serve a máquinas com systemd fora da imagem A/B.
 - Só uma versão de volta (`.prev`); sem histórico.
 - Sem systemd (contêiner), o script não espera nem faz rollback.
 - Atualiza só o binário do worker; o sistema operacional (reimage, A/B) é a F15 J4/J5.

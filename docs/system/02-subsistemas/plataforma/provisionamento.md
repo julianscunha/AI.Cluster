@@ -85,7 +85,7 @@ passar a `VALIDATING`. Sem essa prova ele não recebe trabalho. O conteúdo da a
 >   [[f01-entrada-e-saida-de-nos]] e [[f07-aprovacao-de-no]].
 > - Estado `PROVISIONING` no enum de nó, sem caminho que o use: `code/crates/common/src/lib.rs`.
 >
-> Nada de reimage, bootstrap agent, PXE, assinatura de imagem, atestação pós-boot ou aquecimento de
+> Nada de reimage, bootstrap agent, PXE, assinatura de imagem (só a da release, conferida no nó: [[adr-018-release-assinada-e-medida-do-slot]]), atestação pós-boot (só medida de software) ou aquecimento de
 > modelo. A máquina entra no cluster pelo worker rodando no Linux que já tinha.
 
 > [!todo] Tudo que o fluxo acima descreve além da entrada no cluster está pendente, inclusive o

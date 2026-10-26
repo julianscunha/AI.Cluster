@@ -1,39 +1,64 @@
 #!/bin/sh
-# Aplica a release pedida (F19): baixa para /data, confere o SHA-256, grava o slot inativo, marca-o em
-# teste (aic_try) e reinicia. A confirmação e o rollback são do u-boot e do aic-slot-commit.
+# Aplica a release pedida (F19): confere a assinatura, baixa para /data, confere o SHA-256, grava o
+# slot inativo, relê o slot e compara com a medida assinada, marca-o em teste (aic_try) e reinicia.
+# A confirmação e o rollback são do u-boot e do aic-slot-commit.
 REQ=/data/state/update-request
 TMP=/data/update.gz
+PUB=/etc/aic-release.pub
+. /etc/aic-board   # board=… slot_mib=…
 log() { logger -t aic-updater "$*"; }
+# a recusa vai para um arquivo que o worker lê: ele não fica esperando um reinício que não vem
+fail() { log "$*"; echo "$*" > /data/state/update-result; chmod 644 /data/state/update-result; }
 
-safe() { case "$1" in ''|*[!A-Za-z0-9._:/%+-]*) return 1;; esac; }
+safe() { case "$1" in ''|*[!A-Za-z0-9._:/%+=-]*) return 1;; esac; }
+hex64() { case "$1" in *[!0-9a-fA-F]*) return 1;; esac; [ ${#1} -eq 64 ]; }
+
+# a < b na ordem de versões (a e b numéricas, separadas por ponto)
+older() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]; }
 
 apply() {
 	# o pedido é escrito pelo worker (sem privilégio): link simbólico não vale
 	if [ -L "$REQ" ]; then rm -f "$REQ"; return; fi
-	read -r version url sha < "$REQ"
+	read -r version url sha image_sha signature < "$REQ"
 	rm -f "$REQ"
-	safe "$version" && safe "$url" && safe "$sha" && [ ${#sha} -eq 64 ] || { log "pedido inválido, ignorado"; return; }
-	# o URL só pode apontar para o host do controller (worker.env é do root): um worker comprometido
-	# não escolhe de onde vem a imagem
+	safe "$version" && safe "$url" && safe "$signature" && hex64 "$sha" && hex64 "$image_sha" && [ ${#signature} -eq 88 ] \
+		|| { fail "pedido inválido, ignorado"; return; }
+
+	# Assinatura do operador sobre placa, versão e as duas somas (a chave pública é da imagem, somente leitura):
+	# nem o controller nem o worker comprometidos escolhem o que vai para o slot.
+	printf 'aic-release-v1\n%s\n%s\n%s\n%s\n' "$board" "$version" "$sha" "$image_sha" > /tmp/aic-release.msg
+	printf '%s' "$signature" | base64 -d > /tmp/aic-release.sig 2>/dev/null
+	if ! openssl pkeyutl -verify -pubin -inkey "$PUB" -rawin -in /tmp/aic-release.msg -sigfile /tmp/aic-release.sig >/dev/null 2>&1; then
+		fail "assinatura inválida para $board $version; ignorado"; rm -f /tmp/aic-release.msg /tmp/aic-release.sig; return
+	fi
+	rm -f /tmp/aic-release.msg /tmp/aic-release.sig
+	current=$(cat /etc/aic-release 2>/dev/null)
+	if [ "$version" = "$current" ] || older "$version" "$current"; then fail "versão $version não é mais nova que $current; recusada"; return; fi
+
+	# o URL só pode apontar para o host do controller (worker.env é do root)
 	controller=$(sed -n 's/^AI_CLUSTER_CONTROLLER=//p' /data/worker.env | head -n 1)
 	chost=${controller#*://}; chost=${chost%%[:/]*}
 	uhost=${url#*://}; uhost=${uhost%%[:/]*}
-	[ -n "$chost" ] && [ "$chost" = "$uhost" ] || { log "URL fora do host do controller; ignorado"; return; }
+	[ -n "$chost" ] && [ "$chost" = "$uhost" ] || { fail "URL fora do host do controller; ignorado"; return; }
 	# em boot de teste (aic_try pendente) o slot atual não é o confirmado: gravar no outro destruiria o bom
-	if dd if=/dev/mmcblk0 bs=512 skip=2016 count=1 2>/dev/null | tr '\0' ' ' | grep -q 'aic_try=[AB]'; then log "slot ainda em teste; atualização adiada"; return; fi
-	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt 700000 ] || { log "pouco espaço em /data"; return; }
+	if dd if=/dev/mmcblk0 bs=512 skip=2016 count=1 2>/dev/null | tr '\0' ' ' | grep -q 'aic_try=[AB]'; then fail "slot ainda em teste; atualização adiada"; return; fi
+	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt 700000 ] || { fail "pouco espaço em /data"; return; }
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
-	case "$slot" in A) target=B; dev=/dev/mmcblk0p3;; B) target=A; dev=/dev/mmcblk0p2;; *) log "sem aic.slot; não é uma imagem A/B"; return;; esac
+	case "$slot" in A) target=B; dev=/dev/mmcblk0p3;; B) target=A; dev=/dev/mmcblk0p2;; *) fail "sem aic.slot; não é uma imagem A/B"; return;; esac
 	log "baixando $version para o slot $target"
 	rm -f "$TMP"
-	wget -q -T 60 -O "$TMP" "$url" || { log "download falhou"; rm -f "$TMP"; return; }
-	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { log "SHA-256 não confere; descartado"; rm -f "$TMP"; return; }
-	gunzip -t "$TMP" 2>/dev/null || { log "gzip corrompido; descartado"; rm -f "$TMP"; return; }
+	wget -q -T 60 -O "$TMP" "$url" || { fail "download falhou"; rm -f "$TMP"; return; }
+	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { fail "SHA-256 não confere; descartado"; rm -f "$TMP"; return; }
+	gunzip -t "$TMP" 2>/dev/null || { fail "gzip corrompido; descartado"; rm -f "$TMP"; return; }
 	log "gravando $dev"
-	if ! gunzip -c "$TMP" | dd of="$dev" bs=1M conv=fsync 2>/dev/null; then log "gravação falhou; o slot $target ficou inconsistente mas não é o confirmado"; rm -f "$TMP"; return; fi
+	if ! gunzip -c "$TMP" | dd of="$dev" bs=1M conv=fsync 2>/dev/null; then fail "gravação falhou; o slot $target ficou inconsistente mas não é o confirmado"; rm -f "$TMP"; return; fi
 	rm -f "$TMP"
+	# relê o que ficou no slot: pega gravação ruim com o mesmo código que a mediu
+	echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+	written=$(dd if="$dev" bs=1M count="$slot_mib" 2>/dev/null | sha256sum | cut -d' ' -f1)
+	[ "$written" = "$image_sha" ] || { fail "o slot $target não confere com a medida assinada; não será usado"; return; }
 	# slot atual continua o confirmado; o novo entra em teste com duas tentativas (boot.cmd)
-	printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$slot" "$target" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || { log "não gravou o estado"; return; }
+	printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$slot" "$target" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || { fail "não gravou o estado"; return; }
 	log "slot $target em teste; reiniciando"
 	sync
 	reboot

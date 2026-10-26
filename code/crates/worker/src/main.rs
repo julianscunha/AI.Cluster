@@ -213,8 +213,14 @@ fn accept_update(release: &Release, current: &str, tried: &str) -> bool {
         && release.version != tried.trim()
         && safe(&release.version, "._-+")
         && safe(&release.url, ":/._-%+")
-        && release.sha256.len() == 64
-        && release.sha256.chars().all(|c| c.is_ascii_hexdigit())
+        && [&release.sha256, &release.image_sha256]
+            .iter()
+            .all(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
+        && release.signature.len() == 88
+        && release
+            .signature
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
 }
 
 fn update_mark_path() -> PathBuf {
@@ -226,8 +232,26 @@ fn update_mark_path() -> PathBuf {
 /// slot inativo e reinicia; se voltar, a atualização falhou.
 fn run_update(command: &str, release: &Release) -> std::io::Result<std::process::ExitStatus> {
     std::process::Command::new(command)
-        .args([&release.version, &release.url, &release.sha256])
+        .args([
+            &release.version,
+            &release.url,
+            &release.sha256,
+            &release.image_sha256,
+            &release.signature,
+        ])
         .status()
+}
+
+/// Medida do slot em execução, gravada pelo serviço `aic-measure` (root) antes do worker subir.
+/// Vazio fora da imagem A/B ou sem a medição.
+fn image_measurement() -> String {
+    let path =
+        std::env::var("AI_CLUSTER_MEASURE_FILE").unwrap_or_else(|_| "/run/aic-measure".into());
+    std::fs::read_to_string(path)
+        .map(|text| text.trim().to_string())
+        .ok()
+        .filter(|text| text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit()))
+        .unwrap_or_default()
 }
 
 /// A versão que o nó roda: a da imagem (`/etc/aic-release`, gravada no build) ou, sem ela, a do
@@ -253,6 +277,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         architecture: std::env::consts::ARCH.to_string(),
         os_version: os_version(),
         runtime_version: runtime_version(),
+        image_sha256: image_measurement(),
+        can_update: std::env::var("AI_CLUSTER_UPDATE_CMD").is_ok_and(|c| !c.is_empty()),
     };
     let mut capability = capability();
     // Fase G4: the local scheduler decides how many cores each unit gets. The node runs up to
@@ -592,12 +618,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let (Some(release), Some(command)) = (pending, update_cmd) {
         // Marca antes: se o nó voltar por rollback, não tenta a mesma versão de novo.
         let _ = std::fs::write(update_mark_path(), &release.version);
+        // resultado de uma tentativa anterior não vale para esta
+        let _ = std::fs::remove_file(update_mark_path().with_file_name("update-result"));
         println!("atualizando para {}", release.version);
         let status = run_update(&command, &release);
         if status.as_ref().is_ok_and(|s| s.success()) {
-            // O pedido foi aceito e a máquina vai reiniciar: ficar fora do cluster até lá, em vez de
-            // voltar a pegar trabalho (o supervisor reiniciaria o processo).
-            time::sleep(Duration::from_secs(3600)).await;
+            // O pedido foi entregue e a máquina vai reiniciar: ficar fora do cluster até lá, em vez de
+            // voltar a pegar trabalho. Se o updater recusar (assinatura, versão, espaço), ele deixa
+            // o motivo em `update-result` e o worker volta; senão espera até 20 min pelo reinício.
+            let result = update_mark_path().with_file_name("update-result");
+            for _ in 0..240 {
+                if let Ok(reason) = std::fs::read_to_string(&result) {
+                    println!("atualização recusada: {}", reason.trim());
+                    break;
+                }
+                time::sleep(Duration::from_secs(5)).await;
+            }
         }
         println!(
             "atualização não concluiu versão={} resultado={status:?}",
@@ -1927,6 +1963,8 @@ mod tests {
             version: version.into(),
             url: url.into(),
             sha256: "a".repeat(64),
+            image_sha256: "b".repeat(64),
+            signature: format!("{}==", "A".repeat(86)),
         };
         let ok = release("2", "http://h:8080/x.gz");
         assert!(accept_update(&ok, "1", ""));

@@ -48,7 +48,7 @@ Legenda de implementação: `[x]` implementado e validado · `[~]` parcial · `[
 | Base Linux específica. | Não escolhida. | [[adr-001-base-linux]] |
 | PXE/iPXE para provisionamento. | Não implementado. | [[provisionamento]] |
 | PostgreSQL + time-series + object storage + projeção em grafo. | Hoje: snapshot de arquivo e roll-up em memória. | [[state-manager]], [[arquitetura]] §17 |
-| mTLS. | TLS implementado ([[fase-07-seguranca-base]]); mTLS e attestation na fase de hardening. | [[seguranca]], [[fase-19-hardening-de-producao]] |
+| mTLS. | TLS implementado ([[fase-07-seguranca-base]]); mTLS opcional e attestation de software (medida do slot, [[adr-018-release-assinada-e-medida-do-slot]]) em F19. | [[seguranca]], [[fase-19-hardening-de-producao]] |
 
 ## Experimental
 

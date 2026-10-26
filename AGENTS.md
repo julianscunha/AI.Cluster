@@ -47,3 +47,4 @@ Os testes E2E ficam em `code/tests/*.sh` (mapa em `docs/implementation/transvers
 - O workspace Cargo é `code/`; o CI o usa como diretório de trabalho.
 - O build do protocolo usa `protoc-bin-vendored`; não dependa de `protoc` do host.
 - `.gitignore` exclui `**/target/`, `.hermes/`, `code/models/` e `.env*` exceto `.env.example`.
+- Imagem A/B (`code/os/image/`): o worker da imagem Alpine é o musl (`TARGET=armv7-unknown-linux-musleabihf bash code/scripts/build-armv7.sh`); sem `TARGET` sai o glibc e a imagem copia o musl antigo. A imagem só aceita release assinada: `release-keys.sh` gera a chave em `~/.aic` e `sign-release.sh` imprime os argumentos de `ai-cluster rollout`. Ver `docs/implementation/19-hardening-de-producao/f19-rollout-de-release.md`.

@@ -41,7 +41,7 @@ revogação sobrevivem a restart. Gate do requisito NFR-011: nó desconhecido n�
 | [x] | S4 TLS de um sentido no canal gRPC | [[f07-tls]] |
 | [x] | S5 persistência da aprovação e revogação (`revoke`, rotação de credencial) | [[f07-aprovacao-de-no]] |
 | [x] | Evidência E2E de negação de papel (`phase-s3-roles.sh`: join e inferência não administram) | [[f07-operador-e-credencial-por-no]] |
-| [ ] | mTLS e attestation de nó | pendente, [[fase-19-hardening-de-producao]] |
+| [~] | mTLS e attestation de nó | parcial em [[fase-19-hardening-de-producao]] (mTLS opcional; attestation de software por medida do slot) |
 | [ ] | Rotação periódica e revogação de operador e de tokens de join | pendente, [[fase-19-hardening-de-producao]] |
 | [ ] | Segredos fora de claro (arquivo em claro, variável visível em `docker inspect`) | pendente, [[fase-19-hardening-de-producao]] |
 | [~] | Níveis intermediários de trust: quarentena automática feita ([[f04-quarentena]]); `UNKNOWN`/`BOOTSTRAPPED`/`VALIDATED` pendentes | [[fase-19-hardening-de-producao]] |

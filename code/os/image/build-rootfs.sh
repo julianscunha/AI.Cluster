@@ -13,8 +13,12 @@ mkdir -p build
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-armv7:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/armv7-unknown-linux-musleabihf/release/ai-cluster-worker /out/ai-cluster-worker
 cp build/ai-cluster-worker ai-cluster-worker
+# chave pública das releases (release-keys.sh): a imagem só instala o que o operador assinou
+PUB=${AIC_KEYS:-$HOME/.aic}/release.pub
+[ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
+cp "$PUB" aic-release.pub
 docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs:dev .
-rm -f ai-cluster-worker
+rm -f ai-cluster-worker aic-release.pub
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar
 docker rm "$CID" >/dev/null
@@ -22,6 +26,6 @@ docker rm "$CID" >/dev/null
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" debian:12-slim sh -c "
   apt-get update -qq >/dev/null && apt-get install -y -qq e2fsprogs >/dev/null &&
   rm -rf /r && mkdir /r && tar -xf /b/rootfs.tar -C /r && rm -f /r/.dockerenv &&
-  rm -f /b/rootfs.ext4 && mke2fs -q -t ext4 -L aicroot -d /r -E root_owner=0:0 /b/rootfs.ext4 $SLOT &&
+  rm -f /b/rootfs.ext4 && mke2fs -q -t ext4 -O ^has_journal -L aicroot -d /r -E root_owner=0:0 /b/rootfs.ext4 $SLOT &&
   e2fsck -fn /b/rootfs.ext4 | tail -1 && du -sh /r"
 ls -l build/rootfs.ext4

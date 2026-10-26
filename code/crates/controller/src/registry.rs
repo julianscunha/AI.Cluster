@@ -82,6 +82,7 @@ impl NodeRecord {
             registered_at_unix_ms: self.registered_at_unix_ms,
             last_heartbeat_unix_ms: self.last_heartbeat_unix_ms,
             trusted: self.trusted,
+            attested: false,
         }
     }
 }
@@ -414,11 +415,21 @@ impl Registry {
         })
     }
 
-    /// The version a registered node runs (`runtime_version` of its last registration).
-    pub fn version(&self, node_id: &str) -> Option<String> {
+    /// The version and slot measurement a registered node reported at its last registration.
+    pub fn version(&self, node_id: &str) -> Option<(String, String)> {
+        self.lock().get(node_id).map(|record| {
+            (
+                record.identity.runtime_version.clone(),
+                record.identity.image_sha256.clone(),
+            )
+        })
+    }
+
+    /// Whether the node declared it can apply a release (`can_update`).
+    pub fn can_update(&self, node_id: &str) -> bool {
         self.lock()
             .get(node_id)
-            .map(|record| record.identity.runtime_version.clone())
+            .is_some_and(|record| record.identity.can_update)
     }
 
     /// Returns false when the node is unknown, so the caller can ask it to re-register.
@@ -579,6 +590,8 @@ mod tests {
             device_id: format!("{node_id}-device"),
             architecture: "x86_64".to_string(),
             os_version: "linux".to_string(),
+            image_sha256: String::new(),
+            can_update: false,
             runtime_version: "0.1.0".to_string(),
         }
     }

@@ -23,7 +23,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-04-escalonamento\|F04]] | Escalonamento | `[x]` | melhor que round-robin | G4 `[~]` (sem GPU/NPU); G1 trust `[~]` (quarentena automática `[x]`; níveis por enrollment `[ ]`) |
 | [[fase-05-observabilidade\|F05]] | Observabilidade | `[x]` | toda requisição com trace e métricas | métricas de LLM só no `/metrics` do gateway; painel não as lê |
 | [[fase-06-estado-e-recuperacao\|F06]] | Estado e recuperação | `[x]` | recupera de falha planejada e abrupta | estado por chave não replicado (vai para F12) |
-| [[fase-07-seguranca-base\|F07]] | Segurança base | `[x]` | nó desconhecido não recebe trabalho (NFR-011) | mTLS e attestation vão para F19 |
+| [[fase-07-seguranca-base\|F07]] | Segurança base | `[x]` | nó desconhecido não recebe trabalho (NFR-011) | mTLS e attestation (de software) em F19 |
 | [[fase-08-inferencia\|F08]] | Inferência | `[~]` | logits idênticos local × fatiado; 503 sem pendurar | gateway concentra o modelo; sem Request Manager |
 | [[fase-09-transporte\|F09]] | Transporte | `[~]` | mesma Work Unit em transportes distintos | cluster só em gRPC/TCP; `Transport` com TCP e Unix fora do caminho do cluster |
 | [[fase-10-inteligencia-de-storage\|F10]] | Inteligência de storage | `[~]` | políticas HDD × NVMe mensuráveis | classes e latência de escrita medidas; sem SMART nem políticas |
@@ -35,7 +35,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[~]` | M7 | Q6 (bateria) feito; resto precisa de celulares |
-| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto, mTLS e upgrade/rollback local feitos; rollout automático e attestation pendentes |
+| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto, mTLS e upgrade/rollback local feitos; rollout com canário, release assinada e attestation de software feitos em um nó; falta rotação de chave, dm-verity/TPM e ondas |
 
 Marcos (M0–M7) e seus critérios: [[marcos]].
 
@@ -150,10 +150,10 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 
 ### F19 `[~]`
 
-- `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. attestation e upgrade/rollback pendentes.
+- `[~]` [[f19-trilha-de-auditoria]] — ações de operador auditadas no log de eventos. attestation e upgrade ficaram em [[f19-rollout-de-release]].
 - `[~]` [[f19-mtls]] — mTLS opcional: o controller exige certificado de cliente de uma CA (ADR-016). Falta ligar o certificado ao `node_id`.
 - `[~]` [[f19-upgrade-e-rollback]] — `bootstrap.sh` troca o binário, só aceita se o nó voltar saudável e desfaz sozinho; manual; o rollout pelo controller está em [[f19-rollout-de-release]].
-- `[~]` [[f19-rollout-de-release]] — `ai-cluster rollout`: o controller anuncia a release pelo heartbeat, um canário atualiza o slot inativo (A/B) e os demais seguem; validado no Orange Pi. Sem assinatura.
+- `[~]` [[f19-rollout-de-release]] — `ai-cluster rollout`: o controller anuncia a release pelo heartbeat, um canário atualiza o slot inativo (A/B) e os demais seguem; release assinada (Ed25519) conferida no nó, versão sempre crescente, medida do slot como attestation de software; validado no Orange Pi.
 - `[~]` [[f19-injecao-de-falha]] — soak com kill/pause em rodízio; achou e corrigiu worker que saía para sempre ao ser marcado offline.
 
 ### Pontos de partida
@@ -161,7 +161,7 @@ Nada iniciado (exige hardware: ARM64 real, GPU, NPU).
 Pontos de partida já existentes:
 
 - F12: projeções sharded e CPU forward estão em F08 (N4 e N6 parciais).
-- F15: imagem A/B e boot de rede só para armv7 (Orange Pi); sem ARM64/x86 nem assinatura.
+- F15: imagem A/B e boot de rede só para armv7 (Orange Pi); sem ARM64/x86; sem assinatura de boot (a release é assinada, o u-boot não verifica).
 - F16: não há caminho de execução de acelerador; C1 `accelerators` `[ ]`.
 
 ## Itens corrigidos em relação às fontes antigas

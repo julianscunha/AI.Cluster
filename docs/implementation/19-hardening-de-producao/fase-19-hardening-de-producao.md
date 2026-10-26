@@ -34,8 +34,8 @@ Verificado em `code/crates/protocol/src/metadata.rs` (TLS e comentário sobre mT
 - [x] TLS do canal (S4). Certificado e CA de servidor, herdados pelo cliente. Entregue em [[fase-07-seguranca-base]].
 - [x] Token de join, aprovação de nó, revogação e credencial por nó (S1, S2, S3, S5). Entregue em F07.
 - [~] mTLS. [[f19-mtls]]: certificado de cliente exigido por `AI_CLUSTER_TLS_CLIENT_CA`. Falta ligar certificado a `node_id`, rotação e revogação.
-- [ ] Attestation de nó. Não existe.
-- [~] Upgrade e rollback. [[f19-upgrade-e-rollback]]: troca do binário com gate de saúde e rollback local, validado em hardware real. O rollout pelo controller com canário está em [[f19-rollout-de-release]] (sem assinatura).
+- [~] Attestation de nó. [[f19-rollout-de-release]]: medida SHA-256 do slot reportada pelo nó e conferida contra a release assinada; software apenas (um nó comprometido mente). Sem TPM, secure boot nem dm-verity.
+- [~] Upgrade e rollback. [[f19-upgrade-e-rollback]]: troca do binário com gate de saúde e rollback local, validado em hardware real. O rollout pelo controller com canário está em [[f19-rollout-de-release]] com release assinada (Ed25519) e verificação no nó ([[adr-018-release-assinada-e-medida-do-slot]]).
 - [~] Auditoria. Os eventos são um ring buffer em memória (`events.rs`). Não há trilha persistente de approve, revoke e leave.
 - [~] Injeção de falhas. [[f19-injecao-de-falha]]: kill e pause em rodízio sob carga (`phase-t-soak.sh`). Faltam partição de rede e controller reiniciado.
 - [~] Soak. `phase-t-soak.sh` com `ROUNDS` configurável; falta uma rodada longa (horas) com medição de recurso.
@@ -54,9 +54,8 @@ Notas desta pasta (esta nota é o MOC): nenhum slice criado.
 Slices a criar:
 
 - `f19-mtls`.
-- `f19-attestation`.
 - `f19-upgrade-e-rollback`.
-- `f19-rollout-de-release`.
+- `f19-rollout-de-release` (rollout, assinatura e attestation).
 - `f19-trilha-de-auditoria`.
 - `f19-injecao-de-falha`.
 - `f19-soak`.

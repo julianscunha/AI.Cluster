@@ -116,6 +116,12 @@ enum Command {
         /// SHA-256 do artefato (64 hexadecimais).
         #[arg(long, default_value = "")]
         sha256: String,
+        /// SHA-256 da imagem ext4 descomprimida (ver os/image/sign-release.sh).
+        #[arg(long, default_value = "")]
+        image_sha256: String,
+        /// Assinatura Ed25519 em base64 (ver os/image/sign-release.sh).
+        #[arg(long, default_value = "")]
+        signature: String,
         /// Cancela o rollout em andamento.
         #[arg(long)]
         cancel: bool,
@@ -263,6 +269,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             version,
             url,
             sha256,
+            image_sha256,
+            signature,
             cancel,
         } => {
             let mut client = connect_operator(cli.controller.clone()).await?;
@@ -270,6 +278,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 version: version.clone(),
                 url,
                 sha256,
+                image_sha256,
+                signature,
             });
             client.set_release(SetReleaseRequest { release }).await?;
             println!(
@@ -433,7 +443,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .nodes;
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11}",
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8}",
         "NÓ",
         "ESTADO",
         "ARQ",
@@ -446,7 +456,9 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "SWAP_%",
         "CONFIANÇA",
         "ARMAZ",
-        "ARMAZ_SCORE"
+        "ARMAZ_SCORE",
+        "VERSÃO",
+        "ATESTADO"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -460,7 +472,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11}",
+            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8}",
             identity.node_id,
             node.state,
             identity.architecture,
@@ -479,6 +491,12 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 "-".to_string()
             },
+            if identity.runtime_version.is_empty() {
+                "-"
+            } else {
+                &identity.runtime_version
+            },
+            if node.attested { "sim" } else { "-" },
         );
     }
     Ok(())

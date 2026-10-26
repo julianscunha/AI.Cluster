@@ -40,6 +40,20 @@ pub fn validate(release: &Release) -> Result<(), String> {
     if release.sha256.len() != 64 || !release.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("sha256 deve ter 64 hexadecimais".into());
     }
+    if release.image_sha256.len() != 64
+        || !release.image_sha256.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err("image_sha256 deve ter 64 hexadecimais".into());
+    }
+    // Ed25519 tem 64 bytes: 88 caracteres em base64. Quem confere a assinatura é o nó.
+    if release.signature.len() != 88
+        || !release
+            .signature
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
+    {
+        return Err("signature deve ser base64 de 64 bytes (Ed25519)".into());
+    }
     // Sem userinfo nem query: o URL vai para o log de auditoria e para todos os nós.
     let rest = release
         .url
@@ -64,6 +78,8 @@ impl Rollout {
                     version: parts.next()?.to_string(),
                     url: parts.next()?.to_string(),
                     sha256: parts.next()?.to_string(),
+                    image_sha256: parts.next()?.to_string(),
+                    signature: parts.next()?.to_string(),
                 };
                 validate(&release).ok().map(|()| release)
             });
@@ -85,7 +101,12 @@ impl Rollout {
         if let Some(path) = &self.path {
             let line = release
                 .as_ref()
-                .map(|r| format!("{} {} {}\n", r.version, r.url, r.sha256))
+                .map(|r| {
+                    format!(
+                        "{} {} {} {} {}\n",
+                        r.version, r.url, r.sha256, r.image_sha256, r.signature
+                    )
+                })
                 .unwrap_or_default();
             let tmp = path.with_extension("tmp");
             if std::fs::write(&tmp, line).is_ok() {
@@ -106,16 +127,18 @@ impl Rollout {
     /// atual roda (o registro sabe). Devolve também um evento quando o rollout pausa ou conclui.
     pub fn announce(
         &self,
+        can_update: bool,
         node: &str,
         version: &str,
-        canary_version: impl Fn(&str) -> Option<String>,
+        canary_version: impl Fn(&str) -> Option<(String, String)>,
         now_ms: u64,
     ) -> (Option<Release>, Option<String>) {
         let mut state = self.lock();
         let Some(desired) = state.desired.clone() else {
             return (None, None);
         };
-        if version == desired.version || state.paused {
+        // um nó sem comando de atualização não entra no rollout nem vira canário
+        if !can_update || version == desired.version || state.paused {
             return (None, None);
         }
         match state.canary.clone() {
@@ -138,7 +161,11 @@ impl Rollout {
                 (Some(desired), None)
             }
             Some(canary) => {
-                if canary_version(&canary).as_deref() == Some(desired.version.as_str()) {
+                // o canário concluiu quando roda a versão e, se mede o slot, a medida bate
+                let done = canary_version(&canary).is_some_and(|(v, m)| {
+                    v == desired.version && (m.is_empty() || m == desired.image_sha256)
+                });
+                if done {
                     (Some(desired), None)
                 } else {
                     (None, None)
@@ -157,6 +184,8 @@ mod tests {
             version: version.into(),
             url: "http://192.168.1.25:8080/img/rootfs.ext4.gz".into(),
             sha256: "a".repeat(64),
+            image_sha256: "b".repeat(64),
+            signature: format!("{}==", "A".repeat(86)),
         }
     }
 
@@ -174,6 +203,11 @@ mod tests {
         r.sha256 = "zz".into();
         assert!(validate(&r).is_err());
         assert!(validate(&release("1; reboot")).is_err());
+        let mut r = release("1.2.0");
+        r.signature = "curta".into();
+        assert!(validate(&r).is_err());
+        r.signature = String::new();
+        assert!(validate(&r).is_err());
     }
 
     #[test]
@@ -181,15 +215,20 @@ mod tests {
         let rollout = Rollout::new(None);
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
+        // nó que não sabe atualizar não vira canário
+        assert!(rollout.announce(false, "x", "1", none, 0).0.is_none());
         // o primeiro nó vira canário
-        assert!(rollout.announce("a", "1", none, 0).0.is_some());
+        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
         // outro nó espera enquanto o canário não reporta a versão nova
-        assert!(rollout.announce("b", "1", none, 1).0.is_none());
+        assert!(rollout.announce(true, "b", "1", none, 1).0.is_none());
         // o canário reporta "2": libera os demais
-        let a_novo = |n: &str| (n == "a").then(|| "2".to_string());
-        assert!(rollout.announce("b", "1", a_novo, 2).0.is_some());
+        let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), String::new()));
+        // medida errada: o canário não concluiu
+        let a_errado = |n: &str| (n == "a").then(|| ("2".to_string(), "c".repeat(64)));
+        assert!(rollout.announce(true, "b", "1", a_errado, 2).0.is_none());
+        assert!(rollout.announce(true, "b", "1", a_novo, 2).0.is_some());
         // quem já está na versão não recebe nada
-        assert!(rollout.announce("a", "2", a_novo, 3).0.is_none());
+        assert!(rollout.announce(true, "a", "2", a_novo, 3).0.is_none());
     }
 
     #[test]
@@ -197,18 +236,18 @@ mod tests {
         let rollout = Rollout::new(None);
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
-        assert!(rollout.announce("a", "1", none, 0).0.is_some());
-        let (r, evento) = rollout.announce("a", "1", none, CANARY_TIMEOUT_MS + 1);
+        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
+        let (r, evento) = rollout.announce(true, "a", "1", none, CANARY_TIMEOUT_MS + 1);
         assert!(r.is_none() && evento.is_some());
         assert!(
             rollout
-                .announce("b", "1", none, CANARY_TIMEOUT_MS + 2)
+                .announce(true, "b", "1", none, CANARY_TIMEOUT_MS + 2)
                 .0
                 .is_none()
         );
         // novo set limpa a pausa
         rollout.set(Some(release("3")));
-        assert!(rollout.announce("b", "1", none, 0).0.is_some());
+        assert!(rollout.announce(true, "b", "1", none, 0).0.is_some());
     }
 
     #[test]

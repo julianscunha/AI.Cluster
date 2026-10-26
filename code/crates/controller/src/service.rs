@@ -336,8 +336,13 @@ impl ClusterControl for ClusterControlService {
             .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms)
             .map(|replica| (*replica).clone());
         let now = unix_ms();
-        let version = self.registry.version(&request.node_id).unwrap_or_default();
+        let version = self
+            .registry
+            .version(&request.node_id)
+            .map(|(version, _)| version)
+            .unwrap_or_default();
         let (release, event) = self.rollout.announce(
+            self.registry.can_update(&request.node_id),
             &request.node_id,
             &version,
             |node| self.registry.version(node),
@@ -374,9 +379,16 @@ impl ClusterControl for ClusterControlService {
         &self,
         _request: Request<ListNodesRequest>,
     ) -> Result<Response<ListNodesResponse>, Status> {
-        Ok(Response::new(ListNodesResponse {
-            nodes: self.registry.list(),
-        }))
+        let desired = self.rollout.desired();
+        let mut nodes = self.registry.list();
+        for node in &mut nodes {
+            if let (Some(want), Some(identity)) = (&desired, &node.identity) {
+                node.attested = identity.runtime_version == want.version
+                    && !identity.image_sha256.is_empty()
+                    && identity.image_sha256 == want.image_sha256;
+            }
+        }
+        Ok(Response::new(ListNodesResponse { nodes }))
     }
 
     /// Planned departure: stop dispatching to the node, hand its in-flight units
@@ -1158,6 +1170,7 @@ mod tests {
             Request::new(RegisterNodeRequest {
                 identity: Some(NodeIdentity {
                     runtime_version: version.to_string(),
+                    can_update: true,
                     ..identity("n1")
                 }),
                 capability: None,
@@ -1175,6 +1188,8 @@ mod tests {
             version: "2".into(),
             url: "http://h/x.gz".into(),
             sha256: "a".repeat(64),
+            image_sha256: "b".repeat(64),
+            signature: format!("{}==", "A".repeat(86)),
         };
         // sem release definida, nada a anunciar
         assert!(

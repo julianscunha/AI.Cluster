@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# Mede o slot em execução (F19, attestation de software): SHA-256 da partição inteira, que é o que o
+# aic-updater conferiu ao gravar. O worker reporta o valor ao controller. Roda antes do worker.
+name="aic-measure"
+description="SHA-256 do slot A/B em execução"
+
+depend() {
+	need localmount
+	before ai-cluster-worker
+}
+
+start() {
+	. /etc/aic-board
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	case "$slot" in A) dev=/dev/mmcblk0p2;; B) dev=/dev/mmcblk0p3;; *) return 0;; esac
+	ebegin "Medindo o slot $slot"
+	nice -n 10 dd if="$dev" bs=1M count="$slot_mib" 2>/dev/null | sha256sum | cut -d' ' -f1 > /run/aic-measure
+	eend 0
+}

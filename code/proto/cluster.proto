@@ -8,6 +8,12 @@ message NodeIdentity {
   string architecture = 3;
   string os_version = 4;
   string runtime_version = 5;
+  /// SHA-256 medido do slot em execução (attestation de software: detecta slot corrompido ou
+  /// errado; um nó comprometido pode mentir). Vazio enquanto a medição não terminou.
+  string image_sha256 = 6;
+  /// O nó sabe aplicar uma release (tem comando de atualização). Só esses nós entram no rollout e
+  /// só eles podem ser canário.
+  bool can_update = 7;
 }
 
 message CapabilityReport {
@@ -114,6 +120,9 @@ message NodeSnapshot {
   uint64 last_heartbeat_unix_ms = 6;
   // Confiança (Fase S2): um nó novo nasce não confiável e só recebe trabalho depois de aprovado.
   bool trusted = 7;
+  // Verdadeiro quando o nó roda a release desejada e a medida do slot (`image_sha256`) confere com a
+  // assinada. Calculado na leitura; não é persistido. Software apenas: um nó comprometido mente.
+  bool attested = 8;
 }
 
 message ApproveNodeRequest {
@@ -180,6 +189,12 @@ message Release {
   string version = 1;
   string url = 2;
   string sha256 = 3;
+  /// SHA-256 do conteúdo do slot depois de gravado (a imagem ext4 descomprimida): o nó confere o
+  /// que gravou e, se medir o slot ativo, reporta o mesmo valor em `NodeIdentity.image_sha256`.
+  string image_sha256 = 4;
+  /// Assinatura Ed25519 (base64) do operador sobre placa, versão, sha256 e image_sha256. Quem
+  /// verifica é o nó (chave pública na imagem), não o controller.
+  string signature = 5;
 }
 
 message SetReleaseRequest {
