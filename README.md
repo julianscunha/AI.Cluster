@@ -11,6 +11,8 @@
   <a href="SECURITY.md"><img alt="Segurança" src="https://img.shields.io/badge/seguran%C3%A7a-pol%C3%ADtica-green"></a>
 </p>
 
+[English](README.en.md) · **Português**
+
 # AI Cluster — Distributed AI Runtime
 
 Runtime Linux-first, escrito em Rust, que junta hardware heterogêneo reaproveitado (PCs, notebooks, servidores, SBCs como Orange Pi) num **pool único de computação para IA**. Uma inferência pode ser dividida entre vários dispositivos; nós entram, saem, falham e são drenados sem derrubar o cluster.
