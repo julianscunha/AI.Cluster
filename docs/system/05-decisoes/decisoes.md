@@ -33,6 +33,7 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-018-release-assinada-e-medida-do-slot]] | decidido | 2026-10-26 | Release assinada (Ed25519) verificada no nó; versão sempre crescente; medida do slot como attestation de software (não prova integridade contra nó comprometido) |
 | [[adr-019-imagem-x86-uefi-com-grub]] | decidido | 2026-10-27 | Imagem x86_64 UEFI: GRUB com grubenv, slots A/B por número de partição, kernel dentro do slot, camada `ab.sh` por plataforma |
 | [[adr-020-niveis-de-confianca-do-no]] | decidido | 2026-10-27 | Níveis de confiança do nó: pendente, aprovado e atestado; a exigência de atestado é da unidade (`require_attested`) |
+| [[adr-021-persistencia-de-traces-e-exportacao-de-eventos]] | decidido | 2026-10-27 | Traces em arquivo de acréscimo com rotação, estado do gateway com `GatewayStats`, eventos por syslog UDP |
 
 ## Notas
 

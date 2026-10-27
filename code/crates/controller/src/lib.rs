@@ -7,4 +7,6 @@ pub mod reservations;
 pub mod rollout;
 pub mod service;
 pub mod shards;
+pub mod syslog;
+pub mod traces;
 pub mod work;

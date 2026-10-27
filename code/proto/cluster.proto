@@ -717,6 +717,20 @@ message MetricsResponse {
 
 message GetMetricsRequest {}
 
+/// Uma unidade concluída, gravada no arquivo de traces do controller (`AI_CLUSTER_TRACES`) com
+/// prefixo de tamanho. Não faz parte da superfície de requests.
+message CompletedRecord {
+  string work_id = 1;
+  string node_id = 2;
+  string request_id = 3;
+  uint64 compute_time_us = 4;
+  uint64 total_latency_us = 5;
+  uint64 transfer_time_us = 6;
+  uint64 predicted_compute_us = 7;
+  double checksum = 8;
+  uint64 completed_at_unix_ms = 9;
+}
+
 /// Estado do controller gravado em disco para que um restart não perca trabalho em fila.
 /// Não faz parte da superfície de requests: isto é o que o controller salva e recarrega,
 /// não algo que um cliente envia.

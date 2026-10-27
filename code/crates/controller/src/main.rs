@@ -119,15 +119,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
     // the benchmark runs use; point it at a mounted volume so a restart keeps the
     // queue instead of losing it with the container.
-    let work = Arc::new(match state_path("AI_CLUSTER_STATE", "state.bin") {
+    let work = match state_path("AI_CLUSTER_STATE", "state.bin") {
         Some(path) => WorkStore::with_state(path),
         None => WorkStore::new(),
+    };
+    // O histórico de concluídas (traces e roll-up) também sobrevive a um reinício: AI_CLUSTER_TRACES
+    // ou, com AI_CLUSTER_DATA_DIR, `traces.log`.
+    let work = Arc::new(match state_path("AI_CLUSTER_TRACES", "traces.log") {
+        Some(path) => work.with_traces(path),
+        None => work,
     });
     // AI_CLUSTER_EVENTS names a file where the event timeline survives a restart (F06).
     let events = Arc::new(match state_path("AI_CLUSTER_EVENTS", "events.log") {
         Some(path) => EventLog::new().persisted(path),
         None => EventLog::new(),
     });
+    // AI_CLUSTER_EVENTS_SYSLOG=host:porta envia cada evento novo a um coletor por syslog UDP (F05).
+    if let Some(target) = std::env::var("AI_CLUSTER_EVENTS_SYSLOG")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        ai_cluster_controller::syslog::spawn(events.clone(), target);
+    }
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
 

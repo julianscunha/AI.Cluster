@@ -105,8 +105,8 @@ struct Inner {
     /// that produced them, so a trace can list a request's failed units (H3).
     ///
     /// ponytail: only the ids survive a reload, so a failed unit's request id is empty
-    /// after a restart. The same ceiling as completed units, which are not persisted at
-    /// all; persist the correlation when traces need to outlive a restart.
+    /// after a restart, while the completed units now come back with theirs (`traces.rs`).
+    /// Persist the correlation of failed units when their traces need to outlive a restart.
     failed: HashMap<String, String>,
     /// Dispatches that went to another unit while a queued unit waited (G4 aging). Not
     /// persisted: a restart resets the age, which only delays an overtake by one span.
@@ -191,6 +191,9 @@ pub struct WorkStore {
     /// Where the snapshot is written. `None` means memory only, which is what the
     /// tests and the benchmark runs use.
     path: Option<PathBuf>,
+    /// Histórico de concluídas em disco (F05), quando `AI_CLUSTER_TRACES` ou o diretório de dados o
+    /// pedem. Sem ele os traces e o roll-up recomeçam do zero a cada reinício.
+    traces: Option<crate::traces::TraceLog>,
     /// The snapshot exactly as last written, with the epoch that dates it (I4).
     ///
     /// Held so a heartbeat can hand a copy to a node without re-encoding the state, and so
@@ -632,6 +635,23 @@ impl WorkStore {
         }));
     }
 
+    /// Guarda o histórico de concluídas em `path` (veja `traces.rs`) e recarrega o que já havia, no
+    /// máximo `MAX_COMPLETED`. O roll-up e os traces passam a atravessar reinícios.
+    pub fn with_traces(self, path: impl Into<PathBuf>) -> Self {
+        self.with_traces_limit(path, MAX_COMPLETED)
+    }
+
+    /// Como [`Self::with_traces`], com o limite escolhido (os testes usam um pequeno).
+    pub fn with_traces_limit(mut self, path: impl Into<PathBuf>, limit: usize) -> Self {
+        let (log, history) = crate::traces::TraceLog::open(path.into(), limit);
+        self.inner
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .completed = history;
+        self.traces = Some(log);
+        self
+    }
+
     /// Epoch for the next save: the clock, but never at or below the last one written.
     ///
     /// A node compares the copy it holds against this number, so a clock that jumps backwards
@@ -1005,6 +1025,9 @@ impl WorkStore {
             checksum: result.checksum,
             completed_at_unix_ms: now_unix_ms,
         };
+        if let Some(log) = &self.traces {
+            log.append(&completed);
+        }
         inner.completed.push(completed.clone());
         trim_history(&mut inner.completed, MAX_COMPLETED);
         if inner.keep.remove(&result.work_id) {
@@ -2590,6 +2613,29 @@ mod tests {
 
         assert_eq!(ask(1_001).unwrap().work_id, "o1");
         assert!(ask(1_002).is_none(), "o último slot é do dono da reserva");
+    }
+
+    #[test]
+    fn o_historico_de_concluidas_atravessa_o_reinicio_e_entra_no_trace() {
+        let dir = std::env::temp_dir().join(format!("aic-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("traces.log");
+        {
+            let store = WorkStore::new().with_traces_limit(&path, 100);
+            store.enqueue([unit("w1"), unit("w2")]);
+            store.claim("node-a", &capability(8, 0.0), 1_000).unwrap();
+            store.claim("node-a", &capability(8, 0.0), 1_000).unwrap();
+            store.complete(result("w1", 50), 1_100).unwrap();
+            store.complete(result("w2", 70), 1_200).unwrap();
+        }
+        let reloaded = WorkStore::new().with_traces_limit(&path, 100);
+        let _ = std::fs::remove_dir_all(&dir);
+        let history = reloaded.completed();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].work_id, "w2");
+        assert_eq!(history[1].completed_at_unix_ms, 1_200);
+        assert_eq!(history[0].compute_time_us, 50);
     }
 
     #[test]

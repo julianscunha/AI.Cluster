@@ -30,6 +30,8 @@ Convenções:
 | `AI_CLUSTER_NODES` | memória | Arquivo com aprovações e credenciais dos nós. Texto claro, modo 0600. Sem ele, o registro some no reinício. |
 | `AI_CLUSTER_STATE` | memória | Arquivo do snapshot da fila, das unidades em voo e dos resultados ainda necessários. A cópia fica em `<arquivo>.replica`, ao lado. |
 | `AI_CLUSTER_EVENTS` | memória | Arquivo da linha do tempo de eventos. Sobrevive a reinício; é reescrito com as últimas 256 linhas ao passar de 1024. |
+| `AI_CLUSTER_TRACES` | memória | Arquivo do histórico de unidades concluídas (traces e roll-up). Sobrevive a reinício; guarda as últimas 100 mil unidades e gira para `.1` ao passar disso. Com `AI_CLUSTER_DATA_DIR` o padrão é `traces.log`. |
+| `AI_CLUSTER_EVENTS_SYSLOG` | desligado | `host:porta` de um coletor syslog UDP (RFC 5424). Cada evento novo sai como um datagrama; os eventos `audit` levam o IP de quem agiu, em texto claro. |
 | `AI_CLUSTER_METRICS_ADDR` | `127.0.0.1:9101` | Endereço do exportador Prometheus (`GET /metrics`). Exige o token de operador como bearer. |
 | `AI_CLUSTER_TLS_CERT` | — | Certificado PEM do servidor. Vem com `AI_CLUSTER_TLS_KEY`. |
 | `AI_CLUSTER_TLS_KEY` | — | Chave PEM do servidor. Vem com `AI_CLUSTER_TLS_CERT`. |

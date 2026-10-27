@@ -76,6 +76,11 @@ O gateway mede cada geração e expõe as séries em `GET /metrics` (chave de AP
 
 Percentis são nearest-rank, sobre as últimas 1024 amostras de cada série. Cancelamento e prazo estourado contam como falha.
 
+## Traces persistentes e exportação de eventos
+
+- **Traces:** com `AI_CLUSTER_TRACES` (ou `AI_CLUSTER_DATA_DIR`) o controller grava cada unidade concluída num arquivo de acréscimo e o recarrega ao subir, então `request trace`, o roll-up e as taxas atravessam reinícios. Ficam as últimas 100 mil unidades. Veja [[adr-021-persistencia-de-traces-e-exportacao-de-eventos]].
+- **Eventos para fora:** `AI_CLUSTER_EVENTS_SYSLOG=host:porta` envia cada evento novo por syslog UDP (RFC 5424, facility `local0`). UDP não confirma entrega nem criptografa; os eventos `audit` saem com IP em texto claro.
+
 ## Inferência no painel
 
 O gateway se apresenta ao controller a cada 15 s e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `ai-cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.

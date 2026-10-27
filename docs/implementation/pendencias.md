@@ -70,10 +70,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 ## F05 — Observabilidade `[x]`
 
-| Item | O que falta | Dependência |
-|---|---|---|
-| Persistência de traces | Traces não sobrevivem a reinício. | código |
-| Exportação de eventos | Enviar eventos a um coletor externo. | código |
+Sem pendências: o código da fase está feito.
 
 ## F06 — Estado e recuperação `[x]`
 
