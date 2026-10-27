@@ -41,17 +41,16 @@ AI Cluster is a Linux system with **roles**. You choose where each one runs:
 Usage flow:
 
 1. **Install the controller** on the server and save the two tokens (join and operator).
-2. **Install the worker** on each device, pointing at the controller. It is a real Linux machine running the worker, no container in between.
+2. **Turn each device into a worker.** The project's path is **AI Cluster OS**: its own immutable, lean system that **replaces the device's operating system** (the device is wiped) and dedicates it to being a worker, with signed updates and automatic rollback. Today the image exists for **ARMv7 boards**; for **x86_64 and ARM64 it is still under development**, and in the meantime the worker can be installed on top of the Linux the device already runs (transition path, nothing is wiped).
 3. **Approve** each new node and **monitor** everything with the CLI.
 4. **Start the gateway** with the model and point your applications at it.
-5. For ARM boards, use **AI Cluster OS**, a dedicated system that updates itself safely.
 
 ## Prerequisites
 
 | Where | Needs |
 |---|---|
 | **Controller/gateway server** | Linux (x86_64 or ARM, glibc), network access from workers to port `50051` and from clients to `8080`. The gateway with SmolLM2 keeps the model in memory (about 1 GB). |
-| **Each worker** | Linux (x86_64 or ARMv7), `root` to install, systemd recommended, outbound connection to the controller's port `50051`. Free memory for the model slice it will hold. |
+| **Each worker** | **AI Cluster OS** (ARMv7 board: the card is wiped and rewritten) **or**, while the x86_64/ARM64 image does not exist, an installed x86_64/ARMv7 Linux with `root` and, preferably, systemd. Either way: outbound connection to the controller's port `50051` and free memory for the model slice. |
 | **Build machine** (once) | Linux with stable Rust ≥ 1.85 (`rustup`). It compiles the binaries; servers and devices do not need Rust. To produce ARMv7 binaries from x86, Docker on that machine. |
 | **Your computer** | The `ai-cluster` binary and network access to the controller. |
 | **Models** | GPT-2 or SmolLM2 weights on the gateway server ([where to download](docs/guia/instalacao.md#pesos-dos-modelos)). Optional: without them the cluster works, it just does not answer chat. |
@@ -90,7 +89,9 @@ AI_CLUSTER_NODES=/var/lib/aic/nodes AI_CLUSTER_STATE=/var/lib/aic/state.bin AI_C
 
 ### 3. Worker (on each device)
 
-Copy `ai-cluster-worker`, `code/os/bootstrap.sh` and the join token to the device and, as root:
+**Recommended path: AI Cluster OS (ARMv7 boards).** The device is wiped and runs the project's own system, already with the worker, the controller configured and signed A/B updates. See step 6.
+
+**Transition path: worker on the existing Linux.** It is the only option today for x86_64 desktops and servers and for ARM64, while their images do not exist. Nothing is wiped, and the device stays an ordinary Linux: no A/B updates or boot rollback. Copy `ai-cluster-worker`, `code/os/bootstrap.sh` and the join token to the device and, as root:
 
 ```bash
 echo '<join-token>' > /root/join-token && chmod 600 /root/join-token
@@ -140,9 +141,11 @@ To **split the model across workers**, install the weights on them too (`--model
 
 All variables, tenants, quotas and the full API: [`docs/guia/configuracao.md`](docs/guia/configuracao.md) and [`docs/guia/api.md`](docs/guia/api.md). (The guides are in Brazilian Portuguese.)
 
-### 6. ARM boards: AI Cluster OS
+### 6. AI Cluster OS: the device becomes a dedicated worker
 
-On SBCs you can flash **AI Cluster OS**, an immutable Alpine image with two slots (A/B). The operator signs an update; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
+**AI Cluster OS** is the project's destination for any device: an immutable Alpine image with two slots (A/B) that wipes the previous system and leaves the machine with only what a worker needs. The operator signs an update; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
+
+**Availability today:** **ARMv7** boards (tested on an Orange Pi PC). **There is no image yet for x86_64 (UEFI) or ARM64**; they are the project's next step (see [`pendencias.md`](docs/implementation/pendencias.md)). Until then, desktops and servers use the transition path from step 3.
 
 <p align="center">
   <img src="docs/assets/os-update.svg" alt="Signed update flow with A/B slots" width="100%">
