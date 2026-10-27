@@ -115,7 +115,7 @@ Os marcos de prova (M0–M7) ficam ao final.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Latência do canal de fatias | Cada operação dependente passa pela fila de unidades. Com cerca de 210 operações por token, isso dá de 4 a 10 s por token, contra cerca de 105 ms local. Falta um caminho de baixa latência para o caminho crítico. | código |
+| Latência do canal de fatias | O canal residente (ADR-009) já tirou a fila de unidades do caminho: medido em 2026-10-27 com a SmolLM2 e 2 workers no mesmo host, são 120 chamadas por token a 7,8 ms cada (cerca de 1,5 ms de relay e 6,3 ms de cálculo), ou seja, uns 0,9 s por token contra cerca de 105 ms local. O que resta é o número de idas e voltas em série (cada camada espera a anterior) e a disputa por núcleos entre workers no mesmo host. Medir em máquinas separadas antes de otimizar. | código, hardware: duas máquinas físicas |
 | Amostragem | Temperatura, top-p e `n` não existem. | código |
 | Stream | Não há `usage` no stream, e `completion_tokens` não conta o token de fim. | código |
 | Modelo no gateway | Sem o model runtime distribuído, o gateway concentra o modelo na RAM. | código (depende de F12) |
