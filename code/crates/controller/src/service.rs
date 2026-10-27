@@ -18,7 +18,10 @@ use ai_cluster_protocol::cluster::{
     ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
-use ai_cluster_protocol::cluster::{Event, WatchEventsRequest};
+use ai_cluster_protocol::cluster::{
+    Event, GatewayInfo, ListGatewaysRequest, ListGatewaysResponse, ReportGatewayRequest,
+    ReportGatewayResponse, WatchEventsRequest,
+};
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, is_recovery, node_credential, require_inference, require_operator,
     require_recovery_scope,
@@ -60,7 +63,32 @@ pub struct ClusterControlService {
     shards: Arc<ShardHub>,
     shard_calls: Arc<tokio::sync::Semaphore>,
     watchers: Arc<tokio::sync::Semaphore>,
+    /// Gateways que se apresentaram, por id. Não persiste: cada um se reapresenta a cada poucos
+    /// segundos, então um reinício do controller se refaz sozinho.
+    gateways: Arc<std::sync::Mutex<std::collections::HashMap<String, GatewayInfo>>>,
     rollout: Rollout,
+}
+
+/// Gateways que o controller lembra ao mesmo tempo; um id novo acima disso é recusado.
+const MAX_GATEWAYS: usize = 64;
+/// Um gateway sem se apresentar há mais que isto deixa de contar como vivo (ele repete a cada 15 s).
+const GATEWAY_ALIVE_MS: u64 = 45_000;
+
+/// Valida o que o gateway diz de si: tamanhos limitados e sem caracteres de controle, porque o
+/// texto vai para a tela do operador.
+fn valid_gateway(request: &ReportGatewayRequest) -> bool {
+    let text = |value: &str, max: usize| {
+        !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+    };
+    text(&request.gateway_id, 64)
+        && request.url.len() <= 256
+        && !request.url.chars().any(char::is_control)
+        && request.models.len() <= 32
+        && request.models.iter().all(|model| {
+            text(&model.model_id, 64)
+                && model.shard_nodes.len() <= 64
+                && model.shard_nodes.iter().all(|node| text(node, 64))
+        })
 }
 
 /// Assinantes simultâneos do barramento de eventos.
@@ -88,6 +116,7 @@ impl ClusterControlService {
             shards: Arc::new(ShardHub::default()),
             shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
             watchers: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WATCHERS)),
+            gateways: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -835,6 +864,66 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(Box::pin(
             tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(frames),
         )))
+    }
+
+    /// O gateway se apresenta (quem é, onde está, que modelos serve e onde ficam as fatias).
+    async fn report_gateway(
+        &self,
+        request: Request<ReportGatewayRequest>,
+    ) -> Result<Response<ReportGatewayResponse>, Status> {
+        require_inference(&request)?;
+        let request = request.into_inner();
+        if !valid_gateway(&request) {
+            return Err(Status::invalid_argument("apresentação de gateway inválida"));
+        }
+        let now = unix_ms();
+        let is_new = {
+            let mut gateways = self
+                .gateways
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !gateways.contains_key(&request.gateway_id) && gateways.len() >= MAX_GATEWAYS {
+                return Err(Status::resource_exhausted("gateways demais"));
+            }
+            gateways
+                .insert(
+                    request.gateway_id.clone(),
+                    GatewayInfo {
+                        gateway_id: request.gateway_id.clone(),
+                        url: request.url,
+                        models: request.models,
+                        last_seen_unix_ms: now,
+                        alive: true,
+                    },
+                )
+                .is_none()
+        };
+        if is_new {
+            self.events
+                .record(now, "gateway_registered", request.gateway_id);
+        }
+        Ok(Response::new(ReportGatewayResponse {}))
+    }
+
+    async fn list_gateways(
+        &self,
+        request: Request<ListGatewaysRequest>,
+    ) -> Result<Response<ListGatewaysResponse>, Status> {
+        require_operator(&request)?;
+        let now = unix_ms();
+        let mut gateways: Vec<GatewayInfo> = self
+            .gateways
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .cloned()
+            .map(|mut gateway| {
+                gateway.alive = now.saturating_sub(gateway.last_seen_unix_ms) <= GATEWAY_ALIVE_MS;
+                gateway
+            })
+            .collect();
+        gateways.sort_by(|a, b| a.gateway_id.cmp(&b.gateway_id));
+        Ok(Response::new(ListGatewaysResponse { gateways }))
     }
 
     /// Quanto cada nó nomeado aceita guardar de fatias (admissão por capacidade). Só diz o que o
@@ -2372,6 +2461,59 @@ mod tests {
             .extensions_mut()
             .insert(ai_cluster_protocol::metadata::Inference);
         request
+    }
+
+    #[tokio::test]
+    async fn o_gateway_se_apresenta_e_o_operador_o_lista() {
+        use ai_cluster_protocol::cluster::GatewayModel;
+        let service = service();
+        let report = |id: &str, models: &[&str]| ReportGatewayRequest {
+            gateway_id: id.into(),
+            url: "http://gw:8080".into(),
+            models: models
+                .iter()
+                .map(|model| GatewayModel {
+                    model_id: model.to_string(),
+                    shard_nodes: vec!["w1".into()],
+                })
+                .collect(),
+        };
+        service
+            .report_gateway(inference(report("gw1", &["gpt2"])))
+            .await
+            .unwrap();
+        // repetir atualiza, não duplica, e só a primeira vez vira evento
+        service
+            .report_gateway(inference(report("gw1", &["gpt2", "smollm2"])))
+            .await
+            .unwrap();
+        let listed = service
+            .list_gateways(op(ListGatewaysRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .gateways;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].models.len(), 2);
+        assert!(listed[0].alive);
+        let registered = service
+            .events
+            .recent(50)
+            .into_iter()
+            .filter(|event| event.kind == "gateway_registered")
+            .count();
+        assert_eq!(registered, 1);
+        // texto de controle, id vazio e modelo com nome vazio são recusados
+        for bad in [report("", &[]), report("g\nx", &[]), report("gw2", &[""])] {
+            assert!(service.report_gateway(inference(bad)).await.is_err());
+        }
+        // listar é do operador: o token de inferência não passa
+        assert!(
+            service
+                .list_gateways(inference(ListGatewaysRequest {}))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -378,6 +378,36 @@ message NodeShardCapacity {
   uint64 memory_bytes = 4;
 }
 
+message GatewayModel {
+  string model_id = 1;
+  /// Nós que guardam as fatias do modelo; vazio quando ele roda inteiro no gateway.
+  repeated string shard_nodes = 2;
+}
+
+message ReportGatewayRequest {
+  string gateway_id = 1;
+  /// Endereço HTTP por onde os clientes chegam ao gateway (`AI_CLUSTER_GATEWAY_URL`).
+  string url = 2;
+  repeated GatewayModel models = 3;
+}
+
+message ReportGatewayResponse {}
+
+message ListGatewaysRequest {}
+
+message GatewayInfo {
+  string gateway_id = 1;
+  string url = 2;
+  repeated GatewayModel models = 3;
+  uint64 last_seen_unix_ms = 4;
+  /// Verdadeiro se a última apresentação é recente. Calculado na leitura; não é persistido.
+  bool alive = 5;
+}
+
+message ListGatewaysResponse {
+  repeated GatewayInfo gateways = 1;
+}
+
 message ShardCapacityResponse {
   repeated NodeShardCapacity nodes = 1;
 }
@@ -681,6 +711,12 @@ service ClusterControl {
   /// Token de inferência ou de operador: quanto cada nó nomeado aceita guardar de fatias, para o
   /// gateway recusar na subida um modelo que os nós não comportam.
   rpc ShardCapacity(ShardCapacityRequest) returns (ShardCapacityResponse);
+  /// Token de inferência ou de operador: o gateway se apresenta (quem é, onde está, que modelos serve
+  /// e em quais nós ficam as fatias) e repete a cada poucos segundos. É o que `ListGateways` e a
+  /// topologia mostram; o gateway não é um nó e não recebe trabalho.
+  rpc ReportGateway(ReportGatewayRequest) returns (ReportGatewayResponse);
+  /// Só operador: os gateways que se apresentaram, com a marca de vivo.
+  rpc ListGateways(ListGatewaysRequest) returns (ListGatewaysResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

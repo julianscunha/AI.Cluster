@@ -379,6 +379,7 @@ const SHARD_MATMUL_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardMatmul";
 /// Path of `ShardCapacity`, the other call the inference token may make: how much slice memory
 /// the nodes it names accept.
 const SHARD_CAPACITY_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardCapacity";
+const REPORT_GATEWAY_PATH: &str = "/ai.cluster.v1.ClusterControl/ReportGateway";
 
 /// The calls a node in network recovery may make: show up, stay alive, say how it is, leave.
 const RECOVERY_PATHS: &[&str] = &[
@@ -400,7 +401,11 @@ pub struct ScopeGate<S> {
 
 /// The inference token reaches `ShardMatmul` and `ShardCapacity` only.
 pub fn inference_gate<S>(inner: S, token: &str) -> ScopeGate<S> {
-    scope_gate(inner, token, &[SHARD_MATMUL_PATH, SHARD_CAPACITY_PATH])
+    scope_gate(
+        inner,
+        token,
+        &[SHARD_MATMUL_PATH, SHARD_CAPACITY_PATH, REPORT_GATEWAY_PATH],
+    )
 }
 
 /// The recovery token reaches [`RECOVERY_PATHS`] only.
@@ -699,8 +704,10 @@ mod tests {
         };
         assert!(call("inf", SHARD_MATMUL_PATH).await);
         assert!(call("inf", SHARD_CAPACITY_PATH).await);
+        assert!(call("inf", REPORT_GATEWAY_PATH).await);
         for path in [
             "/ai.cluster.v1.ClusterControl/ListNodes",
+            "/ai.cluster.v1.ClusterControl/ListGateways",
             "/ai.cluster.v1.ClusterControl/ShardChannel",
             "/ai.cluster.v1.LinkProbe/Probe",
             "/ai.cluster.v1.ClusterControl/ShardMatmul/",

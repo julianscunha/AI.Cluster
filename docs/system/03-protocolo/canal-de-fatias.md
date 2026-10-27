@@ -51,6 +51,7 @@ Semântica da faixa:
 | Abertura de `ShardChannel` | nó no metadado `x-ai-cluster-node-id`, registrado, aprovado, elegível e com a credencial exata do nó |
 | `ShardMatmul` | token de inferência ou de operador |
 | `ShardCapacity` | token de inferência ou de operador |
+| `ReportGateway` | token de inferência ou de operador: o gateway se apresenta ao controller (id, URL, modelos e nós das fatias) a cada 15 s. `ListGateways`, que lê isso, é só do operador. |
 | Qualquer outro RPC com o token de inferência | `PermissionDenied`: o token só passa para `ShardMatmul` e `ShardCapacity` |
 
 - O token de operador **não** abre o canal: sem a credencial do nó, `ShardChannel` é recusado.

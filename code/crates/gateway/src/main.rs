@@ -25,8 +25,8 @@ use ai_cluster_engine::{
     manifest::verified_version, tokenizer::Tokenizer,
 };
 use ai_cluster_protocol::cluster::{
-    CancelRequestRequest, EnqueueGraphRequest, GetOutputRequest, GetTraceRequest,
-    NodeShardCapacity, ShardCapacityRequest, ShardMatmulRequest, ShardOp,
+    CancelRequestRequest, EnqueueGraphRequest, GatewayModel, GetOutputRequest, GetTraceRequest,
+    NodeShardCapacity, ReportGatewayRequest, ShardCapacityRequest, ShardMatmulRequest, ShardOp,
 };
 use ai_cluster_protocol::metadata::{
     FAILED_NODE_HEADER, INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient,
@@ -76,6 +76,8 @@ struct Llm {
     end_of_text: u32,
     /// Set when the projections run on workers (J5).
     remote: Option<Arc<RemoteStats>>,
+    /// The nodes that hold the model's slices; empty when it runs whole in the gateway.
+    shards: Vec<String>,
     /// Instruct models take their conversation as ChatML turns; base models just continue text.
     chat: Option<ChatMl>,
 }
@@ -211,6 +213,38 @@ fn grpc_executor(
         roster: Roster::new(nodes),
     });
     (executor, stats)
+}
+
+/// Presents this gateway to the controller now and every `GATEWAY_REPORT_SECS`, so the operator's
+/// topology shows it: who it is, where clients reach it, which models it serves and which nodes hold
+/// their slices. Best effort: a controller that is down or too old only means it is not listed.
+const GATEWAY_REPORT_SECS: u64 = 15;
+
+fn announce_gateway(client: &MetadataClient, llms: &[Arc<Llm>], addr: SocketAddr) {
+    let id = std::env::var("AI_CLUSTER_GATEWAY_ID").unwrap_or_else(|_| format!("gateway-{addr}"));
+    let url = std::env::var("AI_CLUSTER_GATEWAY_URL").unwrap_or_else(|_| format!("http://{addr}"));
+    let models: Vec<GatewayModel> = llms
+        .iter()
+        .map(|llm| GatewayModel {
+            model_id: llm.id.to_string(),
+            shard_nodes: llm.shards.clone(),
+        })
+        .collect();
+    let mut client = client.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(GATEWAY_REPORT_SECS));
+        loop {
+            tick.tick().await;
+            let report = ReportGatewayRequest {
+                gateway_id: id.clone(),
+                url: url.clone(),
+                models: models.clone(),
+            };
+            if let Err(err) = client.report_gateway(report).await {
+                eprintln!("não consegui me apresentar ao controller: {err}");
+            }
+        }
+    });
 }
 
 /// A SmolLM2 checkpoint the gateway can serve, and the environment variables that configure it.
@@ -358,7 +392,7 @@ fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, 
         );
         (
             Box::new(
-                Llama::load_remote(&dir, executor, shards)
+                Llama::load_remote(&dir, executor, shards.clone())
                     .map_err(|err| format!("{}: {err}", spec.id))?,
             ),
             Some(stats),
@@ -382,6 +416,7 @@ fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, 
         end_of_text: chat.as_ref().map_or(0, |chat| chat.end),
         tokenizer,
         remote,
+        shards,
         chat,
     }))
 }
@@ -1413,6 +1448,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             verified_version(&dir, manifest_required()).map_err(|err| format!("gpt2: {err}"))?;
         // AI_CLUSTER_GPT2_SHARDS: see the SmolLM2 block below; GPT-2's slices are column bands.
         let shards = shard_nodes("AI_CLUSTER_GPT2_SHARDS");
+        let shards_for_report = shards.clone();
         let (model, remote): (Box<dyn LanguageModel + Send + Sync>, _) = if shards.is_empty() {
             (
                 Box::new(Gpt2::load(&dir).map_err(|err| format!("gpt2: {err}"))?),
@@ -1439,6 +1475,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokenizer: Tokenizer::open(&dir).map_err(|err| format!("gpt2: tokenizador: {err}"))?,
             end_of_text: 50256,
             remote,
+            shards: shards_for_report,
             chat: None,
         }));
     }
@@ -1448,6 +1485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             llms.push(Arc::new(llm));
         }
     }
+    announce_gateway(&client, &llms, addr);
     let gateway = Gateway {
         client: operator_client,
         tenants,

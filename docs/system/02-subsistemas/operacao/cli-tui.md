@@ -35,7 +35,7 @@ Ver [[seguranca]] para os papéis de cada token.
 |---|---|
 | `ai-cluster status` | Mesma saída de `nodes`: uma linha por nó, com estado, confiança, versão, medida e sinais. |
 | `ai-cluster nodes` | Tabela de nós. |
-| `ai-cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os nós agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway não aparece, porque não se registra no controller. |
+| `ai-cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os nós agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway entra como um ramo à parte: ele se apresenta ao controller a cada 15 s (`ReportGateway`, não é um nó e não recebe trabalho) e a árvore mostra o id, a URL, se está vivo e, por modelo, os nós que guardam as fatias. Controller antigo, sem o RPC, mostra a árvore sem o ramo. |
 | `ai-cluster node show <id>` | Um nó, com capability, saúde e confiança completas. |
 | `ai-cluster approve <nó>` | Aprova um nó pendente para receber trabalho. |
 | `ai-cluster revoke <nó>` | Retira a aprovação e a credencial do nó, devolve o trabalho em voo à fila e deixa o nó pendente. |

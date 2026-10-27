@@ -75,6 +75,8 @@ Convenções:
 
 | Variável | Padrão | Efeito |
 |---|---|---|
+| `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `ai-cluster topology`. |
+| `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia. |
 | `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige `AI_CLUSTER_INSECURE`, porque a perna HTTP não tem TLS. |
 | `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. Obrigatória se `AI_CLUSTER_TENANTS` estiver vazio. |
 | `AI_CLUSTER_TENANTS` | — | Tenants no formato `nome=chave[,models=a\|b][,tokens=N][,class=c];...`. `models` limita os modelos, `tokens` dá cota por janela, `class` é a classe máxima. |

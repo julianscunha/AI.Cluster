@@ -526,6 +526,7 @@ fn node_role(node_id: &str, shard_cache_bytes: u64) -> &'static str {
 fn topology_lines(
     controller: &str,
     nodes: &[ai_cluster_protocol::cluster::NodeSnapshot],
+    gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
 ) -> Vec<String> {
     let mut groups: Vec<(&'static str, Vec<String>)> = Vec::new();
     for node in nodes {
@@ -556,6 +557,42 @@ fn topology_lines(
             None => groups.push((role, vec![line])),
         }
     }
+    // O gateway entra como mais um ramo: o que ele serve e em que nós ficam as fatias.
+    if !gateways.is_empty() {
+        let lines = gateways
+            .iter()
+            .map(|gateway| {
+                let models = gateway
+                    .models
+                    .iter()
+                    .map(|model| {
+                        if model.shard_nodes.is_empty() {
+                            format!("{} (inteiro no gateway)", model.model_id)
+                        } else {
+                            format!(
+                                "{} → fatias em {}",
+                                model.model_id,
+                                model.shard_nodes.join(",")
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "{}  {}  {}  {}",
+                    gateway.gateway_id,
+                    gateway.url,
+                    if gateway.alive { "VIVO" } else { "SEM SINAL" },
+                    if models.is_empty() {
+                        "sem modelos"
+                    } else {
+                        &models
+                    },
+                )
+            })
+            .collect();
+        groups.push(("Gateway de inferência", lines));
+    }
     let mut out = vec![format!("controller {controller}  ({} nós)", nodes.len())];
     let last_group = groups.len().saturating_sub(1);
     for (g, (role, lines)) in groups.iter().enumerate() {
@@ -584,7 +621,13 @@ async fn print_topology(endpoint: &str) -> Result<(), Box<dyn std::error::Error>
         .await?
         .into_inner()
         .nodes;
-    for line in topology_lines(endpoint, &nodes) {
+    // Controller antigo não conhece o RPC: sem gateways na árvore, sem erro.
+    let gateways = client
+        .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
+        .await
+        .map(|response| response.into_inner().gateways)
+        .unwrap_or_default();
+    for line in topology_lines(endpoint, &nodes, &gateways) {
         println!("{line}");
     }
     Ok(())
@@ -1195,7 +1238,7 @@ mod tests {
             node("b", 0, false),
             node("c", 0, true),
         ];
-        let tree = topology_lines("http://x:1", &nodes);
+        let tree = topology_lines("http://x:1", &nodes, &[]);
         assert_eq!(tree[0], "controller http://x:1  (3 nós)");
         assert_eq!(tree[1], "├─ Computação + fatias de modelo (1)");
         assert!(tree[2].starts_with("│  └─ a  READY arm 4t"));
@@ -1203,6 +1246,31 @@ mod tests {
         assert_eq!(tree[3], "└─ Computação (2)");
         assert!(tree[4].starts_with("   ├─ b ") && tree[4].contains("PENDENTE"));
         assert!(tree[5].starts_with("   └─ c "));
-        assert_eq!(topology_lines("u", &[]), vec!["controller u  (0 nós)"]);
+        assert_eq!(topology_lines("u", &[], &[]), vec!["controller u  (0 nós)"]);
+    }
+
+    #[test]
+    fn o_gateway_aparece_como_ramo_com_modelos_e_fatias() {
+        use ai_cluster_protocol::cluster::{GatewayInfo, GatewayModel};
+        let gateway = GatewayInfo {
+            gateway_id: "gw1".into(),
+            url: "http://gw:8080".into(),
+            alive: true,
+            models: vec![
+                GatewayModel {
+                    model_id: "gpt2".into(),
+                    shard_nodes: vec![],
+                },
+                GatewayModel {
+                    model_id: "smollm2".into(),
+                    shard_nodes: vec!["a".into(), "b".into()],
+                },
+            ],
+            ..Default::default()
+        };
+        let tree = topology_lines("u", &[node("a", 0, true)], &[gateway]);
+        assert_eq!(tree[3], "└─ Gateway de inferência (1)");
+        assert!(tree[4].contains("gw1  http://gw:8080  VIVO"));
+        assert!(tree[4].contains("gpt2 (inteiro no gateway); smollm2 → fatias em a,b"));
     }
 }
