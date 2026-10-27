@@ -5,6 +5,8 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+# Codifica o arquivo de estado do gateway (GatewayStats).
+prost = "0.14"
 ai-cluster-protocol = { path = "../protocol" }
 ai-cluster-common = { path = "../common" }
 ai-cluster-engine = { path = "../engine" }

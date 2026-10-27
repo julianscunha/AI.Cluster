@@ -46,6 +46,22 @@ impl ResponseCache {
         }
     }
 
+    /// `(hits, misses, tokens avoided)` since the process started (or the restored base).
+    pub fn counts(&self) -> (u64, u64, u64) {
+        (
+            self.hits.load(Ordering::Relaxed),
+            self.misses.load(Ordering::Relaxed),
+            self.tokens_avoided.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Starts the counters from a saved base; the entries themselves are not persisted.
+    pub fn restore_counts(&self, hits: u64, misses: u64, tokens_avoided: u64) {
+        self.hits.store(hits, Ordering::Relaxed);
+        self.misses.store(misses, Ordering::Relaxed);
+        self.tokens_avoided.store(tokens_avoided, Ordering::Relaxed);
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner
             .lock()

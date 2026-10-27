@@ -6,6 +6,9 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use ai_cluster_protocol::cluster::GatewayStats;
+use prost::Message;
+
 /// Recent samples kept per series; the oldest are dropped, so percentiles describe recent load.
 const KEEP: usize = 1024;
 
@@ -142,6 +145,109 @@ fn percentile(values: &VecDeque<u64>, p: f64) -> u64 {
     sorted[rank - 1]
 }
 
+/// The numbers the controller shows in the dashboard: the counters and the percentiles. The cache
+/// counts and the rates are filled by the caller, which owns the cache and the sample ring.
+pub fn stats() -> GatewayStats {
+    let inner = lock();
+    let seconds = |us: u64| us as f64 / 1e6;
+    let rates = &inner.tokens_per_second;
+    GatewayStats {
+        requests: inner.requests,
+        failed: inner.failed,
+        prompt_tokens: inner.prompt_tokens,
+        generated_tokens: inner.generated_tokens,
+        ttft_p50_seconds: seconds(percentile(&inner.ttft_us, 0.5)),
+        ttft_p95_seconds: seconds(percentile(&inner.ttft_us, 0.95)),
+        itl_p50_seconds: seconds(percentile(&inner.itl_us, 0.5)),
+        itl_p95_seconds: seconds(percentile(&inner.itl_us, 0.95)),
+        decode_tokens_per_second: if rates.is_empty() {
+            0.0
+        } else {
+            rates.iter().sum::<f64>() / rates.len() as f64
+        },
+        kv_bytes_last: inner.kv_bytes_last,
+        kv_bytes_max: inner.kv_bytes_max,
+        ..Default::default()
+    }
+}
+
+/// Starts the counters from a saved base, so a restart does not zero them. Percentiles and the KV
+/// size are not restored: they describe recent load, which the new process has not seen.
+pub fn restore(base: &GatewayStats) {
+    let mut inner = lock();
+    inner.requests = base.requests;
+    inner.failed = base.failed;
+    inner.prompt_tokens = base.prompt_tokens;
+    inner.generated_tokens = base.generated_tokens;
+}
+
+/// Reads a state file written by [`save_state`]. A missing or unreadable file is "no base".
+pub fn load_state(path: &std::path::Path) -> Option<GatewayStats> {
+    GatewayStats::decode(std::fs::read(path).ok()?.as_slice()).ok()
+}
+
+/// Writes the stats to a sibling and renames it into place, so a crash leaves the old file whole.
+pub fn save_state(path: &std::path::Path, stats: &GatewayStats) {
+    let temp = path.with_extension("tmp");
+    if let Err(err) =
+        std::fs::write(&temp, stats.encode_to_vec()).and_then(|()| std::fs::rename(&temp, path))
+    {
+        eprintln!(
+            "salvar estado do gateway em {} falhou: {err}",
+            path.display()
+        );
+    }
+}
+
+/// Counter samples at report time, to turn totals into rates. Windows are asked in seconds; a
+/// window the history does not cover yet has no rate (never extrapolated from a short span).
+#[derive(Default)]
+pub struct RateRing {
+    /// `(seconds, requests, generated_tokens)`, oldest first.
+    samples: VecDeque<(u64, u64, u64)>,
+}
+
+impl RateRing {
+    /// Longest window asked, plus slack for the tick not landing exactly on it.
+    const KEEP_SECS: u64 = 300 + 60;
+
+    pub fn sample(&mut self, now_s: u64, requests: u64, tokens: u64) {
+        self.samples.push_back((now_s, requests, tokens));
+        // Keep one sample older than the longest window so it can still be the start of that window.
+        while self.samples.len() > 2
+            && self
+                .samples
+                .get(1)
+                .is_some_and(|next| next.0 + Self::KEEP_SECS < now_s)
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    /// `(requests per second, tokens per second)` over the last `window_s`, or zeros when the
+    /// oldest sample is younger than the window.
+    pub fn rates(&self, now_s: u64, window_s: u64) -> (f64, f64) {
+        let Some(&(now, requests, tokens)) = self.samples.back() else {
+            return (0.0, 0.0);
+        };
+        let start = self
+            .samples
+            .iter()
+            .rev()
+            .find(|sample| sample.0 + window_s <= now_s.max(now));
+        match start {
+            Some(&(then, r0, t0)) if now > then => {
+                let span = (now - then) as f64;
+                (
+                    requests.saturating_sub(r0) as f64 / span,
+                    tokens.saturating_sub(t0) as f64 / span,
+                )
+            }
+            _ => (0.0, 0.0),
+        }
+    }
+}
+
 /// The Prometheus text for `GET /metrics`.
 pub fn render() -> String {
     let inner = lock();
@@ -228,6 +334,56 @@ mod tests {
         let values: VecDeque<u64> = (1..=20).collect();
         assert_eq!(percentile(&values, 0.5), 10);
         assert_eq!(percentile(&values, 0.95), 19);
+    }
+
+    #[test]
+    fn a_janela_so_tem_taxa_quando_o_historico_a_cobre() {
+        let mut ring = RateRing::default();
+        ring.sample(0, 0, 0);
+        ring.sample(15, 30, 300);
+        ring.sample(30, 60, 600);
+        // 30 s de história: a janela de 1 min ainda não está coberta
+        assert_eq!(ring.rates(30, 60), (0.0, 0.0));
+        ring.sample(60, 120, 1_200);
+        // agora há uma amostra de 60 s atrás: 120 requisições e 1200 tokens em 60 s
+        let (r, t) = ring.rates(60, 60);
+        assert!((r - 2.0).abs() < 1e-9 && (t - 20.0).abs() < 1e-9, "{r} {t}");
+        // contador que voltou (reinício sem base) não dá taxa negativa
+        ring.sample(120, 5, 50);
+        assert_eq!(ring.rates(120, 60).0, 0.0);
+    }
+
+    #[test]
+    fn o_anel_descarta_o_que_passa_da_maior_janela_mas_guarda_uma_amostra_de_apoio() {
+        let mut ring = RateRing::default();
+        for step in 0..60u64 {
+            ring.sample(step * 15, step * 10, step * 100);
+        }
+        // 900 s de amostras a cada 15 s: o anel não cresce sem limite
+        assert!(ring.samples.len() <= 30, "{}", ring.samples.len());
+        let (r, _) = ring.rates(59 * 15, 300);
+        assert!((r - 10.0 / 15.0).abs() < 1e-9, "{r}");
+    }
+
+    #[test]
+    fn o_estado_salvo_volta_como_base_dos_contadores() {
+        let dir = std::env::temp_dir().join(format!("aic-gwstate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gw.state");
+        assert!(load_state(&path).is_none(), "sem arquivo, sem base");
+        let saved = GatewayStats {
+            requests: 7,
+            failed: 1,
+            prompt_tokens: 70,
+            generated_tokens: 700,
+            ..Default::default()
+        };
+        save_state(&path, &saved);
+        let loaded = load_state(&path).expect("o arquivo salvo carrega");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((loaded.requests, loaded.generated_tokens), (7, 700));
+        restore(&loaded);
+        assert!(stats().requests >= 7, "os contadores partem da base");
     }
 
     #[test]

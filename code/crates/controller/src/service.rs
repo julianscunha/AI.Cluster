@@ -125,7 +125,24 @@ fn valid_gateway(request: &ReportGatewayRequest) -> bool {
     let text = |value: &str, max: usize| {
         !value.is_empty() && value.len() <= max && value.chars().all(|c| c.is_ascii_graphic())
     };
-    text(&request.gateway_id, 64)
+    // Números que o papel de inferência escreve e o operador lê: só finitos e não negativos.
+    let finite = |stats: &ai_cluster_protocol::cluster::GatewayStats| {
+        [
+            stats.ttft_p50_seconds,
+            stats.ttft_p95_seconds,
+            stats.itl_p50_seconds,
+            stats.itl_p95_seconds,
+            stats.decode_tokens_per_second,
+            stats.requests_per_second_1m,
+            stats.requests_per_second_5m,
+            stats.generated_tokens_per_second_1m,
+            stats.generated_tokens_per_second_5m,
+        ]
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+    };
+    request.stats.as_ref().is_none_or(finite)
+        && text(&request.gateway_id, 64)
         && request.url.len() <= 256
         && request.url.chars().all(|c| c.is_ascii_graphic())
         && request.models.len() <= 32
@@ -981,6 +998,7 @@ impl ClusterControl for ClusterControlService {
                         models: request.models,
                         last_seen_unix_ms: now,
                         alive: true,
+                        stats: request.stats,
                     },
                 )
                 .is_none()
@@ -1010,7 +1028,10 @@ impl ClusterControl for ClusterControlService {
             })
             .collect();
         gateways.sort_by(|a, b| a.gateway_id.cmp(&b.gateway_id));
-        Ok(Response::new(ListGatewaysResponse { gateways }))
+        Ok(Response::new(ListGatewaysResponse {
+            gateways,
+            now_unix_ms: now,
+        }))
     }
 
     /// Quanto cada nó nomeado aceita guardar de fatias (admissão por capacidade). Só diz o que o
@@ -2632,6 +2653,7 @@ mod tests {
         use ai_cluster_protocol::cluster::GatewayModel;
         let service = service();
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
+            stats: None,
             gateway_id: id.into(),
             url: "http://gw:8080".into(),
             models: models
@@ -2671,6 +2693,31 @@ mod tests {
         for bad in [report("", &[]), report("g\nx", &[]), report("gw2", &[""])] {
             assert!(service.report_gateway(inference(bad)).await.is_err());
         }
+        // estatística com NaN ou negativa não entra
+        let mut hostile = report("gw3", &[]);
+        hostile.stats = Some(ai_cluster_protocol::cluster::GatewayStats {
+            ttft_p50_seconds: f64::NAN,
+            ..Default::default()
+        });
+        assert!(service.report_gateway(inference(hostile)).await.is_err());
+        let mut honest = report("gw4", &[]);
+        honest.stats = Some(ai_cluster_protocol::cluster::GatewayStats {
+            requests: 3,
+            ..Default::default()
+        });
+        service.report_gateway(inference(honest)).await.unwrap();
+        let shown = service
+            .list_gateways(op(ListGatewaysRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(shown.now_unix_ms > 0);
+        let gw4 = shown
+            .gateways
+            .iter()
+            .find(|g| g.gateway_id == "gw4")
+            .unwrap();
+        assert_eq!(gw4.stats.as_ref().map(|s| s.requests), Some(3));
         // texto que disfarça (inversão de direção, largura zero) também é recusado
         assert!(
             service
@@ -2692,6 +2739,7 @@ mod tests {
         let service = service();
         let report = |id: String| {
             inference(ReportGatewayRequest {
+                stats: None,
                 gateway_id: id,
                 url: String::new(),
                 models: vec![],

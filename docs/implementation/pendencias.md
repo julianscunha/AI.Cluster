@@ -72,11 +72,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Painel de inferência | `ai-cluster dashboard` não mostra TTFT, ITL, tokens por segundo nem cache KV. As fontes já existem no `/metrics` do gateway. | código |
-| Séries temporais | Taxa por segundo e tendência do gateway (requisições e tokens). O controller já publica unidades por segundo em 1 e 5 min. | código |
 | Persistência de traces | Traces não sobrevivem a reinício. | código |
-| Métricas de inferência persistidas | Contadores do gateway zeram no reinício. | código |
-| Tokens evitados | Contagem de tokens poupados pelo cache no painel. | código |
 | Exportação de eventos | Enviar eventos a um coletor externo. | código |
 
 ## F06 — Estado e recuperação `[x]`

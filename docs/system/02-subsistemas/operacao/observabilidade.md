@@ -76,6 +76,15 @@ O gateway mede cada geração e expõe as séries em `GET /metrics` (chave de AP
 
 Percentis são nearest-rank, sobre as últimas 1024 amostras de cada série. Cancelamento e prazo estourado contam como falha.
 
+## Inferência no painel
+
+O gateway se apresenta ao controller a cada 15 s e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `ai-cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.
+
+- **Taxas e tendência:** requisições e tokens gerados por segundo nas janelas de 1 e 5 minutos, com a razão como tendência (`↑`, `→`, `↓`). Zero antes de a história cobrir a janela; nunca extrapolado.
+- **Gateway sem sinal:** o painel diz há quantos segundos e avisa que os números são do último sinal.
+- **Contadores sobrevivem ao reinício:** com `AI_CLUSTER_GATEWAY_STATE` (ou `AI_CLUSTER_DATA_DIR`, que usa `gateway-<id>.state`) o gateway grava os contadores a cada apresentação e os recarrega ao subir. Percentis, tamanho do KV e as entradas do cache não persistem: descrevem a carga recente. Dois gateways não podem dividir o mesmo arquivo.
+- **Controller antigo:** sem `ListGateways`, o painel omite a seção.
+
 ## Métricas do controller em HTTP
 
 O exportador do controller serve `GET /metrics` na porta `AI_CLUSTER_METRICS_ADDR` (padrão `127.0.0.1:9101`). Ele exige `Authorization: Bearer <token de operador>`.

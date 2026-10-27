@@ -1741,7 +1741,9 @@ mod tests {
         store
             .claim("node-a", &capability(8, 0.0), 1_000)
             .expect("w1");
+        let waited = std::time::Instant::now();
         std::thread::sleep(std::time::Duration::from_micros(1_500));
+        let elapsed = waited.elapsed();
         let done = store
             .complete(
                 WorkResult {
@@ -1749,11 +1751,17 @@ mod tests {
                     node_id: "node-a".into(),
                     ..Default::default()
                 },
-                // o relógio em ms diz 1 ms; o monotônico enxerga ~1,5 ms e concorda dentro de 1 ms
-                1_001,
+                // o relógio em ms acompanha o tempo realmente esperado (a máquina carregada pode
+                // dormir bem mais que 1,5 ms); o monotônico concorda com ele dentro de 1 ms
+                1_000 + elapsed.as_millis() as u64,
             )
             .expect("completa");
-        assert!(done.total_latency_us >= 1_500, "{}", done.total_latency_us);
+        assert!(
+            done.total_latency_us >= elapsed.as_micros() as u64,
+            "{} < {}",
+            done.total_latency_us,
+            elapsed.as_micros()
+        );
         assert!(done.total_latency_us < 2_000_000);
         // o lease restaurado do disco não tem Instant e volta ao relógio em ms
         let restored = WorkStore::new();

@@ -402,11 +402,39 @@ message GatewayModel {
   repeated string shard_nodes = 2;
 }
 
+/// O que o gateway mede da inferência (F05). Contadores desde que o gateway subiu (ou desde o
+/// arquivo de estado, se houver), percentis das últimas 1024 amostras e taxas das janelas de 1 e 5
+/// minutos. Taxa zero é "sem história que cubra a janela", nunca "ocioso".
+message GatewayStats {
+  uint64 requests = 1;
+  uint64 failed = 2;
+  uint64 prompt_tokens = 3;
+  uint64 generated_tokens = 4;
+  double ttft_p50_seconds = 5;
+  double ttft_p95_seconds = 6;
+  double itl_p50_seconds = 7;
+  double itl_p95_seconds = 8;
+  /// Taxa média de decodificação sobre as requisições recentes.
+  double decode_tokens_per_second = 9;
+  uint64 kv_bytes_last = 10;
+  uint64 kv_bytes_max = 11;
+  uint64 cache_hits = 12;
+  uint64 cache_misses = 13;
+  /// Tokens que o cache de respostas poupou de gerar.
+  uint64 cache_tokens_avoided = 14;
+  double requests_per_second_1m = 15;
+  double requests_per_second_5m = 16;
+  double generated_tokens_per_second_1m = 17;
+  double generated_tokens_per_second_5m = 18;
+}
+
 message ReportGatewayRequest {
   string gateway_id = 1;
   /// Endereço HTTP por onde os clientes chegam ao gateway (`AI_CLUSTER_GATEWAY_URL`).
   string url = 2;
   repeated GatewayModel models = 3;
+  /// Ausente num gateway antigo: o painel diz "sem dados", não mostra zeros.
+  GatewayStats stats = 4;
 }
 
 message ReportGatewayResponse {}
@@ -420,10 +448,14 @@ message GatewayInfo {
   uint64 last_seen_unix_ms = 4;
   /// Verdadeiro se a última apresentação é recente. Calculado na leitura; não é persistido.
   bool alive = 5;
+  GatewayStats stats = 6;
 }
 
 message ListGatewaysResponse {
   repeated GatewayInfo gateways = 1;
+  /// Relógio do controller na leitura, para a CLI calcular a idade do último sinal sem confiar no
+  /// próprio relógio.
+  uint64 now_unix_ms = 2;
 }
 
 message ShardCapacityResponse {

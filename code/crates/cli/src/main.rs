@@ -1125,6 +1125,23 @@ async fn print_dashboard(
             metrics.avg_storage_read_score,
             metrics.avg_storage_latency_ms
         );
+        // Controller antigo não conhece o RPC: a seção some. Outra falha é avisada.
+        match client
+            .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
+            .await
+        {
+            Ok(response) => {
+                let response = response.into_inner();
+                for line in gateway_lines(&response.gateways, response.now_unix_ms) {
+                    println!("{line}");
+                }
+            }
+            Err(status) if status.code() == tonic::Code::Unimplemented => {}
+            Err(status) => eprintln!(
+                "aviso: não consegui listar os gateways: {}",
+                clean(status.message())
+            ),
+        }
         println!();
         println!("RESERVAS {}", reservations.len());
         for reservation in reservations {
@@ -1140,6 +1157,68 @@ async fn print_dashboard(
         // Ctrl-C encerra o processo pelo sinal padrão: não é preciso tratá-lo aqui.
         tokio::time::sleep(Duration::from_secs(watch_secs)).await;
     }
+}
+
+/// A seção INFERÊNCIA do painel: uma bloco por gateway, com o que ele mediu e a idade do último
+/// sinal quando está sem sinal, para ninguém ler números velhos como atuais. Linhas puras, testáveis.
+fn gateway_lines(
+    gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
+    now_ms: u64,
+) -> Vec<String> {
+    if gateways.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![
+        String::new(),
+        format!("INFERÊNCIA gateways={}", gateways.len()),
+    ];
+    for gateway in gateways {
+        let gateway = sanitize_gateway(gateway.clone());
+        let state = if gateway.alive {
+            "VIVO".to_string()
+        } else {
+            let age = now_ms.saturating_sub(gateway.last_seen_unix_ms) / 1000;
+            format!("SEM SINAL há {age}s (números abaixo são do último sinal)")
+        };
+        out.push(format!("  {} {} {state}", gateway.gateway_id, gateway.url));
+        let Some(stats) = gateway.stats else {
+            out.push("    sem dados (gateway antigo)".to_string());
+            continue;
+        };
+        out.push(format!(
+            "    requisições={} falhas={} tokens_prompt={} tokens_gerados={}",
+            stats.requests, stats.failed, stats.prompt_tokens, stats.generated_tokens
+        ));
+        out.push(format!(
+            "    TTFT p50={:.3}s p95={:.3}s  ITL p50={:.4}s p95={:.4}s  decodificação={:.1} tok/s",
+            stats.ttft_p50_seconds,
+            stats.ttft_p95_seconds,
+            stats.itl_p50_seconds,
+            stats.itl_p95_seconds,
+            stats.decode_tokens_per_second
+        ));
+        out.push(format!(
+            "    taxa req/s 1m={:.3} 5m={:.3} {}  tok/s 1m={:.2} 5m={:.2} {}",
+            stats.requests_per_second_1m,
+            stats.requests_per_second_5m,
+            trend(stats.requests_per_second_1m, stats.requests_per_second_5m),
+            stats.generated_tokens_per_second_1m,
+            stats.generated_tokens_per_second_5m,
+            trend(
+                stats.generated_tokens_per_second_1m,
+                stats.generated_tokens_per_second_5m
+            )
+        ));
+        out.push(format!(
+            "    KV último={} B máximo={} B  cache hits={} misses={} tokens_evitados={}",
+            stats.kv_bytes_last,
+            stats.kv_bytes_max,
+            stats.cache_hits,
+            stats.cache_misses,
+            stats.cache_tokens_avoided
+        ));
+    }
+    out
 }
 
 /// A tendência entre a taxa de 1 min e a de 5 min: `-` sem as duas, senão a razão e uma seta. A
@@ -1380,6 +1459,35 @@ mod tests {
             .unwrap()
             .node_id;
         assert!(!id.chars().any(char::is_control), "{id:?}");
+    }
+
+    #[test]
+    fn o_painel_de_inferencia_mostra_o_cache_e_a_idade_de_quem_sumiu() {
+        use ai_cluster_protocol::cluster::{GatewayInfo, GatewayStats};
+        let gateway = |alive, stats| GatewayInfo {
+            gateway_id: "gw1".into(),
+            url: "http://gw:8080".into(),
+            alive,
+            last_seen_unix_ms: 1_000,
+            stats,
+            ..Default::default()
+        };
+        assert!(gateway_lines(&[], 5_000).is_empty());
+        let stats = GatewayStats {
+            requests: 10,
+            cache_hits: 4,
+            cache_tokens_avoided: 128,
+            generated_tokens_per_second_1m: 2.0,
+            generated_tokens_per_second_5m: 1.0,
+            ..Default::default()
+        };
+        let live = gateway_lines(&[gateway(true, Some(stats))], 5_000).join("\n");
+        assert!(live.contains("VIVO") && live.contains("tokens_evitados=128"));
+        assert!(live.contains("↑2.00x"), "tendência de tokens: {live}");
+        let gone = gateway_lines(&[gateway(false, Some(stats))], 31_000).join("\n");
+        assert!(gone.contains("SEM SINAL há 30s"), "{gone}");
+        let old = gateway_lines(&[gateway(true, None)], 5_000).join("\n");
+        assert!(old.contains("sem dados"), "{old}");
     }
 
     #[test]

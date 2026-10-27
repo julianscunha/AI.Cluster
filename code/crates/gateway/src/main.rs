@@ -220,7 +220,32 @@ fn grpc_executor(
 /// their slices. Best effort: a controller that is down or too old only means it is not listed.
 const GATEWAY_REPORT_SECS: u64 = 15;
 
-fn announce_gateway(client: &MetadataClient, llms: &[Arc<Llm>], addr: SocketAddr) {
+/// Where the counters survive a restart: `AI_CLUSTER_GATEWAY_STATE`, else a file named for the
+/// gateway under `AI_CLUSTER_DATA_DIR`. None when neither is set (counters then start at zero).
+fn gateway_state_path(id: &str) -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("AI_CLUSTER_GATEWAY_STATE") {
+        return Some(path.into());
+    }
+    let dir = std::env::var_os("AI_CLUSTER_DATA_DIR")?;
+    let safe: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Some(std::path::PathBuf::from(dir).join(format!("gateway-{safe}.state")))
+}
+
+fn announce_gateway(
+    client: &MetadataClient,
+    llms: &[Arc<Llm>],
+    addr: SocketAddr,
+    cache: Arc<cache::ResponseCache>,
+) {
     let id = std::env::var("AI_CLUSTER_GATEWAY_ID").unwrap_or_else(|_| format!("gateway-{addr}"));
     let url = std::env::var("AI_CLUSTER_GATEWAY_URL").unwrap_or_else(|_| format!("http://{addr}"));
     let models: Vec<GatewayModel> = llms
@@ -241,16 +266,51 @@ fn announce_gateway(client: &MetadataClient, llms: &[Arc<Llm>], addr: SocketAddr
         );
         return;
     }
+    // The counters start from the saved base, before the first request is served.
+    let state_path = gateway_state_path(&id);
+    if let Some(base) = state_path.as_deref().and_then(metrics::load_state) {
+        metrics::restore(&base);
+        cache.restore_counts(
+            base.cache_hits,
+            base.cache_misses,
+            base.cache_tokens_avoided,
+        );
+    }
     let mut client = client.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(GATEWAY_REPORT_SECS));
         let mut failing = false;
+        let mut ring = metrics::RateRing::default();
         loop {
             tick.tick().await;
+            // Sampled before the send and even when the send fails, so a controller outage leaves
+            // no hole in the rates.
+            let now_s = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs());
+            let mut stats = metrics::stats();
+            ring.sample(now_s, stats.requests, stats.generated_tokens);
+            (
+                stats.cache_hits,
+                stats.cache_misses,
+                stats.cache_tokens_avoided,
+            ) = cache.counts();
+            (
+                stats.requests_per_second_1m,
+                stats.generated_tokens_per_second_1m,
+            ) = ring.rates(now_s, 60);
+            (
+                stats.requests_per_second_5m,
+                stats.generated_tokens_per_second_5m,
+            ) = ring.rates(now_s, 300);
+            if let Some(path) = &state_path {
+                metrics::save_state(path, &stats);
+            }
             let report = ReportGatewayRequest {
                 gateway_id: id.clone(),
                 url: url.clone(),
                 models: models.clone(),
+                stats: Some(stats),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {
@@ -1506,13 +1566,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             llms.push(Arc::new(llm));
         }
     }
-    announce_gateway(&client, &llms, addr);
+    let response_cache = Arc::new(cache::ResponseCache::new(env_number(
+        "AI_CLUSTER_CACHE_ENTRIES",
+        256,
+    ) as usize));
+    announce_gateway(&client, &llms, addr, response_cache.clone());
     let gateway = Gateway {
         client: operator_client,
         tenants,
-        cache: Arc::new(cache::ResponseCache::new(
-            env_number("AI_CLUSTER_CACHE_ENTRIES", 256) as usize,
-        )),
+        cache: response_cache,
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),
         admission,

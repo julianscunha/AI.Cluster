@@ -75,6 +75,7 @@ Convenções:
 
 | Variável | Padrão | Efeito |
 |---|---|---|
+| `AI_CLUSTER_GATEWAY_STATE` | `AI_CLUSTER_DATA_DIR/gateway-<id>.state` | Arquivo onde o gateway grava os contadores de inferência para sobreviverem ao reinício. Sem ele e sem o diretório de dados, os contadores partem de zero. |
 | `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `ai-cluster topology`. |
 | `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia. |
 | `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige `AI_CLUSTER_INSECURE`, porque a perna HTTP não tem TLS. |
