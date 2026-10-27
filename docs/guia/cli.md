@@ -26,7 +26,7 @@ ai-cluster [--controller <endpoint>] <comando>
 | `node show <id>` | Tudo que o controller sabe sobre um nó: capacidade, saúde e reserva. |
 | `metrics` | Roll-up do cluster: contagem de nós, profundidade da fila e tempos das unidades concluídas. |
 | `events [--limit N]` | Eventos recentes, do mais antigo para o mais novo. `--limit` padrão 20; `0` mostra tudo que o controller ainda guarda. |
-| `dashboard [--watch N]` | Painel de uma tela: nós, fila e reservas. `--watch N` atualiza a cada N segundos até Ctrl-C. Padrão `0`: imprime uma vez. |
+| `dashboard [--watch N]` | Painel de uma tela: nós, fila e reservas. `--watch N` atualiza a cada N segundos até Ctrl-C. Padrão `0`: imprime uma vez. No terminal, o painel traz o logotipo, seções com régua, estados coloridos e a tendência com seta; redirecionado (scripts), sai em `chave=valor` como sempre. `AI_CLUSTER_COLOR=always` força o painel bonito. |
 
 ## Aprovação e saída
 

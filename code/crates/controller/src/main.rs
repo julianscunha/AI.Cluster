@@ -279,6 +279,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
     }
+    println!(
+        "{}",
+        ai_cluster_common::brand::banner(
+            "controller",
+            env!("CARGO_PKG_VERSION"),
+            &format!("gRPC em {addr}")
+        )
+    );
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     builder
         .add_service(InterceptedService::new(

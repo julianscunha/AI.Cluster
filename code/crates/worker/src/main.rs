@@ -363,6 +363,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     credential.set(&registered.node_credential);
     store_credential(&registered.node_credential);
     println!(
+        "{}",
+        ai_cluster_common::brand::banner(
+            "worker",
+            env!("CARGO_PKG_VERSION"),
+            &format!("no {node_id}")
+        )
+    );
+    println!(
         "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id
     );

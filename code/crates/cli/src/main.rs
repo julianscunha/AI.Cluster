@@ -564,9 +564,13 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {:<10} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8}",
+            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8}",
             identity.node_id,
-            node.state,
+            // a largura vem antes da cor: os códigos de escape não contam como coluna
+            ai_cluster_common::brand::paint(
+                &format!("{:<10}", node.state),
+                ai_cluster_common::brand::state_tone(&node.state)
+            ),
             identity.architecture,
             capability.cpu_threads,
             capability.memory_bytes as f64 / 1_073_741_824.0,
@@ -621,7 +625,10 @@ fn topology_lines(
         let role = node_role(&identity.node_id, capability.shard_cache_bytes);
         let mut facts = format!(
             "{} {} {}t {:.1}GB v{}",
-            node.state,
+            ai_cluster_common::brand::paint(
+                &node.state,
+                ai_cluster_common::brand::state_tone(&node.state)
+            ),
             identity.architecture,
             capability.cpu_threads,
             capability.memory_bytes as f64 / 1_073_741_824.0,
@@ -1065,90 +1072,109 @@ async fn print_dashboard(
             .await?
             .into_inner()
             .reservations;
+        // Controller antigo não conhece o RPC: a seção some. Outra falha é avisada.
+        let (gateways, gateways_now) = match client
+            .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
+            .await
+        {
+            Ok(response) => {
+                let response = response.into_inner();
+                (response.gateways, response.now_unix_ms)
+            }
+            Err(status) if status.code() == tonic::Code::Unimplemented => (Vec::new(), 0),
+            Err(status) => {
+                eprintln!(
+                    "aviso: não consegui listar os gateways: {}",
+                    clean(status.message())
+                );
+                (Vec::new(), 0)
+            }
+        };
 
         if watch_secs > 0 {
             // Home + limpa a tela, para a volta seguinte sobrescrever a anterior.
             print!("\x1b[2J\x1b[H");
         }
 
-        println!(
-            "PAINEL nós_disponíveis={}/{}",
-            metrics.nodes_available, metrics.nodes_total
-        );
-        println!();
-        println!(
-            "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8} {:>7} {:>7}",
-            "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C"
-        );
-        for node in nodes {
-            let identity = node.identity.unwrap_or_default();
-            let capability = node.capability.unwrap_or_default();
-            let health = node.health.unwrap_or_default();
-            println!(
-                "{:<20} {:<12} {:>7} {:>9.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2}",
-                identity.node_id,
-                node.state,
-                capability.cpu_threads,
-                capability.memory_bytes as f64 / 1_073_741_824.0,
-                capability.compute_score,
-                health.health_score,
-                health.cpu_utilization * 100.0,
-                health.temperature_c,
-            );
-        }
-        println!();
-        println!(
-            "TRABALHO concluídas={} pendentes={} bloqueadas={} falhas={}",
-            metrics.units_completed,
-            metrics.units_pending,
-            metrics.units_blocked,
-            metrics.units_failed
-        );
-        println!(
-            "TEMPO compute_total_us={} compute_media_us={} latencia_total_us={} latencia_media_us={} previsto_total_us={}",
-            metrics.total_compute_time_us,
-            metrics.avg_compute_time_us,
-            metrics.total_latency_us,
-            metrics.avg_latency_us,
-            metrics.total_predicted_compute_us
-        );
-        println!(
-            "TAXA unidades_por_s_1m={:.3} unidades_por_s_5m={:.3} tendencia={}",
-            metrics.units_per_second_1m,
-            metrics.units_per_second_5m,
-            trend(metrics.units_per_second_1m, metrics.units_per_second_5m)
-        );
-        println!(
-            "MEDIAS rede={:.2} escrita={:.2} leitura={:.2} latencia_escrita_ms={:.2}",
-            metrics.avg_network_score,
-            metrics.avg_storage_score,
-            metrics.avg_storage_read_score,
-            metrics.avg_storage_latency_ms
-        );
-        // Controller antigo não conhece o RPC: a seção some. Outra falha é avisada.
-        match client
-            .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
-            .await
-        {
-            Ok(response) => {
-                let response = response.into_inner();
-                for line in gateway_lines(&response.gateways, response.now_unix_ms) {
-                    println!("{line}");
-                }
+        // No terminal, o painel com a identidade visual; redirecionado (scripts, testes), o formato
+        // de chave=valor de sempre, que não muda. `AI_CLUSTER_COLOR=always` força o painel bonito.
+        if ai_cluster_common::brand::color_enabled() {
+            for line in pretty_dashboard(
+                endpoint,
+                &nodes,
+                &metrics,
+                &reservations,
+                &gateways,
+                gateways_now,
+            ) {
+                println!("{line}");
             }
-            Err(status) if status.code() == tonic::Code::Unimplemented => {}
-            Err(status) => eprintln!(
-                "aviso: não consegui listar os gateways: {}",
-                clean(status.message())
-            ),
-        }
-        println!();
-        println!("RESERVAS {}", reservations.len());
-        for reservation in reservations {
+        } else {
             println!(
-                "  {:<20} requisição={} expira_em_unix_ms={}",
-                reservation.node_id, reservation.request_id, reservation.expires_at_unix_ms
+                "PAINEL nós_disponíveis={}/{}",
+                metrics.nodes_available, metrics.nodes_total
             );
+            println!();
+            println!(
+                "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8} {:>7} {:>7}",
+                "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C"
+            );
+            for node in nodes {
+                let identity = node.identity.unwrap_or_default();
+                let capability = node.capability.unwrap_or_default();
+                let health = node.health.unwrap_or_default();
+                println!(
+                    "{:<20} {:<12} {:>7} {:>9.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2}",
+                    identity.node_id,
+                    node.state,
+                    capability.cpu_threads,
+                    capability.memory_bytes as f64 / 1_073_741_824.0,
+                    capability.compute_score,
+                    health.health_score,
+                    health.cpu_utilization * 100.0,
+                    health.temperature_c,
+                );
+            }
+            println!();
+            println!(
+                "TRABALHO concluídas={} pendentes={} bloqueadas={} falhas={}",
+                metrics.units_completed,
+                metrics.units_pending,
+                metrics.units_blocked,
+                metrics.units_failed
+            );
+            println!(
+                "TEMPO compute_total_us={} compute_media_us={} latencia_total_us={} latencia_media_us={} previsto_total_us={}",
+                metrics.total_compute_time_us,
+                metrics.avg_compute_time_us,
+                metrics.total_latency_us,
+                metrics.avg_latency_us,
+                metrics.total_predicted_compute_us
+            );
+            println!(
+                "TAXA unidades_por_s_1m={:.3} unidades_por_s_5m={:.3} tendencia={}",
+                metrics.units_per_second_1m,
+                metrics.units_per_second_5m,
+                trend(metrics.units_per_second_1m, metrics.units_per_second_5m)
+            );
+            println!(
+                "MEDIAS rede={:.2} escrita={:.2} leitura={:.2} latencia_escrita_ms={:.2}",
+                metrics.avg_network_score,
+                metrics.avg_storage_score,
+                metrics.avg_storage_read_score,
+                metrics.avg_storage_latency_ms
+            );
+            for line in gateway_lines(&gateways, gateways_now) {
+                println!("{line}");
+            }
+            println!();
+            println!("RESERVAS {}", reservations.len());
+            for reservation in reservations {
+                println!(
+                    "  {:<20} requisição={} expira_em_unix_ms={}",
+                    reservation.node_id, reservation.request_id, reservation.expires_at_unix_ms
+                );
+            }
         }
 
         if watch_secs == 0 {
@@ -1159,8 +1185,209 @@ async fn print_dashboard(
     }
 }
 
+/// O painel com a identidade visual: logotipo, seções com régua, estados coloridos e a tendência
+/// com seta. É o mesmo conteúdo do formato de máquina. Linhas puras, testáveis; sem cor (como num
+/// teste) o texto sai igual, só sem os códigos de escape.
+fn pretty_dashboard(
+    endpoint: &str,
+    nodes: &[ai_cluster_protocol::cluster::NodeSnapshot],
+    metrics: &ai_cluster_protocol::cluster::MetricsResponse,
+    reservations: &[ai_cluster_protocol::cluster::Reservation],
+    gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
+    now_ms: u64,
+) -> Vec<String> {
+    use ai_cluster_common::brand::{self, Tone, paint, rule, state_tone};
+    const WIDTH: usize = 78;
+    let mut out: Vec<String> = brand::banner(
+        "painel",
+        env!("CARGO_PKG_VERSION"),
+        &format!(
+            "{}  -  {}/{} nos disponiveis",
+            clean(endpoint),
+            metrics.nodes_available,
+            metrics.nodes_total
+        ),
+    )
+    .lines()
+    .map(String::from)
+    .collect();
+
+    out.push(String::new());
+    out.push(rule("Nos", WIDTH));
+    out.push(paint(
+        &format!(
+            "    {:<18} {:<11} {:<8} {:>4} {:>8} {:>7} {:>6} {:>6}  {}",
+            "NO", "ESTADO", "ARQ", "THR", "RAM", "COMPUTE", "SAUDE", "CPU", "VERSAO"
+        ),
+        Tone::Dim,
+    ));
+    if nodes.is_empty() {
+        out.push(paint("    nenhum no registrado", Tone::Dim));
+    }
+    for node in nodes {
+        let node = sanitize_node(node.clone());
+        let identity = node.identity.clone().unwrap_or_default();
+        let capability = node.capability.clone().unwrap_or_default();
+        let health = node.health.unwrap_or_default();
+        let tone = state_tone(&node.state);
+        out.push(format!(
+            "  {} {:<18} {} {:<8} {:>3}t {:>6.1}GB {:>7.2} {:>6.2} {:>5.1}%  {}{}",
+            paint(brand::glyphs().node, tone),
+            identity.node_id,
+            paint(&format!("{:<11}", node.state), tone),
+            identity.architecture,
+            capability.cpu_threads,
+            capability.memory_bytes as f64 / 1_073_741_824.0,
+            capability.compute_score,
+            health.health_score,
+            health.cpu_utilization * 100.0,
+            if identity.runtime_version.is_empty() {
+                "-"
+            } else {
+                &identity.runtime_version
+            },
+            if node.trusted {
+                String::new()
+            } else {
+                format!("  {}", paint("pendente de aprovacao", Tone::Warn))
+            },
+        ));
+    }
+
+    out.push(String::new());
+    out.push(rule("Trabalho", WIDTH));
+    let failures = format!("falhas {}", metrics.units_failed);
+    out.push(format!(
+        "    concluidas {}   pendentes {}   bloqueadas {}   {}",
+        metrics.units_completed,
+        metrics.units_pending,
+        metrics.units_blocked,
+        paint(
+            &failures,
+            if metrics.units_failed > 0 {
+                Tone::Bad
+            } else {
+                Tone::Dim
+            }
+        ),
+    ));
+    out.push(format!(
+        "    taxa   1m {:.3}/s   5m {:.3}/s   {}",
+        metrics.units_per_second_1m,
+        metrics.units_per_second_5m,
+        trend(metrics.units_per_second_1m, metrics.units_per_second_5m)
+    ));
+    out.push(paint(
+        &format!(
+            "    tempo  compute medio {} us   latencia media {} us   previsto {} us",
+            metrics.avg_compute_time_us, metrics.avg_latency_us, metrics.total_predicted_compute_us
+        ),
+        Tone::Dim,
+    ));
+
+    out.push(String::new());
+    out.push(rule("Capacidade media dos nos prontos", WIDTH));
+    out.push(format!(
+        "    rede {:.2}   escrita {:.2}   leitura {:.2}   latencia de escrita {:.2} ms",
+        metrics.avg_network_score,
+        metrics.avg_storage_score,
+        metrics.avg_storage_read_score,
+        metrics.avg_storage_latency_ms
+    ));
+
+    if !gateways.is_empty() {
+        out.push(String::new());
+        out.push(rule("Inferencia", WIDTH));
+        for gateway in gateways {
+            let gateway = sanitize_gateway(gateway.clone());
+            let (word, tone) = if gateway.alive {
+                ("VIVO".to_string(), Tone::Ok)
+            } else {
+                let age = now_ms.saturating_sub(gateway.last_seen_unix_ms) / 1000;
+                (format!("SEM SINAL ha {age}s"), Tone::Bad)
+            };
+            out.push(format!(
+                "  {} {}  {}  {}",
+                paint(brand::glyphs().node, tone),
+                gateway.gateway_id,
+                paint(&gateway.url, Tone::Dim),
+                paint(&word, tone)
+            ));
+            match gateway.stats {
+                Some(stats) => {
+                    out.extend(gateway_detail(&stats).into_iter().map(|l| format!("  {l}")))
+                }
+                None => out.push(paint("      sem dados (gateway antigo)", Tone::Dim)),
+            }
+        }
+    }
+
+    out.push(String::new());
+    out.push(rule("Reservas", WIDTH));
+    if reservations.is_empty() {
+        out.push(paint("    nenhuma", Tone::Dim));
+    }
+    for reservation in reservations {
+        let left = reservation.expires_at_unix_ms.saturating_sub(now_ms) / 1000;
+        out.push(format!(
+            "  {} {:<18} {}  {}",
+            paint(brand::glyphs().node, Tone::Accent),
+            clean(&reservation.node_id),
+            clean(&reservation.request_id),
+            paint(
+                &if reservation.slots == 0 {
+                    "no inteiro".to_string()
+                } else {
+                    format!("{} slot(s)", reservation.slots)
+                },
+                Tone::Dim
+            ),
+        ));
+        let _ = left;
+    }
+    out
+}
+
 /// A seção INFERÊNCIA do painel: uma bloco por gateway, com o que ele mediu e a idade do último
 /// sinal quando está sem sinal, para ninguém ler números velhos como atuais. Linhas puras, testáveis.
+/// As quatro linhas do que um gateway mediu: totais, latências, taxas com tendência e cache.
+fn gateway_detail(stats: &ai_cluster_protocol::cluster::GatewayStats) -> Vec<String> {
+    let mut out = Vec::new();
+    out.push(format!(
+        "    requisições={} falhas={} tokens_prompt={} tokens_gerados={}",
+        stats.requests, stats.failed, stats.prompt_tokens, stats.generated_tokens
+    ));
+    out.push(format!(
+        "    TTFT p50={:.3}s p95={:.3}s  ITL p50={:.4}s p95={:.4}s  decodificação={:.1} tok/s",
+        stats.ttft_p50_seconds,
+        stats.ttft_p95_seconds,
+        stats.itl_p50_seconds,
+        stats.itl_p95_seconds,
+        stats.decode_tokens_per_second
+    ));
+    out.push(format!(
+        "    taxa req/s 1m={:.3} 5m={:.3} {}  tok/s 1m={:.2} 5m={:.2} {}",
+        stats.requests_per_second_1m,
+        stats.requests_per_second_5m,
+        trend(stats.requests_per_second_1m, stats.requests_per_second_5m),
+        stats.generated_tokens_per_second_1m,
+        stats.generated_tokens_per_second_5m,
+        trend(
+            stats.generated_tokens_per_second_1m,
+            stats.generated_tokens_per_second_5m
+        )
+    ));
+    out.push(format!(
+        "    KV último={} B máximo={} B  cache hits={} misses={} tokens_evitados={}",
+        stats.kv_bytes_last,
+        stats.kv_bytes_max,
+        stats.cache_hits,
+        stats.cache_misses,
+        stats.cache_tokens_avoided
+    ));
+    out
+}
+
 fn gateway_lines(
     gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
     now_ms: u64,
@@ -1185,38 +1412,7 @@ fn gateway_lines(
             out.push("    sem dados (gateway antigo)".to_string());
             continue;
         };
-        out.push(format!(
-            "    requisições={} falhas={} tokens_prompt={} tokens_gerados={}",
-            stats.requests, stats.failed, stats.prompt_tokens, stats.generated_tokens
-        ));
-        out.push(format!(
-            "    TTFT p50={:.3}s p95={:.3}s  ITL p50={:.4}s p95={:.4}s  decodificação={:.1} tok/s",
-            stats.ttft_p50_seconds,
-            stats.ttft_p95_seconds,
-            stats.itl_p50_seconds,
-            stats.itl_p95_seconds,
-            stats.decode_tokens_per_second
-        ));
-        out.push(format!(
-            "    taxa req/s 1m={:.3} 5m={:.3} {}  tok/s 1m={:.2} 5m={:.2} {}",
-            stats.requests_per_second_1m,
-            stats.requests_per_second_5m,
-            trend(stats.requests_per_second_1m, stats.requests_per_second_5m),
-            stats.generated_tokens_per_second_1m,
-            stats.generated_tokens_per_second_5m,
-            trend(
-                stats.generated_tokens_per_second_1m,
-                stats.generated_tokens_per_second_5m
-            )
-        ));
-        out.push(format!(
-            "    KV último={} B máximo={} B  cache hits={} misses={} tokens_evitados={}",
-            stats.kv_bytes_last,
-            stats.kv_bytes_max,
-            stats.cache_hits,
-            stats.cache_misses,
-            stats.cache_tokens_avoided
-        ));
+        out.extend(gateway_detail(&stats));
     }
     out
 }
@@ -1488,6 +1684,52 @@ mod tests {
         assert!(gone.contains("SEM SINAL há 30s"), "{gone}");
         let old = gateway_lines(&[gateway(true, None)], 5_000).join("\n");
         assert!(old.contains("sem dados"), "{old}");
+    }
+
+    #[test]
+    fn o_painel_bonito_traz_as_mesmas_secoes_e_marca_o_que_precisa_de_atencao() {
+        use ai_cluster_protocol::cluster::{MetricsResponse, Reservation};
+        let metrics = MetricsResponse {
+            nodes_total: 2,
+            nodes_available: 1,
+            units_completed: 3,
+            units_failed: 1,
+            units_per_second_1m: 2.0,
+            units_per_second_5m: 1.0,
+            avg_network_score: 1.5,
+            ..Default::default()
+        };
+        let nodes = [node("orangepi-ab", 0, true), node("pendente-1", 0, false)];
+        let reservation = Reservation {
+            node_id: "orangepi-ab".into(),
+            request_id: "req-1".into(),
+            slots: 2,
+            ..Default::default()
+        };
+        let lines = pretty_dashboard("http://c:1", &nodes, &metrics, &[reservation], &[], 0).join(
+            "
+",
+        );
+        for expected in [
+            "Real.AI.Cluster painel",
+            "1/2 nos disponiveis",
+            "orangepi-ab",
+            "pendente de aprovacao",
+            "concluidas 3",
+            "falhas 1",
+            "↑2.00x",
+            "rede 1.50",
+            "req-1",
+            "2 slot(s)",
+        ] {
+            assert!(
+                lines.contains(expected),
+                "falta {expected:?} em:
+{lines}"
+            );
+        }
+        // sem gateway, a seção de inferência não aparece
+        assert!(!lines.contains("Inferencia"));
     }
 
     #[test]

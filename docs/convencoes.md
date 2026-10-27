@@ -30,6 +30,15 @@ Dois prefixos, cada um com um papel:
 
 Todo comando aceita `--help`.
 
+## Identidade visual
+
+Todo componente fala com a mesma cara, definida em `crates/common/src/brand.rs` (Rust) e em `os/image/overlay/usr/lib/aic/ui.sh` (scripts do nó). Mexa nos dois juntos.
+
+- **Logotipo:** uma malha de sete nós em cinco linhas, em ciano. Aparece no banner de partida do controller, do gateway e do worker, no painel (`ai-cluster dashboard`), no console do monitor e na tela de carregamento do nó.
+- **Paleta por papel, não por componente:** título forte (branco), rótulo e logotipo em ciano, **verde** para pronto, **amarelo** para atenção (pendente, drenando), **vermelho** para falha ou sem sinal, cinza para apoio. `READY` e `VIVO` são verdes; `OFFLINE`, `QUARANTINED` e `SEM SINAL` são vermelhos; o resto é amarelo.
+- **Só onde a tela aceita:** cor e glifos de caixa saem num terminal de verdade. Saída redirecionada (log de contêiner, arquivo, scripts, testes) fica em texto puro, e o painel volta ao formato `chave=valor` que os scripts leem. `NO_COLOR` e `AI_CLUSTER_COLOR=never` desligam a cor, `AI_CLUSTER_COLOR=always` força, `AI_CLUSTER_ASCII=1` troca os glifos por ASCII.
+- **Linha de partida:** num log, o banner é uma linha só (`Real.AI.Cluster <componente> v<versão> - <detalhe>`), seguida pelas linhas de sempre.
+
 ## Arquivos e links
 
 - Nomes em kebab-case, ASCII, pt-br sem acento. O título com acento vai no frontmatter.

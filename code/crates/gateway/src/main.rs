@@ -1605,6 +1605,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/chat/completions", post(chat_completions))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(gateway);
+    println!(
+        "{}",
+        ai_cluster_common::brand::banner(
+            "gateway",
+            env!("CARGO_PKG_VERSION"),
+            &format!("HTTP em {addr}")
+        )
+    );
     println!("gateway em http://{addr} (modelo {MODEL_ID}, controller {controller})");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
