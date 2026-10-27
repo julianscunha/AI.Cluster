@@ -20,6 +20,12 @@ Três limites da observabilidade (F05): os traces e o roll-up de unidades conclu
 3. **O gateway leva suas estatísticas ao controller** em `ReportGateway`, e `ai-cluster dashboard` as mostra. A CLI não fala HTTP com o gateway.
 4. **Eventos saem por syslog UDP (RFC 5424).** `AI_CLUSTER_EVENTS_SYSLOG=host:porta` liga uma tarefa que assina o barramento (`EventLog::subscribe`) e envia um datagrama por evento: facility `local0`, severidade notice para `audit` e info para o resto, texto sem controle e truncado em 1000 bytes.
 
+## Cuidados com o arquivo de traces
+
+- Um registro sem `work_id` (o tamanho zero de um arquivo estendido com zeros após uma queda) é tratado como corrupção: a leitura para ali, em vez de povoar o histórico com unidades fantasmas.
+- A reescrita na abertura faz `fsync` antes do `rename`. Se ela falha, o log fica desligado nessa execução em vez de acrescentar atrás de lixo. Um `work_id` repetido é ignorado, o que protege de um `.1` que não pôde ser removido.
+- O acréscimo acontece fora do lock da fila, e uma rotação que não consegue reabrir o arquivo tenta de novo no próximo registro.
+
 ## Consequências
 
 - O `units_completed` e os percentis do roll-up passam a atravessar reinícios (até 100 mil unidades). Uma unidade falha continua perdendo o `request_id` no reinício.

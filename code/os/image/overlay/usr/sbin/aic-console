@@ -37,7 +37,6 @@ draw() {
 	cores=$(grep -c '^processor' /proc/cpuinfo)
 	mem=$(awk '/^MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo)
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s (%s)", sep, $4, $2; sep = ", " }')
-	up=$(awk '{ s = int($1); printf "%dd %02dh %02dm", s / 86400, (s % 86400) / 3600, (s % 3600) / 60 }' /proc/uptime)
 	node=$(env_value AI_CLUSTER_NODE_ID)
 	controller=$(env_value AI_CLUSTER_CONTROLLER)
 	if pidof ai-cluster-worker >/dev/null 2>&1; then
@@ -62,7 +61,6 @@ draw() {
 	row "Rede"        "${ip:-sem endereco}"
 	row "Controller"  "${controller:-nao configurado}"
 	row "Worker"      "$worker"
-	row "Ativo ha"    "$up"
 	printf '%s[K\n' "$ESC"
 	printf '   Para administrar este no, use o ai-cluster a partir de outra maquina%s[K\n' "$ESC"
 	printf '   (ai-cluster --controller %s nodes).%s[K\n' "${controller:-URL}" "$ESC"
@@ -112,10 +110,17 @@ screen_power() {
 }
 
 printf '%s[2J' "$ESC"
+# Sem redesenho periódico: a tela é montada em memória a cada 5 s e só vai ao terminal quando o
+# conteúdo mudou (o IP que aparece depois do boot, o worker que cai). Nada pisca enquanto nada muda.
+shown=
 while :; do
-	draw
+	screen=$(draw)
+	if [ "$screen" != "$shown" ]; then
+		printf '%s' "$screen"
+		shown=$screen
+	fi
 	case "$(key 5)" in
-	f2) screen_logs ;;
-	f12) screen_power ;;
+	f2) screen_logs; shown= ;;
+	f12) screen_power; shown= ;;
 	esac
 done

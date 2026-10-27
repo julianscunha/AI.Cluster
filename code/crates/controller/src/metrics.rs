@@ -108,22 +108,51 @@ fn mean_measured(values: impl Iterator<Item = f64>) -> f64 {
     }
 }
 
-/// Unidades concluídas por segundo na janela `[now - window_ms, now]`. Zero enquanto o histórico
-/// não cobre a janela inteira (a unidade mais antiga que o controller guarda é mais nova que o
-/// início da janela): extrapolar de pouca história inventaria uma taxa.
-fn units_per_second(completed: &[CompletedWork], now_ms: u64, window_ms: u64) -> f64 {
+/// Quando este processo começou a observar (unix ms). Marcado na partida do controller; sem a
+/// marca (testes) vale o primeiro uso.
+static OBSERVING_SINCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+pub fn mark_start() {
+    OBSERVING_SINCE.get_or_init(crate::registry::unix_ms);
+}
+
+pub fn observing_since() -> u64 {
+    *OBSERVING_SINCE.get_or_init(crate::registry::unix_ms)
+}
+
+/// Unidades concluídas por segundo na janela `[now - window_ms, now]`.
+///
+/// Zero enquanto o controller não observa há tempo suficiente para cobrir a janela: nem o processo
+/// (`observing_since_ms`) nem o histórico carregado do disco (a unidade mais antiga) vão até o
+/// início dela, e extrapolar de pouca história inventaria uma taxa. Um cluster ligado há uma hora
+/// que concluiu a primeira unidade há 30 s tem a janela de 1 min coberta pelo processo.
+///
+/// Se o histórico chegou ao teto (`cap`) e a unidade mais antiga retida é mais nova que a janela,
+/// a janela de fato retida é a que vai dela até agora: a taxa usa essa, em vez de cair a zero
+/// justamente quando o cluster está mais ocupado.
+fn units_per_second(
+    completed: &[CompletedWork],
+    now_ms: u64,
+    window_ms: u64,
+    observing_since_ms: u64,
+    cap: usize,
+) -> f64 {
     let start = now_ms.saturating_sub(window_ms);
-    let oldest = completed.iter().map(|c| c.completed_at_unix_ms).min();
-    match oldest {
-        Some(oldest) if oldest <= start => {
-            let in_window = completed
-                .iter()
-                .filter(|c| c.completed_at_unix_ms > start)
-                .count();
-            in_window as f64 / (window_ms as f64 / 1000.0)
-        }
-        _ => 0.0,
+    let Some(oldest) = completed.iter().map(|c| c.completed_at_unix_ms).min() else {
+        return 0.0;
+    };
+    let truncated = completed.len() >= cap && oldest > start;
+    let covered = observing_since_ms <= start || oldest <= start || truncated;
+    if !covered {
+        return 0.0;
     }
+    let from = if truncated { oldest } else { start };
+    let span_ms = now_ms.saturating_sub(from).max(1);
+    let in_window = completed
+        .iter()
+        .filter(|c| c.completed_at_unix_ms > from)
+        .count();
+    in_window as f64 / (span_ms as f64 / 1000.0)
 }
 
 /// Acrescenta ao roll-up o que depende dos nós (rede e storage) e do tempo (taxas por segundo).
@@ -143,8 +172,10 @@ pub fn add_rollups(
     metrics.avg_storage_score = mean_measured(ready.iter().map(|c| c.storage_score));
     metrics.avg_storage_read_score = mean_measured(ready.iter().map(|c| c.storage_read_score));
     metrics.avg_storage_latency_ms = mean_measured(ready.iter().map(|c| c.storage_latency_ms));
-    metrics.units_per_second_1m = units_per_second(completed, now_ms, 60_000);
-    metrics.units_per_second_5m = units_per_second(completed, now_ms, 300_000);
+    let since = observing_since();
+    let cap = crate::work::MAX_COMPLETED;
+    metrics.units_per_second_1m = units_per_second(completed, now_ms, 60_000, since, cap);
+    metrics.units_per_second_5m = units_per_second(completed, now_ms, 300_000, since, cap);
 }
 
 #[cfg(test)]
@@ -178,6 +209,23 @@ mod tests {
     }
 
     #[test]
+    fn cluster_antigo_com_a_primeira_unidade_recente_tem_taxa_e_o_teto_nao_zera() {
+        let at = |ms| CompletedWork {
+            completed_at_unix_ms: ms,
+            ..completed(1, 1)
+        };
+        let now = 10_000_000;
+        // ligado há muito tempo (since = 0), a primeira unidade concluiu há 30 s
+        let recent = [at(now - 30_000), at(now - 10_000)];
+        let rate = units_per_second(&recent, now, 60_000, 0, 100_000);
+        assert!((rate - 2.0 / 60.0).abs() < 1e-9, "{rate}");
+        // com o teto cheio e só 20 s retidos, a taxa usa os 20 s retidos, não zero
+        let burst: Vec<_> = (0..1000).map(|n| at(now - 20_000 + n * 20)).collect();
+        let rate = units_per_second(&burst, now, 300_000, now - 1, 1000);
+        assert!((rate - 1000.0 / 20.0).abs() < 1.0, "{rate}");
+    }
+
+    #[test]
     fn a_taxa_por_segundo_so_vale_com_historico_que_cobre_a_janela() {
         let at = |ms| CompletedWork {
             completed_at_unix_ms: ms,
@@ -186,14 +234,17 @@ mod tests {
         // 3 unidades nos últimos 60 s, e uma antiga (150 s antes) que prova a história
         let now = 400_000;
         let history = [at(250_000), at(350_000), at(360_000), at(390_000)];
-        let mut metrics = MetricsResponse::default();
-        add_rollups(&mut metrics, &[], &history, now);
-        assert!((metrics.units_per_second_1m - 3.0 / 60.0).abs() < 1e-9);
-        // a janela de 5 min começa em 100 000 e a unidade mais antiga é de 250 000: sem história
-        assert_eq!(metrics.units_per_second_5m, 0.0);
-        let mut empty = MetricsResponse::default();
-        add_rollups(&mut empty, &[], &[], now);
-        assert_eq!(empty.units_per_second_1m, 0.0);
+        let cap = 100_000;
+        // o processo observa desde 380 000: a janela de 1 min (início em 340 000) não está coberta
+        // pelo processo, mas a unidade mais antiga (250 000) vai além dela
+        let rate = |window, since, history: &[CompletedWork]| {
+            units_per_second(history, now, window, since, cap)
+        };
+        assert!((rate(60_000, 380_000, &history) - 3.0 / 60.0).abs() < 1e-9);
+        // a janela de 5 min começa em 100 000: nem o processo (380 000) nem a unidade mais antiga
+        // (250 000) chegam lá, então não há história para uma taxa
+        assert_eq!(rate(300_000, 380_000, &history), 0.0);
+        assert_eq!(rate(60_000, 0, &[]), 0.0);
     }
 
     fn completed(compute_time_us: u64, total_latency_us: u64) -> CompletedWork {

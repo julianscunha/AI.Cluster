@@ -174,7 +174,10 @@ pub fn stats() -> GatewayStats {
 /// Starts the counters from a saved base, so a restart does not zero them. Percentiles and the KV
 /// size are not restored: they describe recent load, which the new process has not seen.
 pub fn restore(base: &GatewayStats) {
-    let mut inner = lock();
+    apply_base(&mut lock(), base);
+}
+
+fn apply_base(inner: &mut Inner, base: &GatewayStats) {
     inner.requests = base.requests;
     inner.failed = base.failed;
     inner.prompt_tokens = base.prompt_tokens;
@@ -382,8 +385,19 @@ mod tests {
         let loaded = load_state(&path).expect("o arquivo salvo carrega");
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!((loaded.requests, loaded.generated_tokens), (7, 700));
-        restore(&loaded);
-        assert!(stats().requests >= 7, "os contadores partem da base");
+        // sobre um estado local, não o global do processo, que outros testes também mexem
+        let mut inner = Inner::default();
+        apply_base(&mut inner, &loaded);
+        assert_eq!(
+            (
+                inner.requests,
+                inner.failed,
+                inner.prompt_tokens,
+                inner.generated_tokens
+            ),
+            (7, 1, 70, 700)
+        );
+        assert!(inner.ttft_us.is_empty(), "os percentis não são restaurados");
     }
 
     #[test]

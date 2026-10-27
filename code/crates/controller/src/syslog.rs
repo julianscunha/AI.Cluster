@@ -90,46 +90,51 @@ pub fn spawn(events: Arc<EventLog>, target: String) {
     let host = std::env::var("HOSTNAME").unwrap_or_default();
     let mut bus = events.subscribe();
     tokio::spawn(async move {
-        let Some(addr) = tokio::net::lookup_host(&target)
-            .await
-            .ok()
-            .and_then(|mut addrs| addrs.next())
-        else {
-            println!("AI_CLUSTER_EVENTS_SYSLOG={target} não resolve; eventos não serão exportados");
-            return;
-        };
-        let local = if addr.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        };
-        let socket = match tokio::net::UdpSocket::bind(local).await {
-            Ok(socket) => socket,
-            Err(err) => {
-                println!("syslog: não consegui abrir o socket UDP: {err}");
-                return;
-            }
-        };
-        println!("eventos exportados por syslog UDP para {addr}");
-        let mut failing = false;
-        loop {
-            let event = match bus.recv().await {
-                Ok(event) => event,
-                // Quem não acompanha perde os mais antigos; segue com os novos.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => return,
+        let mut announced_unresolved = false;
+        // O alvo é resolvido de novo depois de um erro de envio: um DNS que ainda não respondia na
+        // partida, ou um coletor que mudou de IP, não desligam a exportação até o próximo reinício.
+        'resolve: loop {
+            let Some(addr) = tokio::net::lookup_host(&target)
+                .await
+                .ok()
+                .and_then(|mut addrs| addrs.next())
+            else {
+                if !announced_unresolved {
+                    announced_unresolved = true;
+                    println!("AI_CLUSTER_EVENTS_SYSLOG={target} ainda não resolve; tento de novo");
+                }
+                // Eventos que chegam enquanto o alvo não resolve ficam no barramento (até 256).
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                continue 'resolve;
             };
-            let datagram = format_event(&event, &host);
-            match socket.send_to(datagram.as_bytes(), addr).await {
-                Err(err) if !failing => {
-                    failing = true;
-                    println!("syslog: envio falhou ({err}); sigo tentando em silêncio");
+            announced_unresolved = false;
+            let local = if addr.is_ipv4() {
+                "0.0.0.0:0"
+            } else {
+                "[::]:0"
+            };
+            let socket = match tokio::net::UdpSocket::bind(local).await {
+                Ok(socket) => socket,
+                Err(err) => {
+                    println!("syslog: não consegui abrir o socket UDP: {err}; tento de novo");
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                    continue 'resolve;
                 }
-                Ok(_) if failing => {
-                    failing = false;
-                    println!("syslog: envio restabelecido");
+            };
+            println!("eventos exportados por syslog UDP para {addr}");
+            loop {
+                let event = match bus.recv().await {
+                    Ok(event) => event,
+                    // Quem não acompanha perde os mais antigos; segue com os novos.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => return,
+                };
+                let datagram = format_event(&event, &host);
+                if let Err(err) = socket.send_to(datagram.as_bytes(), addr).await {
+                    println!("syslog: envio falhou ({err}); resolvendo o alvo de novo");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue 'resolve;
                 }
-                _ => {}
             }
         }
     });

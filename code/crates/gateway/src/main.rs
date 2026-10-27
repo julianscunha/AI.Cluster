@@ -237,7 +237,11 @@ fn gateway_state_path(id: &str) -> Option<std::path::PathBuf> {
             }
         })
         .collect();
-    Some(std::path::PathBuf::from(dir).join(format!("gateway-{safe}.state")))
+    // O hash do id original separa ids que a limpeza do nome tornaria iguais ("a.b" e "a_b").
+    let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    });
+    Some(std::path::PathBuf::from(dir).join(format!("gateway-{safe}-{:08x}.state", hash as u32)))
 }
 
 fn announce_gateway(
@@ -268,6 +272,20 @@ fn announce_gateway(
     }
     // The counters start from the saved base, before the first request is served.
     let state_path = gateway_state_path(&id);
+    if let Some(path) = state_path.as_deref()
+        && metrics::load_state(path).is_none()
+        && path.exists()
+    {
+        // Um arquivo que existe mas não lê é guardado ao lado, para o próximo salvamento não gravar
+        // zeros por cima de uma base que talvez ainda se recupere.
+        let bad = path.with_extension("bad");
+        eprintln!(
+            "estado do gateway em {} ilegível; guardado em {} e os contadores partem de zero",
+            path.display(),
+            bad.display()
+        );
+        let _ = std::fs::rename(path, bad);
+    }
     if let Some(base) = state_path.as_deref().and_then(metrics::load_state) {
         metrics::restore(&base);
         cache.restore_counts(

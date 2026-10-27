@@ -129,6 +129,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => work.with_traces(path),
         None => work,
     });
+    // As taxas por segundo só valem depois de o controller observar por uma janela inteira.
+    ai_cluster_controller::metrics::mark_start();
     // AI_CLUSTER_EVENTS names a file where the event timeline survives a restart (F06).
     let events = Arc::new(match state_path("AI_CLUSTER_EVENTS", "events.log") {
         Some(path) => EventLog::new().persisted(path),

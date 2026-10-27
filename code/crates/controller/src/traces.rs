@@ -6,8 +6,10 @@
 //! passa de `limit` registros ele é rodado para `<arquivo>.1` (um `rename`, sem reescrever nada
 //! sob o lock da fila), então o disco guarda no máximo `2 × limit` registros.
 //!
-//! Uma cauda truncada por uma queda no meio de uma gravação é descartada na leitura, sem erro: o
-//! que veio antes continua valendo.
+//! A leitura para no primeiro registro ilegível (uma cauda truncada por queda, bytes soltos, ou um
+//! registro vazio que um arquivo estendido com zeros produz): o que veio antes continua valendo e
+//! o que vem depois é descartado. Um `work_id` repetido é ignorado, o que protege contra um
+//! arquivo rodado (`.1`) que não conseguiu ser removido e seria lido duas vezes.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -56,6 +58,8 @@ struct State {
     file: Option<File>,
     /// Registros acrescentados ao arquivo atual desde que ele foi aberto ou rodado.
     appended: usize,
+    /// A rotação não conseguiu reabrir o arquivo: tentar de novo no próximo registro.
+    reopen: bool,
 }
 
 #[derive(Debug)]
@@ -80,8 +84,10 @@ fn read_records(path: &Path) -> (Vec<CompletedRecord>, bool) {
     let mut records = Vec::new();
     while !slice.is_empty() {
         match CompletedRecord::decode_length_delimited(&mut slice) {
-            Ok(record) => records.push(record),
-            Err(_) => return (records, true),
+            // Um registro sem `work_id` é o tamanho zero de um arquivo preenchido com zeros, não uma
+            // unidade: tratado como corrupção, para não povoar o histórico de fantasmas.
+            Ok(record) if !record.work_id.is_empty() => records.push(record),
+            _ => return (records, true),
         }
     }
     (records, false)
@@ -97,6 +103,9 @@ impl TraceLog {
         let (current, torn_new) = read_records(&path);
         let had_rotated = rotated_path.exists();
         records.extend(current);
+        // O mesmo trabalho não conta duas vezes (ver o doc do módulo).
+        let mut seen = std::collections::HashSet::new();
+        records.retain(|record| seen.insert(record.work_id.clone()));
         let dropped = records.len().saturating_sub(limit);
         records.drain(..dropped);
         let history: Vec<CompletedWork> = records.iter().cloned().map(Into::into).collect();
@@ -104,35 +113,57 @@ impl TraceLog {
         // Reescreve limpo quando algo precisa ser arrumado: cauda truncada, excesso ou o arquivo
         // rodado que já foi incorporado. Do contrário só reabre para acrescentar.
         let needs_rewrite = torn_old || torn_new || dropped > 0 || had_rotated;
-        let appended = if needs_rewrite {
+        // Reescrita com `fsync` antes do `rename`: uma queda de energia deixa o arquivo antigo ou o
+        // novo inteiro, nunca um vazio no lugar do bom.
+        let rewrite = |records: &[CompletedRecord]| -> std::io::Result<()> {
             let temp = path.with_extension("tmp");
             let mut bytes = Vec::new();
-            for record in &records {
+            for record in records {
                 bytes.extend_from_slice(&record.encode_length_delimited_to_vec());
             }
-            match std::fs::write(&temp, &bytes).and_then(|()| std::fs::rename(&temp, &path)) {
+            let mut file = File::create(&temp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            std::fs::rename(&temp, &path)
+        };
+        // Se a reescrita necessária falha, o arquivo continua com o lixo na cauda e acrescentar
+        // atrás dele perderia os registros novos: nesse caso o log fica desligado, em vez de mentir.
+        let mut usable = true;
+        let appended = if needs_rewrite {
+            match rewrite(&records) {
                 Ok(()) => {
-                    let _ = std::fs::remove_file(&rotated_path);
+                    if let Err(err) = std::fs::remove_file(&rotated_path)
+                        && rotated_path.exists()
+                    {
+                        println!("remover {} falhou: {err}", rotated_path.display());
+                    }
                     records.len()
                 }
                 Err(err) => {
-                    println!("compactar traces em {} falhou: {err}", path.display());
+                    println!(
+                        "compactar traces em {} falhou: {err}; sem persistência nesta execução",
+                        path.display()
+                    );
+                    usable = false;
                     0
                 }
             }
         } else {
             records.len()
         };
-        let file = OpenOptions::new().create(true).append(true).open(&path);
-        let file = match file {
-            Ok(file) => Some(file),
-            Err(err) => {
-                println!(
-                    "abrir traces em {} falhou: {err}; sem persistência",
-                    path.display()
-                );
-                None
+        let file = if usable {
+            match OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(file) => Some(file),
+                Err(err) => {
+                    println!(
+                        "abrir traces em {} falhou: {err}; sem persistência",
+                        path.display()
+                    );
+                    None
+                }
             }
+        } else {
+            None
         };
         if !history.is_empty() {
             println!(
@@ -144,7 +175,11 @@ impl TraceLog {
         let log = Self {
             path,
             limit: limit.max(1),
-            state: Mutex::new(State { file, appended }),
+            state: Mutex::new(State {
+                file,
+                appended,
+                reopen: false,
+            }),
         };
         (log, history)
     }
@@ -157,6 +192,18 @@ impl TraceLog {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Depois de uma rotação que não conseguiu reabrir o arquivo, tenta de novo a cada registro
+        // (uma vez só por falha, no log) em vez de ficar mudo até o reinício.
+        if state.file.is_none() && state.reopen {
+            state.file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)
+                .ok();
+            if state.file.is_some() {
+                state.reopen = false;
+            }
+        }
         let Some(file) = state.file.as_mut() else {
             return;
         };
@@ -175,6 +222,7 @@ impl TraceLog {
                 .open(&self.path)
                 .ok();
             state.appended = 0;
+            state.reopen = state.file.is_none();
             if let Err(err) = rolled {
                 println!("girar traces em {} falhou: {err}", self.path.display());
             }
@@ -242,6 +290,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         assert_eq!(again.len(), 3);
         assert_eq!(again[2].work_id, "w2");
+    }
+
+    #[test]
+    fn um_arquivo_estendido_com_zeros_nao_vira_unidades_fantasmas() {
+        let path = temp_file("zeros");
+        let (log, _) = TraceLog::open(path.clone(), 100);
+        log.append(&work("w0", 5));
+        drop(log);
+        // o sistema de arquivos estendeu o arquivo com zeros depois de uma queda
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&[0u8; 64]).unwrap();
+        drop(file);
+        let (_, loaded) = TraceLog::open(path.clone(), 100);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        assert_eq!(loaded.len(), 1, "só a unidade verdadeira");
+        assert_eq!(loaded[0].work_id, "w0");
+    }
+
+    #[test]
+    fn o_arquivo_rodado_que_nao_saiu_nao_duplica_o_historico() {
+        let path = temp_file("duplica");
+        let (log, _) = TraceLog::open(path.clone(), 100);
+        log.append(&work("a", 1));
+        log.append(&work("b", 2));
+        drop(log);
+        // simula um `.1` que ficou para trás com os mesmos registros do arquivo atual
+        std::fs::copy(&path, rotated(&path)).unwrap();
+        let (_, loaded) = TraceLog::open(path.clone(), 100);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let ids: Vec<_> = loaded.iter().map(|w| w.work_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
     }
 
     #[test]

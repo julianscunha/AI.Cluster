@@ -221,7 +221,7 @@ fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
 /// How many completed units the store remembers (traces, work report, metrics). Past it the oldest
 /// go, so a controller that runs for months does not grow with all work ever done; the completed
 /// counters then count this window instead of the whole life.
-const MAX_COMPLETED: usize = 100_000;
+pub(crate) const MAX_COMPLETED: usize = 100_000;
 
 /// Keeps the newest `max` entries. Trims in chunks of a tenth so a full history does not shift the
 /// whole vector on every push.
@@ -1025,9 +1025,6 @@ impl WorkStore {
             checksum: result.checksum,
             completed_at_unix_ms: now_unix_ms,
         };
-        if let Some(log) = &self.traces {
-            log.append(&completed);
-        }
         inner.completed.push(completed.clone());
         trim_history(&mut inner.completed, MAX_COMPLETED);
         if inner.keep.remove(&result.work_id) {
@@ -1049,6 +1046,13 @@ impl WorkStore {
         // The unit is settled, so its retry budget no longer matters.
         inner.attempts.remove(&result.work_id);
         self.save_locked(&mut inner);
+        // A gravação do trace é I/O de disco: fica fora do lock da fila, para um disco lento não
+        // travar `claim`, heartbeat e registro. A ordem entre unidades de threads diferentes pode
+        // se inverter no arquivo; cada registro leva o seu `completed_at_unix_ms`.
+        drop(inner);
+        if let Some(log) = &self.traces {
+            log.append(&completed);
+        }
         Some(completed)
     }
 
