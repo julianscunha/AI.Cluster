@@ -65,7 +65,7 @@ Reservar antes de enfileirar permite que a requisição caia no nó reservado: o
 | Comando | Função |
 |---|---|
 | `ai-cluster metrics` | Roll-up do cluster em `chave=valor`, com percentis. |
-| `ai-cluster events [--limit N]` | Linha do tempo, do mais antigo para o mais recente. Padrão 20. `0` mostra tudo. |
+| `ai-cluster events [--limit N] [--follow]` | Linha do tempo, do mais antigo para o mais recente. Padrão 20. `0` mostra tudo. Com `--follow`, segue os eventos novos pelo barramento. |
 | `ai-cluster dashboard [--watch N]` | Painel de uma tela. `0` ou sem a opção imprime uma vez. |
 
 Ver [[observabilidade]] para o significado de cada campo.

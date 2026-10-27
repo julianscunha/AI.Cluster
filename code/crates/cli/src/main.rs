@@ -5,7 +5,7 @@ use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, CancelRequestRequest, EnqueueGraphRequest, EnqueueWorkRequest,
     GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListNodesRequest,
     ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
-    SetReleaseRequest, WorkReportRequest, WorkReportResponse,
+    SetReleaseRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::connect_operator;
 use clap::{Parser, Subcommand};
@@ -43,6 +43,9 @@ enum Command {
         /// Most recent N events. 0 means everything the controller still holds.
         #[arg(long, default_value_t = 20)]
         limit: u32,
+        /// Depois de listar, continua mostrando os eventos novos à medida que acontecem.
+        #[arg(long)]
+        follow: bool,
     },
     /// Model files: manifest with version and checksums, and its verification (F12). Local.
     Model {
@@ -218,7 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
-        Command::Events { limit } => print_events(&cli.controller, limit).await?,
+        Command::Events { limit, follow } => print_events(&cli.controller, limit, follow).await?,
         Command::Request { action } => match action {
             RequestAction::Trace { request_id } => {
                 print_trace(&cli.controller, &request_id).await?
@@ -688,8 +691,23 @@ fn list_or_dash(values: &[String]) -> String {
 }
 
 /// Prints the controller's recent lifecycle events, oldest first.
-async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::error::Error>> {
+async fn print_events(
+    endpoint: &str,
+    limit: u32,
+    follow: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
+    // assina antes de listar: nada que aconteça entre as duas chamadas se perde (pode repetir um)
+    let mut live = if follow {
+        Some(
+            client
+                .watch_events(WatchEventsRequest {})
+                .await?
+                .into_inner(),
+        )
+    } else {
+        None
+    };
     let events = client
         .list_events(ListEventsRequest { limit })
         .await?
@@ -702,6 +720,14 @@ async fn print_events(endpoint: &str, limit: u32) -> Result<(), Box<dyn std::err
             "{:<14} {:<16} {}",
             event.at_unix_ms, event.kind, event.detail
         );
+    }
+    if let Some(live) = live.as_mut() {
+        while let Some(event) = live.message().await? {
+            println!(
+                "{:<14} {:<16} {}",
+                event.at_unix_ms, event.kind, event.detail
+            );
+        }
     }
     Ok(())
 }

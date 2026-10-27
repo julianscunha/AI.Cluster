@@ -68,7 +68,7 @@ Um nó que devolve três resultados inválidos seguidos (checksum errado) vai pa
 
 ## Eventos e trilha de auditoria
 
-`ai-cluster events --limit N` mostra a linha do tempo recente. Tipos de evento que o controller grava:
+`ai-cluster events --limit N` mostra a linha do tempo recente; com `--follow` continua mostrando os eventos novos à medida que acontecem (no máximo 16 assinantes; um evento pode aparecer duas vezes na junção entre a lista e o fluxo). Tipos de evento que o controller grava:
 
 - Nós: `node_registered`, `node_approved`, `node_revoked`, `node_left`, `node_offline`, `node_quarantined`.
 - Trabalho: `work_enqueued`, `work_completed`, `work_rejected`, `graph_enqueued`, `request_cancelled`.

@@ -40,8 +40,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Item | O que falta | Dependência |
 |---|---|---|
 | Cluster de 2 a 4 máquinas | Validar entrada e saída em máquinas físicas. Hoje só há containers. | hardware: 2 a 4 máquinas físicas |
-| Event bus | Hoje é um anel de eventos, não um barramento. | código |
-| Intervalo de despacho | Cada worker recebe uma unidade por heartbeat (5 s). Revisar quando o throughput importar. | código |
 
 ## F02 — Capability e saúde `[~]`
 

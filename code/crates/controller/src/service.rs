@@ -18,6 +18,7 @@ use ai_cluster_protocol::cluster::{
     ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
+use ai_cluster_protocol::cluster::{Event, WatchEventsRequest};
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, is_recovery, node_credential, require_inference, require_operator,
     require_recovery_scope,
@@ -58,8 +59,12 @@ pub struct ClusterControlService {
     cluster_id: String,
     shards: Arc<ShardHub>,
     shard_calls: Arc<tokio::sync::Semaphore>,
+    watchers: Arc<tokio::sync::Semaphore>,
     rollout: Rollout,
 }
+
+/// Assinantes simultâneos do barramento de eventos.
+const MAX_EVENT_WATCHERS: usize = 16;
 
 /// Highest priority class an enqueue may ask for. Aging is 64 passes per class, so an
 /// unbounded `u32` would make a low class wait effectively forever.
@@ -82,6 +87,7 @@ impl ClusterControlService {
             cluster_id: cluster_id.into(),
             shards: Arc::new(ShardHub::default()),
             shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
+            watchers: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WATCHERS)),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -1008,6 +1014,47 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(ListEventsResponse {
             events: self.events.recent(limit),
         }))
+    }
+
+    type WatchEventsStream = std::pin::Pin<
+        Box<dyn tonic::codegen::tokio_stream::Stream<Item = Result<Event, Status>> + Send>,
+    >;
+
+    /// O barramento de eventos: cada evento novo chega ao operador assim que é gravado.
+    async fn watch_events(
+        &self,
+        request: Request<WatchEventsRequest>,
+    ) -> Result<Response<Self::WatchEventsStream>, Status> {
+        let peer = operator_peer(&request)?;
+        let permit = self
+            .watchers
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Status::resource_exhausted("assinantes de eventos demais"))?;
+        let mut bus = self.events.subscribe();
+        self.audit(&peer, "watch_events", "");
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        tokio::spawn(async move {
+            let _permit = permit;
+            loop {
+                let next = match bus.recv().await {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(lost)) => Event {
+                        at_unix_ms: unix_ms(),
+                        kind: "events_lagged".into(),
+                        detail: format!("{lost} eventos perdidos"),
+                    },
+                    Err(_) => break,
+                };
+                // o operador saiu: encerra e libera a vaga
+                if tx.send(Ok(next)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(
+            tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(rx),
+        )))
     }
 
     async fn get_metrics(
@@ -2365,6 +2412,46 @@ mod tests {
         assert_eq!(denied.unwrap_err().code(), tonic::Code::PermissionDenied);
         let empty = service.shard_capacity(inference(ask(&[]))).await;
         assert_eq!(empty.unwrap_err().code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn o_barramento_entrega_o_evento_novo_so_ao_operador() {
+        use tonic::codegen::tokio_stream::StreamExt;
+        let (service, _work) = service_with_work();
+        let denied = service
+            .watch_events(Request::new(WatchEventsRequest {}))
+            .await;
+        assert_eq!(denied.err().unwrap().code(), tonic::Code::PermissionDenied);
+        let mut stream = service
+            .watch_events(op(WatchEventsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        // a própria assinatura é auditada e chega pelo barramento
+        let audit = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            (audit.kind.as_str(), audit.detail.contains("watch_events")),
+            ("audit", true)
+        );
+        service.events.record(7, "teste", "novo");
+        let got = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            (got.at_unix_ms, got.kind.as_str(), got.detail.as_str()),
+            (7, "teste", "novo")
+        );
+        // o limite de assinantes recusa o excesso
+        let mut held = Vec::new();
+        for _ in 0..MAX_EVENT_WATCHERS {
+            match service.watch_events(op(WatchEventsRequest {})).await {
+                Ok(stream) => held.push(stream),
+                Err(status) => {
+                    assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+                    return;
+                }
+            }
+        }
+        let excess = service.watch_events(op(WatchEventsRequest {})).await;
+        assert_eq!(excess.err().unwrap().code(), tonic::Code::ResourceExhausted);
     }
 
     #[tokio::test]

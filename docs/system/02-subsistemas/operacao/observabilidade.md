@@ -82,7 +82,7 @@ O exportador do controller serve `GET /metrics` na porta `AI_CLUSTER_METRICS_ADD
 
 ## Eventos
 
-`ai-cluster events [--limit N]` imprime do mais antigo para o mais recente. Padrão: os últimos 20. `--limit 0` mostra tudo que o controller ainda guarda.
+`ai-cluster events [--limit N] [--follow]` imprime do mais antigo para o mais recente. Padrão: os últimos 20. `--limit 0` mostra tudo que o controller ainda guarda.
 
 Nomes de evento:
 

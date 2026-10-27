@@ -32,6 +32,8 @@ struct Sink {
 pub struct EventLog {
     inner: Mutex<VecDeque<Event>>,
     sink: Mutex<Option<Sink>>,
+    /// Barramento: cada evento gravado também sai para quem assinou (`subscribe`).
+    bus: tokio::sync::broadcast::Sender<Event>,
 }
 
 /// `at<TAB>kind<TAB>detail`, one event per line. A tab or newline in a field would break the
@@ -66,7 +68,14 @@ impl EventLog {
         Self {
             inner: Mutex::new(VecDeque::with_capacity(CAPACITY)),
             sink: Mutex::new(None),
+            bus: tokio::sync::broadcast::channel(CAPACITY).0,
         }
+    }
+
+    /// Os eventos que forem gravados a partir de agora. Quem não acompanha o ritmo perde os mais
+    /// antigos (o receptor avisa com `Lagged`).
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Event> {
+        self.bus.subscribe()
     }
 
     /// Keeps the events in `path` too: loads the last `CAPACITY` from it now and appends every
@@ -136,6 +145,8 @@ impl EventLog {
         };
         inner.push_back(event.clone());
         self.append(&event, &inner);
+        // sem assinantes o envio falha, e tudo bem
+        let _ = self.bus.send(event);
     }
 
     /// The most recent `limit` events, oldest first. `limit` of 0 means every

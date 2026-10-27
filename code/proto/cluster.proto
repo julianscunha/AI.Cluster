@@ -547,6 +547,8 @@ message ListEventsRequest {
   uint32 limit = 1;
 }
 
+message WatchEventsRequest {}
+
 message ListEventsResponse {
   repeated Event events = 1;
 }
@@ -662,6 +664,10 @@ service ClusterControl {
   rpc EnqueueGraph(EnqueueGraphRequest) returns (EnqueueGraphResponse);
   rpc WorkReport(WorkReportRequest) returns (WorkReportResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  /// Só operador: os eventos novos, um a um, à medida que acontecem (barramento). Não repete o
+  /// que já aconteceu; para o histórico use ListEvents. Um assinante lento perde eventos e
+  /// recebe um evento `events_lagged` com a contagem.
+  rpc WatchEvents(WatchEventsRequest) returns (stream Event);
   rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
   rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
   rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
