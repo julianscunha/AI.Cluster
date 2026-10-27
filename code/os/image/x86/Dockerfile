@@ -30,7 +30,7 @@ RUN apk add --no-cache blkid \
  && rm -f /tmp/init-pre.sh /tmp/init-post.sh
 
 RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
- && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic-console /etc/init.d/aic-measure \
+ && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic-console /usr/sbin/aic-role /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
  && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|' /etc/inittab \

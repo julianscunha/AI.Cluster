@@ -56,6 +56,7 @@ draw() {
 	printf '   o---o%s[K\n' "$ESC"
 	printf '%s[K\n' "$ESC"
 	row "No"          "${node:-$(hostname)}"
+	row "Papel"       "$(/usr/sbin/aic-role --short)"
 	row "Hardware"    "${board:-?}  ${cores:-?} nucleo(s)  ${mem:-?}"
 	row "Processador" "${cpu:-?}"
 	row "Rede"        "${ip:-sem endereco}"

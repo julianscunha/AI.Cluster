@@ -1,0 +1,40 @@
+#!/bin/sh
+# Diz qual é o papel deste nó no cluster, lendo só a configuração local (sem token e sem rede).
+#   aic-role          resumo em várias linhas
+#   aic-role --short  uma linha, para o console
+# Quem aprova o nó é o controller: confira lá com `ai-cluster nodes` (coluna CONFIANÇA).
+
+ENV_FILE=${AIC_WORKER_ENV:-/data/worker.env}
+CMDLINE=${AIC_CMDLINE:-/proc/cmdline}
+
+# valor de uma chave do worker.env, sem aspas; o token nunca é lido
+value() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | head -n 1 | tr -d "\"'"; }
+
+node=$(value AI_CLUSTER_NODE_ID)
+controller=$(value AI_CLUSTER_CONTROLLER)
+model_dir=$(value AI_CLUSTER_MODEL_DIR)
+cache_mb=$(value AI_CLUSTER_SHARD_CACHE_MB)
+credential=$(value AI_CLUSTER_NODE_CREDENTIAL_FILE)
+
+if grep -q 'aic\.controller=' "$CMDLINE" 2>/dev/null || [ "$(value AI_CLUSTER_PRESENCE_ONLY)" = 1 ]; then
+	role="recuperacao (so presenca: registra e responde, nao recebe trabalho)"
+else
+	role="worker de computacao"
+	[ -n "$model_dir" ] && role="$role + hospeda fatias de modelo (cache ${cache_mb:-2048} MB)"
+fi
+
+if [ "$1" = "--short" ]; then
+	echo "$role"
+	exit 0
+fi
+
+if pidof ai-cluster-worker >/dev/null 2>&1; then state="worker em execucao"; else state="worker parado"; fi
+if [ -n "$credential" ] && [ -s "$credential" ]; then joined="sim (credencial salva)"; else joined="ainda nao (sem credencial salva)"; fi
+
+printf 'No:          %s\n' "${node:-$(hostname)}"
+printf 'Papel:       %s\n' "$role"
+printf 'Estado:      %s\n' "$state"
+printf 'Controller:  %s\n' "${controller:-nao configurado}"
+printf 'Registrado:  %s\n' "$joined"
+printf 'Versao:      %s   slot %s\n' "$(cat /etc/aic-release 2>/dev/null || echo dev)" "$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' "$CMDLINE")"
+printf '\nAprovacao e papel de acesso sao do controller: ai-cluster --controller %s nodes\n' "${controller:-URL}"
