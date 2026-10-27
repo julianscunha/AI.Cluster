@@ -74,7 +74,7 @@ Total: 2 serviços e 24 RPCs.
 | `WorkResult` | `work_id` (1), `node_id` (2), `rows` (3), `cols` (4), `matrix_c` (5), `checksum` (6), `compute_time_us` (7) | |
 | `RequestWorkRequest` / `RequestWorkResponse` | `node_id` (1) / `has_work` (1), `work` (2) | |
 | `SubmitWorkResultRequest` / `SubmitWorkResultResponse` | `result` (1) / `accepted` (1), `message` (2) | |
-| `EnqueueWorkRequest` / `EnqueueWorkResponse` | `rows` (1), `shared` (2), `cols` (3), `seed` (4), `repetitions` (5), `min_cpu_threads` (6), `request_id` (7), `priority` (8) / `enqueued` (1), `request_id` (2) | `request_id` vazio faz o controller gerar um, que volta na resposta |
+| `EnqueueWorkRequest` / `EnqueueWorkResponse` | `rows` (1), `shared` (2), `cols` (3), `seed` (4), `repetitions` (5), `min_cpu_threads` (6), `request_id` (7), `priority` (8), `require_attested` (9) / `enqueued` (1), `request_id` (2) | `request_id` vazio faz o controller gerar um, que volta na resposta |
 | `EnqueueGraphRequest` / `EnqueueGraphResponse` | `size` (1), `seed` (2), `request_id` (3), `keep_result` (4), `priority` (5) / `enqueued` (1), `blocked` (2), `request_id` (3) | `keep_result` guarda a saída final para `GetOutput`; o controller guarda as últimas 64 |
 | `GetOutputRequest` / `GetOutputResponse` | `request_id` (1) / `found` (1), `rows` (2), `cols` (3), `matrix_c` (4) | `found` falso para id desconhecido, não terminado ou expulso |
 | `CancelRequestRequest` / `CancelRequestResponse` | `request_id` (1) / `removed` (1), `in_flight` (2) | `removed` conta unidades retiradas da fila; `in_flight` conta as que já estão num worker e terminam normalmente |

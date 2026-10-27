@@ -76,6 +76,10 @@ struct KeptResult {
 
 #[derive(Debug, Default)]
 struct Inner {
+    /// Nodes the service found attested (running the desired release with the signed slot
+    /// measure). Refreshed by the service while a unit that requires attestation waits; never
+    /// persisted, because it is derived from live identities and the published release.
+    attested: HashSet<String>,
     /// Work ids whose output a client asked to keep (J1). Not persisted: a restart loses the
     /// result, and the client sees `found: false`.
     ///
@@ -741,6 +745,17 @@ impl WorkStore {
         self.reservations.list(now)
     }
 
+    /// Whether any queued unit demands an attested node, so the service rebuilds the attested set
+    /// only while it matters.
+    pub fn needs_attestation(&self) -> bool {
+        self.lock().queue.iter().any(|unit| unit.require_attested)
+    }
+
+    /// Replaces the set of nodes known to be attested (see `Inner::attested`).
+    pub fn set_attested(&self, nodes: HashSet<String>) {
+        self.lock().attested = nodes;
+    }
+
     pub fn enqueue(&self, units: impl IntoIterator<Item = WorkUnit>) -> usize {
         let mut inner = self.lock();
         let mut count = 0;
@@ -779,9 +794,11 @@ impl WorkStore {
         let in_flight = in_flight_on(&inner, node_id);
         let index = {
             let outputs = &inner.outputs;
+            let attested = &inner.attested;
             *ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
+                    && (!unit.require_attested || attested.contains(node_id))
                     && held.as_ref().is_none_or(|hold| {
                         hold.admits(&unit.request_id, in_flight, capability.work_slots)
                     })
@@ -833,9 +850,11 @@ impl WorkStore {
         let asking_in_flight = in_flight_on(&inner, node_id);
         let ranked = {
             let outputs = &inner.outputs;
+            let attested = &inner.attested;
             ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
+                    && (!unit.require_attested || attested.contains(node_id))
                     && held.as_ref().is_none_or(|hold| {
                         hold.admits(&unit.request_id, asking_in_flight, capability.work_slots)
                     })
@@ -845,10 +864,23 @@ impl WorkStore {
         // a hold for another node) must not block a lower-ranked unit it would take.
         for index in ranked {
             let raw = predicted_compute_us(&inner.queue[index], capability);
+            // A unit that demands attestation is ranked only among the attested nodes: a better
+            // but unattested node could never take it, and must not make this one yield.
+            let attested_pool: Vec<(String, CapabilityReport, HealthReport)>;
+            let pool = if inner.queue[index].require_attested {
+                attested_pool = candidates
+                    .iter()
+                    .filter(|(id, _, _)| inner.attested.contains(id))
+                    .cloned()
+                    .collect();
+                &attested_pool[..]
+            } else {
+                candidates
+            };
             let takes = decide(
                 &inner.queue[index],
                 node_id,
-                candidates,
+                pool,
                 |id| in_flight_on(&inner, id),
                 |id| self.reservations.hold(id, now_unix_ms),
                 tolerance,
@@ -1199,6 +1231,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
             priority: 0,
+            require_attested: false,
         }
     }
 
@@ -1394,6 +1427,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
             priority: 0,
+            require_attested: false,
         }
     }
 
@@ -2404,6 +2438,41 @@ mod tests {
             work_slots: slots,
             ..capability(4, 1.0)
         }
+    }
+
+    #[test]
+    fn unidade_que_exige_atestado_so_vai_para_no_atestado() {
+        let store = WorkStore::new();
+        store.enqueue([WorkUnit {
+            require_attested: true,
+            ..unit_for("sensivel", "req-s")
+        }]);
+        let nodes = [
+            ("a".to_string(), capability(4, 1.0), healthy()),
+            ("b".to_string(), capability(4, 1.0), healthy()),
+        ];
+        let ask = |id: &str| store.claim_placed(id, &capability(4, 1.0), 1_000, &nodes, 10.0);
+
+        // ninguém atestado (sem release publicada): a unidade espera
+        assert!(ask("a").is_none() && ask("b").is_none());
+        assert_eq!(store.pending(), 1);
+        // só o "b" é atestado: o "a" continua sem receber e o "b" leva
+        store.set_attested(["b".to_string()].into());
+        assert!(ask("a").is_none());
+        assert_eq!(ask("b").unwrap().work_id, "sensivel");
+        // o caminho sem placement respeita a mesma regra
+        store.enqueue([WorkUnit {
+            require_attested: true,
+            ..unit_for("outra", "req-s")
+        }]);
+        assert!(store.claim("a", &capability(4, 1.0), 1_001).is_none());
+        assert_eq!(
+            store
+                .claim("b", &capability(4, 1.0), 1_001)
+                .unwrap()
+                .work_id,
+            "outra"
+        );
     }
 
     #[test]

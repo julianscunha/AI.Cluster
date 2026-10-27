@@ -81,6 +81,9 @@ enum Command {
         /// Priority class of the enqueued units: higher dispatches first, 0 is the default (G4).
         #[arg(long, default_value_t = 0)]
         priority: u32,
+        /// Only attested nodes (desired release, signed slot measure) may run the units.
+        #[arg(long)]
+        require_attested: bool,
     },
     /// Dispatch a dependency graph (diamond) and watch the branches gate.
     Graph {
@@ -253,6 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             min_threads,
             request_id,
             priority,
+            require_attested,
         } => {
             run_benchmark(
                 &cli.controller,
@@ -262,6 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 min_threads,
                 &request_id,
                 priority,
+                require_attested,
             )
             .await?
         }
@@ -1196,6 +1201,8 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
     Ok(())
 }
 
+// Cada flag do comando vira um argumento; agrupar numa struct só moveria a lista de lugar.
+#[allow(clippy::too_many_arguments)]
 async fn run_benchmark(
     endpoint: &str,
     size: u32,
@@ -1204,6 +1211,7 @@ async fn run_benchmark(
     min_threads: u32,
     request_id: &str,
     priority: u32,
+    require_attested: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Version and parameters travel with the output so two runs are comparable.
     println!(
@@ -1225,6 +1233,7 @@ async fn run_benchmark(
             min_cpu_threads: min_threads,
             request_id: request_id.to_string(),
             priority,
+            require_attested,
         })
         .await?
         .into_inner();

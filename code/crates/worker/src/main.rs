@@ -2197,6 +2197,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: String::new(),
             priority: 0,
+            require_attested: false,
         };
         let result = execute_work(&unit, "node-a", 4).expect("shapes match");
         assert_eq!(result.work_id, "w1");
@@ -2222,6 +2223,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: String::new(),
             priority: 0,
+            require_attested: false,
         };
         assert!(execute_work(&unit, "node-a", 1).is_none());
     }

@@ -348,6 +348,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
             priority: 0,
+            require_attested: false,
         }
     }
 

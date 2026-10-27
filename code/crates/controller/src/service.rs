@@ -19,8 +19,8 @@ use ai_cluster_protocol::cluster::{
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::cluster::{
-    Event, GatewayInfo, ListGatewaysRequest, ListGatewaysResponse, ReportGatewayRequest,
-    ReportGatewayResponse, WatchEventsRequest,
+    Event, GatewayInfo, ListGatewaysRequest, ListGatewaysResponse, NodeIdentity, Release,
+    ReportGatewayRequest, ReportGatewayResponse, WatchEventsRequest,
 };
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, is_recovery, node_credential, require_inference, require_operator,
@@ -67,6 +67,14 @@ pub struct ClusterControlService {
     /// segundos, então um reinício do controller se refaz sozinho.
     gateways: Arc<std::sync::Mutex<std::collections::HashMap<String, GatewayInfo>>>,
     rollout: Rollout,
+}
+
+/// Whether the node runs the desired release and its measured slot matches the signed image.
+/// Software attestation only: a compromised node can lie about the measure.
+fn is_attested(identity: &NodeIdentity, want: &Release) -> bool {
+    identity.runtime_version == want.version
+        && !identity.image_sha256.is_empty()
+        && identity.image_sha256 == want.image_sha256
 }
 
 /// Gateways que o controller lembra ao mesmo tempo; um id novo acima disso é recusado.
@@ -230,6 +238,21 @@ fn operator_peer<T>(request: &Request<T>) -> Result<String, Status> {
 }
 
 impl ClusterControlService {
+    /// Nodes that run the desired release with the signed slot measure; empty when no release is
+    /// published (nobody is attested against nothing).
+    fn attested_nodes(&self) -> std::collections::HashSet<String> {
+        let Some(want) = self.rollout.desired() else {
+            return Default::default();
+        };
+        self.registry
+            .list()
+            .into_iter()
+            .filter_map(|node| node.identity)
+            .filter(|identity| is_attested(identity, &want))
+            .map(|identity| identity.node_id)
+            .collect()
+    }
+
     /// The audit trail (F19): one `audit` event per operator action, with the peer and the target.
     /// It goes into the same event log, so `AI_CLUSTER_EVENTS` keeps it across restarts.
     fn audit(&self, peer: &str, action: &str, target: &str) {
@@ -439,9 +462,7 @@ impl ClusterControl for ClusterControlService {
         let mut nodes = self.registry.list();
         for node in &mut nodes {
             if let (Some(want), Some(identity)) = (&desired, &node.identity) {
-                node.attested = identity.runtime_version == want.version
-                    && !identity.image_sha256.is_empty()
-                    && identity.image_sha256 == want.image_sha256;
+                node.attested = is_attested(identity, want);
             }
         }
         Ok(Response::new(ListNodesResponse { nodes }))
@@ -518,6 +539,11 @@ impl ClusterControl for ClusterControlService {
         // hysteresis band (G5) of cheapest. A node that is neither gets nothing and
         // polls again, so the unit waits for the node that fits it better instead of
         // going to whoever asked first.
+        // Units that demand attestation only go to nodes that run the desired release with the
+        // measured slot matching the signed one; the set is rebuilt only while such a unit waits.
+        if self.work.needs_attestation() {
+            self.work.set_attested(self.attested_nodes());
+        }
         let claimed = if placement_enabled() {
             let candidates = self.registry.candidates();
             self.work.claim_placed(
@@ -661,6 +687,7 @@ impl ClusterControl for ClusterControlService {
                 min_cpu_threads: request.min_cpu_threads,
                 request_id: request_id.clone(),
                 priority: request.priority.min(MAX_PRIORITY),
+                require_attested: request.require_attested,
             }
         });
         let enqueued = self.work.enqueue(units);
@@ -746,6 +773,7 @@ impl ClusterControl for ClusterControlService {
                 min_cpu_threads: 0,
                 request_id: request_id.clone(),
                 priority: request.priority.min(MAX_PRIORITY),
+                require_attested: false,
             }
         };
         let units = vec![
@@ -1466,6 +1494,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
             priority: 0,
+            require_attested: false,
         }
     }
 
@@ -1483,6 +1512,7 @@ mod tests {
             min_cpu_threads: 0,
             request_id: "req-test".to_string(),
             priority: 0,
+            require_attested: false,
         }
     }
 
@@ -1735,6 +1765,7 @@ mod tests {
                 min_cpu_threads: 0,
                 request_id: String::new(),
                 priority: 0,
+                require_attested: false,
             }))
             .await
             .unwrap()
@@ -1767,6 +1798,7 @@ mod tests {
                 min_cpu_threads: 0,
                 request_id: String::new(),
                 priority: 0,
+                require_attested: false,
             }))
             .await
             .unwrap_err();
@@ -2245,6 +2277,7 @@ mod tests {
                 min_cpu_threads: 0,
                 request_id: String::new(),
                 priority: 0,
+                require_attested: false,
             }))
             .await
             .unwrap()

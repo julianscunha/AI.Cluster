@@ -61,7 +61,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Níveis de confiança | `UNKNOWN` até `TRUSTED`, dependendo de um fluxo de enrollment. Hoje só há pendente e aprovado, mais quarentena automática. | decisão, código |
+| Níveis de confiança | Fluxo de enrollment (token de uso único por nó, aprovação por regra) sobre os níveis já decididos no [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler local por GPU/NPU | Filas por recurso de GPU e NPU. Hoje só CPU. | hardware: GPU/NPU |
 | Localidade | Locality não entra no custo do placement. Depende de saídas residentes no worker: hoje as saídas ficam no controller, então não há transferência a evitar e um desconto por afinidade seria um parâmetro sem efeito medível. | código, depende de F12 (estado e saídas nos workers) |
 

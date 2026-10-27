@@ -302,6 +302,10 @@ message WorkUnit {
   /// Classe de prioridade (G4): maior é despachada antes. 0 é a classe padrão; a fila continua
   /// FIFO dentro da classe, e o envelhecimento impede que uma classe alta mate a baixa de fome.
   uint32 priority = 12;
+  /// Só um nó atestado pode receber esta unidade: roda a release desejada e a medida do slot
+  /// (`image_sha256`) confere com a assinada. Sem release publicada ninguém é atestado, e a unidade
+  /// espera. É atestação de software: um nó comprometido mente (veja `NodeSnapshot.attested`).
+  bool require_attested = 13;
 }
 
 message WorkResult {
@@ -345,6 +349,8 @@ message EnqueueWorkRequest {
   string request_id = 7;
   /// Classe de prioridade das unidades desta chamada (G4). 0 é a padrão; maior vai antes.
   uint32 priority = 8;
+  /// Só nós atestados recebem as unidades desta chamada (`WorkUnit.require_attested`).
+  bool require_attested = 9;
 }
 
 message EnqueueWorkResponse {

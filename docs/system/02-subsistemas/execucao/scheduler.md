@@ -76,6 +76,10 @@ ai-cluster release <nó>
 ai-cluster reservations
 ```
 
+## Exigência de atestado
+
+Uma unidade pode exigir um nó atestado (`require_attested`, `--require-attested` no `benchmark`): o nó roda a release desejada e a medida do slot confere com a assinada. O controller só a entrega a esses nós e a ordena só entre eles. Sem release publicada ninguém é atestado e a unidade espera. Veja [[adr-020-niveis-de-confianca-do-no]].
+
 ## Concorrência local
 
 - Cada worker roda até `AI_CLUSTER_WORK_SLOTS` unidades ao mesmo tempo (padrão 1, limite 64).
