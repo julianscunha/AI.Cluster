@@ -1,95 +1,52 @@
 ---
 title: "Provisionamento"
-aliases: ["docs/03", "03 — Provisioning", "03 — Provisionamento"]
+aliases: ["Provisionamento", "Provisioning"]
 tags: [sistema/subsistema/plataforma]
 type: sistema/subsistema
-status: proposto
-implementacao: nao-iniciado
-fases: ["[[fase-15-ai-cluster-os]]", "[[fase-18-worker-movel]]"]
 ---
 
 # Provisionamento
 
-Provisionamento transforma uma máquina com Linux qualquer em um nó do cluster com o AI Cluster OS
-instalado do zero. O objetivo é que a entrada de um dispositivo seja automática, verificada e
-reversível: nada é apagado antes de o cluster confirmar que a máquina e a imagem servem.
+Provisionamento é o caminho de uma máquina até ser um nó do cluster. Hoje ele é feito pelo operador, com três caminhos e aprovação manual. O objetivo de longo prazo é que a entrada seja automática, verificada e reversível: nada é apagado antes de o cluster confirmar que a máquina e a imagem servem. Voltar para [[plataforma]].
 
-## Fluxo
+## Caminhos de entrada
 
-```text
-Existing Linux
- -> Bootstrap Agent
- -> Controller discovery
- -> Enrollment
- -> Trust validation
- -> Hardware scan
- -> Benchmark
- -> OS image selection
- -> Reimage
- -> Reboot
- -> AI Cluster OS
- -> Post-boot attestation
- -> Runtime benchmark
- -> Model warm-up
- -> READY
-```
+| Caminho | Quando usar | Como |
+|---|---|---|
+| Worker sobre Linux existente | Máquina com Linux já instalado, com systemd ou sem | `os/bootstrap.sh` como root. Ver [[ai-cluster-os]]. |
+| Imagem em cartão | Placa armv7 com o AI Cluster OS | `install-disk.py` grava a imagem a partir de um ambiente em memória. |
+| Boot pela rede | Placa armv7 que já tem um sistema qualquer | `install-netboot.sh`, com retorno ao cartão. |
 
-Estados de provisionamento:
+Em qualquer caminho, o worker chama o controller com o token de join e recebe uma credencial. A máquina entra pendente, e o operador aprova com `ai-cluster approve`. Ver [[seguranca]].
 
-```text
-DISCOVERED -> ENROLLING -> TRUSTED -> PROVISIONING -> REBOOTING -> VALIDATING -> BENCHMARKING -> READY
-```
+## Condições antes de gravar o disco
 
-## Requisito de reimage
+O instalador de cartão só grava quando:
 
-O sistema definitivo não roda sobre o Linux que estava na máquina. O dispositivo é reprovisionado
-com uma instalação limpa do AI Cluster OS ([[ai-cluster-os]]). Um Linux temporário serve só de
-ponte até o reimage.
+1. a raiz do ambiente é o ambiente de instalação esperado;
+2. o cartão está desmontado;
+3. a execução recebeu `--yes`.
 
-## Dispositivos de mesa e servidor
+Se qualquer condição falha, o cartão não é tocado.
 
-Inicialização pela rede: PXE, iPXE ou mecanismo equivalente. Esse caminho ainda é proposta.
+## Após a entrada
 
-## Dispositivos móveis
+1. O worker mede o hardware e informa capacidade ao controller ([[capability-engine]]).
+2. O operador aprova o nó.
+3. O nó passa a receber trabalho e aparece como `READY` em `ai-cluster nodes`.
 
-Em aberto. Exige suporte de bootloader, recuperação e drivers específicos por modelo. Um dispositivo
-móvel só é elegível quando o caminho de instalação pode ser automatizado e revertido com segurança.
-Ver [[fase-18-worker-movel]].
+Sem reinstalação, a máquina continua com o Linux que já tinha, e pacotes e configurações fora do controle do cluster continuam lá.
 
-## Condições antes de apagar o disco
+> Planejado: fluxo completo de provisionamento, com descoberta automática do dispositivo, um agente de bootstrap, verificação de hardware antes de qualquer alteração, escolha da imagem pelo cluster, reinstalação disparada pelo controller e atestação pós-boot antes de liberar trabalho.
+> Planejado: estados de provisionamento visíveis na CLI: descoberto, registrando, confiável, provisionando, reiniciando, validando, em benchmark e pronto.
+> Planejado: aquecimento de modelo antes de o nó ficar pronto, carregando as fatias que ele vai servir.
+> Planejado: boot por rede para servidores e estações, por PXE ou iPXE.
+> Planejado: caminho de instalação para dispositivos móveis, com bootloader e recuperação próprios por modelo. Um dispositivo móvel só entra no provisionamento quando a instalação puder ser automatizada e revertida.
 
-1. Compatibilidade de hardware validada.
-2. Imagem válida e assinada disponível.
-3. Rede estável.
-4. Identidade de provisionamento estabelecida (ver [[seguranca]]).
-5. Estratégia de recuperação disponível.
+## Limites conhecidos
 
-Se qualquer condição falhar, o disco não é tocado e o dispositivo fica em `DISCOVERED` ou
-`ENROLLING`.
-
-## Atestação pós-boot
-
-Depois do reboot no AI Cluster OS, o nó prova que a imagem e o worker são os esperados antes de
-passar a `VALIDATING`. Sem essa prova ele não recebe trabalho. O conteúdo da atestação está em
-[[seguranca]].
-
-## Benchmark e aquecimento
-
-- `BENCHMARKING` mede a capacidade do nó (ver [[capability-engine]]).
-- Aquecimento de modelo: carregar as fatias que o nó vai servir antes de `READY`.
-
-> [!info] O que já existe
-> - Descoberta de rede e medição de link: [[f02-descoberta-de-rede]].
-> - Benchmark de capacidade no registro: [[f02-benchmark-de-capability]].
-> - Entrada no cluster (registro, pendente, aprovação), que cobre parte de `ENROLLING` e `TRUSTED`:
->   [[f01-entrada-e-saida-de-nos]] e [[f07-aprovacao-de-no]].
-> - Estado `PROVISIONING` no enum de nó, sem caminho que o use: `code/crates/common/src/lib.rs`.
->
-> Nada de reimage, bootstrap agent, PXE, assinatura de imagem (só a da release, conferida no nó: [[adr-018-release-assinada-e-medida-do-slot]]), atestação pós-boot (só medida de software) ou aquecimento de
-> modelo. A máquina entra no cluster pelo worker rodando no Linux que já tinha.
-
-> [!todo] Tudo que o fluxo acima descreve além da entrada no cluster está pendente, inclusive o
-> caminho de instalação móvel. Ver [[fase-15-ai-cluster-os]] e [[fase-18-worker-movel]].
-
-> [!warning] Desvio do alvo: no MVP o nó entra pelo worker rodando no Linux existente. Não há
-> reimage, então um nó pode carregar pacotes e configurações que o cluster não controla.
+- **Aprovação manual de cada nó.** Não há enrollment automático.
+- **Sem reinstalação pelo cluster.** Reinstalar um nó é trabalho do operador, com cartão ou boot de rede.
+- **Imagem só para armv7.** Outras arquiteturas entram pelo caminho de bootstrap, que depende do Linux já instalado.
+- **Entrada sem verificação de origem.** O binário do worker usado no bootstrap não é verificado por assinatura, e o token de join fica em claro no arquivo de ambiente do worker.
+- **Sem medição de hardware antes de alterar a máquina.** O operador decide se a placa serve.

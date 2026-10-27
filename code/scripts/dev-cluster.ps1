@@ -16,7 +16,7 @@ param(
 )
 
 $Net = 'aic-net'
-$Img = 'aic-rust:1'
+$Img = if ($env:AIC_RUST_IMAGE) { $env:AIC_RUST_IMAGE } else { 'rust:1-bookworm' }
 $R = '/t/release'
 $Join = 'dev-token'
 $Operator = 'dev-operator'

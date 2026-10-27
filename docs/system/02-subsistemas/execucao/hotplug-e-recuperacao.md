@@ -1,108 +1,84 @@
 ---
 title: "Hot-plug e recuperação"
-aliases: ["Hot-Plug and Recovery", "docs/20", "20 — Hot-Plug and Recovery"]
-tags: [sistema/subsistema/execucao, subsistema/hotplug-e-recuperacao]
+aliases: ["Hot-Plug and Recovery", "Hot-plug e recuperação"]
+tags: [sistema/subsistema/execucao]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-01-nucleo-do-cluster]]", "[[fase-03-execucao-distribuida]]", "[[fase-06-estado-e-recuperacao]]"]
 ---
 
 # Hot-plug e recuperação
 
 Voltar para [[execucao]].
 
-## Objetivo
-
-Permitir que nós entrem e saiam do cluster sem operação manual, sem perder trabalho e sem corromper o grafo em execução. A regra de base do [[adr-006-hotplug]] é que o cluster se reorganiza sozinho quando a capacidade muda.
+Nós entram e saem do cluster sem operação manual. Trabalho em voo volta à fila sem ser perdido, e o cluster continua andando com os nós que sobraram. Essa é a regra de [[adr-006-hotplug]]: a capacidade muda, e o cluster se reorganiza sozinho.
 
 ## Entrada
 
-```text
-DISCOVERED
- -> TRUST
- -> PROVISION
- -> BENCHMARK
- -> warm model/state
- -> READY
-```
+1. O worker se conecta com o token de entrada e se registra.
+2. O controller guarda o nó com a capacidade reportada e o deixa aguardando aprovação do operador (`ai-cluster approve`), a não ser que `AI_CLUSTER_AUTO_APPROVE` esteja ligado.
+3. Depois de aprovado, o nó recebe trabalho. Ele já reportou benchmark, saúde e capacidade no registro.
 
-Um nó só recebe trabalho depois de confiado e medido. Estado de modelo e de dados é carregado antes de ele ficar pronto.
+Um nó novo não recebe trabalho antes de ser aprovado. Não há etapa de carga de modelo ou de estado antes de o nó ficar pronto.
 
-## Remoção planejada
+## Saída planejada
 
 ```text
-ACTIVE
- -> DRAINING
- -> no new work
- -> finish/checkpoint active work
- -> release model/state
- -> OFFLINE
+worker recebe SIGTERM ou Ctrl+C
+ -> para de pedir trabalho
+ -> espera os slots em execução devolverem seus resultados (teto de 30 s)
+ -> para o heartbeat
+ -> chama LeaveNode
+controller: nó vira DRAINING, sai dos candidatos, unidades em voo voltam à fila,
+            nó sai do registro
 ```
 
-Durante a drenagem o nó não recebe trabalho novo. O trabalho ativo termina ou gera checkpoint, o modelo e o estado são liberados, e só então o nó sai.
+O controller não espera a drenagem do trabalho ativo. As unidades em voo voltam à fila no momento da saída. Como o worker espera seus slots antes de avisar o controller, em geral nada fica em voo nessa hora.
 
-## Perda inesperada
+## Queda do nó
 
 ```text
-heartbeat lost
- -> mark FAILED
- -> identify impacted Work Units
- -> recover state
- -> choose replacements
- -> new plan
- -> resume
+heartbeat para
+ -> após AI_CLUSTER_HEARTBEAT_GRACE_MS sem heartbeat (padrão 15 000 ms), nó vira OFFLINE
+ -> unidades em voo voltam à fila (se tentativas restantes) ou falham com seus dependentes
+ -> quando o nó volta a enviar heartbeat, vira READY de novo
 ```
 
-O controller percebe a perda pelo silêncio do heartbeat, identifica as unidades afetadas, recupera o estado que elas precisam e as reatribui a outros nós, dentro de um novo plano.
+O controller varre os nós a cada 5 s. Um resultado atrasado do nó caído é recusado, porque a posse da unidade já mudou. Uma unidade reoferecida recomeça do zero.
 
-## Atualização de capacidade
+A grace deve ficar confortavelmente acima do intervalo de heartbeat de 5 s. Uma grace curta demais tira do ar um nó saudável.
 
-Depois de entrada ou saída:
+## Reinício do controller
 
-1. atualizar o estado do cluster;
-2. atualizar o grafo;
-3. atualizar a capacidade de desempenho;
-4. gerar um plano candidato;
-5. comparar a melhoria esperada;
-6. replanejar se valer a pena.
+- A fila de trabalho, as unidades em voo (com o dono de cada uma) e os resultados ainda necessários são gravados em `AI_CLUSTER_STATE` a cada alteração. A gravação é atômica (arquivo temporário e renomeação). Uma cópia ao lado (`AI_CLUSTER_STATE` com sufixo `.replica`) fica no mesmo volume.
+- Ao reiniciar, a fila volta. Uma unidade em voo volta com o mesmo dono. Se o dono reconectar, o resultado que ele estava calculando é aceito.
+- Se o dono não reconectar até a grace contada a partir do início do controller, a unidade volta à fila ou falha, como em uma queda de nó.
+- Com `AI_CLUSTER_STATE_REPLICA` nos workers, cada worker guarda uma cópia do estado. Se o volume do controller é perdido, o controller adota a cópia que um nó oferece no re-registro, desde que ela seja mais nova que a que ele já tem e ele não esteja com trabalho nas mãos.
 
-## Não-objetivo
+Quando o controller perde o estado do disco e nenhum worker tem cópia, a fila se perde.
 
-Não é requisito inicial migrar memória viva arbitrária, byte a byte, entre hosts. A recuperação privilegia objetos de estado, checkpoints e recomputação seletiva ([[state-manager]]).
+## Revogação
 
-> [!info] O que já existe
-> **Entrada**
-> - O registro (`Registry::register`, `code/crates/controller/src/registry.rs`) põe o nó em `READY` com a capability reportada. Token de join obrigatório em toda RPC ([[f07-token-de-join]]).
-> - Aprovação manual: nó novo fica aguardando (`awaiting_approval`) e não recebe trabalho até ser aprovado ([[f07-aprovacao-de-no]]).
-> - Não há estados `DISCOVERED`, `PROVISIONING`, `VALIDATING` nem `BENCHMARKING` no controller. Confiança é um flag. Não há carga de modelo ou de estado antes de `READY`.
->
-> **Saída planejada**
-> - `leave_node` (`code/crates/controller/src/service.rs`): `begin_drain` (vira `DRAINING` e sai dos candidatos), `requeue_for_node`, remoção do registro. O worker para o heartbeat antes de chamar a RPC, para que um beat atrasado não desfaça a saída. Ver [[f01-entrada-e-saida-de-nos]] e [[f03-tolerancia-a-falhas]].
->
-> **Perda de nó**
-> - O sweep do controller (`code/crates/controller/src/main.rs`) roda a cada 5 s. `mark_stale_offline` marca como `OFFLINE` o nó sem heartbeat por `AI_CLUSTER_HEARTBEAT_GRACE_MS` (15 s por padrão). O heartbeat seguinte devolve o nó a `READY`.
-> - `requeue_for_node` devolve as unidades em voo à fila enquanto o orçamento de tentativas dura (`MAX_ATTEMPTS = 3`). Esgotado, a unidade falha com seus dependentes.
-> - Evidência: `bash code/tests/phase-2-failure.sh`.
->
-> **Reinício do controller**
-> - Donos de unidades em voo que não voltam após o grace do start são reenfileirados (`unknown_owners`). O estado vem do snapshot, e uma cópia fica em nós com `AI_CLUSTER_STATE_REPLICA`. Ver [[f06-recuperacao]].
-> - Evidência: `bash code/tests/phase-i4-recovery.sh` e `bash code/tests/phase-i4-replica.sh`.
->
-> **Revogação**
-> - `revoke_node` (S5) tira a confiança e devolve as unidades em voo à fila. Ver [[f07-operador-e-credencial-por-no]].
+`ai-cluster revoke <nó>` tira a confiança do nó e devolve as unidades em voo dele à fila. Ver [[saude-e-confianca]].
 
-> [!todo] Não implementado
-> - Drenagem que espera o trabalho ativo terminar. Hoje as unidades em voo voltam à fila na hora da saída.
-> - Checkpoint de trabalho ativo e liberação de modelo ou estado na saída.
-> - Estado `FAILED` para nó que parou de responder. O controller usa `OFFLINE`. `FAILED` e `QUARANTINED` existem no enum, mas nenhum caminho os produz.
-> - Estados de entrada `DISCOVERED`, `PROVISIONING`, `VALIDATING`, `BENCHMARKING` e `ACTIVE`/`DEGRADED`.
-> - Aquecimento de modelo e de estado antes de `READY` ([[model-manager]]).
-> - Replanejamento com comparação de melhoria esperada. Hoje a reavaliação é implícita, a cada poll de trabalho.
-> - Capacidade agregada atualizada após entrada e saída ([[modelo-de-desempenho]]).
-> - Sinal de falha vindo do worker. Hoje a perda só é notada pelo silêncio do heartbeat.
-> - Recuperação incremental. Unidade reoferecida recomeça do zero.
-> - Reatribuição que evite o nó que falhou.
+## Garantias
 
-> [!warning] Divergência do MVP
-> A arquitetura-alvo separa a saída planejada (drenar, checkpoint, liberar) da perda (`FAILED`, replanejar). No MVP, as duas usam o mesmo caminho de devolver à fila, e a perda passa por `OFFLINE`. Para o usuário, o efeito é o mesmo para unidades puras, porque a unidade recomeça do zero. A diferença aparece em estado de longa duração, que o MVP ainda não tem. Migração prevista: o [[state-manager]] passa a produzir checkpoints de estado por chave, e a saída planejada passa a esperar a drenagem.
+- Um resultado é aceito só do nó para o qual a unidade foi despachada. Resultado atrasado de nó que perdeu a posse é recusado.
+- Cada atribuição conta uma tentativa. Quando um nó cai ou sai, a unidade volta à fila, e a próxima atribuição conta de novo.
+- O orçamento de três tentativas limita o desperdício quando um nó continua caindo.
+- Com o estado gravado em disco, uma unidade em voo volta ao reinício com o mesmo dono. Sem cópia do estado, um reinício perde as unidades não concluídas, e o cliente deve reenviá-las.
+
+## Limites conhecidos
+
+- Não há drenagem que espere o trabalho ativo terminar. Quando um nó sai, suas unidades em voo voltam à fila na hora.
+- Não há checkpoint de trabalho ativo nem liberação de modelo ou estado na saída.
+- A perda de nó é notada só pelo silêncio do heartbeat. Não há sinal de falha vindo do worker.
+- Não há estado `FAILED` para nó que parou de responder. Usa-se `OFFLINE`.
+- A gravação da posse é preguiçosa: a atribuição de uma unidade não é gravada sozinha, só as mutações seguintes levam a posse ao disco. Se o controller reinicia logo após um despacho, a unidade volta à fila sem dono e pode rodar duas vezes. O resultado do primeiro nó é recusado quando chega, e o trabalho extra é gasto. Para uma multiplicação de matrizes determinística, o resultado final é o mesmo.
+- Não há replanejamento com comparação de melhoria esperada. A reavaliação do cluster acontece a cada pedido de trabalho.
+- Não há capacidade agregada atualizada após entrada e saída.
+- Uma unidade reoferecida recalcula a multiplicação inteira. Não há recuperação incremental.
+- A reatribuição não evita o nó que já falhou a unidade.
+- A cópia de estado fica em cada nó com `AI_CLUSTER_STATE_REPLICA`, sem fator de replicação nem nó designado. Com estado grande, o tráfego cresce com o número de nós e de gravações.
+- A cópia não tem identidade do cluster. Um controller novo apontado para nós que guardam a cópia de outro cluster adota aquela fila.
+- O registro de nós e o log de eventos não são persistidos por padrão. Eventos só sobrevivem a reinício quando `AI_CLUSTER_EVENTS` está definido, e guardam os 256 últimos eventos. O arquivo é compactado a partir de 1024 linhas. Não há `fsync` a cada evento: uma queda de energia pode perder os últimos.
+
+> Planejado: drenagem que espera o trabalho ativo, checkpoint de trabalho ativo, estado `FAILED`, replanejamento com ganho esperado, aquecimento de modelo e de estado antes de `READY` (ver [[model-manager]]), e recuperação incremental. Ver também [[state-manager]].

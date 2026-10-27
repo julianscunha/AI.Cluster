@@ -1,83 +1,79 @@
 ---
 title: "Estado das decisões"
-aliases: ["STATUS", "Status da arquitetura", "Estado da arquitetura"]
+aliases: ["STATUS", "Status da arquitetura", "Estado da arquitetura", "Decisões vigentes"]
 tags: [sistema/arquitetura]
 type: sistema/arquitetura
-status: vivo
-implementacao: parcial
 ---
 
 # Estado das decisões
 
-Voltar para [[arquitetura]]. Esta nota separa **o estado da decisão** (decidido, proposto, experimental, aberto) do **estado da implementação** (marcas abaixo). O estado de implementação por fase e por slice está em [[status]].
+Voltar para [[arquitetura]]. Esta página separa as decisões vigentes, as propostas, as experimentais e as questões de desenho ainda abertas. O registro de cada decisão, com contexto, alternativas e consequências, está em [[decisoes]].
 
-Legenda de implementação: `[x]` implementado e validado · `[~]` parcial · `[ ]` não iniciado.
+## Vigentes
 
-## Decidido
+| Decisão | ADR |
+|---|---|
+| Linux em todos os nodes. | [[arquitetura]] §7, [[adr-001-base-linux]] |
+| Rust como linguagem principal do Controller e do Worker. | [[adr-008-stack-inicial]] |
+| gRPC + Protocol Buffers como RPC e schema do control plane. | [[adr-008-stack-inicial]], [[protocolo-controller-worker]] |
+| Controller separado do Worker Runtime. | [[adr-003-controller-worker]] |
+| Work Unit como unidade de execução. | [[work-unit]] |
+| Hardware tratado por capability, não por modelo de máquina. | [[principios]] P-001, [[capability-engine]] |
+| Health, capacity e trust separados. | [[saude-e-confianca]], [[principios]] P-004 e P-005 |
+| Execution Graph (WHAT), placement (WHERE) e Worker Runtime (HOW) separados. | [[principios]] P-003 |
+| O nó pede trabalho e o controller decide por custo, com histerese, prioridade e quarentena por evidência. | [[adr-011-escalonamento-por-custo]] |
+| Hot-plug por state objects, checkpoints e replanejamento, sem migração de memória viva. | [[adr-006-hotplug]] |
+| RAM e VRAM como HOT, SSD e NVMe como WARM, HDD como COLD. | [[adr-005-camadas-de-storage]] |
+| A Inference API é a única fronteira para cargas externas. | [[adr-007-fronteira-inference-api]] |
+| Pesos residentes nos workers, fatiados por faixas, com canal bidirecional pelo controller. | [[adr-009-canal-residente-de-fatias]] |
+| Papéis de credencial separados (join, operador, inferência, credencial por nó, chave de API), com falha fechada. | [[adr-010-papeis-de-credencial]] |
+| O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração. | [[adr-012-metricas-de-inferencia-no-gateway]] |
+| Estado do controller por snapshot do conjunto vivo, posse preguiçosa e cópia num nó. | [[adr-013-estado-do-controller-e-recuperacao]] |
+| O transporte carrega bytes em frames; o cluster segue em gRPC. | [[adr-014-abstracao-de-transporte]] |
+| Request Manager dentro do gateway, enquanto houver um só gateway. | [[adr-015-request-manager-no-gateway]] |
+| mTLS opcional no plano de controle, ligado por CA de clientes. | [[adr-016-mtls-opcional-no-plano-de-controle]] |
+| Instalação A/B imutável é o caminho oficial; boot de rede só instala e recupera. | [[adr-017-instalacao-a-b-e-boot-de-rede]] |
+| Release assinada (Ed25519) conferida no nó, versão sempre crescente e medida do slot como attestation de software. | [[adr-018-release-assinada-e-medida-do-slot]] |
 
-| Decisão | Impl. | Situação atual | Onde |
-|---|---|---|---|
-| Linux em todos os nodes. | [x] | Controller e workers rodam em Linux. | [[arquitetura]] §7 |
-| Rust como linguagem principal do Controller e do Worker. | [x] | Workspace Rust (edition 2024) em `code/`. | [[adr-008-stack-inicial]] |
-| gRPC + Protocol Buffers como RPC e schema do control plane. | [x] | `code/proto/cluster.proto`, tonic 0.14 e prost 0.14. | [[adr-008-stack-inicial]], [[protocolo-controller-worker]] |
-| Controller + Worker Runtime. | [x] | Separação implementada. | [[adr-003-controller-worker]] |
-| Work Unit como unidade de execução. | [x] | Unidade de trabalho com DAG e retries. | [[work-unit]] |
-| Mesmo AI Cluster OS lógico com hardware distinto. | [ ] | Ainda não há imagem própria. | [[ai-cluster-os]], [[adr-002-os-imutavel]] |
-| Reimage do sistema original após ingresso; não executar apenas um appliance sobre o Linux antigo. | [ ] | Reimage não implementado. | [[provisionamento]], [[adr-002-os-imutavel]] |
-| Suporte conceitual a PCs, servidores, SBCs e celulares compatíveis. | [ ] | Não implementado. | [[provisionamento]], [[fase-18-worker-movel]] |
-| Hardware heterogêneo. | [~] | Nós de tamanhos diferentes já são filtrados por capability. | [[capability-engine]], [[fase-02-capability-e-saude]] |
-| Hot-plug / hot-remove. | [~] | Join/leave seguro validado; recuperação de estado em aberto. | [[hotplug-e-recuperacao]], [[adr-006-hotplug]] |
-| Capability scoring multidimensional. | [~] | Threads, RAM e health são reportados; scoring multidimensional ainda não. | [[capability-engine]] |
-| Health, Capacity e Trust separados. | [~] | Health e capacity são reportados; trust ainda parcial. | [[saude-e-confianca]], [[seguranca]] |
-| Execution Graph + Placement Plan. | [~] | DAG com dependências e retries validado; custo de placement em `placement.rs`, sem locality nem fator térmico. | [[execution-graph]], [[execution-planner]], [[fase-04-escalonamento]] |
-| Pipeline / Tensor / Hybrid parallelism. | [ ] | Não implementado. | [[fase-12-model-runtime]] |
-| Edge optimization antes da inferência pesada. | [ ] | Não implementado. | [[edge-optimizer]], [[fase-14-edge-optimizer]] |
-| Graph engine para relações e retrieval. | [ ] | Não implementado. | [[graph-engine]], [[adr-004-grafo-como-projecao]] |
-| Storage intelligence com detecção HDD/SSD/NVMe. | [~] | Classe por dispositivo (HDD = COLD, SSD/NVMe = WARM) no worker; a fase segue parcial. | [[storage-intelligence]], [[adr-005-camadas-de-storage]] |
-| SSD/NVMe aproveitados para cache/swap conforme política. | [ ] | Não implementado. | [[storage-intelligence]], [[fase-10-inteligencia-de-storage]] |
-| Telemetria detalhada e TUI via shell. | [~] | Eventos e métricas prontos; o dashboard de texto existe no CLI (`--watch`); TUI full-screen com ratatui não iniciada. | [[observabilidade]], [[cli-tui]] |
-| Performance Model expected vs actual. | [~] | Previsto vs real já existe no roll-up de métricas; sem calibração contínua do modelo. | [[modelo-de-desempenho]], [[f05-previsto-vs-real]] |
-| Application Plane desacoplado via Inference API. | [~] | Gateway com chave de API, `/v1/models`, `/v1/embeddings` e `/v1/chat/completions`; o modelo roda no próprio gateway, fora do cluster. | [[inference-api]], [[adr-007-fronteira-inference-api]] |
-| Request Manager separado do Scheduler. | [ ] | Não implementado. | [[request-manager]], [[fase-11-request-manager]] |
-| Inference Engine separado do Planner/Scheduler. | [~] | Forward de GPT-2 small e SmolLM2-135M em CPU com paridade contra `transformers`; projeções em workers pelo canal residente de fatias. | [[inference-engine]], [[adr-009-canal-residente-de-fatias]] |
+## Propostas
 
-## Proposto
+Decisões sugeridas que ainda não foram tomadas.
 
-| Proposta | Situação atual | Onde |
-|---|---|---|
-| Base Linux específica. | Não escolhida. | [[adr-001-base-linux]] |
-| PXE/iPXE para provisionamento. | Não implementado. | [[provisionamento]] |
-| PostgreSQL + time-series + object storage + projeção em grafo. | Hoje: snapshot de arquivo e roll-up em memória. | [[state-manager]], [[arquitetura]] §17 |
-| mTLS. | TLS implementado ([[fase-07-seguranca-base]]); mTLS opcional e attestation de software (medida do slot, [[adr-018-release-assinada-e-medida-do-slot]]) em F19. | [[seguranca]], [[fase-19-hardening-de-producao]] |
+| Proposta | ADR |
+|---|---|
+| Base Linux específica. | [[adr-001-base-linux]] |
+| Imagem versionada e imutável com atualização A/B como padrão do OS do nó. | [[adr-002-os-imutavel]] |
+| Grafo como projeção, não como fonte única de verdade. | [[adr-004-grafo-como-projecao]] |
+| PostgreSQL, time-series, object storage e projeção em grafo para metadados e métricas. | [[state-manager]], [[arquitetura]] §17 |
+| PXE/iPXE para provisionamento de PCs e servidores. | [[provisionamento]] |
 
-## Experimental
+## Experimentais
 
 Precisam de benchmark ou prova de conceito antes de virar decisão.
 
-| Tema | Onde |
+| Tema | Nota |
 |---|---|
-| Mobile boot/reimage universal. | [[fase-18-worker-movel]] |
-| NPU backends. | [[fase-16-aceleradores]] |
+| Mobile boot/reimage universal. | [[provisionamento]] |
+| Backends de NPU. | [[ai-cluster-os]] |
 | RDMA. | [[camada-de-transporte]] |
 | Zero-copy cross-device. | [[camada-de-transporte]] |
-| Speculative execution thresholds. | [[fase-17-runtime-adaptativo]] |
-| Learned planner. | [[fase-17-runtime-adaptativo]], [[execution-planner]] |
+| Limiares de execução especulativa. | [[execution-planner]] |
+| Planejador aprendido. | [[execution-planner]] |
 
-## Aberto
+## Questões em aberto
 
-| Questão | Onde |
+| Questão | Nota |
 |---|---|
 | Base Linux exata. | [[adr-001-base-linux]] |
-| Formato interno de tensor e shard. | [[model-manager]], [[fase-12-model-runtime]] |
-| Tecnologia de graph database / projeção. | [[graph-engine]] |
+| Formato interno de tensor e shard. | [[model-manager]] |
+| Tecnologia de graph database e de projeção. | [[graph-engine]] |
 | Tecnologia de time-series. | [[observabilidade]] |
-| Modelo de armazenamento distribuído. | [[state-manager]], [[storage-intelligence]] |
-| Formato do worker móvel. | [[fase-18-worker-movel]] |
-| Estratégia final de kernel optimization. | [[fase-16-aceleradores]] |
-
-> [!note] Correções em relação ao STATUS anterior
-> - A linguagem principal do Controller e do Worker saiu de *Aberto* e virou *Decidido* (Rust, [[adr-008-stack-inicial]]).
-> - A TUI deixou de ser "não iniciada": existe o dashboard de texto do CLI. Só a TUI full-screen segue pendente.
-> - Storage deixou de ser "não iniciado": a classificação por dispositivo existe no worker. Alocação dinâmica e aproveitamento de SSD/NVMe seguem pendentes.
-> - gRPC + Protobuf saiu de *Proposto* e virou *Decidido* (ADR-008), já em uso.
-> - Previsto vs real deixou de ser "não iniciado": o roll-up de métricas já compara previsto e real.
+| Modelo de armazenamento distribuído do estado. | [[state-manager]], [[storage-intelligence]] |
+| Quando adotar pipeline ou paralelismo híbrido (modelo que não cabe em um nó). | [[inference-engine]] |
+| Rebalanceamento de fatias quando um nó entra no cluster. | [[canal-de-fatias]] |
+| Formato do worker móvel. | [[provisionamento]] |
+| Estratégia final de kernel optimization. | [[worker-runtime]] |
+| Imagem para ARM64 e x86_64 (instalador e bootloader próprios). | [[adr-017-instalacao-a-b-e-boot-de-rede]] |
+| Assinatura do boot, dm-verity e TPM. | [[adr-018-release-assinada-e-medida-do-slot]] |
+| Revogação de chave de release sem imagem nova. | [[adr-018-release-assinada-e-medida-do-slot]] |
+| Ligação do certificado de cliente ao `node_id`. | [[adr-016-mtls-opcional-no-plano-de-controle]] |

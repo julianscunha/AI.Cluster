@@ -3,13 +3,11 @@ title: "Subsistemas"
 aliases: ["Mapa de subsistemas", "02-subsistemas"]
 tags: [sistema/moc]
 type: sistema/moc
-status: vivo
-implementacao: parcial
 ---
 
 # Subsistemas
 
-Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem um MOC próprio. Cada nota descreve a arquitetura-alvo completa do subsistema e, no fim, o que o MVP já faz (`O que já existe`) e o que falta (`todo`). Voltar para [[system]].
+Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem uma nota própria, e cada nota descreve o que existe hoje e, em linha marcada com `> Planejado:`, o que ainda não existe. Voltar para [[system]].
 
 ## Grupos
 
@@ -20,7 +18,7 @@ Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem um MOC própri
 | [[dados]] | Onde o estado mora | State Manager, Storage Intelligence, Graph Engine |
 | [[ia]] | Como uma requisição de IA é atendida | Inference API, Request Manager, Edge Optimizer, Model Manager, Inference Engine |
 | [[plataforma]] | Como o sistema é provisionado e protegido | AI Cluster OS, provisionamento, segurança |
-| [[operacao]] | Como o sistema é observado e operado | Observabilidade, CLI e TUI |
+| [[operacao]] | Como o sistema é observado e operado | Observabilidade, CLI |
 
 ## Dependências entre grupos
 
@@ -31,5 +29,5 @@ Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem um MOC própri
 
 Leitura recomendada: substrato, depois execução, dados, IA, plataforma e operação. Os protocolos entre controller e workers estão em [[protocolo-controller-worker]], e as decisões em [[decisoes]].
 
-> [!warning] Estado do MVP
-> O caminho de inferência roda no gateway, fora do modelo de subsistemas alvo: o modelo é executado no processo do gateway e só as projeções vão a workers. Os desvios e a migração estão em [[ia]] e nas notas de cada subsistema.
+> [!note] Onde a inferência roda hoje
+> A inferência não segue à risca o modelo de subsistemas. O gateway recebe a requisição, autentica, admite e executa o modelo no próprio processo. Só as projeções lineares são enviadas aos workers, em faixas residentes. Detalhes em [[ia]].

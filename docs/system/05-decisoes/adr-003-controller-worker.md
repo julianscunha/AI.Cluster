@@ -3,14 +3,11 @@ title: "ADR-003 — Controller e Worker"
 aliases: ["ADR-003", "ADR-003 — Controller / Worker"]
 tags: [sistema/adr, subsistema/execucao]
 type: sistema/adr
-status: decidido
-implementacao: implementado
-fases: ["[[fase-01-nucleo-do-cluster]]"]
 ---
 
 # ADR-003 — Controller e Worker
 
-Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -22,13 +19,13 @@ Separar o control plane do cluster (o controller) do Worker Runtime ([[worker-ru
 
 ## Consequências
 
-Permite hardware heterogêneo, scheduler central e execução local otimizada.
+- Permite hardware heterogêneo, scheduler central e execução local otimizada.
+- Controller e worker são binários separados que falam gRPC ([[protocolo-controller-worker]]). O registro, a aprovação e o trabalho passam pelo controller.
 
 ## Alternativas
 
-- Não registradas no ADR original.
+- Nenhuma alternativa registrada.
 
-> [!info] O que já existe
-> `code/crates/controller` e `code/crates/worker` são binários separados que falam gRPC ([[protocolo-controller-worker]]). O registro, a aprovação e o trabalho passam pelo controller ([[fase-01-nucleo-do-cluster]]).
+## Limites
 
-> [!todo] Não há controller em alta disponibilidade. A cópia do estado num nó cobre a perda do volume do controller ([[f06-recuperacao]]); a recuperação completa está em [[fase-06-estado-e-recuperacao]].
+- Não há controller em alta disponibilidade. Uma cópia do estado num nó cobre a perda do volume do controller ([[adr-013-estado-do-controller-e-recuperacao]]).

@@ -1,97 +1,96 @@
 ---
 title: "Escalonador"
-aliases: ["Scheduler", "docs/11", "11 — Scheduler"]
-tags: [sistema/subsistema/execucao, subsistema/scheduler]
+aliases: ["Scheduler", "Escalonador"]
+tags: [sistema/subsistema/execucao]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-04-escalonamento]]"]
 ---
 
 # Escalonador
 
 Voltar para [[execucao]].
 
-## Objetivo
+O escalonador atribui Work Units a nós e a núcleos. Ele roda em dois níveis.
 
-Atribuir Work Units a nós e recursos, maximizando o objetivo da execução: latência, vazão ou o perfil da requisição.
+- **Global (controller):** escolha do nó, reservas e prioridade da fila.
+- **Local (worker):** quantos núcleos cada unidade recebe e quantas unidades rodam ao mesmo tempo.
 
-## Dois níveis
+## Despacho por demanda
 
-**Global** (controller):
+Cada worker pede trabalho ao controller (`RequestWork`) a cada 200 ms quando está ocioso, e logo após concluir uma unidade. O controller decide, naquele pedido, se entrega a unidade àquele nó.
 
-- seleção de nó;
-- placement do plano ([[execution-planner]]);
-- reservas;
-- prioridades;
-- rebalanceamento.
+Um nó ocioso que para de pedir trabalho pode segurar uma unidade. Como ele continua enviando heartbeat, não é marcado como offline. Ver limites.
 
-**Local** (worker):
+## Filtro de candidatos
 
-- cores;
-- filas de GPU/NPU;
-- memória local;
-- ordem local.
+Um nó só recebe a unidade se:
 
-## Modelo de despacho
+- tem threads reportadas em número igual ou maior que `min_cpu_threads` da unidade;
+- tem memória reportada suficiente para os operandos e o resultado. Memória zero não filtra;
+- é elegível: aprovado e fora dos estados `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`;
+- está ocioso (sem unidade em voo) ou tem slot livre.
 
-O despacho é por demanda: cada worker pergunta ao controller por trabalho (`RequestWork`), e o controller decide, naquele momento, se entrega ou não a unidade àquele nó. Por isso a decisão de placement é um filtro e um ranking sobre o nó que pergunta, não uma escolha de empurrar trabalho para um nó.
+Um requisito que nenhum nó sobrevivente atende deixa a unidade pendente, sem erro.
 
-## Filtragem de candidatos
+## Custo de placement
 
-Excluir rapidamente os nós sem:
+O custo estimado de rodar a unidade no nó é a soma de três termos, multiplicada pelo fator de saúde. Menor é melhor.
 
-- capability: threads mínimas declaradas pela unidade;
-- memória: footprint da unidade contra a memória reportada;
-- confiança: nó aprovado e não em estado de saída, quarentena ou falha;
-- alcance de rede;
-- suporte à precisão.
+- **Compute:** operações da unidade sobre a taxa do nó (threads vezes score de compute medido). Sem medida, usa 1,0 por thread.
+- **Transferência:** bytes que a unidade move sobre a velocidade de rede do nó (menor entre a nominal e a alcançada).
+- **Fila:** 50 pontos por unidade já em voo no nó. Impede que um nó ocupado, porém mais rápido, leve tudo.
+- **Saúde:** fator multiplicativo. Escore de saúde zero é tratado como não reportado.
 
-## Dimensões de pontuação
+Os pesos são fixos. Só a ordem entre nós importa.
 
-- custo de compute;
-- custo de comunicação;
-- custo de fila;
-- localidade;
-- folga térmica;
-- saúde;
-- custo de mover estado;
-- confiabilidade;
-- viabilidade do prazo.
+## Decisão
 
-## Reserva
+O nó que pergunta leva a unidade quando é o candidato ocioso mais barato, ou um candidato dentro da faixa de tolerância (10%). Se outro nó ocioso é mais barato além dessa faixa, o nó que pergunta recebe nada e pede de novo. A unidade fica na fila para o nó que encaixa melhor.
 
-Um nó pode ser reservado para uma requisição antes de o trabalho existir. Enquanto a reserva vale, o nó só aceita unidades dessa requisição, e as unidades dela só rodam nele, mesmo que não seja o mais barato.
+- Só nós ociosos entram no ranking.
+- Com `AI_CLUSTER_PLACEMENT=off`, o primeiro nó que pede leva a unidade. Serve para comparar a política com e sem decisão.
+- `AI_CLUSTER_PLACEMENT_TOLERANCE` ajusta a faixa. Valor inválido é limitado a uma faixa válida, e faixa zero significa "estritamente o mais barato".
 
-## Rebalanceamento
+## Prioridade
 
-Migrar trabalho só quando o ganho esperado supera um limiar configurável e o custo da migração.
+Cada unidade tem prioridade de 0 a 9 (valores acima de 9 são reduzidos a 9 no enfileiramento). Entre as unidades prontas que cabem no nó que pergunta, sai a de maior `prioridade × 64 + passagens`. Empate sai pela ordem de chegada.
 
-## Execução especulativa
+O campo `passagens` conta quantos despachos passaram por cima da unidade enquanto ela esperava. Uma unidade de prioridade baixa ultrapassa um fluxo contínuo de unidades altas depois de cerca de 64 despachos. Uma unidade de prioridade alta que espera por um nó reservado não bloqueia as de prioridade menor.
 
-Usar apenas para stragglers e quando a economia de latência esperada justifica o compute gasto.
+Enfileirar unidades exige o papel de operador. Quem pode pedir prioridade alta, para cada requisição, ainda não tem regra própria.
 
-> [!info] O que já existe
-> - **Filtro duro** (`placement::fits`, `code/crates/controller/src/placement.rs`): `min_cpu_threads` da unidade e footprint (A e B lidos, C escrito, 8 bytes por elemento) contra threads e memória reportadas. Memória zero significa "não reportado" e não filtra. Ver [[f04-placement]].
-> - **Elegibilidade** (`registry::eligible`): nó confiável e fora de `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`. Confiança é um flag binário (aprovação e credencial, ver [[f07-aprovacao-de-no]]).
-> - **Custo** (`placement_cost`): compute, transferência, fila (50 por unidade em voo) e saúde. Pesos são placeholders; só a ordem entre nós tem significado.
-> - **Ranking só entre ociosos** e **histerese** de 10% (`AI_CLUSTER_PLACEMENT_TOLERANCE`). `AI_CLUSTER_PLACEMENT=off` volta ao primeiro que pergunta. Ver [[f04-placement]].
-> - **Reservas** (`code/crates/controller/src/reservations.rs`): por nó, com TTL padrão de 60 s, vencimento lido na consulta. RPCs `Reserve`, `ListReservations`, `ReleaseReservation`. Ver [[f04-reservas]].
-> - **Local**: `worker::core_budget` concede `min(threads reportadas, cores do host)`, e o produto é dividido por linhas. Ver [[f04-scheduler-local]].
-> - **Prioridade na fila do controller**: `WorkUnit.priority` define o ranking `priority*64 + passagens` (`work.rs::best_position`), com FIFO como desempate. Ver [[f04-scheduler-local]].
-> - Evidências: `bash code/tests/phase-g-priority.sh`, `bash code/tests/phase-g-placement.sh`, `bash code/tests/phase-g-memory.sh`, `bash code/tests/phase-g-reservations.sh`, `bash code/tests/phase-g-cores.sh`.
+## Reservas
 
-> [!todo] Não implementado
-> - Classes nomeadas de prioridade (CRITICAL a CACHE, ver [[worker-runtime]]) e autorização por papel. Hoje a prioridade é um inteiro por unidade (`WorkUnit.priority`, maior primeiro, FIFO dentro da classe, envelhecimento de 64 passagens por classe); a Request Manager ([[fase-11-request-manager]]) é quem deve herdá-la da requisição.
-> - Dimensões de pontuação ausentes: localidade, folga térmica, custo de mover estado, confiabilidade e prazo. O registro não carrega esses dados.
-> - Filtros de precisão, acelerador e armazenamento. O worker reporta, mas nenhuma unidade pode exigir.
-> - Confiança em níveis (UNKNOWN → TRUSTED). Hoje é binária.
-> - Rebalanceamento: trabalho só muda de nó quando o nó sai ou falha.
-> - Execução especulativa.
-> - Fila local ordenada por classe e admissão por memória no worker. Hoje há só slots de concorrência (`AI_CLUSTER_WORK_SLOTS`, [[f04-scheduler-local]]).
-> - Escolha da unidade de melhor encaixe para o nó que pergunta (a G4). Hoje só a primeira unidade elegível é avaliada.
-> - Reserva de fração de nó (cores ou memória). A reserva retém o nó inteiro.
-> - Reserva que sobrevive a restart. Hoje é só em memória.
+Um cliente pode reter um nó para a requisição dele antes de o trabalho existir.
 
-> [!warning] Teto do MVP
-> Um nó ocioso que para de perguntar pode segurar uma unidade. Ele continua mandando heartbeat, então não é marcado offline, e o controller infere "ocioso" só pela ausência de unidade em voo. Revisitar com idade do último poll ou contador de recusas. Mesma nota em [[hotplug-e-recuperacao]].
+- Uma reserva prende um nó inteiro a um `request_id` por um tempo (padrão 60 s, `ttl_ms` configurável). Um nó tem no máximo uma reserva; uma nova substitui a antiga.
+- Enquanto a reserva vale, o nó só aceita unidades daquela requisição, **mesmo com `AI_CLUSTER_PLACEMENT=off`**.
+- As unidades da requisição só rodam no nó reservado, mesmo que ele seja o mais caro.
+- A expiração é verificada quando alguém pergunta pela reserva, não por um temporizador. Um cliente que some libera o nó no primeiro consulta depois do vencimento.
+
+```bash
+ai-cluster reserve <nó> <requisição> --ttl-ms 60000
+ai-cluster benchmark --request-id <requisição>
+ai-cluster release <nó>
+ai-cluster reservations
+```
+
+## Concorrência local
+
+- Cada worker roda até `AI_CLUSTER_WORK_SLOTS` unidades ao mesmo tempo (padrão 1, limite 64).
+- Cada unidade recebe `núcleos do orçamento / slots`, no mínimo 1 núcleo. O orçamento é `min(threads reportadas, núcleos do host)`.
+- O nó só aparece como ocupado no controller quando todos os slots têm unidade.
+
+## Limites conhecidos
+
+- Não há rebalanceamento. Trabalho só muda de nó quando o nó sai ou cai.
+- Não há execução especulativa.
+- Não há filtro por precisão, acelerador ou armazenamento. O worker reporta esses campos, mas nenhuma unidade pode exigi-los.
+- Não há fila local ordenada por classe nem admissão por memória no worker. Há só o limite de slots.
+- A reserva retém o nó inteiro. Não há reserva de parte de núcleos ou de memória.
+- Reservas não sobrevivem a reinício.
+- O ranking decide qual nó pega a unidade, mas só a primeira unidade elegível é avaliada para cada nó. Não se escolhe a unidade de melhor encaixe.
+- O número de núcleos vem de `available_parallelism`, não de medida de desempenho.
+- A prioridade não é persistida. Um reinício zera a idade das unidades.
+- Um nó ocioso que para de pedir trabalho segura a unidade enquanto continuar enviando heartbeat.
+
+> Planejado: classes de prioridade nomeadas, dimensões de pontuação de localidade, folga térmica, custo de mover estado e confiabilidade, filtros por precisão e acelerador, fila local por classe, reserva de fração de nó e reservas que sobrevivem a reinício.

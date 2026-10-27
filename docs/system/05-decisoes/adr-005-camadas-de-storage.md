@@ -3,14 +3,11 @@ title: "ADR-005 — Camadas de armazenamento"
 aliases: ["ADR-005", "ADR-005 — Storage Tiering"]
 tags: [sistema/adr, subsistema/dados]
 type: sistema/adr
-status: decidido
-implementacao: parcial
-fases: ["[[fase-10-inteligencia-de-storage]]"]
 ---
 
 # ADR-005 — Camadas de armazenamento
 
-Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -24,13 +21,12 @@ Política adicional: SSD e NVMe saudáveis podem receber uso amplo de cache e sw
 
 ## Consequências
 
-Não registradas no ADR original.
+- Cada worker classifica o próprio armazenamento a partir de `/sys/block`: NVMe e SSD como WARM, HDD como COLD ([[storage-intelligence]]).
 
 ## Alternativas
 
-- Não registradas no ADR original.
+- Nenhuma alternativa registrada.
 
-> [!info] O que já existe
-> Cada worker classifica o próprio armazenamento ([[f10-classes-de-armazenamento]]), e há benchmark de escrita sequencial com fsync (Fase K2 em [[fase-10-inteligencia-de-storage]]). A política de cache e swap em SSD não está implementada.
+## Limites
 
-> [!todo] Política de cache e swap com limites de endurance, SMART e alocação dinâmica ficam em [[storage-intelligence]] e [[fase-10-inteligencia-de-storage]].
+- A política de cache e swap em SSD e NVMe não existe. Também não existem leitura de SMART e alocação dinâmica entre HOT, WARM e COLD ([[storage-intelligence]]).

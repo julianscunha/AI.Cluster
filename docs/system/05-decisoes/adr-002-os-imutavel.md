@@ -3,14 +3,11 @@ title: "ADR-002 — OS imutável do AI Cluster"
 aliases: ["ADR-002", "ADR-002 — Immutable AI Cluster OS"]
 tags: [sistema/adr, subsistema/plataforma]
 type: sistema/adr
-status: proposto
-implementacao: nao-iniciado
-fases: ["[[fase-15-ai-cluster-os]]", "[[fase-19-hardening-de-producao]]"]
 ---
 
 # ADR-002 — OS imutável do AI Cluster
 
-Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: proposto · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -22,13 +19,14 @@ Usar imagem versionada e imutável, com reimage inicial e atualização A/B.
 
 ## Consequências
 
-Evita configuration drift e facilita rollback e recuperação.
+- Evita configuration drift e facilita rollback e recuperação.
+- A atualização de versão passa por release assinada conferida no nó ([[adr-018-release-assinada-e-medida-do-slot]]).
 
 ## Alternativas
 
-- Configuração mutável por nó: não registrada no ADR original; a justificativa é o drift que a decisão evita.
+- Configuração mutável por nó: a justificativa é o drift que a decisão evita.
 
-> [!info] O que já existe
-> Nada. `code/os/` contém só o README.
+## Limites
 
-> [!todo] Reimage, atualização A/B e rollback ficam em [[fase-15-ai-cluster-os]] e [[fase-19-hardening-de-producao]]. Ver [[provisionamento]].
+- Raiz somente leitura e slots A/B existem hoje só na imagem armv7 ([[adr-017-instalacao-a-b-e-boot-de-rede]]). x86_64 e ARM64 ainda não têm imagem.
+- Reimage, atualização A/B e rollback: ver [[provisionamento]].

@@ -13,79 +13,122 @@
 
 **English** · [Português](README.md)
 
-# AI Cluster — Distributed AI Runtime
+# AI Cluster
 
-A Linux-first runtime written in Rust that turns repurposed, heterogeneous hardware (PCs, laptops, servers, SBCs such as the Orange Pi) into a **single pool of compute for AI**. One inference can be split across several devices; nodes join, leave, fail and drain without taking the cluster down.
+**Turn the idle machines you already own (old PCs, laptops, servers, Raspberry/Orange Pi boards) into a single pool of compute for AI.**
 
-> Note: the project documentation (`docs/`) and commit messages are in Brazilian Portuguese.
+Each one is weak; together they run a model. AI Cluster securely discovers and admits nodes, measures what each can do, splits the work, **slices the model weights across machines**, and keeps going when one of them dies. Written in Rust, with an OpenAI-compatible API.
 
-## Purpose
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Architecture: client, gateway, controller and workers" width="100%">
+</p>
 
-Plenty of idle machines are useful for AI once orchestrated: each is weak, the set is not. This project covers the gap between "I have ten old machines" and "I have an inference service": secure node discovery and admission, per-node capability measurement, cost-based placement, failure tolerance, observability, and updating the nodes' own operating system.
+## Why use it
 
-## What it does
+- **Reuses any hardware:** x86_64 and ARM in the same cluster, no GPU required.
+- **Truly distributed inference:** weights stay resident on the workers; only partial results travel. If a worker dies, its ranges are reassigned immediately.
+- **Nodes come and go:** token join, approval, drain, clean leave, automatic quarantine of misbehaving nodes.
+- **Role-based security:** separate credentials to join, operate and infer; optional mTLS; the gateway runs without the operator token.
+- **Its own OS for SBCs:** immutable Alpine A/B image with automatic rollback, **Ed25519-signed updates** and controller-driven canary rollout.
+- **Observable:** Prometheus metrics, events, request traces and a terminal dashboard.
 
-| Feature | How |
+<p align="center">
+  <img src="docs/assets/terminal-nodes.svg" alt="Real output of ai-cluster nodes with an x86 PC and an Orange Pi" width="100%">
+</p>
+
+## What you need
+
+| Item | Requirement |
 |---|---|
-| **Cluster** | The `controller` keeps the node registry, work store, reservations and events; the `worker` is the node agent (token join, heartbeat, drain, clean leave). |
-| **Capability and placement** | Each node measures CPU, memory, network and disk; the controller decides where each Work Unit runs by cost, with DAGs, retries and re-planning. |
-| **Distributed inference** | The `gateway` serves `/v1/chat/completions` (SSE) on GPT-2 and SmolLM2; the `engine` slices the weight projections across workers, which keep them resident. If a worker dies, its ranges are reassigned. Numerical parity with `transformers` is an acceptance criterion. |
-| **Role-based security** | Three credentials (join, operator, inference); optional mTLS; the gateway runs without the operator token. |
-| **Observability** | Prometheus metrics, events, traces and a CLI dashboard. |
-| **AI Cluster OS** | Alpine A/B image for SBCs with u-boot, automatic rollback, an **Ed25519-signed release** verified on the node, controller-driven canary rollout, and a SHA-256 measurement of the slot as software attestation. |
+| **Where to run the commands** | On your own computer, **inside the `code/` folder of the cloned repository**. The commands below start a test cluster in Docker containers on the same machine; you do not need several machines to try it. |
+| **OS** | Linux, macOS or Windows (with Docker Desktop). On Windows use Git Bash or PowerShell. |
+| **Docker** | Docker Engine or Docker Desktop running. |
+| **RAM / disk** | ~4 GB free RAM and ~6 GB disk for the build. |
+| **Rust** | Only to build without Docker: stable Rust ≥ 1.85 (edition 2024). `protoc` is bundled. |
+| **AI models** | Optional. GPT-2 / SmolLM2 inference needs the weights in `code/models/` ([how to get them](docs/guia/instalacao.md)); the cluster, CLI and benchmark work without them. |
+| **Network** | On a real cluster, nodes must reach the controller port (default `50051`). |
 
-The exact state (what exists vs. target architecture) is in [`docs/implementation/status.md`](docs/implementation/status.md). Known security limits are in the ADRs, e.g. [ADR-018](docs/system/05-decisoes/adr-018-release-assinada-e-medida-do-slot.md).
-
-## Architecture at a glance
-
-```
-                 operator (ai-cluster CLI)
-                          │  gRPC, operator token
-                          ▼
-   client ──HTTP──► gateway ──gRPC──► controller ◄──gRPC── workers (x86, ARM…)
- (/v1/chat/…)        │  engine           registry · placement     benchmark · ShardMatmul
-                     └─ weight slices ──────────────────────────► resident on workers
-```
-
-## Getting started
-
-Requirements: stable Rust (edition 2024) **or** Docker. `protoc` is vendored.
+## Get started in 5 minutes (one machine, no extra hardware)
 
 ```bash
 git clone https://github.com/julianscunha/Real.AI.Cluster.git
-cd Real.AI.Cluster/code
+cd Real.AI.Cluster/code                    # all commands below run here
 
-cargo test --workspace --all-features          # unit tests
-bash scripts/dev-cluster.sh build              # build into the aic-target Docker volume
-bash scripts/dev-cluster.sh up 2               # controller + 2 workers (no TLS, development only)
-bash scripts/dev-cluster.sh cli nodes          # nodes and health
+bash scripts/dev-cluster.sh build          # compile (a few minutes the first time)
+bash scripts/dev-cluster.sh up 2           # start 1 controller + 2 workers in containers
+bash scripts/dev-cluster.sh cli nodes      # list nodes and their health
 bash scripts/dev-cluster.sh cli dashboard --watch 2
-bash scripts/dev-cluster.sh down
+bash scripts/dev-cluster.sh cli benchmark --size 256 --repetitions 8
+bash scripts/dev-cluster.sh down           # stop everything
 ```
 
-On Windows use `scripts/dev-cluster.ps1`. The development cluster uses fixed tokens (`dev-token`, `dev-operator`): **never** expose it to an open network.
+On Windows (PowerShell): `scripts\dev-cluster.ps1` with the same arguments.
 
-End-to-end tests: `bash tests/<script>.sh` (map in [`docs/implementation/transversal/evidencias-e2e.md`](docs/implementation/transversal/evidencias-e2e.md)). Inference tests need the weights in `code/models/{gpt2,smollm2,smollm2-instruct}` (see [`f08-engine-local.md`](docs/implementation/08-inferencia/f08-engine-local.md)).
+> The development cluster runs **without TLS and with fixed tokens**. It is for your own machine only; never expose it to an open network. For production see [`docs/guia/operacao.md`](docs/guia/operacao.md).
 
-To install the OS on a real node (A/B image, signed rollout): [`provisionamento`](docs/system/02-subsistemas/plataforma/provisionamento.md) and [`f19-rollout-de-release`](docs/implementation/19-hardening-de-producao/f19-rollout-de-release.md).
+Run the tests: `cd code && cargo test --workspace --all-features` (or see [`docs/guia/testes.md`](docs/guia/testes.md)).
 
-## Layout
+## A real cluster: several machines
+
+1. On one machine run the **controller**; on the others run the **worker** pointing at it (`AI_CLUSTER_CONTROLLER=http://<controller-ip>:50051`).
+2. Each new node joins with the *join token* and you approve it: `ai-cluster approve <node>`.
+3. Watch it with `ai-cluster nodes`, `dashboard` and `events`.
+
+Step by step, TLS, tokens and every environment variable: [`docs/guia/instalacao.md`](docs/guia/instalacao.md) and [`docs/guia/configuracao.md`](docs/guia/configuracao.md). (The guides are in Brazilian Portuguese.)
+
+## Distributed inference
+
+The gateway exposes `POST /v1/chat/completions` (with SSE), `GET /v1/models` and `/metrics`. Each weight projection is split across workers, which keep it in memory.
+
+<p align="center">
+  <img src="docs/assets/inference-split.svg" alt="One model layer split across three workers" width="100%">
+</p>
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer <your-key>" -H "Content-Type: application/json" \
+  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":32}'
+```
+
+API details, supported models and how to enable slicing on workers: [`docs/guia/api.md`](docs/guia/api.md).
+
+## AI Cluster OS: safe node updates
+
+On ARM boards the project ships an immutable image with two slots (A/B). The operator signs a release; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
+
+<p align="center">
+  <img src="docs/assets/os-update.svg" alt="Signed update flow with A/B slots" width="100%">
+</p>
+
+Board install and rollout: [`docs/guia/operacao.md`](docs/guia/operacao.md). Known security limits: [`SECURITY.md`](SECURITY.md).
+
+## Project status
+
+Pre-production: the core (cluster, placement, distributed inference, role-based security, A/B image with signed releases) runs and is tested on an x86 PC and an Orange Pi (ARMv7). What is still missing is in [`docs/implementation/pendencias.md`](docs/implementation/pendencias.md): accelerators (GPU/NPU), mobile worker, key revocation and hardware attestation, among others.
+
+## Documentation
+
+| To | See |
+|---|---|
+| Install, configure and operate | [`docs/guia/`](docs/guia/guia.md) |
+| Understand how it works and is structured | [`docs/system/`](docs/system/system.md) (architecture, protocol, data model, decisions) |
+| Contribute code | [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) |
+
+Documentation is written in Brazilian Portuguese.
+
+## Repository layout
 
 ```
 code/
   crates/{common,protocol,controller,worker,transport,benchmark,cli,engine,gateway}
   proto/cluster.proto      wire contract (ai.cluster.v1)
   os/                      A/B image, netboot, installer
-  tests/ scripts/          shell E2E, development cluster
-docs/                      Obsidian vault: system/ (the system) and implementation/ (phases F00–F19)
+  scripts/ tests/          development cluster, end-to-end tests
+docs/                      guia/, system/, implementation/ (pending work)
 ```
 
-## Documentation
+## Contribute
 
-All project knowledge lives in an Obsidian vault under `docs/`. Start at [`docs/inicio.md`](docs/inicio.md); conventions in [`docs/convencoes.md`](docs/convencoes.md). Crate layout and pitfalls: [`AGENTS.md`](AGENTS.md).
+Give it a ⭐ if you like the idea, open an issue with ideas or problems and read [`CONTRIBUTING.md`](CONTRIBUTING.md). Vulnerabilities: [`SECURITY.md`](SECURITY.md) (private report, do not open an issue). Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-## Contributing, security and license
-
-- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-- Vulnerabilities: [`SECURITY.md`](SECURITY.md) (do not open a public issue)
-- License: [Apache-2.0](LICENSE)
+License: [Apache-2.0](LICENSE).

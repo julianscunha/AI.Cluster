@@ -1,13 +1,13 @@
 # AI Cluster
 
-Runtime de IA distribuído, Linux-first. O workspace executável é `code/` (Rust). A documentação é um vault do Obsidian em `docs/`, em duas pastas: `docs/system/` (o sistema, arquitetura-alvo completa) e `docs/implementation/` (fases `F00`–`F19`, slices, status, testes).
+Runtime de IA distribuído, Linux-first. O workspace executável é `code/` (Rust). A documentação é um vault do Obsidian em `docs/`, em três pastas: `docs/guia/` (instalar, configurar, operar), `docs/system/` (como o sistema funciona e como é estruturado) e `docs/implementation/` (só o que falta).
 
 ## Fonte da verdade
 
 - Trate arquivos locais como autoritativos. Comece por `docs/inicio.md`.
 - Arquitetura-alvo: `docs/system/` (mestre: `docs/system/01-arquitetura/arquitetura.md`). Decisões: `docs/system/05-decisoes/`.
-- O que existe e o que falta: `docs/implementation/status.md`; ordem e dependências: `docs/implementation/implementation.md`.
-- Convenções de formato dos docs (wikilinks, frontmatter, checkbox `Superado`): `docs/convencoes.md`. Ao mudar código, atualize o slice `fNN-*` correspondente e, se a decisão for arquitetural, registre um ADR.
+- Uso e operação: `docs/guia/`. O que falta: `docs/implementation/pendencias.md`.
+- Convenções de formato dos docs (wikilinks, frontmatter): `docs/convencoes.md`. Ao mudar código, atualize `docs/system/` e `docs/guia/` e, se a decisão for arquitetural, registre um ADR.
 
 ## Workspace e CI
 
@@ -20,7 +20,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Os testes E2E ficam em `code/tests/*.sh` (mapa em `docs/implementation/transversal/evidencias-e2e.md`). Os que usam pesos de modelo exigem `code/models/{gpt2,smollm2,smollm2-instruct}` (ignorados pelo git).
+Os testes E2E ficam em `code/tests/*.sh` (mapa em `docs/guia/testes.md`). Os que usam pesos de modelo exigem `code/models/{gpt2,smollm2,smollm2-instruct}` (ignorados pelo git).
 
 ## Layout
 

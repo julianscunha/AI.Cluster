@@ -3,14 +3,11 @@ title: "ADR-007 — API como fronteira entre Application Plane e AI Cluster"
 aliases: ["ADR-007", "ADR-007 — API como fronteira entre Application Plane e AI Cluster"]
 tags: [sistema/adr, subsistema/ia]
 type: sistema/adr
-status: decidido
-implementacao: parcial
-fases: ["[[fase-08-inferencia]]"]
 ---
 
 # ADR-007 — API como fronteira entre Application Plane e AI Cluster
 
-Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -43,6 +40,8 @@ Negativas:
 - necessidade de manter compatibilidade do contrato externo;
 - possível overhead de serialização no gateway.
 
+Hoje a API é um gateway HTTP com `/v1/models`, `/v1/embeddings` e `/v1/chat/completions` (com streaming SSE), autenticado por uma chave de API separada dos tokens do cluster ([[adr-010-papeis-de-credencial]]).
+
 ## Regra
 
 A Inference API é a única fronteira suportada para cargas externas. Interfaces de administração e protocolos internos ficam separados.
@@ -51,10 +50,7 @@ A Inference API é a única fronteira suportada para cargas externas. Interfaces
 
 - Expor o Data Plane diretamente: descartado pelo acoplamento descrito no contexto.
 
-> [!warning] Desvio do MVP
-> O gateway hoje roda o modelo dentro do próprio processo (GPT-2 e SmolLM2, com as projeções opcionalmente nos workers) e não há Request Manager. A fronteira é respeitada para clientes, que só falam HTTP com a chave de API, mas o gateway ainda acumula o papel de engine. A migração prevista está em [[request-manager]] e [[inference-engine]].
+## Limites
 
-> [!info] O que já existe
-> Gateway HTTP com `/v1/models`, `/v1/embeddings` e `/v1/chat/completions` (streaming incluso), autenticado por chave de API separada dos tokens do cluster ([[f08-gateway-e-api]], [[fase-08-inferencia]]). Ver [[adr-010-papeis-de-credencial]].
-
-> [!todo] Request Manager (admissão, filas, cotas, prioridades) e ACL por modelo ficam em [[fase-11-request-manager]].
+- O gateway ainda executa o modelo dentro do próprio processo (GPT-2 e SmolLM2; só as projeções podem ir para os workers). Ele acumula, portanto, também o papel de engine. Clientes só falam HTTP com a chave de API.
+- A admissão, a cota e a fila estão no gateway ([[adr-015-request-manager-no-gateway]]). Planejado: separar a engine do gateway ([[inference-engine]]).

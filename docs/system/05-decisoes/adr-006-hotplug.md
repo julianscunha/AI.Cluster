@@ -3,14 +3,11 @@ title: "ADR-006 — Modelo de recuperação em hot-plug"
 aliases: ["ADR-006", "ADR-006 — Hot-Plug Recovery Model"]
 tags: [sistema/adr, subsistema/execucao]
 type: sistema/adr
-status: decidido
-implementacao: parcial
-fases: ["[[fase-03-execucao-distribuida]]", "[[fase-06-estado-e-recuperacao]]"]
 ---
 
 # ADR-006 — Modelo de recuperação em hot-plug
 
-Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -22,13 +19,14 @@ Hot-plug e hot-remove são tratados por state objects, checkpoints, retries, pro
 
 ## Consequências
 
-Não registradas no ADR original.
+- Entrada e saída de nós funcionam. Na falha de um nó, as unidades dele voltam à fila e o grafo segue ([[worker-runtime]]).
+- Se o volume do controller morre, a cópia do estado num nó é recuperada ([[adr-013-estado-do-controller-e-recuperacao]]).
 
 ## Alternativas
 
 - Migração de memória viva: não adotada, pela decisão acima.
 
-> [!info] O que já existe
-> Entrada e saída de nós ([[fase-01-nucleo-do-cluster]]), tolerância a falha com retry e reatribuição de unidades ([[f03-tolerancia-a-falhas]]), e cópia do estado recuperada quando o volume do controller morre ([[f06-recuperacao]]).
+## Limites
 
-> [!todo] Hot-plug de dispositivos (USB, aceleradores) depende de [[fase-16-aceleradores]] e [[fase-18-worker-movel]]. O modelo completo está em [[hotplug-e-recuperacao]].
+- A recuperação do estado por chave (KV cache, estado de modelo) não existe.
+- Hot-plug de dispositivos (USB, aceleradores) é planejado. O modelo completo está em [[hotplug-e-recuperacao]].

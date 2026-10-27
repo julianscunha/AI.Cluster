@@ -7,6 +7,6 @@
 
 ## Documentação
 
-- [ ] Slice `fNN-*` e `docs/implementation/status.md` atualizados
+- [ ] Docs de `docs/system/` ou `docs/guia/` atualizadas; `docs/implementation/pendencias.md` ajustado se um item fechou
 - [ ] ADR registrado (se a decisão é arquitetural)
 - [ ] Nenhum segredo no diff

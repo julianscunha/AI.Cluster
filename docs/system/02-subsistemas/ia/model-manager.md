@@ -1,64 +1,59 @@
 ---
 title: "Model Manager / Registry"
-aliases: ["Gerenciador de modelos", "Registry de modelos", "docs/14", "14 — Model Manager / Registry"]
+aliases: ["Gerenciador de modelos", "Registry de modelos", "Model Manager"]
 tags: [sistema/subsistema/ia]
 type: sistema/subsistema
-status: proposto
-implementacao: nao-iniciado
-fases: ["[[fase-12-model-runtime]]"]
 ---
 
 # Model Manager / Registry
 
-O Model Manager gerencia modelos, versões, variantes de precisão e shards, independentemente do placement. Ele sabe **o que existe e onde está**; o [[execution-planner]] decide **onde deveria estar**. Voltar para [[ia]].
+O Model Manager diz quais pesos existem, em qual versão e com quais checksums. Ele sabe **o que existe e onde está**; o [[execution-planner]] decide **onde deveria estar**. Voltar para [[ia]].
 
-## Entidades do registry
+Hoje não há um registry central. Cada modelo é um diretório, e o diretório carrega o próprio manifesto.
 
-| Entidade | Conteúdo |
-|---|---|
-| Model | Identidade conceitual (ex.: `llama-x-3.2`) |
-| Version | Revisão imutável dos pesos e da configuração |
-| Variant | Versão em uma precisão ou quantização (FP16, FP8, INT8, Q8, Q6, Q5, Q4) |
-| Manifest | Lista de artefatos, shards, tamanhos e checksums de uma variante |
-| Artifact | Arquivo físico (safetensors, GGUF ou equivalente) |
-| Shard | Fatia de um artefato atribuível a um nó |
-| Compatibility profile | Arquitetura, memória mínima, precisão e backends suportados |
+## Diretório de modelo
 
-A quantização é atributo de uma variante, não outro modelo conceitual.
+Um modelo é um diretório com:
 
-## Referência de execução imutável
+- `model.safetensors`: os pesos. O nome do arquivo é fixo.
+- Arquivos do tokenizador (`vocab.json`, `merges.txt`, `config.json`, e `tokenizer.json` quando houver).
+- `manifest.json`: nome, versão e SHA-256 de cada arquivo. Opcional, mas obrigatório se `AI_CLUSTER_REQUIRE_MANIFEST=1`.
 
-Uma execução referencia uma variante e uma versão exatas e não as altera no meio da request. Trocar de versão é nova execução, nunca mutação.
+O gateway lê diretórios por variável (`AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR`). Os workers lêem `AI_CLUSTER_MODEL_DIR/<subdiretório>/model.safetensors`. O subdiretório aceita só componentes simples, é canonicalizado e precisa continuar dentro da raiz.
 
-## Cache de modelo
+## Manifesto
 
-| Camada | Local | Uso |
-|---|---|---|
-| HOT | RAM/VRAM | Shards em uso |
-| WARM | NVMe/SSD | Shards recentes; política de [[storage-intelligence]] |
-| COLD | Repositório | Origem |
+Gerar e conferir pela CLI, sem controller:
 
-Prefetch do próximo shard quando houver previsibilidade suficiente.
+```bash
+ai-cluster model manifest <diretório> --name <nome> --version <versão>
+ai-cluster model verify <diretório>
+```
 
-## Compatibilidade
+- O manifesto lista os arquivos em ordem de nome, com tamanho e SHA-256 de cada um. Os mesmos pesos geram o mesmo manifesto.
+- Nome e versão aceitam letras, dígitos, `.`, `_` e `-`, e são seguros em cabeçalho HTTP.
+- O manifesto tem no máximo 1024 arquivos e 1 MiB, e precisa listar `model.safetensors`.
 
-Cada shard ou variante declara arquitetura, memória mínima, precisão e backends suportados. O planner só atribui shards a nós compatíveis com esse perfil.
+Onde a versão aparece:
 
-> [!info] O que já existe (MVP)
-> Não há registry, manifest, versão nem checksum. O que existe é o carregamento direto de arquivos por caminho:
-> - Gateway: `AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR` e `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` apontam para os arquivos de cada modelo. O gateway carrega na subida e falha fechado se o diretório estiver incompleto.
-> - Workers: lêem as fatias de `AI_CLUSTER_MODEL_DIR/<subdir>/model.safetensors`, na primeira vez que a fatia é pedida, e mantêm em `ShardStore` com despejo LRU. O subdiretório é validado (componentes simples, canonicalizado, sob a raiz); o nome do arquivo é fixo.
-> - Modelos em `code/models/` ficam fora do repositório (ignorados pelo git).
->
-> Os pesos não são versionados nem verificados: quem garante que o worker tem o mesmo arquivo que o gateway é o operador. A resposta da API não traz `model_version`. Slices: [[f08-engine-local]], [[f08-canal-residente-de-fatias]].
+- **Gateway:** na subida, cada diretório com manifesto é conferido. Se algum arquivo não confere, o gateway não sobe e a mensagem nomeia o arquivo. A versão sai em `GET /v1/models` (`version`) e no cabeçalho `x-model-version` das respostas de chat.
+- **Worker:** antes de abrir o canal de fatias, confere o manifesto de cada subdiretório de `AI_CLUSTER_MODEL_DIR`. Divergência encerra o worker. Com `AI_CLUSTER_REQUIRE_MANIFEST=1`, subdiretório sem manifesto também é recusado.
 
-> [!warning] Desvio do alvo e migração
-> O cluster não tem um Model Manager. A referência de execução é um caminho, não uma versão; o mesmo nome de subdiretório em dois workers pode carregar pesos diferentes sem que nada detecte. Migração: registry com manifest e checksum em [[fase-12-model-runtime]].
+## Versão e fatias
 
-> [!todo] Falta
-> - Registry com Model, Version, Variant, Manifest, Artifact e Shard.
-> - Verificação de checksum na carga de cada shard e na distribuição.
-> - Perfil de compatibilidade consultado pelo planner.
-> - Referência de execução imutável (variante e versão) e retorno de `model_version` na API.
-> - Cache HOT/WARM/COLD e prefetch.
-> - Variantes quantizadas (Q4/Q8) no [[inference-engine]].
+A chave de uma faixa de peso no worker é (subdiretório, tensor, linhas). Ela não tem versão. Por isso, trocar os pesos de um modelo com o cluster rodando exige reiniciar os workers, senão faixas antigas continuam em memória.
+
+## Limites conhecidos
+
+- **Conferência só na subida.** Um arquivo trocado depois do início não é detectado, e o worker lê as faixas do disco sob demanda.
+- **Links simbólicos são seguidos.** Quem controla o diretório controla o alvo.
+- **Manifesto não é assinado.** Quem escreve no diretório escreve no manifesto. Ele detecta corrupção e divergência, não adulteração por quem tem acesso ao disco.
+- **Sem registry central.** Gateway e workers não comparam versões entre si. O cluster não sabe se todos servem a mesma versão.
+- **Uma só variante por modelo.** Os pesos são float32 ou BF16, sem quantização.
+
+> Planejado: registry com as entidades Model, Version, Variant, Manifest, Artifact e Shard.
+> Planejado: variantes de precisão e quantização (Q8, Q4), tratadas como atributo de uma variante, não como outro modelo.
+> Planejado: perfil de compatibilidade (arquitetura, memória mínima, precisão e backends) consultado pelo planejador antes de atribuir uma faixa.
+> Planejado: execução que referencia versão e variante exatas, nunca mutáveis no meio de uma requisição.
+> Planejado: verificação de checksum a cada faixa carregada, e cache em três camadas (memória, SSD, repositório) com prefetch.
+> Planejado: manifesto assinado.

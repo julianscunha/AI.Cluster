@@ -3,13 +3,11 @@ title: "Princípios"
 aliases: ["PRINCIPLES", "Princípios de projeto"]
 tags: [sistema/visao, principios]
 type: sistema/visao
-status: decidido
-implementacao: parcial
 ---
 
 # Princípios
 
-Voltar para [[visao]]. Baseline DECIDIDO, v0.1. Os princípios valem para toda a arquitetura em [[arquitetura]].
+Voltar para [[visao]]. Os princípios valem para toda a arquitetura em [[arquitetura]].
 
 ## P-001 — Compute é um pool, hardware é uma implementação
 
@@ -67,8 +65,8 @@ O núcleo do protocolo deve ser neutro a x86_64/ARM64. Ver [[protocolo-controlle
 
 Uma execução referencia uma variante/version exata do modelo. Ver [[model-manager]].
 
-> [!warning] Desvio do MVP
-> Hoje os pesos são carregados de um diretório, sem versão nem checksum, e a execução não referencia uma variante registrada. O alvo é o registry de modelos da [[fase-12-model-runtime]].
+> [!warning] Limite atual
+> O gateway e os workers conferem o `manifest.json` do modelo (versão e SHA-256) ao subir e expõem a versão. A execução ainda não referencia uma variante de um registry. Planejado: registry de variantes e placement por versão ([[model-manager]]).
 
 ## P-015 — Prefira localidade
 

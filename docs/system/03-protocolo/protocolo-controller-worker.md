@@ -3,9 +3,6 @@ title: "Protocolo Controller ↔ Worker"
 aliases: ["protocol/controller-worker", "Protocolo controller-worker"]
 tags: [sistema/protocolo]
 type: sistema/protocolo
-status: vivo
-implementacao: parcial
-fases: ["[[fase-00-fundacao]]", "[[fase-01-nucleo-do-cluster]]", "[[fase-07-seguranca-base]]"]
 ---
 
 # Protocolo Controller ↔ Worker
@@ -14,105 +11,93 @@ Como o controller e os workers conversam: transporte, quem inicia cada conversa,
 
 ## Transporte
 
-- gRPC sobre HTTP/2, payload em Protobuf (ADR em [[adr-003-controller-worker]]). O schema é `code/proto/cluster.proto`, pacote `ai.cluster.v1`, com dois serviços no mesmo servidor do controller: `ClusterControl` e `LinkProbe`.
-- **TLS**: o controller sobe com `AI_CLUSTER_TLS_CERT` e `AI_CLUSTER_TLS_KEY`; sem eles não sobe, a menos de `AI_CLUSTER_INSECURE=1` (rede fechada). O cliente usa `https://` com `AI_CLUSTER_TLS_CA` (e `AI_CLUSTER_TLS_DOMAIN` quando o endpoint é um IP ou alias). `http://` é recusado sem `AI_CLUSTER_INSECURE`, para que um token nunca vá em claro por padrão.
-- **Keepalive HTTP/2 de 10 s** nos dois lados, com keepalive também ocioso: detecta conexão meio-aberta (Wi-Fi caído, worker suspenso) em segundos.
-- **Tamanho**: 64 MiB por mensagem nas duas direções (`MAX_MESSAGE_BYTES`). `ProbeLink` tem teto próprio de 4 MiB (`MAX_PROBE_BYTES`), para que a sonda não herde o limite de dados.
-- **Quem inicia**: sempre o worker. O controller nunca abre conexão para um worker, e o worker não expõe porta. O trabalho é puxado (`RequestWork`); o canal de fatias é um stream que o worker abre e o controller só usa.
+- gRPC sobre HTTP/2, com payload em Protobuf (ver [[adr-003-controller-worker]]). O schema é `code/proto/cluster.proto`, pacote `ai.cluster.v1`, com dois serviços no mesmo servidor do controller: `ClusterControl` e `LinkProbe`.
+- **TLS.** O controller exige `AI_CLUSTER_TLS_CERT` e `AI_CLUSTER_TLS_KEY` e não sobe sem eles, a menos de `AI_CLUSTER_INSECURE=1`, que só se usa em rede fechada. O cliente fala `https://` e verifica o controller com `AI_CLUSTER_TLS_CA`; `AI_CLUSTER_TLS_DOMAIN` entra quando o endereço é um IP ou um alias. `http://` é recusado sem `AI_CLUSTER_INSECURE`, para que um token nunca vá em claro por padrão.
+- **mTLS opcional** ([[adr-016-mtls-opcional-no-plano-de-controle]]). Com `AI_CLUSTER_TLS_CLIENT_CA` no controller, só entram clientes com certificado assinado por essa CA. O cliente apresenta o certificado com `AI_CLUSTER_TLS_CLIENT_CERT` e `AI_CLUSTER_TLS_CLIENT_KEY`.
+- **Keepalive HTTP/2 de 10 s** nos dois lados, inclusive ocioso. Detecta conexão meio aberta (Wi-Fi caído, nó suspenso) em segundos.
+- **Tamanho.** 64 MiB por mensagem nas duas direções. `ProbeLink` tem teto próprio de 4 MiB, para a sonda não herdar o limite de dados.
+- **Quem inicia.** Sempre o worker. O controller nunca abre conexão para um worker, e o worker não expõe porta. O trabalho é puxado (`RequestWork`); o canal de fatias é um stream que o worker abre e o controller só usa.
 
 ## Fluxo de interações
 
 | Interação | Iniciador | RPC | Padrão |
 |---|---|---|---|
 | Registro | worker | `RegisterNode` | unário; devolve `node_credential` |
-| Aprovação | operador | `ApproveNode` | unário; nó novo espera aprovação (S2) |
-| Batida de vida | worker | `Heartbeat` | unário a cada 5 s; sem batida por 15 s (`AI_CLUSTER_HEARTBEAT_GRACE_MS`) vira `OFFLINE` |
+| Aprovação | operador | `ApproveNode` | unário; nó novo não é confiável até ser aprovado |
+| Atualização do sistema | operador define; o nó recebe | `SetRelease`, depois `Heartbeat` | a release chega na resposta da batida ([[versionamento]]) |
+| Batida de vida | worker | `Heartbeat` | unário a cada 5 s; sem batida por 15 s (`AI_CLUSTER_HEARTBEAT_GRACE_MS`) o nó vira `OFFLINE` |
 | Saúde e perfil | worker | `ReportHealth` | unário; leva o perfil remedido quando houver |
-| Trabalho | worker | `RequestWork` → `SubmitWorkResult` | pull; `WORK_POLL_IDLE_MS` = 200 ms ocioso |
-| Sonda de enlace | worker | `ProbeLink` | upload de 2 MiB cronometrado (C2) |
+| Trabalho | worker | `RequestWork` → `SubmitWorkResult` | pull; o worker espera 200 ms quando ocioso |
+| Sonda de enlace | worker | `ProbeLink` | upload de 2 MiB, cronometrado, melhor de três |
 | Canal de fatias | worker abre | `ShardChannel` | stream bidirecional residente |
-| Inferência fatiada | gateway (via operador ou token de inferência) | `ShardMatmul` | unário; o controller repassa pelo canal |
-| Saída do nó | worker | `LeaveNode` | unário; reenfileira o que estava em voo |
+| Inferência fatiada | gateway (com token de inferência ou de operador) | `ShardMatmul` | unário; o controller repassa pelo canal |
+| Saída do nó | worker | `LeaveNode` | unário; devolve o que estava em voo |
 | Enfileirar | operador | `EnqueueWork`, `EnqueueGraph` | unário |
-| Observação | operador | `ListNodes`, `ListEvents`, `GetMetrics`, `GetTrace`, `WorkReport` | unário, leitura |
+| Cancelar | operador | `CancelRequest` | unário; retira da fila o que não foi despachado |
+| Reservar | operador | `Reserve`, `ReleaseReservation` | unário |
+| Observação | operador ou CLI | `ListNodes`, `ListEvents`, `GetMetrics`, `GetTrace`, `WorkReport`, `ListReservations` | unário, leitura |
 
-## Mensagens de ciclo de vida: alvo e implementado
+## Como o protocolo cobre o ciclo de vida
 
-A lista de mensagens do protocolo proposto foi substituída pelos RPCs reais. Esta tabela mostra para onde cada item foi.
-
-| Mensagem proposta | Estado | Implementado como |
-|---|---|---|
-| `HELLO` | parcial | não há handshake separado: a versão vai no cabeçalho e a identidade em `RegisterNode` |
-| `REGISTER` | implementado | `RegisterNode` |
-| `CAPABILITIES` | implementado | `RegisterNodeRequest.capability` e, remedido, `HealthStreamRequest.capability` |
-| `BENCHMARK_REQUEST` / `BENCHMARK_RESULT` | parcial | o benchmark roda no worker no registro; não há RPC de pedido |
-| `HEARTBEAT` | implementado | `Heartbeat` |
-| `HEALTH_REPORT` | implementado | `ReportHealth` |
-| `TELEMETRY` | não iniciado | observação por pull (`ListEvents`, `GetMetrics`); não há stream de telemetria |
-| `LOAD_MODEL` / `UNLOAD_MODEL` | não iniciado | o modelo é um subdiretório de `AI_CLUSTER_MODEL_DIR`, nomeado em cada `ShardOp` |
-| `LOAD_SHARD` / `UNLOAD_SHARD` | parcial | implícito: a fatia carrega no primeiro uso e sai por LRU ([[canal-de-fatias]]) |
-| `ASSIGN_WORK` | parcial | invertido: o worker puxa com `RequestWork` |
-| `CANCEL_WORK` | não iniciado | não há RPC; só o `ShardMatmul` cancela (abandono da chamada) |
-| `CHECKPOINT` / `RESTORE` | parcial | `StateReplica` trafega dentro de `Heartbeat` e `RegisterNode`; sem mensagem explícita |
-| `DRAIN` | parcial | sem RPC próprio; `LeaveNode` marca o nó `DRAINING` e o remove |
-| `LEAVE` | implementado | `LeaveNode` |
+| Conceito | Como é feito |
+|---|---|
+| Registro e credencial | `RegisterNode`; a credencial do nó volta na resposta |
+| Capacidade | `RegisterNodeRequest.capability` no registro e `HealthStreamRequest.capability` na remedição. O benchmark roda no próprio worker, no registro; não há RPC para pedi-lo |
+| Batida e saúde | `Heartbeat` e `ReportHealth` |
+| Modelo | um subdiretório de `AI_CLUSTER_MODEL_DIR`, nomeado em cada `ShardOp`. Não há mensagem de carregar ou descarregar |
+| Fatia residente | carregada no primeiro uso e despejada por LRU ([[canal-de-fatias]]) |
+| Atribuição de trabalho | o worker puxa com `RequestWork` |
+| Cancelamento | `CancelRequest` retira unidades da fila; uma chamada de fatia em voo é abortada quando o gateway desiste |
+| Réplica de estado (checkpoint) | `StateReplica` viaja dentro de `RegisterNode` e de `Heartbeat` |
+| Saída | `LeaveNode`: o nó vira `DRAINING`, devolve o que tinha em voo e sai |
+| Atualização | `Release` vem na resposta de `Heartbeat`; o nó sai ordenadamente antes de atualizar |
+| Telemetria | por pull: `ListEvents`, `GetMetrics` |
 
 ## Identidade e autenticação
 
 | Segredo | Variável | Quem apresenta | Vale para |
 |---|---|---|---|
-| Token de join | `AI_CLUSTER_JOIN_TOKEN` | todo nó e cliente | todos os RPCs de nó e leitura |
-| Token de operador | `AI_CLUSTER_OPERATOR_TOKEN` | CLI do operador | tudo que o join não cobre (aprovar, revogar, enfileirar, reservar, `GetOutput`) |
+| Token de join | `AI_CLUSTER_JOIN_TOKEN` | todo nó e todo cliente | registro, leitura e os RPCs de nó |
+| Token de operador | `AI_CLUSTER_OPERATOR_TOKEN` | CLI do operador | o que o join não cobre: aprovar, revogar, liberar release, enfileirar, cancelar, reservar, `GetOutput` |
 | Token de inferência | `AI_CLUSTER_INFERENCE_TOKEN` | gateway | **só** `ShardMatmul` ([[canal-de-fatias]]) |
-| Credencial do nó | emitida em `RegisterNode` | o próprio nó, no cabeçalho `x-ai-cluster-node-auth` | chamadas de nó (`Heartbeat`, `RequestWork`, `ShardChannel`…) |
+| Credencial do nó | emitida em `RegisterNode` | o próprio nó, no cabeçalho `x-ai-cluster-node-auth` | chamadas de nó: `Heartbeat`, `RequestWork`, `SubmitWorkResult`, `ShardChannel` etc. |
 
-- Os três tokens de servidor precisam ser distintos, ou o controller não sobe.
-- Chamadas de nó aceitam a credencial do nó ou o token de operador. O canal de fatias **não** aceita o operador: exige a credencial do nó (`channel_allowed`).
-- O nó precisa estar registrado, aprovado e em estado elegível; revogação e saída derrubam a sessão.
+- Os três tokens de servidor precisam ser diferentes, ou o controller não sobe.
+- Chamadas de nó aceitam a credencial do nó ou o token de operador. O canal de fatias **não** aceita o operador: exige a credencial do nó.
+- Um nó precisa estar registrado, aprovado e em estado elegível. Revogação e saída derrubam a sessão.
+- `AI_CLUSTER_AUTO_APPROVE=1` aprova sem operador todo nó que se registra. Sem essa variável, cada nó novo espera `ApproveNode`.
+- **Atestação.** O nó informa `image_sha256` no registro, a medida do slot que roda. `NodeSnapshot.attested` compara essa medida com a release desejada. É prova de software apenas: um nó comprometido pode informar qualquer valor ([[seguranca]]).
+- **Quarentena.** Três resultados inválidos seguidos põem o nó em quarentena. Ele continua vivo e visível em `ListNodes`, mas deixa de ser candidato a trabalho. Aprovar o nó de novo a libera.
 
 Detalhes de quem chama o quê estão em [[mensagens]], na coluna de autorização.
 
 ## Metadados de requisição
 
-Um interceptor cliente põe os metadados em toda chamada; nenhum ponto de chamada os repete.
+Um interceptor cliente põe os metadados em toda chamada.
 
-| Campo | Cabeçalho | Estado |
+| Campo | Cabeçalho | Conteúdo |
 |---|---|---|
-| versão do protocolo | `x-ai-cluster-protocol-version` | emitido `v1`; o controller rejeita qualquer outra com `FailedPrecondition` |
+| versão do protocolo | `x-ai-cluster-protocol-version` | `v1`. O controller rejeita qualquer outra com `FailedPrecondition` |
 | correlação | `x-ai-cluster-correlation-id` | valor novo a cada chamada |
-| autenticação | `x-ai-cluster-auth` | join, operador ou inferência |
+| autenticação | `x-ai-cluster-auth` | token de join, de operador ou de inferência |
 | credencial do nó | `x-ai-cluster-node-auth` | credencial emitida no registro |
 | nó do canal | `x-ai-cluster-node-id` | só na abertura de `ShardChannel` |
 | nó culpado | `x-ai-cluster-failed-node` | só em resposta de erro de `ShardMatmul` |
-| idempotência | — | estrutural: a unidade sai da tabela de despacho ao completar, então uma submissão duplicada não tem o que completar |
 
-O `node_id` também viaja no payload protobuf, onde o controller precisa dele.
+Idempotência não tem chave explícita. A garantia é estrutural: a unidade sai da tabela de despacho quando completa, então uma submissão duplicada não tem o que completar.
 
 ## Streaming e backpressure
 
-- **Canal de fatias**: stream bidirecional com fila de 64 quadros por sentido; fila cheia falha na hora, sem esperar.
-- **Telemetria**: não há stream. O operador lê por pull.
-- **Transferências longas**: `WorkUnit` vai inteiro numa mensagem (limite de 64 MiB); não há chunking nem streaming de operandos.
+- **Canal de fatias**: stream bidirecional com fila de 64 quadros por sentido. Fila cheia falha na hora, sem esperar.
+- **Telemetria**: sem stream. O operador lê por pull.
+- **Transferências longas**: uma `WorkUnit` vai inteira numa mensagem, limitada a 64 MiB. Não há divisão nem streaming de operandos.
 
-## Compatibilidade
+## Limites conhecidos
 
-O controller conhece as capacidades de cada nó por `CapabilityReport` no registro e a cada remedição. Negociação de features ainda não existe; ver [[versionamento]].
+- **Trabalho por pull.** `RequestWork` com espera ociosa de 200 ms põe um piso de dezenas de milissegundos em cada operação dependente. Por isso o canal de fatias empurra os quadros, em vez de puxar.
+- **Um segredo de join para todos os nós.** A identidade de cada nó vem da credencial emitida no registro, não de certificado por nó. Sem TPM, a atestação não prova integridade do hardware.
+- **Rejeição por chamada.** Uma versão incompatível não registra o nó, mas o controller não põe nó em quarentena por versão.
+- **Sem negociação de features.** O controller não sabe o que cada nó suporta antes de mandar uma operação; a compatibilidade depende de a versão do protocolo bater.
+- **Sem chunking de operandos** acima de 64 MiB.
 
-> [!warning] Desvios da arquitetura-alvo
-> - **Fila de puxar em vez de despacho**: `RequestWork` com espera de 200 ms ocioso põe um piso de dezenas de ms em cada operação dependente. Por isso o canal de fatias empurra. A migração prevista é generalizar o canal residente para trabalho (ver [[execution-planner]] e [[scheduler]]).
-> - **Um segredo de join para todos os nós**: a identidade por nó vem da credencial do registro (S3b). mTLS e attestation ficam para [[fase-19-hardening-de-producao]].
-> - **Rejeição por chamada, não por nó**: versão incompatível não registra nenhum nó, mas o controller não põe nó em quarentena por versão.
-> - **Sem idempotency key explícita**: a garantia é estrutural, pela posse da unidade em [[work-unit]].
-
-> [!info] O que já existe
-> - Registro, batida, saúde e saída: [[f01-entrada-e-saida-de-nos]], [[f02-modelo-de-saude]].
-> - Trabalho puxado e tolerância a falha: [[f03-tolerancia-a-falhas]], [[f00-mvp]].
-> - Segurança: [[f07-token-de-join]], [[f07-aprovacao-de-no]], [[f07-operador-e-credencial-por-no]], [[f07-tls]].
-> - Canal residente e gateway: [[f08-canal-residente-de-fatias]], [[f08-gateway-e-api]].
-
-> [!todo] Falta
-> - `CANCEL_WORK` como mensagem de controle (hoje só o abandono do `ShardMatmul`).
-> - Telemetria por stream com backpressure.
-> - Negociação de features no registro.
-> - Quarentena por versão e por saúde, com mensagem própria.
-> - Chunking ou streaming de operandos acima de 64 MiB.
+> Planejado: negociação de features no registro; quarentena por versão e por saúde, com mensagem própria visível ao operador.

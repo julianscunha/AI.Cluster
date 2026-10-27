@@ -1,87 +1,71 @@
 ---
 title: "State Manager"
-aliases: ["Gerenciador de estado", "docs/13", "13 — State Manager"]
+aliases: ["State Manager", "Gerenciador de estado"]
 tags: [sistema/subsistema/dados]
 type: sistema/subsistema
-status: proposto
-implementacao: parcial
-fases: ["[[fase-06-estado-e-recuperacao]]"]
 ---
 
 # State Manager
 
-O State Manager preserva o estado necessário para retomar uma execução quando o placement ou o hardware mudam. Ele não executa nada: guarda, replica, localiza e restaura. Voltar para [[dados]].
+O state manager guarda o estado necessário para retomar a execução quando um nó ou o controller falha. Ele não executa nada: guarda, replica e restaura. Voltar para [[dados]].
 
-## Classes de estado
+## O que é guardado hoje
 
-| Classe | Conteúdo | Política |
+Só o estado de trabalho do controller:
+
+| Conteúdo | Onde | Quando é gravado |
 |---|---|---|
-| Model State | Pesos e shards | Não é estado de execução. Referenciado pelo [[model-manager]] de forma imutável |
-| Execution State | Plano, epoch, sampling, Work Units em voo | Replicado; é o que permite retomar |
-| KV Cache | Estado por sequência ([[inference-engine]]) | Seletivo: replica ou checkpoint quando exigido; descartável se reconstruível |
-| Checkpoint/Recovery State | Snapshots em pontos seguros | Incremental, conforme política |
+| Fila de Work Units pendentes | Arquivo do controller (`AI_CLUSTER_STATE`) | A cada alteração da fila, em voo ou concluída. |
+| Unidades em voo, com o dono de cada uma | Mesmo arquivo | Junto da alteração que a levou a voo. |
+| Resultados que uma unidade pendente ainda lê | Mesmo arquivo | Enquanto houver leitor. |
+| Cópia do arquivo | Arquivo ao lado (`.replica`), no mesmo volume | Junto do arquivo principal. |
+| Cópia de nó | Arquivo em cada worker com `AI_CLUSTER_STATE_REPLICA` | Entregue no heartbeat quando o controller avança. |
 
-## Camadas
+Resultados sem leitor são descartados. Um snapshot guarda o trabalho que falta, não o histórico.
 
-```text
-HOT  -> RAM / VRAM
-WARM -> NVMe / SSD
-COLD -> armazenamento persistente ou distribuído
-```
+## Gravação e leitura
 
-A alocação por camada é de [[storage-intelligence]].
+- **Escrita atômica.** Cada arquivo é gravado num irmão temporário e depois renomeado. Uma queda no meio da escrita deixa a gravação anterior intacta.
+- **Falha de escrita não é fatal.** O estado em memória continua valendo para a execução.
+- **Leitura.** Ao subir, o controller lê o arquivo principal. Se ele estiver ausente, ilegível ou vazio, lê a cópia ao lado. Se nenhum servir, começa vazio, para que um arquivo corrompido não impeça o cluster de aceitar trabalho.
+- **Época.** O snapshot guarda uma época monotônica que sobrevive ao reinício. Ela decide qual cópia é mais nova.
 
-## Replicação
+## Posse de trabalho
 
-Não replicar tudo 1:1. Prioridade: metadados críticos, execution state, KV seletivo e checkpoint conforme política. Caches derivados podem ser descartados.
+Uma unidade em voo volta ao reinício com o mesmo dono, e o resultado que esse dono entregar depois é aceito. Se o dono não reconectar até a grace contada a partir do início do controller, a unidade volta à fila ou falha, como em uma queda de nó.
 
-## Diretório de estado
-
-Referências lógicas, como `state://req-1842/kv/layer-42`. O diretório guarda primary, réplicas e localização. A referência é um endereço: consultá-la não move dado.
-
-## Posse e leases
-
-A posse de um estado usa lease e heartbeat, para que a perda do dono seja detectada rapidamente. Um estado tem um dono por vez; a troca de dono passa pelo lease.
-
-## Checkpoints
-
-Incrementais e em pontos seguros da execução. Não se persiste toda a memória viva a cada token.
+A posse é gravada de forma preguiçosa. A atribuição de uma unidade não é gravada sozinha. Se o controller reinicia logo após um despacho, a unidade volta sem dono e pode rodar duas vezes. Ver [[hotplug-e-recuperacao]].
 
 ## Recuperação
 
-```text
-nó perdido
- -> identificar o estado afetado
- -> promover réplica, ou recalcular
- -> restaurar
- -> regenerar placement
- -> continuar (a request permanece a mesma; ver request-manager)
-```
+- **Controller perde o volume.** Se o arquivo local e sua cópia somem, o controller adota a cópia que um worker oferece no re-registro. A adoção só acontece se a cópia for mais nova que a que ele tem e se ele não estiver com trabalho nas mãos.
+- **Worker cai.** Suas unidades voltam à fila, dentro do orçamento de tentativas. Ver [[hotplug-e-recuperacao]].
 
-## Falhas
+## Configuração
 
-- **Perda do dono:** detectada pelo lease; a unidade é reoferecida ou falha se o orçamento de tentativas acabou.
-- **Perda do volume do controller:** sem cópia fora dele, a fila se perde junto.
-- **Estado corrompido ou ilegível:** nunca restaurar a partir dele; cair para a cópia íntegra ou começar vazio, com alerta.
-- **Escrita interrompida:** gravar em arquivo temporário e renomear, para que a versão anterior continue válida.
+| Variável | Onde | Efeito |
+|---|---|---|
+| `AI_CLUSTER_STATE` | Controller | Caminho do arquivo de estado. Sem ele, o estado vive só em memória. |
+| `AI_CLUSTER_STATE_REPLICA` | Worker | Caminho do arquivo onde o nó guarda a cópia. Sem ele, o nó não guarda cópia. |
+| `AI_CLUSTER_EVENTS` | Controller | Caminho do arquivo de eventos. Ver [[observabilidade]]. |
+| `AI_CLUSTER_NODES` | Controller | Caminho do arquivo de nós: aprovação, credencial e quarentena sobrevivem a reinício. |
 
-> [!info] O que já existe (MVP)
-> - O controller persiste a **fila de Work Units** em um snapshot (`AI_CLUSTER_STATE`), gravado com arquivo temporário e renomeação, e uma cópia ao lado (`.replica`) no mesmo volume. Sem a variável, fica só em memória.
-> - O snapshot guarda só o que ainda não terminou: a fila, o que está em voo com o dono e os resultados que uma unidade ainda vai ler. Resultados sem leitor são descartados.
-> - A posse volta ao reload com o mesmo nó, e o resultado em voo é aceito. Depois de um restart, o dono não é reconhecido de imediato; a varredura espera o grace e então reoferece a unidade.
-> - Cópia no nó: com `AI_CLUSTER_STATE_REPLICA`, o worker guarda a cópia inteira do snapshot e a devolve no re-registro. O controller adota a cópia só quando não tem trabalho em mãos e ela é mais nova (época em `WorkSnapshot.epoch_unix_ms`).
-> - Código: `code/crates/controller/src/work.rs` e `code/crates/worker/src/main.rs`.
->
-> Slices: [[f06-persistencia-e-checkpoint]], [[f06-recuperacao]].
+## Garantias
 
-> [!warning] Desvio do alvo e migração
-> Não há estado por chave. Não existe diretório de estado nem KV cache persistido: o KV cache de uma geração de chat vive na memória do gateway e se perde se o gateway cai. A réplica é a cópia inteira em todo nó configurado, sem fator de replicação escolhido. Migração: estado por chave e KV cache em [[fase-12-model-runtime]].
+- Um reinício do controller com `AI_CLUSTER_STATE` definido não perde a fila nem os resultados que ainda serão lidos.
+- Uma gravação interrompida não corrompe a gravação anterior.
+- Um arquivo corrompido não é lido como "nenhum trabalho". Zero bytes conta como arquivo não carregável, e a cópia é tentada.
 
-> [!todo] Falta
-> - Diretório de estado com `state://` e localização de réplicas.
-> - Persistência só da tabela de leases, ou journal de deltas, em vez de reescrever o conjunto vivo.
-> - Fator de replicação e escolha de portador designado.
-> - Checkpoint incremental de execução de inferência e KV cache replicado.
-> - Persistência do registry e do log de eventos (hoje perdidos no restart).
-> - Persistência do lease no momento do despacho (hoje é preguiçosa: pode levar a compute duplicado).
-> - Métricas-alvo: idade do último checkpoint, atraso de réplica e tempo de recuperação.
+## Limites conhecidos
+
+- A cópia do controller fica no mesmo volume. Se o volume some, as duas somem juntas. Só a cópia em nó tem outro disco.
+- A cópia em nó é o snapshot inteiro, oferecido a cada gravação para cada nó configurado. Não há fator de replicação nem nó designado. Com estado grande, o tráfego cresce com nós e gravações.
+- Sem identidade de cluster na cópia: um controller novo apontado para nós com a cópia de outro cluster adota aquela fila.
+- A gravação reescreve o estado vivo inteiro a cada alteração, e o custo cresce com o trabalho que falta. Oito resultados de 256 × 256 pendentes já somam cerca de 4 MB por gravação, com a cópia dobrando a escrita. Sem trabalho pendente, o arquivo fica em poucos bytes.
+- A posse é gravada de forma preguiçosa (ver acima), e isso pode causar compute duplicado após reinício.
+- Não há estado por chave. Não há diretório de referências lógicas (como `state://…`). O KV cache de uma geração de chat vive na memória do gateway e se perde se o gateway cai.
+- Não há checkpoint incremental de execução de inferência.
+- Não há persistência de reservas nem de prioridade envelhecida (ver [[scheduler]]).
+- O arquivo de eventos guarda só os últimos 256 eventos, e não tem `fsync` a cada evento.
+
+> Planejado: diretório de estado com `state://` e localização de réplicas, estado por chave (execução de inferência e KV cache replicado), persistência só da tabela de posse ou de um journal de deltas, fator de replicação com portador designado, métricas de idade do último checkpoint, atraso de réplica e tempo de recuperação.

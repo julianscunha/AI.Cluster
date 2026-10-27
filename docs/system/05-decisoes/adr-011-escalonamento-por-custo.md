@@ -3,14 +3,11 @@ title: "ADR-011 — Escalonamento por custo, prioridade e quarentena"
 aliases: ["ADR-011", "Escalonamento por custo"]
 tags: [sistema/adr, subsistema/execucao]
 type: sistema/adr
-status: decidido
-implementacao: implementado
-fases: ["[[fase-04-escalonamento]]"]
 ---
 
 # ADR-011 — Escalonamento por custo, prioridade e quarentena
 
-Data: 2026-10-25 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-25 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -29,20 +26,21 @@ O controller entregava a próxima unidade a quem pedisse primeiro. Num cluster h
 
 ## Consequências
 
-- O placement mede o que decide: `phase-g-placement.sh` mostra 2.020.000 µs sob primeiro-a-pedir contra 18.000 µs sob custo.
+- Em cluster heterogêneo, o placement por custo evita que o nó fraco pegue o trabalho pesado. A diferença medida foi de ordens de grandeza em relação a primeiro-a-pedir.
 - Um nó que perde a disputa espera até um intervalo de poll (200 ms). Em unidades curtas esse custo é real; por isso a banda de histerese.
-- A prioridade é um número, não classes nomeadas, e ninguém além do operador a define.
+- A prioridade é um número, não classes nomeadas, e só o operador a define.
 - Um slot a mais esconde latência de transferência, mas divide os núcleos: com unidades que já ocupam o nó inteiro, 1 slot é melhor.
 
 ## Alternativas
 
-- Round-robin ou primeiro-que-pergunta: descartado pela medição acima.
+- Round-robin ou primeiro-que-pergunta: descartado pela medição de que a espera fica muito maior.
 - Empurrar do controller para o nó: exigiria o controller conhecer a ocupação em tempo real; o modelo de puxar a dá de graça.
 - Prioridade estrita sem envelhecimento: simples, mas uma corrente de unidades altas mata as baixas.
 - Excluir o nó por qualquer resultado inválido: um erro isolado (corrupção de rede, bug transitório) não justifica tirar o nó; três seguidos justificam.
 
-> [!warning] Tetos
-> Locality, folga térmica, custo de mover estado e prazo não entram no custo. Não há rebalanceamento de trabalho em voo nem execução especulativa. O checksum prova coerência interna, não a conta certa: um nó que mente de forma consistente passa (a conferência por réplica não existe). Os níveis de confiança `UNKNOWN`, `BOOTSTRAPPED` e `VALIDATED` dependem de enrollment.
+## Limites
 
-> [!info] O que já existe
-> Tudo acima está implementado. Evidências: `phase-g-placement.sh`, `phase-g-cores.sh`, `phase-g-reservations.sh`, `phase-g-priority.sh`, `phase-g-slots.sh` e `phase-g-quarantine.sh`. Slices: [[f04-placement]], [[f04-scheduler-local]], [[f04-reservas]], [[f04-quarentena]].
+- Locality, folga térmica, custo de mover estado e prazo não entram no custo.
+- Não há rebalanceamento de trabalho em voo nem execução especulativa.
+- O checksum prova coerência interna, não a conta certa: um nó que mente de forma consistente passa. Não existe conferência por réplica.
+- Planejado: níveis de confiança `UNKNOWN`, `BOOTSTRAPPED` e `VALIDATED`, dependentes de enrollment ([[scheduler]], [[saude-e-confianca]]).

@@ -14,7 +14,7 @@
 set -uo pipefail
 
 NET=aic-net
-IMG=aic-rust:1
+IMG=${AIC_RUST_IMAGE:-rust:1-bookworm}   # imagem pública; precisa de Docker
 R=/t/release
 JOIN=dev-token
 OPERATOR=dev-operator

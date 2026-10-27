@@ -3,14 +3,11 @@ title: "ADR-013 — Estado do controller e recuperação"
 aliases: ["ADR-013", "Estado e recuperação"]
 tags: [sistema/adr, subsistema/dados]
 type: sistema/adr
-status: decidido
-implementacao: implementado
-fases: ["[[fase-06-estado-e-recuperacao]]"]
 ---
 
 # ADR-013 — Estado do controller e recuperação
 
-Data: 2026-10-25 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-25 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -19,7 +16,7 @@ O controller guardava a fila e as unidades em voo só na memória. Um restart pe
 ## Decisão
 
 1. **Snapshot do conjunto vivo, não journal.** O `WorkStore` grava a fila, a posse das unidades em voo e os resultados que alguma unidade ainda vai ler, num arquivo (`AI_CLUSTER_STATE`), por escrita atômica (arquivo irmão e rename). O conjunto vivo é pequeno por construção.
-2. **Checkpoint podado.** Um resultado só fica guardado enquanto alguma unidade não terminada ainda o lê. É isso que mantém o arquivo pequeno (4,19 MB viram 2 bytes num grafo concluído).
+2. **Checkpoint podado.** Um resultado só fica guardado enquanto alguma unidade não terminada ainda o lê. É isso que mantém o arquivo pequeno.
 3. **Posse preguiçosa.** Cada unidade em voo guarda o dono e o payload, então um dono que não volta tem o que reoferecer. O snapshot não decide por conta própria que o dono morreu.
 4. **Dois relógios.** Heartbeat perdido com o controller de pé (`mark_stale_offline`) e dono ausente depois do restart (`unknown_owners`), este contado desde o start do controller, não desde o despacho. Os dois caminhos acabam em `requeue_for_node`, que respeita o orçamento de tentativas.
 5. **Cópia num nó.** Um segundo arquivo irmão no volume e, opcionalmente, uma cópia que o controller entrega a um worker (`AI_CLUSTER_STATE_REPLICA`) só quando a época do controller avança além da do nó. A cópia só é adotada quando o controller não tem trabalho nas mãos e ela é mais nova.
@@ -29,9 +26,8 @@ O controller guardava a fila e as unidades em voo só na memória. Um restart pe
 
 ## Consequências
 
-- Reescrever o snapshot inteiro a cada mudança custa O(conjunto vivo). Com milhares de unidades vivas isso precisa virar journal.
 - Depois de um restart, uma unidade com dono espera até o grace antes de ser reoferecida: de propósito, para o dono que está subindo não ver o trabalho rodar duas vezes.
-- O estado por chave (KV cache, estado de modelo) não é coberto; só fila, posse e resultados de Work Units.
+- Eventos de antes do restart não incluem o que o ring buffer já havia descartado.
 
 ## Alternativas
 
@@ -40,8 +36,8 @@ O controller guardava a fila e as unidades em voo só na memória. Um restart pe
 - Persistir o registry inteiro: os nós o reconstroem em segundos pelo heartbeat, e um registry velho no disco faria o controller acreditar em nós que já saíram.
 - Reoferecer a unidade no restart sem esperar o dono: roda trabalho em dobro sempre que o controller reinicia.
 
-> [!warning] Tetos
-> Sem réplica fora do volume do controller por padrão, sem estado por chave e sem journal. Eventos de antes do restart não incluem o que o ring buffer já havia descartado.
+## Limites
 
-> [!info] O que já existe
-> Tudo acima, com `phase-i-state.sh`, `phase-i-checkpoint.sh`, `phase-i4-recovery.sh`, `phase-i4-replica.sh` e `phase-i-events.sh`. Slices: [[f06-persistencia-e-checkpoint]], [[f06-recuperacao]], [[f06-eventos-persistidos]].
+- Reescrever o snapshot inteiro a cada mudança custa O(conjunto vivo). Com milhares de unidades vivas isso exige um journal.
+- A cópia do estado fora do volume do controller é opcional (`AI_CLUSTER_STATE_REPLICA`).
+- O estado por chave (KV cache, estado de modelo) não é coberto; só fila, posse e resultados de Work Units.

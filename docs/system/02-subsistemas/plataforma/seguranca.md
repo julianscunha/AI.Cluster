@@ -1,208 +1,191 @@
 ---
 title: "Segurança e confiança"
-aliases: ["docs/19", "19 — Security & Trust", "19 — Segurança e confiança"]
+aliases: ["Segurança", "Security & Trust", "Confiança"]
 tags: [sistema/subsistema/plataforma]
 type: sistema/subsistema
-status: proposto
-implementacao: parcial
-fases: ["[[fase-07-seguranca-base]]", "[[fase-19-hardening-de-producao]]"]
 ---
 
 # Segurança e confiança
 
-Segurança cobre quem é cada participante do cluster, o que cada um pode fazer, como a
-conexão é protegida, como um nó é aceito, suspenso e retirado, e como as ações deixam rastro.
-O modelo-alvo separa três identidades (física, lógica e certificado do cluster) e aplica
-autorização por papel e por nó. Parte disso já existe no MVP como segredos compartilhados e
-credencial por nó; o resto é alvo.
+Segurança cobre quem é cada participante do cluster, o que cada um pode fazer, como a conexão é protegida, como um nó é aceito, suspenso e retirado, como uma release é verificada e como as ações deixam rastro. Voltar para [[plataforma]].
 
 ## Princípios
 
-- **Falha fechada.** Controller sem token de join ou de operador não sobe. Token vazio no
-  servidor não aceita ninguém. Gateway sem chave de API não sobe.
-- **Menor privilégio por papel.** Quem registra e trabalha (nó) não aprova; quem aprova (operador)
-  não precisa ser nó; quem só faz inferência (gateway) não toca no plano de controle.
-- **Não confiar por padrão.** Nó novo nasce não confiável (`pendente`) e não recebe trabalho até
-  ser aprovado.
-- **Identidade é do controller.** O que o nó declara sobre si (`node_id`, `device_id`) não é
-  prova. A prova é a credencial que o controller emitiu.
+- **Falha fechada.** Controller sem token de join ou de operador não sobe. Token vazio no servidor não aceita ninguém. Gateway sem chave de API não sobe.
+- **Menor privilégio por papel.** Quem registra e trabalha (nó) não aprova. Quem aprova (operador) não age como nó. Quem só faz inferência não toca no plano de controle.
+- **Não confiar por padrão.** Nó novo nasce pendente e não recebe trabalho até ser aprovado.
+- **Identidade vem do controller.** O que o nó declara sobre si (`node_id`, `device_id`) não é prova. A prova é a credencial que o controller emitiu.
 
 ## Identidades
 
-| Identidade | Alvo | Hoje |
+| Identidade | Como é provada | Limite |
 |---|---|---|
-| Física (dispositivo) | Prova de hardware e de imagem de SO, na atestação. | Não existe. `NodeIdentity.device_id` é texto enviado pelo worker, sem verificação. |
-| Lógica (nó) | `node_id` autenticado pelo controller, com credencial e certificado. | `node_id` é escolhido pelo worker. A credencial emitida no registro é a prova. |
-| Certificado do cluster | Certificado por nó (mTLS) emitido por CA do cluster, com rotação e revogação. | Não existe. O servidor tem certificado; o cliente não apresenta nenhum. |
+| Física (dispositivo) | Não há. O `device_id` é texto que o worker envia. | Não verificada. |
+| Lógica (nó) | Credencial de 128 bits, emitida no registro, enviada em toda chamada. | Só prova posse da credencial, não o hardware. |
+| Certificado de cliente (mTLS) | Certificado assinado pela CA do cluster, opcional. | Prova que o peer pertence ao cluster, mas não está ligado ao `node_id`. |
 
-## Papéis de credencial
+## Configuração de segredos
 
-A separação em papéis é a decisão de [[adr-010-papeis-de-credencial]].
-
-| Papel | Credencial | Transporte | Pode | Não pode |
-|---|---|---|---|---|
-| Join | `AI_CLUSTER_JOIN_TOKEN` | `x-ai-cluster-auth` | Registrar nó (`RegisterNode`) e ler estado: `ListNodes`, `ListEvents`, `GetTrace`, `GetMetrics`, `ListReservations`. Chamadas de nó só com a credencial do próprio nó. | Aprovar, revogar, enfileirar, reservar, ler `GetOutput`. Não basta para atuar como nó. |
-| Operador | `AI_CLUSTER_OPERATOR_TOKEN` | `x-ai-cluster-auth`; `Bearer` no exportador de métricas | `ApproveNode`, `RevokeNode`, `EnqueueWork`, `EnqueueGraph`, `Reserve`, `ReleaseReservation`, `GetOutput`. Age em nome de qualquer nó (`authorize_node` aceita o operador). Usado pela CLI e pelo scraper. | Ser o nó: as RPCs de nó pedem a credencial do próprio `node_id`, que o operador não substitui. |
-| Inferência | `AI_CLUSTER_INFERENCE_TOKEN` (opcional) | `x-ai-cluster-auth` | Só `ShardMatmul`. Qualquer outro caminho responde `PermissionDenied`. Usado pelo gateway. | Aprovar, enfileirar, ler estado. |
-| Nó | Credencial por nó, 128 bits (`getrandom`), emitida no `RegisterNode` | `x-ai-cluster-node-auth` | `Heartbeat`, `ReportHealth`, `RequestWork`, `SubmitWorkResult`, `LeaveNode`, `ShardChannel`, somente para o `node_id` que representa. | Atuar por outro `node_id`. |
-| Chave de API do gateway | `AI_CLUSTER_API_KEY` | `Authorization: Bearer` nas rotas HTTP | `/v1/models`, `/v1/embeddings`, `/v1/chat/completions`. `/health` é público. | Falar com o controller: é uma credencial de cliente de inferência, separada das quatro acima. |
+| Variável | Onde | Função |
+|---|---|---|
+| `AI_CLUSTER_JOIN_TOKEN` | Controller, workers, CLI | Segredo de entrada. Obrigatório no controller. |
+| `AI_CLUSTER_OPERATOR_TOKEN` | Controller, CLI, gateway, exportador | Segredo de administração. Obrigatório no controller. Precisa ser diferente do de join. |
+| `AI_CLUSTER_INFERENCE_TOKEN` | Controller, gateway | Segredo do papel de inferência. Opcional. Diferente dos outros dois. |
+| `AI_CLUSTER_API_KEY`, `AI_CLUSTER_TENANTS` | Gateway | Chaves das aplicações. Diferentes de todos os tokens do cluster. |
+| `AI_CLUSTER_TLS_CERT`, `AI_CLUSTER_TLS_KEY` | Controller | Certificado do servidor, sempre em par. |
+| `AI_CLUSTER_TLS_CA` | Clientes | CA que valida o controller. |
+| `AI_CLUSTER_TLS_DOMAIN` | Clientes | Nome verificado quando o endereço é um IP. |
+| `AI_CLUSTER_TLS_CLIENT_CA` | Controller | Liga o mTLS: exige certificado de cliente assinado por esta CA. |
+| `AI_CLUSTER_TLS_CLIENT_CERT`, `AI_CLUSTER_TLS_CLIENT_KEY` | Workers, CLI, gateway | Certificado de cliente, em par. |
+| `AI_CLUSTER_INSECURE` | Controller, clientes, gateway | `1` libera operação sem TLS. Certificado vence esse opt-out. |
+| `AI_CLUSTER_AUTO_APPROVE` | Controller | `1` ou `true` aprova todo nó no registro. Padrão: aprovação manual. |
+| `AI_CLUSTER_NODES` | Controller | Arquivo com nós, credenciais e aprovação (modo 0600). |
+| `AI_CLUSTER_NODE_CREDENTIAL_FILE` | Worker | Arquivo com a credencial do nó. |
 
 Regras comuns:
 
-- Os tokens de join, operador e inferência precisam ser distintos entre si; a chave de API do
-  gateway também precisa ser distinta dos três. O controller e o gateway recusam subir se não forem.
-- O servidor compara com tempo constante (`same_token`) e confere o token antes de qualquer outra
-  coisa; quem não se autentica não recebe resposta sobre versão ou estado.
-- Papel é marcado na requisição (extensões `Operator` e `Inference`) e cada RPC exige o papel
-  certo (`require_operator`, `require_inference`, `authorize_node`).
+- Os tokens de join, operador e inferência são distintos entre si. A chave de API do gateway também é distinta dos três. Controller e gateway recusam subir se não forem.
+- O servidor compara tokens em tempo constante e checa o token antes de qualquer outra coisa. Quem não se autentica não recebe nenhuma resposta sobre versão ou estado.
+- O papel vai marcado na requisição, e cada RPC exige o papel certo.
+
+## Papéis de credencial
+
+| Papel | Credencial | Pode | Não pode |
+|---|---|---|---|
+| Join | Token de join | Registrar nó (`RegisterNode`). Ler estado: nós, eventos, traces, métricas e reservas. | Aprovar, revogar, enfileirar, reservar, cancelar, ler saídas ou definir release. Não basta para atuar como nó. |
+| Operador | Token de operador | Aprovar e revogar nós, enfileirar trabalho e grafos, reservar, liberar reservas, cancelar requisições, ler saídas, definir release, ler tudo que o join lê. Age em nome de qualquer nó. | Atuar como nó: as RPCs de nó exigem a credencial do próprio `node_id`. |
+| Inferência | Token de inferência | Só `ShardMatmul`, o cálculo de projeções. Qualquer outra RPC responde `PermissionDenied`. | Aprovar, enfileirar, ler estado ou listar nós. |
+| Nó | Credencial do nó | `Heartbeat`, `ReportHealth`, `RequestWork`, `SubmitWorkResult`, `LeaveNode` e o canal de fatias, só para o `node_id` que representa. | Atuar por outro `node_id`. |
+| Aplicação | Chave de API do gateway | Rotas `/v1/*` e `/metrics` do gateway. `/health` é público. | Falar com o controller. |
+
+Quem tem o token de join enxerga a lista de nós, os eventos e as métricas, sem poder agir. O token de operador é exigido também pelo exportador de métricas.
+
+O papel de inferência existe para o gateway rodar modelos nos workers sem poder administrar o cluster. O gateway pode usar só esse token; então `/v1/embeddings` (que depende do grafo sintético) fica indisponível.
 
 ## Registro e aprovação
 
-Fluxo do nó novo:
+1. O nó chama `RegisterNode` com o token de join e recebe uma credencial de 128 bits.
+2. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente. Um nó pendente não recebe unidades, não entra no placement, não tem a réplica de estado aceita, e `RequestWork` responde sem trabalho (sem erro, para o worker não sair).
+3. O operador aprova com `ai-cluster approve <nó>`. Aprovar de novo não tem efeito colateral.
+4. Um novo registro com o mesmo `node_id` só mantém a aprovação se provar a credencial atual. Sem prova, o nó volta a pendente.
+5. Um nó aprovado sem a credencial é recusado até um `revoke`. Assim, o token de join não expulsa um nó aprovado.
 
-1. `RegisterNode` com token de join. O controller devolve a credencial do nó.
-2. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica `pendente`: não recebe unidade, não entra no
-   placement, a réplica de estado que ele oferece é ignorada, e `RequestWork` responde sem trabalho.
-3. O operador aprova (`ai-cluster approve`). O nó vira `aprovado`.
-4. Re-registro do mesmo `node_id` só mantém a aprovação se provar a credencial atual. Sem prova,
-   volta a `pendente`. Nó aprovado sem a credencial é recusado (`FailedPrecondition`) até
-   `revoke`, então o token de join não expulsa um nó aprovado.
+Com `AI_CLUSTER_AUTO_APPROVE`, todo nó é aprovado no registro. Isso é para redes fechadas de teste.
 
-## Autorização de trabalho
+## Transporte
 
-Alvo: um nó só acessa unidades de trabalho, fatias de modelo e objetos de estado autorizados a
-ele. Hoje o controle é por nó e por papel, não por unidade: qualquer nó aprovado e com capacidade
-pode receber qualquer unidade que o placement escolha. Fatias (`ShardChannel`) exigem a credencial
-do nó. Restauração de estado só vem de nó aprovado.
+- **TLS de um sentido, por padrão.** O controller serve TLS com o certificado do servidor. O cliente confere a CA em `AI_CLUSTER_TLS_CA`.
+- **Sem TLS, o controller não sobe**, a menos que `AI_CLUSTER_INSECURE=1`. Com certificado e `INSECURE` juntos, vale o certificado.
+- **mTLS opcional.** Com `AI_CLUSTER_TLS_CLIENT_CA`, o controller exige certificado de cliente assinado pela CA. Peer sem certificado é recusado no handshake, antes de qualquer token. Workers, CLI e gateway apresentam o próprio certificado com `AI_CLUSTER_TLS_CLIENT_CERT` e `AI_CLUSTER_TLS_CLIENT_KEY`.
+- **Canal de fatias** com keepalive HTTP/2 de 10 s, para detectar conexão meio-aberta.
 
-## Transporte e mTLS
+Sem `AI_CLUSTER_TLS_CLIENT_CA`, o cliente não apresenta certificado, e a credencial do nó é o único segredo em jogo.
 
-Hoje (S4): TLS de um sentido.
+> Planejado: CA do cluster emitindo e renovando certificado por nó, com o controller associando o certificado ao `node_id`.
 
-- O controller serve TLS com `AI_CLUSTER_TLS_CERT` e `AI_CLUSTER_TLS_KEY` (PEM, sempre em par).
-- O cliente (worker, CLI, gateway) confere a CA em `AI_CLUSTER_TLS_CA`. `AI_CLUSTER_TLS_DOMAIN`
-  troca o nome verificado quando o endpoint é um IP.
-- `http://` só com `AI_CLUSTER_INSECURE=1`, nos dois lados. Certificado vence o opt-out.
+## Atestação de software
 
-mTLS (F19, [[adr-016-mtls-opcional-no-plano-de-controle]]): `AI_CLUSTER_TLS_CLIENT_CA` no controller exige certificado de cliente da CA; worker, CLI e gateway apresentam `AI_CLUSTER_TLS_CLIENT_CERT`/`AI_CLUSTER_TLS_CLIENT_KEY`.
+Nas imagens do AI Cluster OS, cada nó mede o próprio slot de boot (SHA-256 da partição ativa) e informa a medida e a versão da imagem. O controller marca um nó como `attested` quando versão e medida são iguais às da release assinada. A coluna `MEDIDA` de `ai-cluster nodes` mostra `confere` nesse caso.
 
-Alvo que falta: cada nó apresenta certificado emitido pela CA do cluster, e o
-controller associa o certificado ao `node_id`. A credencial por nó passa a ser complementar, não a
-única prova. Os tokens de papel continuam para operador e inferência.
+A medida prova que o conteúdo do slot é o esperado. Ela não prova que o nó é íntegro: quem controla o nó controla o que ele informa. Não há TPM, secure boot nem dm-verity nesta versão.
 
-> [!todo] mTLS: o cliente não apresenta certificado; a identidade do nó é só a credencial em
-> claro. Falta a CA do cluster, emissão e renovação de certificado por nó.
+> Planejado: atestação de kernel, driver e versão do worker, com a medida feita por algo fora do controle do sistema operacional, e uso da atestação para liberar trabalho.
 
-## Atestação
+## Release assinada
 
-Alvo: quando disponível, validar imagem de SO, kernel e perfil, versão do worker, estado de driver
-e integridade. A atestação pós-boot faz parte do provisionamento: um nó só vira `READY` depois dela
-(ver [[provisionamento]]).
+Cada release de imagem é assinada com Ed25519 pelo operador. A chave privada fica fora do repositório e do controller. A assinatura cobre a versão, a placa, o SHA-256 do arquivo comprimido e o SHA-256 da imagem ext4. O URL fica fora da assinatura, então trocar de espelho não exige assinar de novo.
 
-Hoje não existe atestação. O único cheque de compatibilidade é a versão do protocolo
-(`x-ai-cluster-protocol-version`, `v1`), que diz se os dois lados falam a mesma língua e não diz
-nada sobre o que está rodando.
+- O nó confere a assinatura antes de baixar qualquer coisa, com as chaves públicas gravadas na imagem.
+- Mais de uma chave pública pode estar na imagem, e vale qualquer uma que confira. É isso que permite rotação.
+- A versão precisa ser maior que a instalada. Não há downgrade pela via normal.
+- O download só vem do host do controller, e só é gravado depois de conferir o SHA-256 e a estrutura gzip.
+- Assinatura inválida é recusada, e o nó volta ao cluster. Ver [[ai-cluster-os]] para o fluxo completo.
 
-> [!todo] Atestação: nenhum cheque de imagem, kernel, versão ou driver. Depende de imagem de SO
-> assinada ([[ai-cluster-os]]) e fica para [[fase-19-hardening-de-producao]].
+O controller guarda a release sem verificar a assinatura: a checagem é do nó. Um controller comprometido pode, portanto, tirar nós do cluster por alguns segundos com uma versão inventada, porque o nó drena antes de recusar.
 
-## Quarentena
+### Rotação de chave
 
-Alvo: isolar um nó sem removê-lo. Gatilhos: divergência de integridade, comportamento inesperado,
-credencial comprometida. Quarentena tira o nó do placement e preserva o estado para investigação.
+1. Gerar um novo par com `release-keys.sh <nome>`. A privada fica em `~/.aic`.
+2. Construir uma imagem de transição com as duas chaves públicas, assinada com a chave antiga.
+3. Depois que os nós tiverem a imagem de transição, publicar a imagem seguinte apenas com a chave nova, assinada com a nova.
 
-Hoje: o enum de estado tem `QUARANTINED` e o placement já o trata como inelegível, mas nenhum
-caminho do código aplica esse estado. A única forma de tirar trabalho de um nó é o drain
-(`LeaveNode`, pelo próprio worker) ou `revoke`.
-
-> [!todo] Quarentena: o estado existe, mas não há gatilho nem comando. Falta o gatilho de
-> integridade e um comando do operador para entrar e sair de quarentena.
+Não existe lista de revogação. Uma chave vazada vale até a imagem que a retira chegar a cada nó. Quem tem a privada consegue instalar qualquer release em todos os nós.
 
 ## Revogação
 
-Alvo: revogar certificado, invalidar sessões e remover acesso a modelo e estado do nó.
-
-Hoje (S5), `ai-cluster revoke <nó>` (operador):
+`ai-cluster revoke <nó>` (operador):
 
 - retira a aprovação e troca a credencial do nó;
-- devolve as unidades em voo à fila e tira o nó do mapa de fatias do controller;
-- gera o evento `node_revoked`;
-- o worker revogado passa a receber `Unauthenticated` nas chamadas (o script `phase-s5-persist.sh` verifica); se subir de novo, nasce `pendente`.
+- devolve as unidades em voo à fila e tira o nó do mapa de fatias;
+- gera o evento `node_revoked` e uma entrada de auditoria;
+- faz o worker revogado receber `Unauthenticated`. Se ele subir de novo, nasce pendente.
 
-Revogação também serve de rotação de credencial de um nó. Não há revogação de certificado (não
-existe), nem de token de join ou de operador: trocá-los é reiniciar o controller com valores novos.
+Revogar também serve para trocar a credencial de um nó. Trocar o token de join ou o de operador exige reiniciar o controller com valores novos.
 
-> [!warning] Com `AI_CLUSTER_AUTO_APPROVE` o nó revogado volta aprovado ao se registrar de novo: a
-> revogação só tem efeito com aprovação manual. A revogação não envia nada ao worker: fatias e
-> modelo que ele já guardou em cache permanecem no disco dele.
+Limites da revogação:
 
-## Segredos
-
-- Os tokens são variáveis de ambiente. Ficam visíveis em `docker inspect` e no ambiente do processo.
-- A credencial do nó fica em claro no controller (arquivo de `AI_CLUSTER_NODES`, modo 0600) e no
-  worker (arquivo de `AI_CLUSTER_NODE_CREDENTIAL_FILE`).
-- Não há rotação periódica. Rotação é manual: revogar o nó, ou reiniciar o controller com novos tokens.
-- A chave de API do gateway é uma variável de ambiente, lida na subida.
-
-> [!warning] `Debug` de `NodeRecord` e de `NodeCredential` imprime o segredo. Nada loga isso hoje,
-> mas um `{:?}` futuro vaza a credencial.
+- Com `AI_CLUSTER_AUTO_APPROVE`, o nó revogado volta aprovado ao se registrar de novo. A revogação só vale com aprovação manual.
+- A revogação não envia nada ao worker. Fatias e modelos que ele já guardou continuam no disco dele.
+- Não há revogação de certificado, porque não há emissão de certificado por nó.
 
 ## Auditoria
 
-Alvo: toda ação administrativa registra quem agiu, quando, em qual nó, com qual papel, e fica
-guardada além de uma sessão.
+Cada ação administrativa gera um evento `audit` com a ação, o alvo e o endereço de quem chamou ([[observabilidade]]). Tentativas negadas não entram na trilha.
 
-Hoje: o controller guarda os últimos 256 eventos de ciclo de vida em memória
-(`node_approved`, `node_revoked`, `node_left`, `node_registered`, `reservation_released` e outros),
-e imprime no stdout. O evento não registra quem agiu: `node_approved` guarda só o `node_id`, e o
-papel que autorizou a chamada não entra no registro. Nada é persistido.
+Limites:
 
-> [!todo] Auditoria: falta o ator (papel e identificador do chamador) em cada evento administrativo,
-> e persistência. Hoje o log é uma visão de incidente recente, não uma trilha.
+- O ator é o endereço de rede, não uma identidade. Não há nome de operador nem CN de certificado.
+- A trilha é o log de eventos, sem assinatura. Persiste só com `AI_CLUSTER_EVENTS`.
+- A ação é registrada antes do efeito.
 
-## Exposição de leitura
+> Planejado: ator com papel e identificador em cada evento administrativo, e persistência em armazenamento próprio.
 
-Os RPCs de leitura (`ListNodes`, `ListEvents`, `GetTrace`, `GetMetrics`, `ListReservations`) aceitam
-o token de join. Quem tem o segredo de join enxerga a lista de nós, os eventos e as métricas, sem
-poder agir. `GetOutput` exige o operador.
+## Quarentena
 
-O exportador de métricas (porta 9101) exige `Authorization: Bearer <token de operador>`, sem TLS:
-o token viaja em claro na rede até ser apresentado.
+O estado de quarentena existe no modelo, e o placement não escolhe nó em quarentena. Mas nenhum gatilho aplica o estado, e não há comando para entrar ou sair dele. Hoje, a única forma de tirar trabalho de um nó é drená-lo (saída do próprio worker) ou revogá-lo.
 
-## Modelo de ameaças resumido
+> Planejado: quarentena por gatilho de integridade (divergência de medida, comportamento anômalo ou credencial comprometida), que preserva o estado do nó para investigação, com comandos para entrar e sair.
 
-| Ameaça | Controle hoje | Lacuna |
+## Segredos
+
+- Os tokens são variáveis de ambiente. Ficam visíveis no ambiente do processo e em ferramentas de inspeção de contêiner.
+- A credencial do nó fica em claro no controller (arquivo de `AI_CLUSTER_NODES`, modo 0600) e no worker (arquivo de `AI_CLUSTER_NODE_CREDENTIAL_FILE`).
+- A chave de API do gateway é variável de ambiente, lida na subida.
+- Não há rotação periódica. Rotação é manual: revogar o nó, ou reiniciar o controller com tokens novos.
+- As estruturas de credencial imprimem o segredo se formatadas com `Debug`. Nada no código faz isso hoje.
+
+> Planejado: segredos em arquivo ou cofre, com rotação periódica de credenciais.
+
+## Transporte da perna HTTP
+
+A perna HTTP do gateway não tem TLS. A chave de API viaja em claro fora de loopback, e o gateway só escuta fora de loopback com `AI_CLUSTER_INSECURE=1`. O exportador de métricas também é HTTP puro, com o token de operador como bearer.
+
+> Planejado: TLS na perna HTTP do gateway e no exportador de métricas.
+
+## Autorização por unidade
+
+Hoje o controle é por nó e por papel, não por unidade. Qualquer nó aprovado e com capacidade pode receber qualquer unidade que o placement escolher. Fatias de modelo exigem a credencial do nó. Restaurar estado só vem de nó aprovado.
+
+> Planejado: nó acessa só as unidades, fatias e objetos de estado autorizados a ele.
+
+## Modelo de ameaças
+
+| Ameaça | Controle | Limite |
 |---|---|---|
-| Cliente anônimo registra nó ou injeta estado | Token de join obrigatório em toda RPC; controller não sobe sem ele | Token compartilhado; quem o captura entra |
-| Nó aprova a si mesmo | Operador separado; aprovação exige papel de operador | Quem tem o token de operador aprova qualquer nó |
-| Nó age por outro nó | Credencial por nó em toda RPC de nó | Credencial em claro sem TLS |
-| Token capturado na rede | TLS de um sentido, obrigatório salvo `INSECURE` | Sem mTLS; `http` aceito com `INSECURE` |
-| Nó comprometido continua recebendo trabalho | Revogação manual | Sem quarentena automática |
-| Modelo ou estado em nó revogado | Fatias saem do mapa do controller | A revogação não manda nada ao worker para limpar o cache |
-| Ação administrativa sem rastro | Eventos em memória | Sem ator, sem persistência |
+| Cliente anônimo registra nó ou injeta estado | Token de join em toda RPC. Controller não sobe sem ele. | Segredo compartilhado: quem o captura entra. |
+| Nó aprova a si mesmo | Aprovação exige o papel de operador. | Quem tem o token de operador aprova qualquer nó. |
+| Nó age por outro nó | Credencial por nó em toda RPC de nó. | Credencial em claro sem TLS. |
+| Token capturado na rede | TLS por padrão. | Sem TLS com `AI_CLUSTER_INSECURE`; perna HTTP do gateway em claro. |
+| Nó comprometido continua recebendo trabalho | Revogação manual. | Sem quarentena automática. |
+| Imagem adulterada | Release assinada, conferida pelo nó antes de gravar. | Sem secure boot: quem altera a placa altera o que roda. |
+| Versão antiga reinstalada | Versão precisa ser maior. | Sem lista de revogação de chaves. |
+| Ação administrativa sem rastro | Evento `audit` no log de eventos. | Ator é endereço de rede; sem assinatura. |
 
-> [!info] O que já existe
-> - Token de join e falha fechada: [[f07-token-de-join]] (S1).
-> - Aprovação de nó e persistência de aprovação: [[f07-aprovacao-de-no]] (S2, S5).
-> - Operador, credencial por nó e papel de inferência: [[f07-operador-e-credencial-por-no]] (S3a, S3b).
-> - TLS de um sentido e opt-out `AI_CLUSTER_INSECURE`: [[f07-tls]] (S4).
-> - Chave de API do gateway e rotas HTTP: [[f08-gateway-e-api]].
-> - Token de inferência restrito a `ShardMatmul`: [[f08-canal-residente-de-fatias]] e [[inference-engine]].
-> - Eventos de ciclo de vida, base da auditoria atual: [[f05-eventos]].
-> - Exportador com Bearer de operador: [[f05-metricas]].
->
-> Código: `code/crates/protocol/src/metadata.rs` (papéis, `ServerMetadata`, `InferenceGate`,
-> `same_token`, TLS do cliente), `code/crates/controller/src/main.rs` (falha fechada, TLS do servidor,
-> `AI_CLUSTER_AUTO_APPROVE`), `code/crates/controller/src/service.rs` (`authorize_node`,
-> `require_operator`, `revoke_node`), `code/crates/controller/src/registry.rs` (aprovação,
-> credencial, `revoke`), `code/crates/controller/src/exporter.rs` (Bearer), `code/crates/gateway/src/main.rs`
-> (`AI_CLUSTER_API_KEY`).
+## Limites conhecidos
 
-> [!todo] Pendente, na ordem do alvo: mTLS com CA do cluster e certificado por nó; atestação de
-> imagem, kernel, worker e driver; quarentena com gatilho e comando; autorização por unidade, fatia e
-> objeto de estado; ator e persistência na auditoria; rotação periódica de credenciais; identidade
-> física verificada. Ver [[fase-19-hardening-de-producao]].
-
-> [!warning] Desvios do alvo no MVP: um segredo de join para todos os nós (sem identidade própria
-> até a credencial de nó); tokens e credenciais em variável de ambiente e em claro; TLS sem mTLS; identidade
-> autodeclarada; revogação manual e sem certificado; quarentena sem gatilho; auditoria sem ator.
+- **Um segredo de join para todos os nós.** Quem o tiver pode registrar um `node_id` pendente e tentar tomá-lo. Um nó já aprovado só é substituído por revogação.
+- **Identidade autodeclarada** até a credencial do nó. O registro pode ser disputado.
+- **Operador sem escopo.** O operador age sobre qualquer nó.
+- **Segredos em claro** em variáveis de ambiente e em arquivos.
+- **Atestação só de software.** Um nó comprometido pode mentir sobre a medida.
+- **Sem rotação de chave de release por revogação.** Só por substituição de imagem.

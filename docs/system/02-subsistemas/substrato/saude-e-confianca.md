@@ -1,81 +1,76 @@
 ---
 title: "Saúde e confiança"
-aliases: ["Saúde e confiança", "Health and Trust", "docs/06", "06 — Health and Trust", "06 — Saúde e confiança"]
+aliases: ["Saúde e confiança", "Health and Trust"]
 tags: [sistema/subsistema/substrato]
 type: sistema/subsistema
-status: proposto
-implementacao: parcial
-fases: ["[[fase-02-capability-e-saude]]", "[[fase-07-seguranca-base]]"]
 ---
 
 # Saúde e confiança
 
-Duas dimensões separadas, que não devem ser confundidas:
+Duas dimensões separadas:
 
-- **Saúde** mede a condição operacional do hardware e do runtime: o nó consegue trabalhar agora?
-- **Confiança** mede se o nó está autorizado e íntegro: ele pode receber trabalho em princípio?
+- **Saúde** responde se o nó consegue trabalhar agora.
+- **Confiança** responde se o nó está autorizado e íntegro, ou seja, se pode receber trabalho em princípio.
 
-Um nó pode estar saudável e não confiável (recém-chegado sem aprovação), ou confiável e degradado (temperatura alta). O escalonador usa as duas.
+Um nó pode estar saudável e não confiável (recém-chegado, ainda sem aprovação), ou confiável e degradado (temperatura alta). O escalonador usa as duas.
 
 ## Saúde
 
-Domínios:
+O relatório de saúde chega a cada heartbeat (5 s). Ele tem um escore entre 0 e 1 e os valores brutos: utilização de CPU, memória e swap, temperatura, operações de disco por segundo e latência de rede.
 
-- CPU;
-- memória;
-- térmico;
-- armazenamento;
-- rede;
-- acelerador.
+O escore é o **pior domínio**, não a média:
 
-Estados: `READY`, `ACTIVE`, `DEGRADED`, `DRAINING`, `FAILED`, `OFFLINE`.
+| Domínio | Medida | Fonte |
+|---|---|---|
+| Pressão de memória | `1 − MemAvailable / MemTotal` | `/proc/meminfo` |
+| Pressão de swap | `1 − SwapFree / SwapTotal` | `/proc/meminfo` |
+| Pressão térmica | Rampa de 80 °C (0) a 100 °C (1) | Zona térmica do kernel ou `AI_CLUSTER_TEMPERATURE_C` |
+| Saúde de armazenamento | Taxa de escrita com `fsync` atual sobre o baseline; razão ≥ 0,8 conta como 1,0 | Sonda remedida no ocioso ou `AI_CLUSTER_STORAGE_HEALTH` |
+
+Regras:
+
+- **CPU não entra no escore.** Utilização mede carga, não condição. A carga é tratada pelo termo de fila do custo de placement.
+- **Piso de 0,05.** Um nó medido nunca reporta exatamente 0, porque 0 significa "não reportado" para o placement.
+- **Sem sensor não penaliza.** Temperatura zero significa que nenhum sensor está visível, e o domínio é ignorado.
+- O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um nó degradado perde para um saudável de capacidade igual.
+
+Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para qualquer hardware.
 
 ## Confiança
 
-Estados: `UNKNOWN`, `UNTRUSTED`, `BOOTSTRAPPED`, `VALIDATED`, `TRUSTED`, `QUARANTINED`, `REVOKED`.
+O controller guarda a confiança de cada nó como aprovado ou não aprovado, com uma exceção de quarentena:
 
-A transição para cada estado de confiança depende de evidência: join token, aprovação do operador, credencial por nó e, na fase de hardening, attestation ([[seguranca]], [[fase-19-hardening-de-producao]]).
+| Situação | Efeito |
+|---|---|
+| Nó novo | Não confiável. Não recebe trabalho até ser aprovado (`ai-cluster approve`). |
+| Aprovado | Recebe trabalho. |
+| Revogado (`RevokeNode`) | Sai de circulação. Suas unidades em voo voltam à fila. |
+| Quarentena | Sai de circulação até um operador aprovar de novo. Ver abaixo. |
 
-## Combinações
+A aprovação e a credencial do nó sobrevivem a reinício quando o controller tem `AI_CLUSTER_NODES` configurado. Registrar o nó de novo não o cura, e sair do cluster não apaga o registro: o nó continua listado, como `QUARANTINED` se estava em quarentena.
 
-Um nó pode estar em combinações como estas:
+Toda RPC exige o token de entrada, e a credencial do nó é conferida em cada chamada. O papel de operador é separado do papel de nó (ver [[seguranca]]).
 
-```text
-Health: DEGRADED
-Trust: TRUSTED
-Capacity: HIGH
-State: ACTIVE
-```
+## Quarentena
 
-```text
-Health: GREEN
-Trust: QUARANTINED
-Capacity: HIGH
-State: BLOCKED
-```
+Um resultado é inválido quando não tem a forma esperada, tem números não finitos ou tem checksum diferente do que a soma recomputada pelo controller daria (mesma ordem de soma, igualdade exata).
 
-## Diagnóstico automatizado
+- Um resultado inválido não é aceito. A unidade volta à fila **sem gastar** a tentativa dela, porque a culpa é do nó.
+- Três resultados inválidos seguidos colocam o nó em quarentena. Um resultado válido zera a contagem.
+- Ao entrar em quarentena, o nó perde as unidades que ainda segura (cada uma volta à fila gastando uma tentativa) e os canais de fatias são derrubados.
+- Só `ai-cluster approve` libera o nó. O limite de três é fixo, sem variável de ambiente.
 
-O sistema registra a causa provável de cada degradação e o impacto estimado sobre o trabalho (por exemplo: "temperatura acima do baseline; previsão de tempo X% maior").
+## Diagnóstico
 
-## Térmico
+O sistema não registra a causa provável de uma degradação nem o impacto estimado sobre o trabalho. O operador vê os valores brutos do relatório de saúde e a coluna de saúde em `ai-cluster nodes`.
 
-A temperatura é comparada com o baseline específico do hardware, não com um limite genérico. Um mesmo número de °C pode ser normal em um SBC e crítico em um notebook.
+## Limites conhecidos
 
-## Armazenamento
+- O checksum prova coerência interna do resultado, não que a multiplicação está certa. Um nó que devolve uma matriz errada com o checksum dessa matriz passa pela validação.
+- Não há verificação por réplica. Executar a mesma unidade em dois nós e comparar custaria o dobro de compute.
+- Não há SMART, medida de desgaste de disco nem limite térmico por hardware.
+- A degradação de rede não entra no escore de saúde. O custo de transferência usa a medida corrente, mas o escore não.
+- Não há estados `UNKNOWN`, `BOOTSTRAPPED` ou `VALIDATED`. A confiança é binária (aprovado ou não) mais a quarentena.
+- Os estados `DEGRADED`, `ACTIVE` e `FAILED` existem no enum, mas o controller não os produz. O estado de um nó que parou de responder é `OFFLINE`.
 
-Detecta aviso de saúde (SMART), desgaste, anomalia de latência e regressão de desempenho, quando o dispositivo expõe esses dados.
-
-> [!info] O que já existe
-> - **Saúde** (`HealthReport` em `code/proto/cluster.proto`, montado por `health()` em `code/crates/worker/src/main.rs`): `health_score` (0..1), utilização de CPU, memória e swap, temperatura, operações de disco por segundo. Enviado a cada batida (5 s) pelo `ReportHealth` (`HealthStreamRequest`), junto com o perfil de capacidade corrente.
-> - Pontuação: o pior domínio decide. Pressão térmica sobe a partir de 80 °C e satura em 100 °C; um nó medido nunca reporta exatamente 0 (piso de 0.05), porque 0 significa "não reportado" para o placement. Um `health_score` baixo entra no placement como penalidade (`HEALTH_WEIGHT`, `code/crates/controller/src/placement.rs`).
-> - **Estados**: `NodeState` em `code/crates/common/src/lib.rs` tem os 11 valores do registro, mas só `READY` (registro), `OFFLINE` (sem batida na janela de `AI_CLUSTER_HEARTBEAT_GRACE_MS`) e `DRAINING` (saída planejada) são atribuídos pelo controller. `DEGRADED`, `ACTIVE`, `FAILED` e `QUARANTINED` existem como valores, sem transição que os produza.
-> - **Elegibilidade** (`eligible` em `code/crates/controller/src/registry.rs`): recebe trabalho o nó com `trusted` e fora de `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`.
-> - **Confiança** hoje é um booleano `trusted` (`NodeSnapshot`): um nó novo nasce não confiável e só recebe trabalho após `ApproveNode`; `RevokeNode` o tira de circulação. A confiança persiste com a credencial do nó em arquivo (`AI_CLUSTER_NODE_CREDENTIAL_FILE` no worker, registro no controller).
-> - Fases: [[f02-modelo-de-saude]], [[f07-aprovacao-de-no]], [[f07-token-de-join]], [[f07-operador-e-credencial-por-no]], [[f07-tls]].
-
-> - **Quarentena** (`QUARANTINED`): o controller confere cada resultado de Work Unit (forma, números finitos, checksum); 3 inválidos seguidos tiram o nó de circulação, devolvem suas unidades à fila e registram `node_quarantined`. `approve` libera. Ver [[f04-quarentena]].
-
-> [!todo] Estados de confiança `UNKNOWN`, `BOOTSTRAPPED`, `VALIDATED` e `REVOKED` como máquina de estados (hoje `trusted` sim/não, mais `QUARANTINED`); transições de `DEGRADED`, `ACTIVE`, `FAILED` e `QUARANTINED`; attestation ([[fase-19-hardening-de-producao]]); diagnóstico automatizado; limite térmico por hardware; saúde de armazenamento (SMART) e de rede.
-
-> [!warning] Divergência: `HealthReport` declara `storage_health`, `network_latency_ms` e `thermal_throttling`, mas o worker nunca os preenche (ficam em zero). O CLI os omite de propósito para não exibir zero como medida. O limite térmico é genérico (80 °C e 100 °C), não o baseline do hardware.
+> Planejado: níveis de confiança com provisionamento e verificação (`UNKNOWN` até `TRUSTED`), attestation, limite térmico por hardware, SMART e diagnóstico automatizado com impacto estimado no trabalho.

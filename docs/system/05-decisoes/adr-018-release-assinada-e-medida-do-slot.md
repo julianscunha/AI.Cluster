@@ -3,18 +3,15 @@ title: "ADR-018 — Release assinada pelo operador e medida do slot"
 aliases: ["ADR-018", "assinatura de release", "attestation de software"]
 tags: [sistema/adr, subsistema/ai-cluster-os, subsistema/seguranca]
 type: sistema/adr
-status: decidido
-implementacao: parcial
-fases: ["[[fase-19-hardening-de-producao]]"]
 ---
 
 # ADR-018 — Release assinada pelo operador e medida do slot
 
-Data: 2026-10-26 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-26 · Voltar para [[decisoes]].
 
 ## Contexto
 
-O rollout pelo controller ([[f19-rollout-de-release]]) manda os nós gravarem um artefato. O SHA-256 e o URL vêm do mesmo controller: quem tem o token de operador, ou um atacante no caminho do download (http), instalaria o que quisesse com privilégio de root. A placa de bancada não tem TPM nem secure boot.
+O rollout pelo controller manda os nós gravarem um artefato. Se o SHA-256 e o URL viessem só do controller, quem tem o token de operador, ou um atacante no caminho de um download http, instalaria o que quisesse com privilégio de root. A placa de referência não tem TPM nem secure boot.
 
 ## Decisão
 
@@ -28,11 +25,18 @@ O rollout pelo controller ([[f19-rollout-de-release]]) manda os nós gravarem um
 ## Consequências
 
 - Um controller ou worker comprometido, ou um MITM no download, não instala uma imagem que o operador não assinou. Quem tem a chave privada continua podendo tudo.
-- A medida **não** protege contra um nó comprometido (ele mente): detecta slot corrompido, gravação ruim e slot errado. `attested` (no CLI, `MEDIDA confere`) não é prova de integridade. O caminho para integridade real é dm-verity com root hash assinado e hardware com raiz de confiança.
-- A imagem ext4 sai sem journal (`^has_journal`) e o fstab sem fsck (passno 0): a raiz é somente leitura e o hash precisa ser estável entre boots (verificado: com journal, o mount ro alterava um bloco).
-- O boot espera a medida (~25–40 s no SD) antes do worker subir; o `aic-slot-commit` tem prazo de 300 s e absorve isso.
-- Trocar a chave são dois rollouts (transição com as duas, depois só a nova); nós offline na troca precisam ver a transição antes da segunda.
+- A medida **não** protege contra um nó comprometido, que pode mentir. Ela detecta slot corrompido, gravação ruim e slot errado. `attested` (no CLI, `MEDIDA confere`) não é prova de integridade. O caminho para integridade real é dm-verity com root hash assinado e hardware com raiz de confiança.
+- A imagem ext4 sai sem journal (`^has_journal`) e o fstab sem fsck (passno 0): a raiz é somente leitura e o hash precisa ser estável entre boots. Com journal, a montagem somente leitura altera um bloco e muda o hash.
+- O boot espera a medida (cerca de 25 a 40 s num cartão SD) antes de o worker subir; o `aic-slot-commit` tem prazo de 300 s e absorve essa espera.
+- Trocar a chave são dois rollouts: transição com as duas chaves, depois só a nova. Nós offline na troca precisam ver a transição antes da segunda.
 
-## Itens abertos
+## Alternativas
 
-Revogação sem nova imagem (lista de revogação), https no `wget`, dm-verity, suporte a mais de uma placa por imagem (hoje `/etc/aic-board`).
+- Confiar no SHA-256 e no URL vindos do controller: descartada pelo risco descrito no contexto.
+
+## Limites
+
+- Revogação sem nova imagem (lista de revogação) não existe.
+- O `wget` do updater usa http; https é pendente.
+- dm-verity, secure boot e TPM ficam fora desta decisão.
+- Uma imagem suporta uma placa só (`/etc/aic-board`).

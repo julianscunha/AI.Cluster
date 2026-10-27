@@ -1,79 +1,75 @@
 ---
 title: "Unidade de trabalho"
-aliases: ["Unidade de trabalho", "Work Unit", "docs/08", "08 — Work Unit", "08 — Unidade de trabalho"]
+aliases: ["Unidade de trabalho", "Work Unit"]
 tags: [sistema/subsistema/substrato]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-03-execucao-distribuida]]"]
 ---
 
 # Unidade de trabalho
 
-Work Unit é a menor unidade executável que o scheduler pode atribuir a um recurso. Tudo o que o cluster executa (uma multiplicação, uma fatia de modelo, uma etapa de um grafo) chega ao worker como Work Unit.
+Work Unit é a menor unidade que o scheduler atribui a um nó. Hoje a unidade é uma multiplicação de matrizes: os operandos viajam no pedido e o resultado volta no relatório da unidade.
 
-## Campos obrigatórios
-
-```json
-{
-  "work_id": "wu-...",
-  "execution_id": "exec-...",
-  "plan_id": "plan-...",
-  "type": "MATMUL",
-  "precision": "INT4",
-  "dependencies": [],
-  "requirements": {},
-  "priority": "INTERACTIVE",
-  "deadline_ms": 80,
-  "retryable": true
-}
-```
+## Campos
 
 | Campo | Função |
 |---|---|
-| `work_id`, `execution_id`, `plan_id` | Identificam a unidade, a execução e o plano a que pertence. |
-| `type`, `precision` | Operação e precisão numérica. |
-| `dependencies` | Unidades que precisam terminar antes. |
-| `requirements` | Restrições de atribuição (ver abaixo). |
-| `priority` | Classe de prioridade ([[worker-runtime]]). |
-| `deadline_ms` | Prazo a partir da atribuição. |
-| `retryable` | Se pode ser reexecutada após falha. |
+| `work_id` | Identificador, gerado pelo controller (`next_work_id`). |
+| `request_id` | Liga as unidades de uma mesma requisição. `GetTrace` reconstrói o caminho por esse id. |
+| `rows`, `shared`, `cols` | Dimensões da multiplicação `A(rows × shared) × B(shared × cols)`. |
+| `matrix_a`, `matrix_b` | Operandos, em `repeated double` (8 bytes por elemento). |
+| `depends_on` | Unidades que precisam completar antes. |
+| `matrix_a_from`, `matrix_b_from` | Entrada vinculada: o operando vem da saída de outra unidade. Vazio usa o operando enviado. |
+| `min_cpu_threads` | Requisito mínimo de threads do nó. `0` significa sem requisito. |
+| `priority` | Inteiro de 0 a 9. Maior sai primeiro. |
 
-## Requisitos
+Uma unidade bloqueada (com dependência ou entrada vinculada ainda não disponível) não é atribuída. Uma entrada vinculada a um identificador que nunca completa deixa a unidade bloqueada, sem despachar com operando vazio.
 
-Podem incluir:
+## Requisitos de atribuição
 
-- memória mínima;
-- precisão;
-- requisito de acelerador;
-- limite de latência;
-- capacidade de compute;
-- requisito de localidade.
+Um nó recebe a unidade só quando tem:
+
+- threads reportadas em número igual ou maior que `min_cpu_threads`;
+- memória reportada suficiente para os operandos e o resultado (A e B lidos, C escrito, 8 bytes por elemento). Memória zero significa "não reportada" e não filtra;
+- confiança e estado elegíveis (ver [[saude-e-confianca]]).
+
+Nenhum outro requisito (precisão, acelerador, armazenamento, localidade, prazo) existe hoje.
 
 ## Ciclo de vida
 
-`CREATED` → `READY` → `QUEUED` → `RUNNING` → `COMPLETED`.
+```text
+na fila --(claim)--> em voo com o nó --(complete)--> concluída
+   ^                         |
+   +----(nó saiu/caiu)------+
+                             \--(orçamento esgotado)--> falhou (com dependentes)
+```
 
-Exceções: `WAITING`, `RETRYING`, `FAILED`, `CANCELLED`, `RECOVERY`.
+- **Atribuição (`claim`).** Ao ser atribuída, a unidade conta uma tentativa. Quem escolhe o nó é o placement (ver [[scheduler]]).
+- **Conclusão (`complete`).** Só o nó que recebeu a unidade pode concluí-la. Um resultado atrasado de nó que perdeu a posse é recusado.
+- **Devolução.** Ao sair ou cair um nó, suas unidades em voo voltam à fila com dependências e entradas vinculadas intactas.
+- **Falha.** Ao esgotar as tentativas, a unidade falha, e todos os dependentes dela, em cascata. Nada fica esperando para sempre.
 
-## Idempotência
+## Tentativas
 
-Work Units indicam se são recomputáveis ou idempotentes. Isso permite retry e execução especulativa de forma controlada.
+Cada unidade tem no máximo **três tentativas**: a primeira e duas reatribuições (`MAX_ATTEMPTS = 3`). Uma unidade que completa zera o contador. Uma unidade rejeitada pela validação de resultado (ver [[saude-e-confianca]]) não gasta tentativa.
 
-> [!info] O que já existe
-> **Unidade atual** (`WorkUnit` em `code/proto/cluster.proto`): é uma multiplicação de matrizes, não a unidade genérica do alvo.
-> - Identificador: `work_id`, gerado pelo controller (`next_work_id` em `code/crates/controller/src/work.rs`).
-> - Operandos: `rows`, `shared`, `cols`, `matrix_a`, `matrix_b` (`repeated double`).
-> - Dependências: `depends_on`; a entrada pode vir da saída de outra unidade (`matrix_a_from`, `matrix_b_from`). Unidade bloqueada não é atribuída até suas dependências completarem.
-> - Requisito: `min_cpu_threads` (o controller não entrega a um nó com menos threads).
-> - Rastreio: `request_id` liga as unidades de uma mesma requisição (H3); `GetTrace` as reconstrói.
->
-> **Ciclo real**: fila → atribuída a um nó (`claim`, que escolhe o nó de menor custo previsto) → concluída (`complete`), ou devolvida à fila quando o nó some (`requeue_for_node`). Uma unidade tem no máximo 3 tentativas de despacho (a primeira mais duas reatribuições, `MAX_ATTEMPTS`); esgotada, falha e leva junto as dependentes (`fail_cascade`). Resultado vem com `checksum` e `compute_time_us` ([[f03-tolerancia-a-falhas]], [[f03-grafo-de-dependencias]]).
->
-> **Reservas**: uma requisição pode reservar nós (`Reserve`, `ReleaseReservation`); a reserva expira ([[f04-reservas]]).
->
-> Saídas intermediárias ficam em memória até nenhuma unidade pendente lê-las (`drop_unreferenced_outputs`), com teto de resultados mantidos (`MAX_KEPT_RESULTS`).
+O limite é o mesmo para todas as unidades. O sistema não distingue unidade idempotente de não idempotente.
 
-> [!todo] Campos `execution_id`, `plan_id`, `type`, `precision`, `priority`, `deadline_ms`, `retryable`, `requirements` com memória e localidade; estados `WAITING`, `RETRYING`, `CANCELLED`, `RECOVERY` como estados nomeados (hoje são inferidos pelas filas); execução especulativa; prazo aplicado no controller.
+## Resultado
 
-> [!warning] Divergência: o `WorkUnit` atual carrega os operandos inline em `repeated double` e não tem prioridade, prazo, precisão ou flag de retry. A tentativa de reexecução é controlada só pelo limite fixo de três despachos, sem distinguir unidade idempotente de não idempotente. O alvo descreve isso como campo da unidade. Nenhum slice planeja a migração ainda; ela precisa entrar em [[fase-03-execucao-distribuida]] antes de um workload que não seja matmul.
+O resultado traz o `checksum` (soma dos elementos, na mesma ordem que o worker calcula) e `compute_time_us`. Os resultados intermediários ficam no controller enquanto alguma unidade não concluída os lê. Depois, são descartados. O controller guarda até 64 resultados finais para consulta (`GetOutput`).
+
+## Tamanho
+
+Cada mensagem gRPC tem teto de 64 MiB (ver [[camada-de-transporte]]). Com A e B na mesma mensagem, 8 bytes por elemento, a unidade quadrada cabe até cerca de 2048 × 2048. Acima disso, a unidade não chega ao worker.
+
+A fila do controller recusa novos grafos quando há mais de 256 unidades pendentes (na fila ou em voo).
+
+## Limites conhecidos
+
+- Os operandos viajam inline em `double` por elemento: tamanho e custo de CPU crescem além do necessário. Não há buffer binário.
+- Prioridade é um inteiro sem classes nomeadas. Hoje só o papel de operador enfileira unidades.
+- A reatribuição não evita o nó que já falhou a unidade. Com um só nó sobrevivente, a unidade volta para ele.
+- Não há sinal de falha vindo do worker. Um worker que não consegue executar uma unidade a descarta em silêncio, e a unidade fica presa a ele até o nó sair.
+- Não há reserva de memória por unidade no nó, só o filtro de atribuição.
+
+> Planejado: campos de precisão, prazo (`deadline_ms`), tipo de operação genérico, flag de idempotência, requisitos de memória e localidade, estados nomeados (`WAITING`, `RETRYING`, `CANCELLED`, `RECOVERY`), execução especulativa e falha explícita reportada pelo worker.

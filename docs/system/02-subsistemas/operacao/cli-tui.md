@@ -1,93 +1,115 @@
 ---
-title: "CLI e TUI"
-aliases: ["docs/22", "22 — CLI / TUI"]
+title: "CLI e painel"
+aliases: ["CLI", "TUI", "ai-cluster", "Painel"]
 tags: [sistema/subsistema/operacao]
 type: sistema/subsistema
-status: proposto
-implementacao: parcial
-fases: ["[[fase-05-observabilidade]]", "[[fase-07-seguranca-base]]"]
 ---
 
-# CLI e TUI
+# CLI e painel
 
-A operação do cluster é feita pelo shell. A CLI `ai-cluster` é o único cliente administrativo: cada
-comando é uma chamada ao controller, sem estado próprio. A TUI, um painel que se atualiza, é a mesma
-leitura em tela cheia. Nenhum dos dois depende de interface gráfica.
+A operação do cluster é feita pelo shell. A CLI `ai-cluster` é o cliente administrativo: cada comando é uma chamada ao controller, sem estado próprio. O painel é a mesma leitura em tela única, repintada. Nenhum dos dois depende de interface gráfica. Voltar para [[operacao]].
 
-## Regras
+## Configuração
 
-- Operação por shell. Toda saída que um script lê é `chave=valor` ou tabela de colunas fixas.
-- A CLI usa o token de operador ([[seguranca]]). Nenhum comando de leitura funciona sem ele.
-- O endereço do controller vem de `AI_CLUSTER_CONTROLLER`.
-- Estado sempre com texto. Cor, quando existir, acompanha a palavra, e não a substitui; assim o
-  painel funciona em terminal sem cor, em `grep` e em operação remota.
+| Variável | Padrão | Uso |
+|---|---|---|
+| `AI_CLUSTER_CONTROLLER` | `http://127.0.0.1:50051` | Endereço do controller. |
+| `AI_CLUSTER_OPERATOR_TOKEN` | — | Token de operador. Todo comando da CLI usa esse token, inclusive os de leitura. |
+| `AI_CLUSTER_TLS_CA` | — | CA que valida o certificado do controller. |
+| `AI_CLUSTER_TLS_DOMAIN` | — | Nome verificado no certificado, quando o endereço é um IP. |
+| `AI_CLUSTER_TLS_CLIENT_CERT`, `AI_CLUSTER_TLS_CLIENT_KEY` | — | Certificado de cliente, quando o controller exige mTLS. |
+
+Ver [[seguranca]] para os papéis de cada token.
+
+## Regras de saída
+
+- Saída que um script lê é `chave=valor` ou tabela de colunas fixas.
+- Estado é sempre texto. O painel não usa cor, então funciona em terminal sem cor, com `grep` e em operação remota.
+- Comandos que mudam estado respondem com uma linha que diz o resultado, como `NÓ aprovado` ou `NÓ não encontrado`.
 
 ## Comandos
 
-Alvo, como especificado:
+### Nós
 
-```bash
-ai-cluster status
-ai-cluster dashboard
-ai-cluster nodes
-ai-cluster node show <id>
-ai-cluster node drain <id>
-ai-cluster node reprovision <id>
-ai-cluster node revoke <id>
-ai-cluster model list
-ai-cluster model show <id>
-ai-cluster request list
-ai-cluster request show <id>
-ai-cluster request trace <id>
-ai-cluster metrics
-ai-cluster events
-ai-cluster topology
-ai-cluster graph query <query>
-ai-cluster diagnose
-ai-cluster benchmark
-ai-cluster rebalance
-```
+| Comando | Função |
+|---|---|
+| `ai-cluster status` | Mesma saída de `nodes`: uma linha por nó, com estado, confiança, versão, medida e sinais. |
+| `ai-cluster nodes` | Tabela de nós. |
+| `ai-cluster node show <id>` | Um nó, com capability, saúde e confiança completas. |
+| `ai-cluster approve <nó>` | Aprova um nó pendente para receber trabalho. |
+| `ai-cluster revoke <nó>` | Retira a aprovação e a credencial do nó, devolve o trabalho em voo à fila e deixa o nó pendente. |
+
+A tabela de nós traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão da imagem) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
+
+### Reservas
+
+| Comando | Função |
+|---|---|
+| `ai-cluster reserve <nó> <requisição> [--ttl-ms N]` | Retém um nó para uma requisição. `0` usa o padrão do controller (60 s). |
+| `ai-cluster reservations` | Lista nó, requisição dona e vencimento. |
+| `ai-cluster release <nó>` | Libera a reserva antes do vencimento. Nó sem reserva não é erro. |
+
+Reservar antes de enfileirar permite que a requisição caia no nó reservado: o `benchmark --request-id` aceita o mesmo id da reserva.
+
+### Trabalho e requisições
+
+| Comando | Função |
+|---|---|
+| `ai-cluster request trace <id>` | Unidades de uma requisição, com estado, nó e tempos. |
+| `ai-cluster request cancel <id>` | Remove da fila as unidades de uma requisição. Unidade já em execução termina. |
+| `ai-cluster benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha multiplicações de matrizes e compara compute com transferência. `--local` roda no próprio processo. |
+| `ai-cluster graph [--size N]` | Despacha um grafo diamante de dependências e mostra as ramificações liberadas. |
+
+### Métricas e eventos
+
+| Comando | Função |
+|---|---|
+| `ai-cluster metrics` | Roll-up do cluster em `chave=valor`, com percentis. |
+| `ai-cluster events [--limit N]` | Linha do tempo, do mais antigo para o mais recente. Padrão 20. `0` mostra tudo. |
+| `ai-cluster dashboard [--watch N]` | Painel de uma tela. `0` ou sem a opção imprime uma vez. |
+
+Ver [[observabilidade]] para o significado de cada campo.
+
+### Release
+
+| Comando | Função |
+|---|---|
+| `ai-cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` | Define a release que os nós devem rodar. |
+| `ai-cluster rollout --cancel` | Encerra o rollout em andamento. |
+
+O `sign-release.sh` do repositório gera os argumentos de `rollout` a partir do artefato assinado. O fluxo está em [[ai-cluster-os]].
+
+### Modelos (local, sem controller)
+
+| Comando | Função |
+|---|---|
+| `ai-cluster model manifest <diretório> --name <nome> --version <versão>` | Grava `manifest.json` com nome, versão e SHA-256 de cada arquivo. |
+| `ai-cluster model verify <diretório>` | Confere os arquivos contra o manifesto. |
+
+Ver [[model-manager]].
 
 ## Painel
 
-Alvo: tempo real com contagem e estado dos nós, saúde, capacidade, CPU, RAM, GPU e NPU, temperatura,
-saúde de armazenamento, rede, requisições, TTFT, ITL, tokens por segundo, tokens evitados, cache KV,
-esperado vs real e plano atual.
+`ai-cluster dashboard` mostra, em texto:
 
-Semântica de estado (alvo):
+- `nós_disponíveis`: quantos nós o placement pode escolher agora.
+- Tabela de nós, com estado (`READY`, `DRAINING` e outros) e saúde.
+- `TRABALHO`: concluídas, pendentes, bloqueadas e falhas, desde o início do controller.
+- `TEMPO`: compute e latência totais e médios, com o previsto ao lado.
+- `RESERVAS`: reservas ativas e a requisição dona de cada uma.
 
-| Cor | Estado |
-|---|---|
-| Verde | normal |
-| Amarelo | degradado |
-| Laranja | alerta ou drenando |
-| Vermelho | falha ou quarentena |
-| Azul | provisionamento ou transição |
-| Cinza | offline |
+Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não tem seleção nem paginação. Detalhe de um nó vem de `node show`, e de uma requisição, de `request trace`.
 
-> [!info] O que já existe
-> - Comandos implementados em `code/crates/cli/src/main.rs`: `status`, `nodes`, `node show <id>`,
->   `metrics`, `events [--limit N]`, `request trace <id>`, `benchmark`, `graph [--size]` (dispatch do
->   grafo em diamante), `reserve <nó> <requisição> [--ttl-ms]`, `reservations`, `approve <nó>`,
->   `revoke <nó>`, `release <nó>`, `dashboard [--watch N]`.
-> - `node show`: [[f02-capability-corrente]]. `benchmark`: [[f02-benchmark-de-capability]]. `graph`:
->   [[f03-grafo-de-dependencias]]. `reserve`, `reservations` e `release`: [[f04-reservas]].
-> - `approve` e `revoke`: [[f07-aprovacao-de-no]] e [[f07-operador-e-credencial-por-no]].
-> - `metrics`: [[f05-metricas]]. `events`: [[f05-eventos]]. `request trace`: [[f05-traces]].
-> - `dashboard`: [[f05-dashboard]]. Lê `ListNodes`, `GetMetrics` e `ListReservations`; sem RPC novo. A
->   atualização repinta a tela inteira a cada N segundos, sem streaming. Não há navegação nem seleção.
-> - Estado do painel só em texto, sem cor, por escolha registrada em [[f05-dashboard]].
+## Limites conhecidos
 
-> [!todo] Comandos e painel que faltam:
-> - `node drain`, `node reprovision` e `node history`. O drain existe só do lado do worker
->   (`LeaveNode`), não há comando do operador.
-> - `request list` e `request show`. Só o `trace` existe.
-> - `model list` e `model show`, que dependem do model manager ([[model-manager]]).
-> - `topology`, `diagnose`, `rebalance` e `graph query`.
-> - Painel: TTFT, ITL, tokens por segundo, tokens evitados, cache KV, esperado vs real no painel,
->   plano atual e a faixa de saúde de armazenamento e rede.
-> - Cor no painel e TUI com navegação. Hoje é texto repintado.
+- **A CLI usa o token de operador para tudo.** Não existe papel só de leitura para quem só quer olhar o cluster.
+- **Painel sem histórico.** Mostra o estado de agora. Taxas por segundo não existem.
+- **Painel sem seções de inferência.** TTFT, ITL e tokens por segundo estão no `/metrics` do gateway, não no painel.
+- **Sem comandos de manutenção de nó.** A CLI não drena nem reprovisiona um nó. A saída acontece quando o próprio worker se desliga.
 
-> [!warning] Divergências de forma: `revoke` está no topo (`ai-cluster revoke <nó>`), não sob `node`.
-> todos os comandos (`status`, `nodes`, `metrics`, `events`, `dashboard`) usam a conexão de operador,
-> então exigem o token de operador mesmo para leitura. A CLI não tem papel de leitura separado.
+> Planejado: `node drain`, `node reprovision` e `node history`.
+> Planejado: `request list` e `request show`.
+> Planejado: `model list` e `model show`.
+> Planejado: `topology`, `diagnose`, `rebalance` e `graph query`.
+> Planejado: TUI com navegação e seleção de nó, e estado com cor além do texto.
+> Planejado: TTFT, ITL, tokens por segundo e cache KV no painel.

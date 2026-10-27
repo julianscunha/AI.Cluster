@@ -1,79 +1,56 @@
 ---
 title: "Modelo de desempenho"
-aliases: ["Performance Model", "docs/21", "21 — Performance Model"]
-tags: [sistema/subsistema/execucao, subsistema/modelo-de-desempenho]
+aliases: ["Performance Model", "Modelo de desempenho"]
+tags: [sistema/subsistema/execucao]
 type: sistema/subsistema
-status: proposto
-implementacao: parcial
-fases: ["[[fase-02-capability-e-saude]]", "[[fase-05-observabilidade]]"]
 ---
 
 # Modelo de desempenho
 
 Voltar para [[execucao]].
 
-## Objetivo
+O modelo prevê quanto tempo de compute uma unidade levará em cada nó. A previsão alimenta o custo do [[scheduler]] e fica registrada junto do tempo real, para comparação.
 
-Prever custo e capacidade, e comparar a previsão com o resultado observado. O modelo alimenta o custo do [[scheduler]] e o plano do [[execution-planner]].
+## Previsão de compute
 
-## Entradas
+Para uma unidade de multiplicação de matrizes, a previsão é:
 
-- benchmark de hardware ([[capability-engine]]);
-- métricas históricas de carga real ([[observabilidade]]);
-- carga atual do nó;
-- topologia de rede;
-- desempenho de armazenamento ([[storage-intelligence]]);
-- modelo e variante;
-- precisão;
-- tamanho de contexto.
+1. **Taxa do nó.** Threads multiplicadas pela taxa por thread. A taxa vem da medida corrente de compute, se existir; senão, do baseline de registro. Sem nenhuma medida, a previsão não existe e é zero.
+2. **Taxa típica.** Quando o desvio da medida de registro é de até 0,25, a taxa é corrigida pela razão entre a mediana e o melhor caso da medida. Acima disso, a correção é ignorada.
+3. **Tempo.** Operações da unidade divididas pela taxa, mais um custo fixo de preparo por unidade de 600 µs (`AI_CLUSTER_UNIT_SETUP_US`).
+4. **Correção aprendida.** Cada nó tem uma média móvel da razão entre o tempo real e o previsto. O peso é 0,3 para cada nova observação, com limites entre 0,05 e 20. Ela é aplicada sobre a previsão. Não é gravada em disco: após reinício, é reaprendida nas primeiras unidades.
 
-## Saídas
+Zero em qualquer campo de medida significa "não medido", não "instantâneo".
 
-- previsão de latência;
-- previsão de vazão;
-- custo por nó;
-- capacidade do cluster;
-- confiança da previsão;
-- variância esperada.
+## Entradas e saídas
 
-## Laço de aprendizado
+Hoje o modelo usa:
 
-```text
-benchmark
- -> carga real
- -> observar
- -> comparar previsto e realizado
- -> atualizar o modelo
- -> melhorar o próximo plano
-```
+- benchmark de compute do nó (ver [[capability-engine]]);
+- medida corrente de compute do nó;
+- threads do nó;
+- tamanho da unidade;
+- medidas de rede (no custo de transferência, não na previsão de compute).
+
+Saídas:
+
+- previsão de tempo de compute por unidade, registrada junto do tempo real;
+- custo relativo por nó, usado pelo placement.
+
+As previsões e os tempos reais aparecem nos traces de requisição (`GetTrace`) e nas métricas de [[observabilidade]].
 
 ## Capacidade do cluster
 
-Manter separadamente:
+Não há agregado de capacidade do cluster. O sistema não soma nós para estimar capacidade total. Quando for preciso, latência, vazão, memória, armazenamento e rede devem ser mantidos como dimensões separadas, sem somar RAM e CPU como se fossem um único dispositivo.
 
-- capacidade de latência;
-- capacidade de vazão;
-- capacidade de memória;
-- capacidade de armazenamento;
-- capacidade de rede.
+## Limites conhecidos
 
-Não tratar a soma de RAM e CPU como se fosse um único dispositivo físico.
+- Só o tempo de compute é previsto. Transferência e espera na fila não são previstas.
+- A previsão assume compute linear com as threads. Turbo e SMT deixam a previsão otimista em nós com muitas threads. A pontuação de placement é relativa: a ordem entre nós importa, o tempo absoluto não.
+- O custo fixo de preparo é constante, não uma função do tamanho da unidade. Três tamanhos medidos deram valores de preparo muito diferentes entre si, espalhados demais por ruído para sustentar mais de um número.
+- Em host compartilhado, a mediana e o melhor caso divergem muito, e a correção pela razão fica desligada. Nesse caso, a previsão depende só do preparo fixo.
+- Unidades de nós sem medida de compute não entram na soma de previsão. O total previsto de uma execução fica subestimado quando parte do cluster não tem medida.
+- A correção aprendida não é persistida.
+- A previsão é um número só: não há intervalo de confiança nem variância.
 
-> [!info] O que já existe
-> - **Benchmark por nó**: a capability reporta `compute_score` (melhor execução), `compute_median_score`, `compute_deviation`, `network_score` e `network_achieved_score`. Ver [[f02-benchmark-de-capability]] e [[f02-estabilidade-do-benchmark]].
-> - **Remedição ociosa** (C3): o worker remede o compute quando está ocioso, no máximo a cada 60 s (`RECOMPUTE_INTERVAL_SECS`), e envia `current_compute_score`. A rede usa `current_network_score` quando existe. Ver [[f02-capability-corrente]].
-> - **Previsão de tempo de compute por unidade** (`predicted_compute_us` em `code/crates/controller/src/placement.rs`): `flops / (threads × taxa por thread × GFLOP de referência × razão típico/melhor)` mais um custo fixo de setup de 600 µs (`AI_CLUSTER_UNIT_SETUP_US`). Sem medição, a previsão é zero, que significa "não previsto" e não "instantâneo".
-> - **Ranking e previsão usam medidas diferentes**: o ranking usa a linha de base de registro; a previsão usa a medição atual. Assim a previsão acompanha um nó que ficou mais lento depois de entrar.
-> - **Registro previsto × real**: cada `CompletedWork` guarda `predicted_compute_us`, e as métricas e o trace expõem os dois valores. Ver [[f05-previsto-vs-real]] e [[f05-traces]].
-> - Evidência: `bash code/tests/phase-h-predictions.sh` e `bash code/tests/phase-c-current.sh`.
-
-> [!todo] Não implementado
-> - Previsão de transferência e de latência total. Só o tempo de compute é previsto.
-> - Capacidade do cluster por dimensão. Não há agregado de latência, vazão, memória, armazenamento ou rede.
-> - Confiança e variância como saída. A previsão é um número só.
-> - Entradas de modelo, variante, precisão e tamanho de contexto. As unidades não carregam esses campos.
-> - Laço de aprendizado que atualiza o modelo a partir do histórico. Hoje a correção é a razão típico/melhor e a remedição ociosa.
-> - Carga atual do nó e topologia de rede como entradas da previsão.
-
-> [!warning] Teto do MVP
-> A previsão assume que o compute escala linearmente com o número de threads, a mesma premissa do benchmark. Turbo e SMT fazem um nó largo ser um pouco mais lento do que a estimativa linear, então a previsão sai otimista em nós com muitas threads. A pontuação de placement é relativa: só a ordem entre nós é significativa, não o tempo absoluto.
+> Planejado: previsão de transferência e de latência total, capacidade por dimensão, confiança e variância como saída, entradas de modelo, variante, precisão e tamanho de contexto, e bandas de preparo por faixa de tamanho.

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 280" width="1100" height="280" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker></defs>
+  <rect width="1100" height="280" rx="14" fill="#0f172a"/>
+  <text x="30" y="40" fill="#e2e8f0" font-size="20" font-weight="600">Atualização do sistema: assinada, em canário, com rollback</text>
+  <g font-size="14" font-weight="600" text-anchor="middle">
+    <rect x="30" y="80" width="200" height="70" rx="10" fill="#1e293b" stroke="#334155"/><text x="130" y="110" fill="#e2e8f0">Operador</text><text x="130" y="132" fill="#94a3b8" font-weight="400" font-size="12">assina a imagem (Ed25519)</text>
+    <rect x="300" y="80" width="200" height="70" rx="10" fill="#1e293b" stroke="#334155"/><text x="400" y="110" fill="#e2e8f0">Controller</text><text x="400" y="132" fill="#94a3b8" font-weight="400" font-size="12">anuncia; 1 canário, depois ondas</text>
+    <rect x="570" y="80" width="200" height="70" rx="10" fill="#1e293b" stroke="#334155"/><text x="670" y="110" fill="#e2e8f0">Nó</text><text x="670" y="132" fill="#94a3b8" font-weight="400" font-size="12">confere assinatura e versão</text>
+    <rect x="840" y="60" width="230" height="50" rx="8" fill="#334155"/><text x="955" y="90" fill="#e2e8f0">Slot A · em uso</text>
+    <rect x="840" y="130" width="230" height="50" rx="8" fill="#38bdf8"/><text x="955" y="160" fill="#0f172a">Slot B · grava e testa</text>
+  </g>
+  <g stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a)"><path d="M230 115H298"/><path d="M500 115H568"/><path d="M770 100L838 85"/><path d="M770 130L838 155"/></g>
+  <g font-size="14" fill="#94a3b8"><text x="30" y="225">1. O nó só grava imagem assinada, de versão mais nova, que bate com a soma anunciada.</text>
+  <text x="30" y="250">2. Reinicia no slot novo; se o worker não confirmar a saúde, o u-boot volta ao slot anterior sozinho.</text></g>
+</svg>

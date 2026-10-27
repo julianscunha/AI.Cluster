@@ -3,7 +3,7 @@
 #
 # Diferente dos outros E2E, este NÃO sobe nada: confere um cluster que já está de pé, com ao
 # menos um worker numa máquina de outra arquitetura (ex.: x86 + ARM). Para montá-lo, veja
-# docs/implementation/00-fundacao/f00-validacao-em-hardware-real.md.
+# docs/guia/testes.md.
 #
 # Critérios verificados:
 #   A) há pelo menos dois nós READY de arquiteturas diferentes;

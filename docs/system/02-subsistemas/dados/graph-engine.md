@@ -1,50 +1,38 @@
 ---
 title: "Graph Engine"
-aliases: ["Motor de grafo", "docs/16", "16 — Graph Engine"]
+aliases: ["Graph Engine", "Motor de grafo"]
 tags: [sistema/subsistema/dados]
 type: sistema/subsistema
-status: proposto
-implementacao: nao-iniciado
-fases: ["[[fase-13-graph-engine]]"]
 ---
 
 # Graph Engine
 
-O Graph Engine explora relações estruturadas para reduzir buscas, localizar dependências e orientar execução e escalonamento. É uma **projeção** consultável sobre os dados operacionais, não a fonte primária ([[adr-004-grafo-como-projecao]]). Voltar para [[dados]].
+O graph engine explora relações estruturadas para reduzir buscas e localizar dependências. Seria uma **projeção** consultável sobre os dados operacionais, não a fonte primária ([[adr-004-grafo-como-projecao]]). Voltar para [[dados]].
 
-## Domínios de grafo
+## Situação
+
+Não existe graph engine. Não há banco de grafo no código. O único grafo em execução é o DAG de Work Units do controller, em memória, usado para dependências e novas tentativas (ver [[execution-graph]]). Ele não é consultável nem alimenta busca.
+
+## Domínios previstos
 
 | Grafo | Nós e arestas |
 |---|---|
-| Conhecimento | Documento, chunk, entidade, fato, incidente, serviço |
+| Conhecimento | Documento, trecho, entidade, fato, incidente, serviço |
 | Hardware | Nó, CPU, RAM, GPU, NPU, armazenamento |
 | Rede | Enlaces e suas métricas |
 | Execução | Operações, dependências, tensores, Work Units |
-| Observabilidade | Request, plano, nó, evento, métrica, incidente |
+| Observabilidade | Requisição, plano, nó, evento, métrica, incidente |
 
-## Projeção
+O modelo de dados desses grafos está em [[modelo-de-grafo]].
 
-A fonte primária continua nos stores operacionais. O grafo pode ser reconstruído a partir deles, o que torna a projeção descartável e evita um segundo sistema de verdade.
+## Por que ainda não existe
 
-## Papel da ideia de grafo
+A adoção de busca por grafo só acontece com ganho medido contra a busca comum. Para medir isso é preciso uma coleção de documentos e perguntas de recuperação, e o cluster ainda não tem nenhuma. Consultas de topologia que o cluster precisa hoje (quais nós estão no mesmo host, qual é o link entre dois nós) são respondidas pelo registro e pelo modelo de custo, sem grafo.
 
-O projeto adota retrieval baseado em grafo quando relações e travessias reduzem o custo de busca. A tecnologia específica é validada em benchmark; não se presume que todo search seja melhor por grafo. A adoção só acontece com ganho medido.
+## Limites conhecidos
 
-## Consultas úteis
+- Não há escolha de tecnologia de grafo nem benchmark de travessia.
+- Não há projeção reconstruível a partir dos stores operacionais.
+- Não há consultas de placement ou de observabilidade sobre grafo.
 
-- Nó elegível mais próximo.
-- Nós que hospedam um shard.
-- Incidentes relacionados e requests afetadas.
-- Skills e tools candidatas ([[edge-optimizer]]).
-- Caminho entre nós.
-- Réplicas de estado ([[state-manager]]).
-
-> [!info] O que já existe (MVP)
-> Nenhum Graph Engine. Não há dependência de banco de grafo no `code/`. O único grafo em execução é o DAG de Work Units do controller, em memória, usado para dependências e retry ([[execution-graph]]); ele não é uma projeção consultável nem alimenta busca. O modelo de grafo de dados está em [[modelo-de-grafo]].
-
-> [!todo] Falta
-> - Escolha da tecnologia de grafo e benchmark de travessia contra busca comum.
-> - Projeção reconstruível a partir dos stores operacionais.
-> - Consultas de placement e de observabilidade.
-> - Integração com o [[edge-optimizer]] para retrieval.
-> - Critério de adoção: só entra com ganho medido ([[fase-13-graph-engine]]).
+> Planejado: projeção reconstruível dos dados operacionais, consultas de nó elegível mais próximo, nós que hospedam um shard, incidentes relacionados, réplicas de estado e caminho entre nós, e integração com o [[edge-optimizer]] para recuperação. Entra só com ganho medido em benchmark de recuperação.

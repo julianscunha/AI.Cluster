@@ -1,28 +1,26 @@
 ---
-title: "Sistema — MOC"
+title: "Sistema"
 aliases: ["System", "DIRECTORY-MAP", "Directory Map", "Mapa do repositório", "MOC"]
 tags: [sistema/moc]
 type: sistema/moc
-status: vivo
-implementacao: parcial
 ---
 
-# Sistema — MOC
+# Sistema
 
-Voltar para [[inicio]]. Esta área descreve **o que o sistema é e como ele funciona**, inclusive o alvo que ainda não existe. Cronograma, fases e status de entrega ficam em [[implementation]].
+Voltar para [[inicio]]. Esta área descreve **o que o sistema é, como está estruturado, como se configura e usa, quais garantias oferece e onde estão os limites**. Quando uma capacidade ainda não existe, a nota a descreve como desenho e marca a linha com `> Planejado:`.
 
-O sistema vive em `code/` (workspace Rust). A verdade sobre o que está implementado é o código; as notas de sistema linkam para os slices `fNN-*` que o descrevem.
+O código fica em `code/` (workspace Rust).
 
 ## Ordem de leitura por camada
 
 ### Camada 1 — Visão e decisões
 
 1. [[visao]] — escopo, princípios e requisitos.
-2. [[visao-geral]] — propósito, ideia central e escopo da v0.1.
+2. [[visao-geral]] — propósito, ideia central e escopo.
 3. [[principios]] — P-001 a P-015.
-4. [[requisitos]] — FR e NFR com a fase de entrega.
+4. [[requisitos]] — FR e NFR, com a disponibilidade de cada um.
 5. [[arquitetura]] — documento mestre da arquitetura.
-6. [[estado-das-decisoes]] — decidido, proposto, experimental e aberto.
+6. [[estado-das-decisoes]] — decisões vigentes, propostas, experimentais e questões em aberto.
 
 ### Camada 2 — Contrato e modelo de dados
 
@@ -46,7 +44,7 @@ O sistema vive em `code/` (workspace Rust). A verdade sobre o que está implemen
 21. [[observabilidade]] — métricas, eventos, traces e CLI.
 22. [[modelo-de-desempenho]] — previsão, expected vs actual e capacidade.
 23. [[state-manager]] — estado, replicação, checkpoint e recuperação.
-24. [[storage-intelligence]] — detecção HDD/SSD/NVMe e políticas.
+24. [[storage-intelligence]] — classes de armazenamento e políticas.
 25. [[hotplug-e-recuperacao]] — entrada, saída planejada, falha e replanejamento.
 
 ### Camada 4 — Dados e runtime de IA
@@ -60,14 +58,10 @@ O sistema vive em `code/` (workspace Rust). A verdade sobre o que está implemen
 
 ### Camada 5 — Plataforma e operação
 
-32. [[ai-cluster-os]] — sistema operacional imutável.
-33. [[provisionamento]] — descoberta, enrollment e reimage.
+32. [[ai-cluster-os]] — sistema operacional do nó.
+33. [[provisionamento]] — descoberta, instalação e recuperação.
 34. [[seguranca]] — identidade, tokens, credenciais e papéis.
 35. [[cli-tui]] — comandos operacionais e dashboard.
-
-### Camada 6 — Implementação
-
-36. [[implementation]] — fases, status, marcos e evidências. Leia depois do sistema.
 
 ## MOCs desta área
 
@@ -76,4 +70,4 @@ O sistema vive em `code/` (workspace Rust). A verdade sobre o que está implemen
 - [[subsistemas]] — especificação de cada subsistema, com MOCs por grupo.
 - [[protocolo]] — protocolo Controller ↔ Worker.
 - [[modelo-de-dados]] — entidades, relações e projeção em grafo.
-- [[decisoes]] — ADRs (001 a 010).
+- [[decisoes]] — ADRs (001 a 018).

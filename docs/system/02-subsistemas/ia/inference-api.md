@@ -1,169 +1,163 @@
 ---
 title: "Inference API"
-aliases: ["API de inferência", "docs/23", "23 — Inference API", "AI Cluster — Inference API"]
+aliases: ["API de inferência", "Inference API", "Gateway de inferência"]
 tags: [sistema/subsistema/ia]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-08-inferencia]]"]
 ---
 
 # Inference API
 
-A Inference API é a fronteira entre o **Application Plane** (agentes, orquestradores, aplicações, CLIs) e o **AI Compute Plane**. Todo consumo de capacidade de IA passa por ela; nenhum cliente fala com o controller, com workers, shards, tensores ou estado interno. Ver [[adr-007-fronteira-inference-api]]. Voltar para [[ia]].
+A Inference API é a fronteira entre as aplicações (agentes, orquestradores, CLIs) e o cluster. Nenhum cliente fala com o controller, com workers, com fatias de modelo ou com o estado interno. Ver [[adr-007-fronteira-inference-api]]. Voltar para [[ia]].
 
-## Objetivo
+Hoje a API é o binário `ai-cluster-gateway`, um servidor HTTP.
 
-Expor o cluster como um endpoint de inferência estável, enquanto a topologia interna evolui. Não expõe como a requisição foi distribuída.
+## Papel
 
-Não devem receber acesso direto ao Data Plane: Worker Runtime, Model Manager, State Manager, armazenamento interno e interfaces administrativas dos workers.
+- Expõe o cluster como um endpoint de inferência estável. A topologia interna pode mudar sem mudar o contrato.
+- Autentica, valida, admite e transmite a resposta. Não escolhe nó, faixa, transporte nem placement.
+- Administração não usa esta API. Nós, métricas, eventos e aprovação ficam na CLI ([[cli-tui]]).
 
-## Separação de planos
+## Endpoints
 
-```text
-Application Plane
-  | HTTPS / API
-  v
-Inference API ........... autenticação, validação, normalização, streaming
-  v
-Request Manager ......... admissão, fila, quotas, orçamento (ver request-manager)
-  +--> Edge Optimizer, Model Manager, Execution Planner, Scheduler, State Manager
-  v
-Distributed Inference
-```
+| Método e rota | Autenticação | Descrição |
+|---|---|---|
+| `GET /health` | Não | Liveness. Não toca o cluster. |
+| `GET /v1/models` | Chave | Lista só os modelos que o consumidor pode chamar, com a versão dos pesos. |
+| `POST /v1/chat/completions` | Chave | Conversa com GPT-2 small, SmolLM2-135M e SmolLM2-135M-Instruct. Aceita `stream: true` (SSE). |
+| `POST /v1/embeddings` | Chave | Embedding do modelo sintético `matmul-diamond-v0`. Ver abaixo. |
+| `GET /metrics` | Chave | Métricas de inferência em texto Prometheus. Ver [[observabilidade]]. |
 
-Administração não usa esta API: nós, planos, workers, métricas, traces, provisionamento e recuperação ficam na Management API / CLI ([[operacao]]).
+> Planejado: `POST /v1/responses`, `POST /v1/rerank`, `POST /v1/transcriptions` e `POST /v1/generate`.
 
-## Contrato público
+## Configuração
 
-### Compatibilidade
+| Variável | Padrão | Função |
+|---|---|---|
+| `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço de escuta. Fora de loopback exige `AI_CLUSTER_INSECURE=1`, porque a perna HTTP não tem TLS. |
+| `AI_CLUSTER_CONTROLLER` | `http://127.0.0.1:50051` | Endpoint gRPC do controller. |
+| `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. |
+| `AI_CLUSTER_TENANTS` | — | Tenants adicionais, no formato `nome=chave[,models=a\|b][,tokens=N][,class=c];...`. |
+| `AI_CLUSTER_OPERATOR_TOKEN` | — | Necessário para o modelo sintético de embeddings. |
+| `AI_CLUSTER_INFERENCE_TOKEN` | — | Necessário para os modelos de linguagem, se o gateway usar o papel de inferência. |
+| `AI_CLUSTER_TLS_CA` | — | CA que o gateway usa ao falar com o controller. |
+| `AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` | — | Diretórios dos modelos. Carregados na subida; um diretório incompleto impede o início. |
+| `AI_CLUSTER_GPT2_SHARDS`, `AI_CLUSTER_SMOLLM2_SHARDS`, `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Nós (`worker-1,worker-2`) que recebem as faixas de projeção. Sem isso, o modelo roda inteiro no gateway. |
+| `AI_CLUSTER_GPT2_SUBDIR`, `AI_CLUSTER_SMOLLM2_SUBDIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_SUBDIR` | `gpt2`, `smollm2`, `smollm2-instruct` | Subdiretório dos pesos em cada worker. |
+| `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | Recusa modelo sem `manifest.json`. Ver [[model-manager]]. |
+| `AI_CLUSTER_CACHE_ENTRIES` | `256` | Tamanho do cache de respostas. `0` desliga. Ver [[edge-optimizer]]. |
+| `AI_CLUSTER_QUOTA_WINDOW_SECS` | `3600` | Janela da cota de tokens. |
+| `AI_CLUSTER_QUEUE_MAX` | `8` | Pedidos de chat que podem esperar na fila. |
+| `AI_CLUSTER_QUEUE_WAIT_SECS` | `10` | Tempo máximo de espera na fila. |
+| `AI_CLUSTER_INSECURE` | desligado | Libera endereço não loopback e conexão sem TLS com o controller. |
 
-A primeira interface deve ser compatível com o padrão de APIs de inferência usado pelos clientes de LLM, desde que não comprometa a semântica do runtime. A compatibilidade é uma camada de adaptação: o protocolo interno do cluster não segue o externo.
+A chave de API é obrigatória, e o gateway não sobe sem ela (nem sem um tenant configurado). Ver [[seguranca]] para a separação entre chaves de aplicação e tokens do cluster.
 
-```text
-POST /v1/chat/completions
-POST /v1/responses
-GET  /v1/models
-POST /v1/embeddings
-Futuro: POST /v1/rerank, POST /v1/transcriptions, POST /v1/generate
-```
+## Autenticação e tenants
 
-### Objeto de requisição
+- Cada requisição traz `Authorization: Bearer <chave>`. A comparação é feita sem saída antecipada.
+- Cada tenant tem nome, chave, lista de modelos (ACL), limite de tokens por janela e classe máxima de prioridade.
+- Um tenant vê em `GET /v1/models` só os modelos da sua ACL. Chamar um modelo fora dela responde 403 `MODEL_FORBIDDEN`.
+- Chaves de tenant precisam ser distintas entre si e distintas dos tokens de join, operador e inferência. O gateway recusa subir se não forem.
 
-Toda requisição recebe um identificador global, usado em logs, métricas, traces, estado, grafo e auditoria.
+## Modelos
 
-```json
-{
-  "request_id": "req-1842",
-  "model": "llama-x-3.2-q4",
-  "priority": "interactive",
-  "stream": true,
-  "input_tokens_estimate": 2481,
-  "output_token_limit": 4096
-}
-```
+| `model` | Tipo | Observação |
+|---|---|---|
+| `gpt2` | Linguagem, base | GPT-2 small (124M). Sem template de chat. |
+| `smollm2-135m` | Linguagem, base | Família Llama. Sem template de chat. |
+| `smollm2-135m-instruct` | Linguagem, instruct | Recebe conversa em ChatML. |
+| `matmul-diamond-v0` | Sintético | Usado por `/v1/embeddings`. Não tem semântica. |
 
-Uma request pode ter várias execuções (retry, recovery). A resposta representa a request; a observabilidade guarda o histórico de cada `execution_id`.
+Cada modelo carregado aparece com a versão do manifesto (`version`). Sem manifesto, o campo vem vazio.
+
+## Chat completions
+
+Campos aceitos: `model`, `messages` (papéis `system`, `user` e `assistant`), `max_tokens` e `stream`.
+
+- `max_tokens` tem padrão 16 e vai de 1 a 64. Valor fora da faixa é ajustado, não rejeitado.
+- Resposta sem stream: `choices[0].message`, `finish_reason` (`stop` ou `length`) e `usage`.
+- Os modelos base recebem as mensagens unidas por quebra de linha e continuam o texto.
+- O modelo instruct recebe ChatML (`<|im_start|>papel ... <|im_end|>`) com a mensagem de sistema padrão quando não há uma. Termina a resposta em `<|im_end|>`. Um `<|im_end|>` digitado pelo usuário é só texto.
+- Campos `temperature`, `top_p`, `n` e `stop` são ignorados. A geração é gulosa, com uma escolha.
 
 ### Streaming
 
-Streaming é requisito de primeira classe. O consumidor não precisa saber em quais nós os tokens foram produzidos. Metadados de uso vão de forma compatível, sem expor métricas internas confidenciais na resposta padrão.
+Com `stream: true` a resposta é `text/event-stream` no formato OpenAI: um chunk com o papel, um `chat.completion.chunk` por trecho de texto, um chunk final com `finish_reason` e `data: [DONE]`. Um caractere UTF-8 partido entre tokens só sai completo.
 
-### Cancelamento
+- Os cabeçalhos saem antes da geração. Uma falha depois disso chega como evento `{"error": ...}` seguido de `[DONE]`.
+- Cliente que desconecta cancela a geração no próximo token.
+- Cliente que para de ler por 10 s também cancela.
+- O stream não traz `usage`.
 
-O cliente pode cancelar uma execução. Fluxo interno: API → Request Manager → Execution Manager → cancelar Work Units pendentes → parar a geração → liberar reservas e estado → emitir evento. O cancelamento é idempotente.
+### Embeddings
 
-### Timeout, deadline e limites
+`POST /v1/embeddings` com `{"model": "matmul-diamond-v0", "input": "texto"}`. O grafo diamante de multiplicação de matrizes 16×16 roda nos workers. O texto vira semente, e a resposta traz um vetor de 16 números, determinístico para o mesmo texto. O vetor não tem semântica: a resposta sempre traz `"synthetic": true`. Entrada de 1 a 8192 bytes.
 
-A request pode trazer `request timeout`, `execution deadline` e `max output tokens`. Esses valores alimentam o Scheduler, mas nunca violam garantias de integridade de estado.
+## Limites de requisição
 
-### Prioridades
-
-Classes controladas por política: `realtime`, `interactive`, `normal`, `batch`, `background`. O cliente não define prioridade crítica sem autorização.
-
-### Contabilização de tokens
-
-Por request, o cluster registra `input_tokens_received`, `input_tokens_after_optimization`, `cached_tokens`, `output_tokens_generated`, `tokens_avoided` e `tokens_total_processed`.
-
-### Latência
-
-Correlacionáveis: latência total, TTFT, latência entre tokens, throughput de geração, latência de borda, de planejamento e de fila.
-
-### Modelo de erro
-
-Categorias estáveis: `INVALID_REQUEST`, `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`, `MODEL_NOT_FOUND`, `MODEL_UNAVAILABLE`, `CAPACITY_UNAVAILABLE`, `TIMEOUT`, `CANCELLED`, `INTERNAL_ERROR`, `SERVICE_UNAVAILABLE`. Detalhes internos ficam em trace, evento e log.
-
-### Descoberta de modelo
-
-`GET /v1/models` expõe só modelos e variantes autorizados ao consumidor. Existência física de shards e nós não faz parte do contrato.
-
-### Política de roteamento
-
-O cliente pode pedir `model`, `quality target` e `latency target`. Não escolhe `node`, `shard`, `worker`, `transport` nem `placement`.
-
-### Headers de observabilidade
-
-Quando couber: `request_id`, `trace_id`, `model_id`, `model_version`, `usage`.
-
-## Segurança e isolamento
-
-- Externa: TLS, autenticação, autorização, rate limiting, limite de tamanho de requisição, ACL de modelo e cota.
-- Acesso termina na API; endpoints de worker nunca são expostos.
-- Mesmo em deployment single-tenant, o modelo separa identidade por `tenant`, `application`, `API key`, quota, ACL de modelo e política de prioridade, para evitar migração futura.
-
-Papéis de credencial (join, operador, inferência) e a chave de API são tratados em [[seguranca]].
-
-## Responsabilidades
-
-| API | Cluster interno |
+| Item | Limite |
 |---|---|
-| Receber, autenticar, autorizar, validar, normalizar | Otimização de contexto e retrieval ([[edge-optimizer]], [[graph-engine]]) |
-| Iniciar e cancelar execução | Seleção de modelo ([[model-manager]]) e planejamento ([[execution-planner]]) |
-| Transmitir resposta | Escalonamento ([[scheduler]]), estado ([[state-manager]]), transporte e execução |
-| Expor uso e identificadores | Execução distribuída ([[inference-engine]]) |
+| Corpo da requisição | 64 KiB |
+| Entrada de embedding | 1 a 8192 bytes |
+| Embeddings em andamento | 4 |
+| Gerações de chat em andamento | 1, para todos os modelos |
+| Prompt de chat | 1 a 512 tokens, até 8 KiB e até 32 mensagens |
+| `max_tokens` | 1 a 64 (ajustado) |
+| Prazo de embedding e de chat | 30 s |
+| Cliente sem ler o stream | 10 s |
+
+Acima dos tetos de admissão o gateway responde 429 com `Retry-After`.
+
+## Cota e fila
+
+- A cota conta tokens (prompt mais gerados) por tenant e por janela. Embeddings gastam um token a cada quatro bytes de entrada. Cache hit também é cobrado, então o cache não contorna a cota.
+- Esgotada a cota, a resposta é 429 `QUOTA_EXCEEDED` com `Retry-After` igual ao tempo que falta na janela.
+- A geração de chat é atendida por classe de prioridade: `realtime`, `interactive`, `normal`, `batch` e `background`. A classe vem do cabeçalho `x-priority`. Sem ele vale `normal`, e a classe nunca passa do teto do tenant. Quem espera sobe uma classe a cada 5 s, para não ser preterido para sempre.
+- Fila cheia ou espera acima de `AI_CLUSTER_QUEUE_WAIT_SECS` responde 429 `CAPACITY_UNAVAILABLE`.
+- Prioridade de embedding também é enviada ao controller, que a usa no despacho.
+
+## Erros
+
+Os códigos são estáveis. A causa interna vai para o log, não para a resposta.
+
+| Status | Código | Quando |
+|---|---|---|
+| 400, 413 | `INVALID_REQUEST` | Corpo malformado, entrada fora dos limites, papel desconhecido, corpo acima de 64 KiB. |
+| 401 | `AUTHENTICATION_FAILED` | Chave ausente ou inválida. |
+| 403 | `MODEL_FORBIDDEN` | Chave sem acesso ao modelo pedido. |
+| 404 | `MODEL_NOT_FOUND` | Modelo desconhecido. |
+| 429 | `CAPACITY_UNAVAILABLE` | Sem vaga de geração, fila cheia ou espera estourada. Traz `Retry-After`. |
+| 429 | `QUOTA_EXCEEDED` | Cota da janela esgotada. Traz `Retry-After`. |
+| 503 | `MODEL_UNAVAILABLE` | Falha de unidade de trabalho ou de nó que impede a resposta. |
+| 503 | `SERVICE_UNAVAILABLE` | Controller inalcançável. |
+| 504 | `TIMEOUT` | Prazo de 30 s estourado. |
+
+## Cabeçalhos
+
+- `x-request-id`: identificador da requisição, também no corpo. Leva a `ai-cluster request trace <id>` ([[cli-tui]]).
+- `x-model-id` e `x-model-version`: modelo e versão dos pesos que responderam.
+- `x-priority`: classe pedida pelo cliente (entrada).
+- `Retry-After`: em respostas 429.
+
+## Cancelamento e prazo
+
+- Não há endpoint de cancelamento para o cliente. Desconectar ou estourar o prazo cancela a geração de chat no próximo token.
+- Uma requisição de embedding que não entrega resposta (prazo, falha ou cliente que saiu) tem as unidades ainda na fila do controller removidas. Unidade já em execução num worker termina.
+
+> Planejado: `DELETE` por `request_id`, propagando o cancelamento até as unidades em execução.
 
 ## Saúde
 
-A saúde da API é separada da do cluster (ex.: API verde, cluster amarelo, capacidade 72%). O endpoint de health não executa inferência real a cada chamada.
+`GET /health` responde sem chave e não executa inferência nem consulta o cluster. A saúde da API é separada da saúde do cluster.
 
-## Backpressure e fallback
+## Limites conhecidos
 
-Sem capacidade, a API aplica política explícita: `queue`, `reject`, `retry-after` ou `fallback model`. O cliente não deve abrir centenas de requisições em paralelo para contornar a capacidade.
+- **Autenticação só por chave.** A perna HTTP não tem TLS. Fora de loopback, a chave viaja em claro.
+- **Sem `usage` no stream** e sem contabilização separada de tokens em cache ou evitados.
+- **Sem `temperature`, `top_p`, `n` nem `stop`.** A saída é sempre a mesma para o mesmo prompt.
+- **Erros que a API ainda não emite:** `CANCELLED`, `AUTHORIZATION_FAILED` e `INTERNAL_ERROR`.
+- **Cota e contadores vivem na memória do gateway.** Reiniciar zera a cota. Com mais de um gateway, cada um conta por conta própria.
+- **O último pedido da janela pode passar da cota**, pelo tamanho dele: a conta é feita ao fim da geração.
+- **Sem `Idempotency-Key`.** Um cliente que repete após timeout gera outra execução.
 
-Fallback interno pode trocar de variante ou de placement. Fallback de modelo só ocorre com política explícita, porque altera qualidade e comportamento.
-
-> [!info] O que já existe (MVP, fatias F08)
-> - Crate `code/crates/gateway` (binário `ai-cluster-gateway`). Fala com o controller como **operador** (`AI_CLUSTER_OPERATOR_TOKEN`) e herda o TLS de cliente (`AI_CLUSTER_TLS_CA`).
-> - Rotas: `GET /health` (sem chave, não toca o cluster); `GET /v1/models`; `POST /v1/embeddings` sobre o modelo sintético `matmul-diamond-v0` (grafo diamante 16×16 executado de verdade nos workers; vetor sem semântica, resposta com `"synthetic": true`); `POST /v1/chat/completions` sobre GPT-2 small e SmolLM2-135M (ids `gpt2`, `smollm2-135m` e `smollm2-135m-instruct`).
-> - Autenticação: `Authorization: Bearer` com `AI_CLUSTER_API_KEY`, comparada sem saída antecipada. A chave é obrigatória e diferente dos tokens de join, operador e inferência; o gateway não sobe se coincidirem.
-> - Limites: corpo máximo de 64 KiB; `input` de 1 a 8192 bytes; embeddings com 4 pedidos em andamento; chat com uma geração por vez (`llm_slot`), prompt até 512 tokens e 8 KiB, até 32 mensagens, `max_tokens` 1–64 (ajustado, não rejeitado), prazo de 30 s. Acima dos tetos: 429 com `Retry-After`.
-> - Erros emitidos: `AUTHENTICATION_FAILED` (401), `MODEL_NOT_FOUND` (404), `INVALID_REQUEST` (400/413), `CAPACITY_UNAVAILABLE` (429), `TIMEOUT` (504), `MODEL_UNAVAILABLE` (503), `SERVICE_UNAVAILABLE` (503). A causa interna vai para o log.
-> - Escuta em `127.0.0.1:8080`; outro endereço só com `AI_CLUSTER_INSECURE=1`.
-> - Correlação: cabeçalhos `x-request-id` e `x-model-id`; o `request_id` também vai no corpo e leva a `ai-cluster request trace <id>`.
-> - Chat com `stream: true`: `text/event-stream` no formato OpenAI; erro depois dos cabeçalhos chega como evento `{"error": ...}` seguido de `[DONE]`; cliente que sai cancela no próximo token. Sem `usage` no stream.
-> - Modelo base (GPT-2, SmolLM2) só continua texto (mensagens unidas por quebra de linha); instruct recebe ChatML com tokens especiais por id, e texto do usuário com `<|im_end|>` não fecha turno.
-> - Controller: `EnqueueGraph` com `keep_result` e RPC `GetOutput` (só operador), guardando as últimas 64 saídas; fila de no máximo 256 unidades (`ResourceExhausted`, 429 no gateway).
-> - Evidência: `code/tests/phase-j-inference.sh`, `code/tests/phase-j-chat.sh [gpt2|smollm2|instruct]`, `code/crates/engine/tests/smollm2_chat_parity.rs`.
->
-> Slices: [[f08-gateway-e-api]], [[f08-chat-completions]].
-
-> [!warning] Desvios do alvo e migração
-> 1. **Sem fronteira entre API e motor.** O modelo roda dentro do gateway (cerca de 1,6 GB de RAM), que depende do crate `engine`. Só as projeções vão a workers, quando `AI_CLUSTER_*_SHARDS` está definido. Migração: [[fase-12-model-runtime]] (motor como serviço fora do gateway).
-> 2. **Sem Request Manager.** Não há admissão por orçamento, fila por classe, quota nem prioridade. O controle de entrada é um semáforo (4 embeddings; 1 geração de chat) que responde 429. Migração: [[fase-11-request-manager]].
-> 3. **Nós escolhidos por variável de ambiente.** `AI_CLUSTER_GPT2_SHARDS` e `AI_CLUSTER_SMOLLM2_SHARDS` listam os nós que recebem faixas; não há Planner nem Scheduler no caminho de inferência. Migração: [[fase-12-model-runtime]] com [[execution-planner]] e [[scheduler]].
-> 4. **Sem versão de modelo.** `model_version` não é retornado; os pesos são lidos do disco de cada worker, por caminho fixo (`model.safetensors`), sem checksum. Migração: registry e manifest em [[model-manager]].
-> 5. **Uma chave só.** Não há tenant, cota, ACL nem prioridade; `GET /v1/models` lista todos os modelos carregados.
-> 6. **Sem endpoint de cancelamento.** Geração de chat cancela ao desconectar ou estourar o prazo; grafo de embeddings já enfileirado continua na fila do controller e roda quando um worker aparece.
-> 7. **Perna HTTP sem TLS.** Fora de loopback (com `AI_CLUSTER_INSECURE=1`), a chave trafega em claro.
-> 8. **Endpoints e campos ausentes.** `/v1/responses` não existe; `/v1/embeddings` é sintético; `temperature`, `n` e `stop` são ignorados (geração gulosa, uma escolha); não há `usage` no stream.
-> 9. **Erros ausentes.** `CANCELLED`, `AUTHORIZATION_FAILED` e `INTERNAL_ERROR` não são emitidos.
-> 10. **Sem contabilização de tokens** (`tokens_avoided`, tokens após otimização) e sem `Idempotency-Key`.
-
-> [!todo] Falta
-> - Request Manager (admissão, fila por classe, quotas, orçamento, prioridades): [[request-manager]], [[fase-11-request-manager]].
-> - Edge Optimizer antes da alocação pesada: [[edge-optimizer]], [[fase-14-edge-optimizer]].
-> - Tenants, quotas, ACL de modelo e autorização de prioridade.
-> - Cancelamento por `request_id` (`DELETE`) que propaga até as Work Units.
-> - Contabilização de tokens e `usage` no stream.
-> - `/v1/responses`, `/v1/rerank`, `/v1/transcriptions`.
-> - TLS e autenticação mútua na perna de aplicações (ver [[seguranca]]).
+> Planejado: TLS na perna HTTP, certificados por cliente, `usage` no stream e `Idempotency-Key`.

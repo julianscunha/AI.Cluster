@@ -1,101 +1,118 @@
 ---
 title: "AI Cluster OS"
-aliases: ["docs/02", "02 — AI Cluster OS"]
+aliases: ["AI Cluster OS", "Imagem do nó", "Sistema do nó"]
 tags: [sistema/subsistema/plataforma]
 type: sistema/subsistema
-status: proposto
-implementacao: nao-iniciado
-fases: ["[[fase-15-ai-cluster-os]]", "[[fase-16-aceleradores]]", "[[fase-18-worker-movel]]"]
 ---
 
 # AI Cluster OS
 
-Sistema operacional mínimo, versionado e orientado a compute, igual em todos os nós. Ele existe
-para que um nó seja só um worker: sem ambiente de desktop, sem serviços de consumo, com a
-identidade de provisionamento e o runtime do worker já instalados, e com atualização que se
-reverte. Não é uma distribuição nova: é uma imagem de uma distribuição Linux existente, montada
-e assinada pelo projeto.
+O AI Cluster OS é o sistema mínimo, imutável e orientado a compute de cada nó. Ele existe para que um nó seja só um worker: sem ambiente de desktop, sem serviços de consumo, com o runtime do worker instalado e supervisionado, e com atualização que se reverte. Não é uma distribuição nova. É uma imagem de uma distribuição Linux existente, montada e assinada pelo projeto. Voltar para [[plataforma]].
 
-## Requisitos
+> Planejado: imagens para x86_64 e ARM64, além da imagem armv7 descrita abaixo.
 
-- Multi-arquitetura: x86_64 e ARM64.
-- Boot e recuperação: a máquina volta a um estado conhecido sem intervenção manual.
-- Rede primeiro: o nó sobe, obtém endereço e alcança o controller sem configuração local.
-- Runtime do worker instalado e supervisionado.
-- Monitoramento de hardware e inteligência de armazenamento (ver [[storage-intelligence]]).
-- Identidade segura: a credencial e a identidade do nó vêm da imagem e do provisionamento, não de
-  um arquivo editado à mão (ver [[seguranca]]).
-- Atualização A/B, com rollback.
-- Pouco uso de recurso em segundo plano.
+## Imagem
 
-## Base do sistema
+A imagem atual é para armv7, com a base Alpine Linux 3.20 e OpenRC.
 
-Escolha proposta: uma distribuição Linux enxuta e imutável, existente, em vez de uma distribuição
-mantida do zero. Ver [[adr-001-base-linux]] e [[adr-002-os-imutavel]].
+- **Serviços:** só o worker, em binário musl, e o mínimo de apoio: servidor SSH somente com chave, sincronização de relógio e um gerador de entropia, porque a placa não tem fonte de aleatoriedade suficiente.
+- **Raiz somente leitura.** `/var/log` e `/tmp` são tmpfs.
+- **Partição `/data`** separada, para estado que sobrevive à troca de imagem: cache, fila local, credenciais e chaves SSH.
+- **Watchdog de hardware** alimentado pelo sistema, para reiniciar a placa quando o sistema trava.
 
-A escolha final considera suporte do kernel, ARM64, boot seguro, ecossistema de drivers,
-construção da imagem, recuperação e ciclo de vida. Esses critérios estão em aberto.
+Caminhos relevantes para operação:
 
-## Atualização imutável
+| Caminho | Conteúdo |
+|---|---|
+| `/etc/aic-release` | Versão instalada. |
+| `/etc/aic-board` | Identificação da placa. A assinatura da release precisa ser dessa placa. |
+| `/etc/aic-release.d/` | Chaves públicas de release. |
+| `/run/aic-measure` | Medida do slot ativo, feita no boot. |
+| `/data/state/` | Estado do worker, incluindo a marca de tentativa de atualização. |
 
-- Imagens versionadas. Um update troca a imagem inteira, não arquivos isolados.
-- Duas partições ou slots (A/B). Um update grava no slot inativo, reinicia e só então confirma.
-  Se o slot novo não passar pela validação de boot, volta ao anterior.
-- O estado do nó (fila local, cache, checkpoints) fica em volume separado da imagem, para que
-  trocar a imagem não apague o estado.
+Layout do cartão: uma área de cabeçalho do u-boot, uma partição FAT `AICBOOT` com o script de boot, os slots A e B de 512 MiB cada, e a partição `aicdata` que vira `/data`. O estado do boot (slot ativo, slot em teste, tentativas e contagem de boots) fica num setor cru, fora da FAT.
 
-## Layout do runtime
+## Boot A/B
+
+- Uma atualização grava o slot inativo. O boot seguinte usa esse slot em teste, com duas tentativas.
+- O slot novo é confirmado depois que o worker se registra no controller. Se o controller não responde, a confirmação acontece mesmo assim.
+- Se o worker não se registra em 300 s com o controller respondendo, o nó reinicia.
+- Se o slot em teste falha nas duas tentativas, o u-boot volta ao slot anterior.
+- Seis boots sem confirmação, ou um pedido explícito de recuperação, levam à recuperação por rede.
+
+### Recuperação por rede
+
+O u-boot obtém endereço por DHCP, baixa kernel, initramfs e árvore de dispositivos por TFTP e sobe um ambiente de recuperação em memória. Esse ambiente regrava os slots e devolve o nó ao cartão. O servidor TFTP é um script simples, com lista de permissão (`--allow`). Não tem TLS e não verifica assinatura do kernel.
+
+## Instalação
+
+Há três caminhos para colocar um nó no ar.
+
+1. **Imagem em cartão.** `install-disk.py` roda a partir de um ambiente em memória e grava a imagem. Antes de gravar, confere a raiz do ambiente, que o cartão está desmontado e que a execução recebeu `--yes`. Depois grava a configuração do worker (`worker.env`, modo 0600), a chave SSH e o script de boot com as definições de recuperação.
+2. **Boot pela rede.** `install-netboot.sh` faz a placa subir o ambiente de recuperação por TFTP, com retorno automático ao cartão.
+3. **Bootstrap sobre Linux existente.** `os/bootstrap.sh`, executado como root, instala o worker num Linux que já existe.
 
 ```text
-/usr/lib/ai-cluster/
-  core/
-  worker/
-  hardware/
-  telemetry/
-  recovery/
-
-/etc/ai-cluster/
-  node.toml
-  identity/
-
-/var/lib/ai-cluster/
-  cache/
-  state/
-  models/
-  checkpoints/
+os/bootstrap.sh --controller URL --join-token-file ARQUIVO [--binary CAMINHO] [--node-id ID] [--prefix DIR] [--model-dir DIR] [--insecure]
 ```
 
-Caminhos propostos; detalhes finais podem mudar.
+- O token é lido de arquivo, para não aparecer na linha de comando.
+- Todo valor é validado contra uma lista de caracteres permitidos antes de ser gravado, porque entra em arquivo de ambiente, em unidade de serviço e em comando.
+- Caminhos são absolutos. Um prefixo que é link ou que não pertence ao root é recusado.
+- Com systemd, cria uma unidade com isolamento: `NoNewPrivileges`, `ProtectSystem=strict`, escrita só em `state/`, sem capacidades. Sem systemd, sobe o processo em segundo plano, com log e pid em `state/`.
+- Trocar o `--node-id` de uma máquina já instalada exige `--force`.
+- Rodar de novo atualiza o binário e o ambiente, e troca o processo. O bootstrap não aprova o nó. A aprovação continua manual.
 
-## Minimização de recursos
+### Atualização do worker fora da imagem
 
-Desabilitar o que não serve ao compute, quando o hardware permitir: interface gráfica, impressão,
-serviços de consumo, indexadores e qualquer carga que não seja do cluster.
+Rodar o bootstrap de novo com outro `--binary` troca o binário. A versão anterior fica em `ai-cluster-worker.prev`. Com systemd, a nova versão só fica se o serviço ficar ativo e o worker se registrar no controller dentro de `--health-timeout` segundos (padrão 90). Caso contrário, a anterior volta e o script sai com código 3. Sem systemd, não há espera nem rollback.
 
-## Tuning de kernel
+## Atualização do sistema
 
-Candidatos: governador de CPU, política de memória, huge pages, afinidade de IRQ, buffers de rede,
-escalonador de I/O, awareness de NUMA quando houver, política térmica. Cada ajuste é medido antes de
-virar padrão global.
+Uma atualização troca a imagem inteira, não arquivos isolados. O operador assina a release, e o controller a distribui em rollout.
 
-## Papel na provisão
+### Preparar a release
 
-O OS é o alvo do reimage. Um dispositivo só vira worker depois de receber a imagem do AI Cluster OS
-e passar pela atestação pós-boot. O fluxo está em [[provisionamento]].
+1. `sign-release.sh <versão> <rootfs.gz> <rootfs.ext4>` calcula os SHA-256 do arquivo comprimido e da imagem, assina e imprime os argumentos do rollout.
+2. `ai-cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` define a release.
+3. `ai-cluster nodes` mostra a versão e a medida de cada nó. `ai-cluster events` mostra o andamento.
+4. `ai-cluster rollout --cancel` encerra o rollout.
 
-> [!info] O que já existe
-> - Nada de imagem de SO. `code/os/README.md` declara que o trabalho da imagem começa na fase de
->   provisionamento e que a Fase 0 só define a fronteira do runtime.
-> - Estados de provisionamento existem no enum de nó (`PROVISIONING` em `code/crates/common/src/lib.rs`),
->   mas nenhum caminho do código os atinge.
-> - O worker roda como processo comum, configurado por variáveis de ambiente
->   (`AI_CLUSTER_CONTROLLER`, `AI_CLUSTER_NODE_ID`, `AI_CLUSTER_NODE_CREDENTIAL_FILE`), não como serviço
->   de um OS próprio: ver [[worker-runtime]].
+Ver [[cli-tui]] para os argumentos e [[seguranca]] para a assinatura e a rotação de chaves.
 
-> [!todo] Tudo do que este documento descreve está pendente: escolha de base, build da imagem,
-> assinatura, slots A/B, boot e recuperação, multi-arquitetura, tuning medido e serviços
-> desabilitados. Ver [[fase-15-ai-cluster-os]]; ARM64 e GPU em [[fase-16-aceleradores]].
+### Como o rollout anda
 
-> [!warning] Desvio do alvo: no MVP o worker roda em contêiner ou processo sobre um Linux qualquer,
-> sem imagem própria, sem A/B e sem garantia de que o SO do nó é o esperado. Até a imagem existir, a
-> atestação de SO ([[seguranca]]) não tem o que validar.
+- Só participam os nós que declaram capacidade de atualizar, isto é, têm o comando de atualização configurado. Os demais continuam na versão atual.
+- O controller escolhe como **canário** o primeiro nó apto que informa a versão antiga. Os demais esperam o canário reportar a versão nova **e** a medida igual à da release assinada.
+- `AI_CLUSTER_ROLLOUT_WAVE=N` limita quantos nós atualizam ao mesmo tempo, depois do canário. Ausente ou `0` significa todos de uma vez. Uma vaga volta quando o nó reporta a versão nova, ou depois de 10 min.
+- Se o canário não reporta a versão nova em 10 min, o rollout pausa e registra um evento `rollout`. Ele só anda de novo com um novo comando `rollout`.
+- Com `AI_CLUSTER_RELEASE_STATE`, a release desejada sobrevive ao reinício do controller.
+
+### O que o nó faz
+
+1. Recebe a release no heartbeat e a valida: caracteres, versão e formato.
+2. Drena o trabalho, como no desligamento, e sai do cluster.
+3. Roda o comando de atualização sem shell, que entrega o pedido ao processo de atualização do sistema.
+4. O processo de atualização confere a assinatura, a versão e o espaço, baixa a imagem, grava o slot inativo, relê o slot e compara a medida com a assinada. Só então marca o slot em teste e reinicia.
+5. Se o processo recusa o pedido, grava o motivo e o worker volta ao cluster em segundos. Caso contrário, espera até 20 min pelo reinício.
+
+Uma marca guarda a versão que acabou de ser tentada. Se o nó volta por rollback, não tenta a mesma versão de novo.
+
+## Limites conhecidos
+
+- **Só armv7.** Não há imagem para x86_64 nem para ARM64.
+- **Sem secure boot, dm-verity ou TPM.** A medida mostra que o slot tem o conteúdo esperado, mas um nó comprometido pode informar qualquer valor. Ver [[seguranca]].
+- **Sem downgrade pela via normal.** A versão precisa ser maior. Um rollback legítimo exige uma versão nova com o conteúdo antigo.
+- **Controller não verifica a assinatura.** Ele guarda a release como recebida. Um pedido inválido ainda faz o nó drenar e voltar.
+- **Só uma versão tentada na marca.** Versões diferentes repetem o ciclo de drenagem.
+- **Download por HTTP.** A integridade vem do SHA-256 e da assinatura, não do canal.
+- **Leitura da medida no boot.** O nó lê 512 MiB do slot antes de subir o worker. Em cartão lento, isso atrasa o início.
+- **Chave privada de release fora de controle do cluster.** Quem a tem instala qualquer release em todos os nós.
+- **Recuperação por rede sem autenticação.** O servidor TFTP não tem TLS nem lista de revogação.
+- **Token de join em claro** em `worker.env` e no script de boot do cartão.
+- **Só instalação sob controle do operador.** Não há instalação disparada pelo cluster.
+
+> Planejado: imagens para x86_64 e ARM64, com geração automática por arquitetura.
+> Planejado: reinstalação de um nó disparada pelo cluster, com a imagem escolhida pelo planejador.
+> Planejado: boot assinado, dm-verity e medida ligada a hardware.
+> Planejado: minimização de serviços e ajuste de kernel, medido antes de virar padrão.

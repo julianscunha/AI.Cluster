@@ -3,18 +3,15 @@ title: "ADR-010 — Papéis de credencial"
 aliases: ["ADR-010", "Papéis de credencial"]
 tags: [sistema/adr, subsistema/plataforma]
 type: sistema/adr
-status: decidido
-implementacao: implementado
-fases: ["[[fase-07-seguranca-base]]"]
 ---
 
 # ADR-010 — Papéis de credencial
 
-Data: 2026-10-23 a 2026-10-24 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-23 a 2026-10-24 · Voltar para [[decisoes]].
 
 ## Contexto
 
-Um segredo único compartilhado por nós, CLI e clientes permitia que quem tinha o token aprovasse a si mesmo, e que um nó comprometido forjasse resultados de outro. A revisão de S2 apontou isso. Também não havia TLS, então os segredos cruzavam a rede em claro.
+Um segredo único compartilhado por nós, CLI e clientes permitia que quem tinha o token aprovasse a si mesmo, e que um nó comprometido forjasse resultados de outro. Também não havia TLS, então os segredos cruzavam a rede em claro.
 
 ## Decisão
 
@@ -36,7 +33,7 @@ Regras de falha fechada:
 - A comparação de segredos não tem saída antecipada (`same_token`).
 - Aprovação manual é o padrão. Um nó aprovado só troca de credencial com `revoke`.
 
-Transporte: TLS de um sentido (S4), com a CA verificada pelo cliente. Não há mTLS nesta fase.
+Transporte: TLS de um sentido, com a CA verificada pelo cliente. O mTLS é opcional e está em [[adr-016-mtls-opcional-no-plano-de-controle]].
 
 ## Consequências
 
@@ -46,14 +43,15 @@ Transporte: TLS de um sentido (S4), com a CA verificada pelo cliente. Não há m
 
 ## Alternativas
 
-- Segredo único compartilhado: estado de S1. Descartado: quem tinha o token aprovava e forjava resultados.
-- Identidade por `device_id` informado pelo cliente: substituída pela credencial por nó (S3b), porque o cliente podia forjá-lo.
-- mTLS por nó: adiado para [[fase-19-hardening-de-producao]].
+- Segredo único compartilhado: descartado, porque quem tinha o token aprovava e forjava resultados.
+- Identidade por `device_id` informado pelo cliente: substituída pela credencial por nó, porque o cliente podia forjá-lo.
+- mTLS por nó: ver [[adr-016-mtls-opcional-no-plano-de-controle]].
 
-> [!warning] Tetos
-> Os segredos ficam em texto claro no controller (arquivo de nós com modo 0600) e nas variáveis de ambiente (visíveis em `docker inspect`). A credencial de nó não tem rotação periódica. Quem tem o token de join ainda consegue registrar um `node_id` alheio pendente. A porta de métricas exige o token de operador, mas não tem TLS. O gateway tem uma única chave, sem tenant nem cota.
+## Limites
 
-> [!info] O que já existe
-> Os cinco papéis estão implementados nos commits de S1 a S5 e no papel de inferência, com `phase-s1-join-token.sh`, `phase-s2-approval.sh`, `phase-s4-tls.sh` e `phase-j-inference.sh` como evidência. Detalhes em [[f07-token-de-join]], [[f07-aprovacao-de-no]], [[seguranca]] e [[f08-gateway-e-api]].
-
-> [!todo] mTLS, attestation, rotação e auditoria estão em [[fase-19-hardening-de-producao]]. Tenant, cota e ACL por modelo estão em [[fase-11-request-manager]].
+- Os segredos ficam em texto claro no controller (arquivo de nós com modo 0600) e nas variáveis de ambiente, que aparecem em `docker inspect`.
+- A credencial de nó não tem rotação periódica.
+- Quem tem o token de join ainda consegue registrar um `node_id` alheio que esteja pendente.
+- A porta de métricas exige o token de operador, mas não tem TLS.
+- O gateway tem uma única chave, sem tenant nem cota por chave ([[adr-015-request-manager-no-gateway]]).
+- Planejado: attestation, rotação e auditoria mais completas ([[seguranca]]).

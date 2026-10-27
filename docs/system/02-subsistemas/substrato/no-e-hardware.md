@@ -1,70 +1,75 @@
 ---
 title: "Nó e hardware"
-aliases: ["Nó e hardware", "docs/04", "04 — Node and Hardware", "04 — Nó e hardware"]
+aliases: ["Nó e hardware", "Node and Hardware"]
 tags: [sistema/subsistema/substrato]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-01-nucleo-do-cluster]]", "[[fase-02-capability-e-saude]]"]
 ---
 
 # Nó e hardware
 
-`Device` é o hardware físico; `Node` é o papel lógico desse hardware no cluster. Separar as duas identidades permite reconhecer o equipamento mesmo quando o nó muda de nome, e impede que um `node_id` reutilizado por outro dispositivo herde a confiança do anterior (ver [[saude-e-confianca]]).
+Um nó é um worker registrado no controller. Ele roda em uma máquina física (ou contêiner, em testes) e se apresenta ao cluster com a identidade e a capacidade que mediu ou que lhe foram configuradas.
 
 ## Identidade
 
-| Conceito | Identifica | Observação |
-|---|---|---|
-| `Device` | Hardware físico | Sobrevive a reimagem do sistema. Reconhecido por fingerprint de hardware. |
-| `Node` | Papel lógico no cluster | Tem estado e confiança próprios, independentes do device. |
-| Fingerprint | Equipamento | Usado para separar identidade física de identidade lógica. |
+| Campo | Origem |
+|---|---|
+| `node_id` | Variável `AI_CLUSTER_NODE_ID`; se ausente, o conteúdo de `/etc/hostname`. |
+| `device_id` | `/etc/machine-id`. |
+| Arquitetura | Arquitetura da máquina (x86_64 ou ARM64). |
+| Versão do sistema | `/etc/os-release`. |
+| Versão do runtime | Versão do binário do worker. |
 
-## Descoberta de dispositivos
+A credencial do nó fica em arquivo local (`AI_CLUSTER_NODE_CREDENTIAL_FILE`). Ela, junto com a aprovação do operador, define a confiança do nó (ver [[saude-e-confianca]]).
 
-Coletar, conforme suporte do equipamento:
+## Descoberta
 
-- arquitetura;
-- CPU: modelo, núcleos, frequência e features;
-- RAM: capacidade e banda;
-- GPU e NPU;
-- dispositivos de armazenamento;
-- interfaces de rede;
-- sensores de temperatura;
-- energia, quando disponível.
+O worker coleta, no registro:
+
+- CPU: número de threads, limitado às threads disponíveis no host;
+- memória: `MemTotal` de `/proc/meminfo`;
+- armazenamento: classes de disco a partir de `/sys/block` (ver [[storage-intelligence]]);
+- rede: maior velocidade negociada entre as interfaces não-loopback, em `/sys/class/net`;
+- temperatura: zona térmica do kernel, quando visível.
+
+Para testes e para simular máquinas de tamanhos diferentes no mesmo host, cada valor pode ser fixado:
+
+| Variável | Efeito |
+|---|---|
+| `AI_CLUSTER_CPU_THREADS` | Threads reportadas (não podem passar do host). |
+| `AI_CLUSTER_MEMORY_BYTES` | Memória reportada. |
+| `AI_CLUSTER_STORAGE_CLASSES` | Classes de armazenamento reportadas, separadas por vírgula. |
+| `AI_CLUSTER_NETWORK_SCORE` | Score de rede fixado. |
+| `AI_CLUSTER_TEMPERATURE_C` | Temperatura reportada. |
 
 ## Perfil de capacidade
 
-O perfil é multidimensional e carrega três coisas: **baseline** (medido no registro), **current** (remedido depois, com o nó ocioso) e **confidence** (quanto as medidas merecem crédito). Detalhes em [[capability-engine]].
+O perfil tem três partes: **baseline** (medido no registro), **corrente** (remedido com o nó ocioso) e **confiança** (quanto as medidas merecem crédito). Detalhes em [[capability-engine]].
 
 ## Classes de hardware
 
-| Classe | Exemplo |
-|---|---|
-| x86_64 CPU | Servidor ou PC comum |
-| x86_64 + GPU | Estação com acelerador |
-| ARM64 CPU | Raspberry Pi e similares |
-| ARM64 + GPU | SBC com GPU |
-| ARM64 + NPU | SBC ou mobile com NPU |
-| SBC | Placa de uma peça |
-| Mobile | Celular ou tablet como worker |
+Hoje o worker roda em CPU x86_64 e ARM64. Não há detecção de GPU, NPU, SBC ou dispositivo móvel como classes próprias.
 
-## Abstração heterogênea
+> Planejado: fingerprint de hardware para separar `Device` (hardware físico) de `Node` (papel lógico), e classes GPU, NPU, SBC e móvel.
 
-Todo equipamento apresenta a mesma interface de Worker. A diferença entre classes aparece no perfil de capacidade e nos backends do [[worker-runtime]], não no protocolo com o controller.
+## Entrada e saída
 
-## Desaparecimento de dispositivo
+- **Entrada.** O nó se registra com o token de entrada (`AI_CLUSTER_JOIN_TOKEN`) e fica aguardando aprovação do operador, a não ser que o controller tenha `AI_CLUSTER_AUTO_APPROVE` ligado. Sem aprovação, não recebe trabalho.
+- **Saída planejada.** Com SIGTERM ou Ctrl+C, o worker para de pedir trabalho, espera os slots em execução devolverem seus resultados (teto de 30 s), para o heartbeat e chama `LeaveNode`. O controller marca o nó como `DRAINING`, devolve à fila as unidades que ainda estiverem em voo e remove o nó do registro.
+- **Desaparecimento.** Sem saída limpa, o nó envia heartbeat a cada 5 s. O controller varre os nós a cada 5 s e marca como `OFFLINE` o nó sem heartbeat há mais de `AI_CLUSTER_HEARTBEAT_GRACE_MS` (padrão 15 000 ms). Suas unidades voltam à fila. Quando o nó volta a enviar heartbeat, retorna a `READY`.
 
-A ausência de heartbeat muda o estado lógico do nó. O controller não depende de desligamento limpo: um nó que some é marcado como offline e seu trabalho volta para a fila ([[hotplug-e-recuperacao]], [[adr-006-hotplug]]).
+## Falhas
 
-> [!info] O que já existe
-> - Identidade no `NodeIdentity` de `code/proto/cluster.proto`, preenchido em `code/crates/worker/src/main.rs`: `node_id` (variável `AI_CLUSTER_NODE_ID`, senão o hostname), `device_id` (de `/etc/machine-id`), arquitetura (`std::env::consts::ARCH`), versão do SO (`/etc/os-release`) e versão do runtime.
-> - Descoberta: CPU (threads, limitadas aos disponíveis no host), memória (`/proc/meminfo`), classes de armazenamento (`/sys/block`), velocidade de rede (`/sys/class/net`) e temperatura (zona térmica do kernel). Override por variável para testes: `AI_CLUSTER_CPU_THREADS`, `AI_CLUSTER_MEMORY_BYTES`, `AI_CLUSTER_STORAGE_CLASSES`, `AI_CLUSTER_NETWORK_SCORE`, `AI_CLUSTER_TEMPERATURE_C`.
-> - Desaparecimento: heartbeat a cada 5 s; o controller marca como `OFFLINE` o nó sem batida por `AI_CLUSTER_HEARTBEAT_GRACE_MS` (padrão 15 000 ms), em `code/crates/controller/src/registry.rs` (`mark_stale_offline`).
-> - Fases: [[f01-entrada-e-saida-de-nos]] (registro e saída), [[f02-descoberta-de-rede]], [[f02-benchmark-de-capability]].
->
-> Divergência: não há fingerprint de hardware nem `Device` como entidade própria. O `device_id` vem de `/etc/machine-id`, que é a única âncora da identidade física e não é verificada contra o hardware.
+- Um worker que morre no meio de uma unidade não avisa o controller. O controller só percebe pelo silêncio do heartbeat.
+- Um worker vivo que descarta uma unidade sem executá-la também não avisa. A unidade fica em voo com esse nó até ele sair.
 
-> [!todo] Fingerprint de hardware; classes GPU, NPU, SBC e mobile; coleta de energia. Ver [[fase-16-aceleradores]] e [[fase-18-worker-movel]].
+## Garantias
 
-> [!warning] Divergência: o campo `accelerators` existe em `CapabilityReport`, mas o worker nunca o preenche. Um nó com GPU aparece como um nó só de CPU.
+- Um nó só recebe trabalho depois de aprovado e fora dos estados `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`.
+- O controller não depende de desligamento limpo para tirar um nó de circulação.
+
+## Limites conhecidos
+
+- A identidade física (`device_id`) vem de `/etc/machine-id` e não é verificada contra o hardware. Quem clona a imagem clona a identidade física.
+- O campo de aceleradores existe no relatório de capacidade, mas o worker não o preenche. Um nó com GPU aparece como nó só de CPU.
+- Dentro de contêiner, `/sys/block` e as zonas térmicas mostram o host, não o contêiner.
+- A grace de heartbeat precisa ficar bem acima do intervalo de 5 s. Um valor curto demais tira do ar um nó saudável.

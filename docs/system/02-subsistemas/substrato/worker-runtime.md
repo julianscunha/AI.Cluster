@@ -1,90 +1,76 @@
 ---
 title: "Runtime do worker"
-aliases: ["Runtime do worker", "Worker Runtime", "docs/07", "07 — Worker Runtime", "07 — Runtime do worker"]
+aliases: ["Runtime do worker", "Worker Runtime"]
 tags: [sistema/subsistema/substrato]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-03-execucao-distribuida]]", "[[fase-08-inferencia]]"]
 ---
 
 # Runtime do worker
 
-Executa Work Units usando o hardware local mais adequado. É o processo que roda em cada máquina do cluster e fala com o controller pelo [[camada-de-transporte]].
+O worker é o processo que roda em cada máquina do cluster. Ele recebe Work Units do controller, executa-as com o hardware local, reporta capacidade e saúde, e mantém os recursos que o controller pedir (fatias de peso, cópia de estado).
 
-## Responsabilidade
+## Responsabilidades
 
-- receber Work Units do controller e executá-las;
+- pedir unidades ao controller e devolver o resultado com checksum;
 - medir e reportar capacidade e saúde ([[capability-engine]], [[saude-e-confianca]]);
-- manter cópia de estado do controller, quando configurado;
-- manter o canal residente de fatias de peso, quando configurado (ver abaixo).
+- manter a cópia do estado do controller, quando configurado;
+- manter o canal residente de fatias de peso, quando configurado.
 
-## Componentes
+## Ciclo de trabalho
 
-| Componente | Papel |
-|---|---|
-| Work Unit Engine | Executa Work Units e devolve o resultado com checksum. |
-| Memory Manager | Limita memória por execução. |
-| Tensor Engine | Kernels de álgebra linear por backend. |
-| Device Manager | Descreve e aciona os dispositivos locais. |
-| Local Scheduler | Decide núcleos, GPU/NPU e buffers do nó. |
-| Transport Engine | Envia e recebe dados pelos transportes disponíveis. |
-| Cache Manager | Guarda dados reutilizáveis (slices de peso, resultados). |
-| Checkpoint Manager | Persiste progresso para recuperação. |
-| Telemetry | Eventos, métricas e traces do nó. |
+1. O worker pede uma unidade ao controller (`RequestWork`).
+2. Sem unidade, espera 200 ms e pede de novo. Depois de concluir uma, pede de novo na hora.
+3. Executa a unidade com os núcleos concedidos e devolve o resultado (`SubmitWorkResult`) com checksum e tempo de cálculo.
+4. Um heartbeat separado roda a cada 5 s, em tarefa própria. Uma unidade longa não deixa o nó parecer morto.
 
-## Backends de hardware
+O worker valida o tamanho das matrizes antes de multiplicar. Uma unidade incoerente volta marcada como inválida, e o controller não tenta outro nó por causa dela.
 
-Interface abstrata do Tensor Engine:
+## Execução local
 
-```text
-Tensor Engine
- |- CPU backend
- |- CUDA/compatible GPU backend
- |- ROCm/compatible backend
- |- Vulkan/OpenCL candidate
- `- NPU backend
-```
+- **Concorrência.** `AI_CLUSTER_WORK_SLOTS` define quantas unidades rodam ao mesmo tempo (padrão 1, limite 64). O worker só pede trabalho quando há slot livre, e segura o slot até entregar o resultado.
+- **Núcleos.** O orçamento é `min(threads reportadas, núcleos do host)`, dividido entre os slots (no mínimo 1 núcleo por unidade). O produto de matrizes é dividido por linhas de saída, e o resultado é igual, bit a bit, ao do caminho serial. O checksum não muda com o número de threads.
+- **Remedições.** Medidas de compute, armazenamento e rede só rodam com o nó vazio, para não roubar núcleos de unidade em voo.
+- **Falha de execução.** Se o cálculo entra em pânico ou o resultado não chega ao controller após três tentativas, o worker sai do cluster. Sua unidade volta à fila pelo caminho de saída.
 
-Começa com CPU x86_64 e ARM64.
+## Canal residente de fatias
 
-## Escalonamento local
+Usado só por inferência, e só quando o worker recebe `AI_CLUSTER_MODEL_DIR`.
 
-O Global Scheduler decide o nó. O Local Scheduler decide núcleos de CPU, GPU/NPU e buffers dentro do nó. ([[scheduler]], [[f04-scheduler-local]])
+- O worker abre um stream `ShardChannel` com o controller, identificando-se pelo `node_id`. Se a conexão cai ou é recusada, tenta de novo a cada 2 s.
+- As fatias de peso ficam no worker. Só ativações e saídas cruzam a rede. Os pesos não saem do disco do nó.
+- O cache de fatias tem teto de `AI_CLUSTER_SHARD_CACHE_MB` (padrão 2048 MiB), com despejo LRU.
+- Até 2 cálculos em paralelo, fila de resposta de 64 quadros.
+- Só tensores de projeção de camada são lidos do disco. Caminho fora da raiz do modelo é recusado. Uma fatia tem no máximo 256 MiB de entrada e a saída no máximo 64 MiB.
+
+Detalhes do protocolo em [[canal-de-fatias]].
+
+## Cópia do estado do controller
+
+Com `AI_CLUSTER_STATE_REPLICA` definido, o worker guarda uma cópia do estado de trabalho do controller. A cópia chega junto de um heartbeat, quando a época do controller avançou além da que o nó tem. Ela é reoferecida no re-registro. Ver [[state-manager]].
+
+## Variáveis de ambiente
+
+| Variável | Padrão | Efeito |
+|---|---|---|
+| `AI_CLUSTER_CONTROLLER` | Endereço padrão do controller | Endereço do controller. |
+| `AI_CLUSTER_NODE_ID` | Conteúdo de `/etc/hostname` | Identidade do nó. |
+| `AI_CLUSTER_NODE_CREDENTIAL_FILE` | | Arquivo com a credencial do nó. |
+| `AI_CLUSTER_WORK_SLOTS` | 1 (limite 1 a 64) | Unidades concorrentes. |
+| `AI_CLUSTER_MODEL_DIR` | | Raiz dos modelos. Liga o canal de fatias. |
+| `AI_CLUSTER_SHARD_CACHE_MB` | 2048 | Teto do cache de fatias. |
+| `AI_CLUSTER_STATE_REPLICA` | | Arquivo onde o nó guarda a cópia do estado do controller. |
+| `AI_CLUSTER_RECOMPUTE_INTERVAL_SECS` | 60 | Cadência das remedições no ocioso. |
 
 ## Prioridade
 
-Classes: `CRITICAL`, `INTERACTIVE`, `NORMAL`, `BACKGROUND`, `PREFETCH`, `CACHE`. A ordem decide qual trabalho local sai da fila primeiro.
+O worker não tem fila de prioridade própria. A prioridade vive na fila do controller (inteiro de 0 a 9, ver [[scheduler]]).
 
-## Compute vs transferência
+## Limites conhecidos
 
-O runtime pode decidir entre transferir um tensor e recomputá-lo, quando a previsão indicar menor custo total. A decisão usa o [[modelo-de-desempenho]] e os links do [[camada-de-transporte]].
+- Só há backend de CPU. Não há execução em GPU, ROCm, Vulkan, OpenCL nem NPU.
+- O worker roda uma unidade por slot, sem fila local ordenada por classe e sem admissão por memória. A única decisão local é quantos núcleos usar.
+- O worker não guarda resultados nem faz checkpoint do próprio trabalho. A cópia de estado é do controller.
+- Uma unidade reoferecida recomeça do zero.
+- Não há controle de memória por execução.
 
-## Zero-copy
-
-EXPERIMENTAL: zero-copy e DMA quando hardware e driver suportarem.
-
-> [!info] O que já existe
-> **Ciclo do worker** (`code/crates/worker/src/main.rs`):
-> - Loop de trabalho: pede unidades ao controller (`RequestWork`); sem trabalho, espera `WORK_POLL_IDLE_MS` (200 ms); após concluir uma, pede de novo sem esperar. Devolve o resultado com `SubmitWorkResult`.
-> - Execução: `execute_work` valida o tamanho das matrizes, multiplica com os núcleos concedidos (`min(cpu_threads reportadas, disponíveis)`) e devolve checksum e tempo de cálculo.
-> - Heartbeat em tarefa própria, a cada 5 s, para que uma unidade longa não faça o controller tirar o nó do ar.
-> - Saída planejada: SIGTERM ou Ctrl+C param de pegar trabalho e avisam o controller antes de sair.
-> - Identidade: `node_id` e credencial por nó, persistida em arquivo (`AI_CLUSTER_NODE_CREDENTIAL_FILE`).
-> - Cópia de estado (I4): com `AI_CLUSTER_STATE_REPLICA`, guarda a cópia do estado do controller que o controller envia no heartbeat quando a sua está atrasada, e a oferece de volta no re-registro.
->
-> **Tensor Engine**: só CPU. O kernel de matmul em `f64` está em `code/crates/common/src/matrix.rs` (`multiply_with_threads`). O modelo de linguagem (`code/crates/engine`) roda no gateway; o worker só executa fatias.
->
-> **Canal residente de fatias (J5)**: `code/crates/worker/src/shards.rs` e `ShardStore` em `code/crates/engine/src/shard.rs`.
-> - Ativo só com `AI_CLUSTER_MODEL_DIR`. O cache de fatias tem teto em `AI_CLUSTER_SHARD_CACHE_MB` (padrão 2048 MiB) com despejo LRU.
-> - O worker abre o stream `ShardChannel` com o `node_id` no cabeçalho e reconecta a cada 2 s após queda ou recusa.
-> - Cada frame `ShardCompute` é respondido com `ShardResult`. Até 2 cálculos em paralelo (`CONCURRENT_COMPUTES`), fila de respostas de 64.
-> - Só tensores de projeção de camada (11 sufixos reconhecidos por `is_projection`) são lidos do disco. Caminho fora da raiz do modelo é recusado. Fatia de até 256 MiB; saída de até 64 MiB.
-> - Erro de pedido (tamanho incoerente, tensor não permitido) volta com `invalid = true`: o controller não tenta outro nó por causa dele.
-> - Pesos não cruzam a rede. Só entram ativações e saídas.
->
-> Fases: [[f08-canal-residente-de-fatias]], [[f08-engine-local]], [[f03-grafo-de-dependencias]].
-
-> [!todo] Backends GPU, ROCm, Vulkan/OpenCL e NPU; Memory Manager com teto por execução; Local Scheduler com prioridades e buffers (hoje há `AI_CLUSTER_WORK_SLOTS` unidades concorrentes, com os núcleos divididos entre elas, e a prioridade vive na fila do controller); Cache Manager para resultados; Checkpoint Manager do worker (o checkpoint existe só no controller); Telemetria própria do nó; zero-copy e DMA; decisão de recompute. Ver [[fase-17-runtime-adaptativo]] e [[fase-16-aceleradores]].
-
-> [!warning] Divergência: o Local Scheduler do alvo decide núcleo, GPU/NPU e buffer. Hoje a única decisão local é quantos núcleos usar. A cópia de estado de I4 é um mecanismo do controller, guardado no worker, e não o Checkpoint Manager descrito no alvo.
+> Planejado: backends de GPU e NPU, Memory Manager com teto por execução, Local Scheduler com decisão de núcleo, GPU e buffer, classes de prioridade nomeadas (`CRITICAL` até `CACHE`), cache de resultados, checkpoint próprio do worker, telemetria local, zero-copy e DMA, e decisão entre recomputar e transferir.

@@ -1,11 +1,8 @@
 ---
 title: "Visão geral"
-aliases: ["01 — Overview", "docs/01-overview", "docs/01", "Visão"]
+aliases: ["Overview", "Visão geral do sistema"]
 tags: [sistema/visao]
 type: sistema/visao
-status: decidido
-implementacao: parcial
-fases: ["[[fase-00-fundacao]]", "[[fase-01-nucleo-do-cluster]]", "[[fase-02-capability-e-saude]]", "[[fase-03-execucao-distribuida]]", "[[fase-04-escalonamento]]", "[[fase-05-observabilidade]]", "[[fase-06-estado-e-recuperacao]]", "[[fase-07-seguranca-base]]", "[[fase-08-inferencia]]", "[[fase-09-transporte]]", "[[fase-10-inteligencia-de-storage]]", "[[fase-11-request-manager]]", "[[fase-12-model-runtime]]", "[[fase-13-graph-engine]]", "[[fase-14-edge-optimizer]]", "[[fase-15-ai-cluster-os]]", "[[fase-16-aceleradores]]", "[[fase-17-runtime-adaptativo]]", "[[fase-18-worker-movel]]", "[[fase-19-hardening-de-producao]]"]
 ---
 
 # Visão geral
@@ -14,15 +11,15 @@ Voltar para [[visao]]. Princípios em [[principios]]; requisitos em [[requisitos
 
 ## Propósito
 
-Definir o escopo do AI Cluster como um runtime distribuído e adaptativo para IA: uma plataforma Linux-first que transforma hardware heterogêneo reaproveitado em um pool distribuído de computação para IA.
+O AI Cluster é um runtime distribuído e adaptativo para IA: uma plataforma Linux-first que transforma hardware heterogêneo reaproveitado em um pool distribuído de computação para IA.
 
 ## Ideia central
 
-Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool lógico de recursos, capaz de executar uma única requisição distribuindo um modelo e suas operações entre diferentes dispositivos.
+Uma coleção heterogênea de equipamentos Linux se comporta como um pool lógico de recursos, capaz de executar uma única requisição distribuindo um modelo e suas operações entre diferentes dispositivos.
 
 ## O que o sistema deve fazer
 
-- Executar uma única inferência distribuindo um modelo robusto entre múltiplos dispositivos.
+- Executar uma única inferência distribuindo um modelo entre múltiplos dispositivos.
 - Aceitar hardware heterogêneo: x86_64, ARM64, CPU, GPU, NPU, PCs, servidores, notebooks, SBCs e dispositivos móveis compatíveis.
 - Provisionar nós automaticamente e convertê-los para um AI Cluster OS próprio.
 - Suportar hot-plug, drain, falha e replanejamento sem derrubar o cluster.
@@ -34,6 +31,8 @@ Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool 
 - Expor capacidade de inferência somente por uma Inference API.
 - Manter Application Plane e Compute Plane desacoplados.
 - Aprender com desempenho observado e recalibrar previsões do cluster.
+
+> Planejado: otimização de borda além do cache exato, grafo de conhecimento, TUI full-screen, aceleradores, worker móvel e aprendizado do planejador.
 
 ## Cargas de trabalho primárias
 
@@ -56,23 +55,17 @@ Uma coleção heterogênea de equipamentos Linux deve se comportar como um pool 
 - otimização adaptativa de tokens;
 - TUI detalhada.
 
-## Fora do escopo da v0.1
+## Fora do escopo
 
 - suporte a hardware móvel arbitrário;
 - suporte universal a NPU;
 - migração transparente de memória de processo arbitrário;
 - garantia de escala linear;
-- substituir kernels de LLM maduros por um compilador de kernel novo no primeiro dia.
+- substituir kernels de LLM maduros por um compilador de kernel novo.
 
-> [!info] O que já existe
-> - Cluster CPU com controller, workers e CLI: entrada e saída de nós ([[f01-entrada-e-saida-de-nos]]), capability e saúde ([[f02-capability-corrente]], [[f02-modelo-de-saude]]), DAG com retry e recuperação ([[f03-tolerancia-a-falhas]]) e placement por custo ([[f04-placement]]).
-> - Observabilidade de eventos, métricas, traces e dashboard de CLI ([[f05-eventos]], [[f05-metricas]], [[f05-traces]], [[f05-dashboard]]).
-> - Gateway HTTP com chave de API, `/v1/models`, `/v1/embeddings` e `/v1/chat/completions` com streaming SSE, sobre modelo sintético e sobre GPT-2 small e SmolLM2-135M em CPU ([[f08-gateway-e-api]], [[f08-engine-local]]).
-> - Projeções de matmul em workers por canal residente de fatias ([[f08-canal-residente-de-fatias]]).
+## Limites conhecidos
 
-> [!todo] O que falta
-> - Request Manager: admissão, filas, quotas e orçamento ([[request-manager]], [[fase-11-request-manager]]).
-> - Model Runtime distribuído: registry, variantes, shards, pipeline/tensor parallelism ([[fase-12-model-runtime]]).
-> - Graph engine e Edge optimizer ([[graph-engine]], [[edge-optimizer]]).
-> - AI Cluster OS e provisionamento por reimage ([[ai-cluster-os]], [[provisionamento]]).
-> - Aceleradores, worker móvel e hardening de produção ([[fase-16-aceleradores]], [[fase-18-worker-movel]], [[fase-19-hardening-de-producao]]).
+- O cluster se comunica só por gRPC sobre TCP; o socket Unix e a memória compartilhada existem apenas como camada de transporte isolada ([[adr-014-abstracao-de-transporte]]).
+- Os nós testados são x86_64 e ARM de 32 bits (armv7). ARM64 não foi testado.
+- O gateway executa o modelo no próprio processo; só as projeções podem ser distribuídas ([[adr-007-fronteira-inference-api]]).
+- A capacidade reportada é de compute, memória, rede (velocidade do link), saúde e classe de armazenamento. Memória sob carga, latência e aceleradores não são medidos.

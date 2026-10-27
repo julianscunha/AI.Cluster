@@ -3,13 +3,13 @@ title: "Decisões"
 aliases: ["ADRs", "Decisões de arquitetura", "05-decisoes"]
 tags: [sistema/moc, adr]
 type: sistema/moc
-status: vivo
-implementacao: parcial
 ---
 
 # Decisões
 
-Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, decisão, consequências e alternativas, e liga-se à fase que a entrega. Voltar para [[system]] ou [[inicio]].
+Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, decisão, consequências, alternativas e, quando há, limites. Voltar para [[system]] ou [[inicio]].
+
+O estado vigente das decisões e as questões em aberto estão em [[estado-das-decisoes]].
 
 | ADR | Status | Data | Decisão |
 |---|---|---|---|
@@ -26,14 +26,13 @@ Registros de decisão de arquitetura (ADR) do sistema. Cada ADR tem contexto, de
 | [[adr-011-escalonamento-por-custo]] | decidido | 2026-10-25 | O nó pede, o controller decide por custo com histerese; prioridade com envelhecimento, slots no worker e quarentena por evidência |
 | [[adr-012-metricas-de-inferencia-no-gateway]] | decidido | 2026-10-25 | O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração e os expõe em `GET /metrics` |
 | [[adr-013-estado-do-controller-e-recuperacao]] | decidido | 2026-10-25 | Snapshot atômico do conjunto vivo, posse preguiçosa, dois relógios de recuperação, cópia num nó e eventos em arquivo |
-| [[adr-014-abstracao-de-transporte]] | decidido | 2026-10-25 | O transporte carrega bytes em frames sobre qualquer fluxo ordenado (TCP, Unix); o cluster segue em gRPC até a integração |
-| [[adr-016-mtls-opcional-no-plano-de-controle]] | decidido | 2026-10-25 | mTLS ligado por `AI_CLUSTER_TLS_CLIENT_CA`; certificado de cliente é a camada abaixo dos tokens |
-| [[adr-018-release-assinada-e-medida-do-slot]] | decidido | 2026-10-26 | release assinada (Ed25519) verificada no nó; versão sempre crescente; medida do slot como attestation de software (não prova integridade contra nó comprometido) |
-| [[adr-017-instalacao-a-b-e-boot-de-rede]] | decidido | 2026-10-26 | instalação A/B imutável é o caminho oficial; boot de rede só instala e recupera; estado do A/B em setor cru |
+| [[adr-014-abstracao-de-transporte]] | decidido | 2026-10-25 | O transporte carrega bytes em frames sobre qualquer fluxo ordenado (TCP, Unix); o cluster segue em gRPC |
 | [[adr-015-request-manager-no-gateway]] | decidido | 2026-10-25 | Tenants com ACL e cota de tokens, fila por classe com envelhecimento e cancelamento de grafo, dentro do gateway |
+| [[adr-016-mtls-opcional-no-plano-de-controle]] | decidido | 2026-10-25 | mTLS ligado por `AI_CLUSTER_TLS_CLIENT_CA`; certificado de cliente é a camada abaixo dos tokens |
+| [[adr-017-instalacao-a-b-e-boot-de-rede]] | decidido | 2026-10-26 | Instalação A/B imutável é o caminho oficial; boot de rede só instala e recupera; estado do A/B em setor cru |
+| [[adr-018-release-assinada-e-medida-do-slot]] | decidido | 2026-10-26 | Release assinada (Ed25519) verificada no nó; versão sempre crescente; medida do slot como attestation de software (não prova integridade contra nó comprometido) |
 
 ## Notas
 
-- Status `proposto` ainda não tem implementação; `decidido` vale para o alvo, mesmo que parcial; `vivo` é revisado com o código.
-- ADR-001 a ADR-008 foram registrados juntos em 2026-10-19; a data é a do primeiro commit que os trouxe ao repositório.
-- ADR-009 e ADR-010 registram decisões tomadas durante a implementação da Fase J5 e da Fase S; os textos seguem o que o código faz hoje.
+- Status `proposto`: a decisão ainda não foi tomada. `decidido`: vale para o alvo, mesmo que implementado só em parte. `vivo`: revisado junto com o código.
+- A data de cada ADR é a data da decisão.

@@ -3,18 +3,15 @@ title: "ADR-012 — Métricas de inferência no gateway"
 aliases: ["ADR-012", "Métricas de inferência"]
 tags: [sistema/adr, subsistema/operacao]
 type: sistema/adr
-status: decidido
-implementacao: implementado
-fases: ["[[fase-05-observabilidade]]"]
 ---
 
 # ADR-012 — Métricas de inferência no gateway
 
-Data: 2026-10-25 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-25 · Voltar para [[decisoes]].
 
 ## Contexto
 
-As métricas da F05 foram feitas para Work Units, no controller. A geração de texto roda no gateway, que decide cada token; o controller só vê as multiplicações de fatia que o gateway lhe manda, sem noção de token, prompt ou cache. FR-056 pede TTFT, ITL, tokens por segundo e latência.
+As métricas do cluster foram feitas para Work Units, no controller. A geração de texto roda no gateway, que decide cada token; o controller só vê as multiplicações de fatia que o gateway lhe manda, sem noção de token, prompt ou cache. O requisito FR-056 pede TTFT, ITL, tokens por segundo e latência.
 
 ## Decisão
 
@@ -27,9 +24,9 @@ As métricas da F05 foram feitas para Work Units, no controller. A geração de 
 
 ## Consequências
 
-- Dois pontos de coleta (controller e gateway) para quem monta um painel. O `dashboard` ainda não lê o gateway.
+- Há dois pontos de coleta (controller e gateway) para quem monta um painel.
 - Um restart do gateway zera as séries; não há histórico.
-- O trabalho do cluster dentro de uma geração (tempo das chamadas aos workers) continua nos logs do gateway (`remoto: ...`), não nas métricas.
+- O tempo gasto nas chamadas aos workers dentro de uma geração aparece nos logs do gateway, não nas métricas.
 
 ## Alternativas
 
@@ -37,4 +34,7 @@ As métricas da F05 foram feitas para Work Units, no controller. A geração de 
 - Medir pelo lado do cliente: depende de cada cliente e perde o prefill do lado do servidor.
 - Histograma Prometheus em vez de percentis calculados: melhor para agregar entre gateways, mas exige escolher buckets antes de existirem dados.
 
-> [!todo] Painel, histórico e agregação entre vários gateways ficam para quando houver mais de um gateway ou um coletor ([[fase-11-request-manager]]).
+## Limites
+
+- O `dashboard` do CLI não lê o gateway; as métricas de LLM só aparecem em `/metrics`.
+- Painel, histórico e agregação entre vários gateways são planejados.

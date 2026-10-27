@@ -1,97 +1,163 @@
 ---
 title: "Observabilidade e telemetria"
-aliases: ["docs/17", "17 — Observability / Telemetry Engine", "17 — Motor de observabilidade / telemetria"]
+aliases: ["Observabilidade", "Telemetria", "Métricas", "Eventos", "Traces"]
 tags: [sistema/subsistema/operacao]
 type: sistema/subsistema
-status: decidido
-implementacao: parcial
-fases: ["[[fase-05-observabilidade]]"]
 ---
 
 # Observabilidade e telemetria
 
-O cluster precisa responder três perguntas em qualquer momento: como está cada nó e o cluster
-inteiro, o que mudou, e o que aconteceu com uma requisição específica. A telemetria é organizada
-em três tipos, cada um com um papel diferente, e um quarto elemento junta previsão e realidade
-para o modelo de custo poder ser calibrado.
+O cluster responde três perguntas em qualquer momento: como está cada nó e o cluster inteiro, o que mudou, e o que aconteceu com uma requisição específica. A telemetria tem três tipos, cada um com um papel, e uma comparação entre previsão e medida para calibrar o modelo de custo. Voltar para [[operacao]].
 
 ## Três tipos de telemetria
 
-| Tipo | Responde | Forma |
-|---|---|---|
-| Métricas | Como está agora, em valores contínuos | Totais, médias, percentis e sinais por nó. |
-| Eventos | O que mudou | Linha do tempo de transições de ciclo de vida. |
-| Traces | Por onde passou uma requisição | Unidades de uma requisição, com nó e tempos. |
+| Tipo | Responde | Forma | Onde se lê |
+|---|---|---|---|
+| Métricas | Como está agora | Totais, médias, percentis e sinais por nó | `ai-cluster metrics`, `ai-cluster nodes`, `/metrics` |
+| Eventos | O que mudou | Linha do tempo de transições | `ai-cluster events` |
+| Traces | Por onde passou uma requisição | Unidades de uma requisição, com nó e tempos | `ai-cluster request trace <id>` |
 
-Previsto vs real acompanha as três: mostra a estimativa e a medida lado a lado, para que o erro do
-modelo seja visto e não só o ranking do placement.
+O painel `ai-cluster dashboard` junta os três numa tela só ([[cli-tui]]).
+
+## Métricas do cluster
+
+`ai-cluster metrics` imprime `chave=valor`, com os mesmos nomes dos campos do protocolo:
+
+```text
+nodes_total=1 nodes_available=1
+units_completed=2 units_pending=0 units_blocked=0 units_failed=0
+total_compute_time_us=1217 avg_compute_time_us=608 total_predicted_compute_us=36
+total_latency_us=3000 avg_latency_us=1500
+p50_compute_time_us=538 p95_compute_time_us=679
+p50_latency_us=1000 p95_latency_us=2000
+```
+
+- `nodes_available` é o conjunto que o placement enxerga: registrado e não drenando, nem offline, nem em quarentena.
+- `units_pending` inclui as unidades em voo. `units_blocked` é o subconjunto que espera dependência do grafo.
+- `units_failed` são as unidades que esgotaram o orçamento de tentativas e nunca vão completar.
+- `total_compute_time_us` vem do próprio worker, no tempo de compute que ele informa. `total_latency_us` vem do relógio do controller, do despacho ao resultado.
+- A diferença entre latência e compute é transferência, fila e espera de consulta. Numa unidade que termina em menos de um milissegundo, o tempo do worker pode passar do tempo observado pelo controller, porque os relógios são diferentes.
+- Média é divisão inteira, arredondada para baixo, e vale zero quando nada foi concluído.
+- Percentis usam o método nearest-rank: a resposta é sempre um tempo que aconteceu de verdade. Com uma unidade só, p50 e p95 têm o mesmo valor.
+
+Média e percentil respondem perguntas diferentes. A média mostra o custo típico. O p95 mostra o que a cauda sente, e a cauda é o que um cliente que espera por uma requisição experimenta.
 
 ## Métricas de nó
 
-Alvo: CPU (uso, frequência, carga, throttling), RAM (uso, swap, banda), GPU e NPU (uso, memória,
-temperatura), armazenamento (latência, IOPS, throughput, saúde, desgaste), rede (banda, latência,
-perda, erros).
+O worker lê `/proc` e `/sys` a cada heartbeat e envia:
+
+- **CPU:** utilização entre duas leituras de `/proc/stat`. Iowait conta como ocioso.
+- **Swap:** `1 - SwapFree/SwapTotal`, de `/proc/meminfo`.
+- **Temperatura:** de `/sys/class/thermal`, em grau Celsius.
+- **IOPS:** leituras e escritas concluídas por segundo, de `/proc/diskstats`.
+- **Score de rede:** velocidade negociada do link sobre a referência de 1 GbE. É um teto nominal, não a vazão sob carga.
+
+Zero significa "não medido", não "zero". Na primeira leitura, CPU e IOPS são zero. Sem sensor de temperatura, a temperatura é zero.
+
+O `health_score` reflete só a pressão de memória. Os sinais de CPU, temperatura e swap são informados crus.
+
+Em contêiner, `/proc` e `/sys` são do host inteiro. CPU e disco mostram o estado da máquina, não o consumo do processo.
 
 ## Métricas de inferência
 
-Alvo: tokens de entrada, de saída e em cache, tokens evitados, TTFT, ITL, throughput de prompt e de
-geração, tamanho de contexto e uso do cache KV. Dependem do motor de inferência e do Request Manager
-([[inference-engine]], [[request-manager]]).
+O gateway mede cada geração e expõe as séries em `GET /metrics` (chave de API no cabeçalho `Authorization: Bearer`):
 
-> [!info] O que já existe
-> O gateway mede TTFT, ITL, tokens por segundo, tokens de entrada e saída e o tamanho do cache KV de cada geração, e os expõe em `GET /metrics` ([[f05-metricas-de-inferencia]], [[adr-012-metricas-de-inferencia-no-gateway]]). Tokens em cache e evitados, throughput de prompt e o painel ainda não.
+- `requests_total`, falhas, tokens de prompt e tokens gerados.
+- **TTFT** (tempo até o primeiro token, prompt incluído), com p50 e p95.
+- **ITL** (intervalo entre tokens seguintes), com p50 e p95.
+- **Tokens por segundo** de geração.
+- **Tamanho do KV cache**, em bytes, da última geração e a maior vista: posições vezes camadas vezes largura de K e V vezes 8 bytes.
+- Cache de respostas: acertos, erros, tokens poupados e entradas ([[edge-optimizer]]).
+- Por tenant: tokens cobrados e pedidos recusados ([[request-manager]]).
+
+Percentis são nearest-rank, sobre as últimas 1024 amostras de cada série. Cancelamento e prazo estourado contam como falha.
+
+## Métricas do controller em HTTP
+
+O exportador do controller serve `GET /metrics` na porta `AI_CLUSTER_METRICS_ADDR` (padrão `127.0.0.1:9101`). Ele exige `Authorization: Bearer <token de operador>`.
+
+- Nomes começam com `ai_cluster_`. Os demais seguem o nome do campo de `metrics`, para que um número visto no scraper e na CLI seja o mesmo.
+- Cada nó vira uma série com o rótulo `node=`.
+- Se o exportador não sobe, o erro é reportado e o controller segue funcionando.
 
 ## Eventos
 
-Alvo: mudanças de estado do cluster, como entrada e saída de nó, degradação, perda de nó, alerta de
-SSD e início de rebalanceamento.
+`ai-cluster events [--limit N]` imprime do mais antigo para o mais recente. Padrão: os últimos 20. `--limit 0` mostra tudo que o controller ainda guarda.
 
-## Previsto vs real
+Nomes de evento:
 
-Estimativas e realidade lado a lado, por unidade, por requisição e no cluster. Serve para calibrar o
-modelo de desempenho ([[modelo-de-desempenho]]).
+| Evento | Quando |
+|---|---|
+| `node_registered` | Nó se registrou. |
+| `node_approved`, `node_revoked` | Aprovação e revogação de nó. |
+| `node_left` | Nó saiu do cluster ao desligar ou ao drenar. |
+| `node_offline` | Nó sem heartbeat além da carência. |
+| `node_reserved`, `reservation_released` | Reserva de nó criada ou liberada. |
+| `work_enqueued`, `graph_enqueued` | Trabalho entrou na fila. |
+| `work_completed` | Unidade concluída. |
+| `request_cancelled` | Unidades de uma requisição foram removidas da fila. |
+| `shard_channel_opened` | Worker abriu o canal de fatias. |
+| `rollout` | Mudança de estado do rollout de release. |
+| `audit` | Ação administrativa. Ver adiante. |
 
-## Amostragem adaptativa
+Os eventos são guardados em anel de 256 entradas. O tempo é sempre o do controller, porque relógios de nó não são confiáveis para ordenação. Com `AI_CLUSTER_EVENTS=<arquivo>`, a linha do tempo sobrevive a reinício: o arquivo guarda uma linha por evento e é reescrito quando passa de 1024 linhas.
 
-Normal: frequência baixa. Nó degradado ou anômalo: frequência alta por um período, depois volta ao
-normal.
+## Trilha de auditoria
 
-## Explicabilidade
+Cada ação administrativa gera um evento `audit` com ação, alvo e endereço de quem chamou. Ações cobertas: aprovação, revogação, enfileiramento de trabalho e de grafo, cancelamento de requisição, reserva, liberação de reserva e definição de release.
 
-Diagnósticos indicam causa provável, impacto e ação recomendada. O que não tem causa conhecida diz
-isso, em vez de chutar.
+- Tentativa negada por token errado não aparece na trilha. Ela falha antes de qualquer ação.
+- A ação é registrada antes do efeito. Um `approve` de nó inexistente aparece como tentativa.
+- Eventos `audit` não são expulsos do anel por eventos comuns.
+- O ator é o endereço de rede de quem chamou, não uma identidade. Não há CN de certificado nem nome de operador.
 
-## Formato de saída
+## Previsto contra real
 
-- Métricas: `chave=valor` com nomes iguais aos campos do protocolo, para script e scraper.
-- Scraper: formato texto do Prometheus, com prefixo `ai_cluster_` e rótulo `node=`.
-- Eventos e traces: tabelas legíveis pela CLI ([[cli-tui]]).
+O controller estima o tempo de compute de cada unidade com o modelo de custo. Ele soma as estimativas nas métricas (`total_predicted_compute_us`), ao lado do tempo medido. A diferença mostra o erro do modelo no cluster.
 
-> [!info] O que já existe
-> - Métricas de cluster (contagens, totais, médias, percentis p50/p95 de compute e latência) e sinais
->   por nó (CPU, temperatura, swap, IOPS, score de rede nominal): [[f05-metricas]]. O exportador em
->   `GET /metrics` na porta 9101 (`code/crates/controller/src/exporter.rs`) exige o token de operador.
-> - Eventos de ciclo de vida, em anel de 256 em memória: [[f05-eventos]]. Os nomes reais são
->   `node_registered`, `node_approved`, `node_revoked`, `node_left`, `node_offline`, `work_enqueued`,
->   `graph_enqueued`, `work_completed`, `node_reserved`, `reservation_released` e `shard_channel_opened`
->   (`code/crates/controller/src/service.rs`, `main.rs`).
-> - Traces por requisição, com unidades, estado, nó e tempos: [[f05-traces]].
-> - Painel de uma tela, lendo as mesmas chamadas da CLI: [[f05-dashboard]].
-> - Previsto vs real por unidade e no cluster: [[f05-previsto-vs-real]].
-> - Sinais de nó vindos de `/proc` e `/sys` do contêiner, então CPU e disco são do host inteiro.
+Por nó, o controller também aprende a razão entre o real e o previsto. Ela corrige as previsões seguintes do mesmo nó, com taxa de aprendizado de 0,3. Razões fora de 0,05 a 20 são descartadas como erro de relógio. A correção afeta a previsão, não o placement: o nó escolhido continua pela taxa de referência do benchmark.
 
-> [!todo] Pendente:
-> - Métricas de nó: frequência, carga, throttling, GPU/NPU, latência e saúde de armazenamento,
->   banda de memória, latência e perda de rede. Hoje `storage_health`, `memory_bandwidth_score` e
->   `network_latency_ms` não são preenchidos.
-> - Métricas de inferência: nenhuma, pois o motor de inferência ainda não expõe contagens de token nem
->   tempos de geração.
-> - Eventos `NODE_DEGRADED`, `SSD_WARNING` e `REBALANCE_STARTED`: não são emitidos.
-> - Amostragem adaptativa: a frequência é fixa.
-> - Explicabilidade: não há diagnóstico com causa e ação.
-> - Histórico: métricas e eventos são instantâneos ou anel em memória; nada é persistido.
-> - Ator nos eventos administrativos, ver [[seguranca]].
+A razão não é persistida. Reiniciar o controller reaprende.
 
-> [!warning] Teto do que existe: o anel de eventos guarda 256 entradas e se perde no restart. Os
-> totais de compute e latência cobrem só as unidades que o controller ainda retém; quando uma sai do
-> anel de conclusões, o número cai. Um contador monotônico exigiria série temporal, que não existe.
+## Traces por requisição
+
+`ai-cluster request trace <id>` lista as unidades de uma requisição:
+
+```text
+REQUISIÇÃO abc123 UNIDADES 2
+TRABALHO   NÓ             ESTADO      COMPUTE_US TRANSFER_US   TOTAL_US
+w1         node-t         completed       12345         678      13023
+w2         node-t         completed       11987         654      12641
+unidades=2 compute_somado_us=24332 transfer_somado_us=1332 latencia_somada_us=25664
+```
+
+Estados de uma unidade:
+
+- `queued`: na fila, ainda não despachada. Inclui as que esperam dependência do grafo.
+- `dispatched`: em voo num nó, sem resultado.
+- `completed`: concluída. É a única com tempos.
+- `failed`: esgotou as tentativas.
+
+O id da requisição é escolhido pelo cliente, ou cunhado pelo controller quando o cliente não manda. Id desconhecido devolve trace vazio, sem erro.
+
+## Painel
+
+`ai-cluster dashboard [--watch N]` mostra nós disponíveis, a tabela de nós, o trabalho (concluídas, pendentes, bloqueadas e falhas), os tempos de compute e latência com o previsto, e as reservas. Sem `--watch` imprime uma vez. Com `--watch N` repinta a cada N segundos. O painel lê as mesmas chamadas da CLI e não tem navegação.
+
+## Limites conhecidos
+
+- **Sem histórico.** Métricas são instantâneas. Totais cobrem só as unidades que o controller ainda retém: quando uma sai do anel de conclusões, o número cai. Taxa por segundo exige série temporal, que não existe.
+- **Métricas de inferência são da memória do gateway.** Reiniciar o gateway zera as séries, e o painel do controller não as mostra.
+- **Eventos e traces se perdem no reinício,** exceto a linha do tempo, que persiste quando `AI_CLUSTER_EVENTS` está definido. O id de requisição de uma unidade não sobrevive ao reinício do controller.
+- **Eventos sem fsync.** Uma queda de energia pode perder os últimos eventos.
+- **Arquivo de eventos sem proteção.** Não tem assinatura, e quem edita o arquivo edita a trilha.
+- **Trace sem spans internos.** Mostra o custo por unidade, não o tempo dentro do worker.
+- **Sinais de rede e armazenamento incompletos.** Latência de rede, banda de memória e saúde de armazenamento não são medidos. O score de rede é nominal.
+- **IOPS conta o disco e as partições.** O número é um teto.
+- **Sem diagnóstico.** O cluster não indica causa provável nem ação recomendada.
+
+> Planejado: métricas de nó de frequência, carga, throttling, GPU e NPU, saúde de armazenamento e banda de memória.
+> Planejado: eventos `NODE_DEGRADED`, `SSD_WARNING` e `REBALANCE_STARTED`.
+> Planejado: amostragem adaptativa, com frequência alta só em nó degradado ou anômalo.
+> Planejado: diagnóstico com causa provável, impacto e ação.
+> Planejado: histórico persistido de métricas e exportação para um coletor.
