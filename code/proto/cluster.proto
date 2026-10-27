@@ -81,6 +81,33 @@ message CapabilityReport {
   /// Bytes que o worker aceita manter residentes como fatias de modelo (`AI_CLUSTER_SHARD_CACHE_MB`).
   /// Zero é "não participa do canal de fatias" (sem `AI_CLUSTER_MODEL_DIR`) ou worker antigo.
   uint64 shard_cache_bytes = 18;
+  /// Quão limpo foi o benchmark do registro (o baseline), 0..1: a melhor execução sobre a mediana.
+  /// Perto de 1, as execuções concordaram e o baseline é o que o nó faz de verdade; baixo, o nó
+  /// estava perturbado (vizinho barulhento, frequência oscilando) e a mediana é a mais confiável.
+  /// Zero é "não medido" (score fixado ou benchmark que falhou), nunca "baseline ruim".
+  double baseline_confidence = 19;
+  /// Fração dos segmentos TCP enviados que foram retransmitidos durante a sonda do registro, 0..1
+  /// (`RetransSegs` sobre `OutSegs` do kernel). É a perda de pacotes que o TCP esconde: o link
+  /// entrega, mas gasta banda reenviando. Zero é "sem perda medida" ou "não medido" (sem
+  /// /proc/net/snmp, ou score de rede fixado); o contador é do host, então vale na sonda ociosa.
+  double network_retransmit_ratio = 20;
+  /// Desvio relativo da taxa entre as repetições da sonda de rede (desvio-padrão sobre média).
+  /// Link congestionado ou compartilhado oscila entre repetições; link livre repete. Zero é
+  /// estável ou não medido.
+  double network_jitter = 21;
+  /// Taxa de leitura sequencial do disco do worker sem passar pelo cache de páginas (O_DIRECT),
+  /// relativa à mesma referência de 500 MB/s de `storage_score`. Zero é "não medido": o sistema
+  /// de arquivos não aceita O_DIRECT (tmpfs) ou a sonda falhou, nunca "disco lento".
+  double storage_read_score = 22;
+  /// Dispositivo de bloco (disco inteiro, sem a partição) em que as sondas de storage mediram,
+  /// por exemplo "mmcblk0" ou "nvme0n1". Vazio é "não identificado" (contêiner, overlay): os
+  /// números de storage valem para onde o worker roda, não necessariamente para um disco.
+  string storage_device = 23;
+  /// Banda de memória com todos os núcleos copiando ao mesmo tempo (até 4 threads), somada e
+  /// relativa à mesma referência de `memory_bandwidth_score`, que é de uma thread só. A razão entre
+  /// as duas diz se a memória escala com os núcleos ou satura (SBC com barramento único satura).
+  /// Zero é "não medido".
+  double memory_bandwidth_loaded_score = 24;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.

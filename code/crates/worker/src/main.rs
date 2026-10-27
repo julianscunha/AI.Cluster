@@ -342,7 +342,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => connect_probe(endpoint.clone()).await.ok(),
     };
     if let Some(probe) = probe_client.as_mut() {
-        capability.network_achieved_score = probe_link(probe).await;
+        let quality = probe_link_quality(probe).await;
+        capability.network_achieved_score = quality.score;
+        capability.network_retransmit_ratio = quality.retransmit_ratio;
+        capability.network_jitter = quality.jitter;
     }
     // A copy left by a previous run of this node is still worth offering: the controller may
     // have lost its own files while this node was down (I4).
@@ -1193,8 +1196,25 @@ fn normalize_network_score(mbps: f64) -> f64 {
 /// shortcut: upload only and the controller path only, add a download leg when a unit's
 /// result transfer needs it.
 async fn probe_link(client: &mut ProbeClient) -> f64 {
+    probe_link_quality(client).await.score
+}
+
+/// What one pass of link probes saw: the achieved rate (as `probe_link`), the share of TCP
+/// segments that had to be resent meanwhile, and how much the runs disagreed with each other.
+#[derive(Debug, Clone, Copy, Default)]
+struct LinkQuality {
+    score: f64,
+    retransmit_ratio: f64,
+    jitter: f64,
+}
+
+/// shortcut: the retransmit counters are the whole host's, so the ratio is only the probe's when
+/// the node is otherwise quiet (it is, at registration); per-connection numbers need netlink.
+async fn probe_link_quality(client: &mut ProbeClient) -> LinkQuality {
     let payload = vec![0u8; PROBE_BYTES];
     let mut best = 0.0f64;
+    let mut rates = Vec::with_capacity(PROBE_RUNS);
+    let before = tcp_counters();
     for _ in 0..PROBE_RUNS {
         let started = Instant::now();
         // A stuck controller must not freeze the work loop that calls this while idle.
@@ -1208,9 +1228,77 @@ async fn probe_link(client: &mut ProbeClient) -> f64 {
         if !matches!(sent, Ok(Ok(_))) {
             break;
         }
-        best = best.max(achieved_mbps(PROBE_BYTES, started.elapsed()));
+        let rate = achieved_mbps(PROBE_BYTES, started.elapsed());
+        rates.push(rate);
+        best = best.max(rate);
     }
-    normalize_network_score(best)
+    LinkQuality {
+        score: normalize_network_score(best),
+        retransmit_ratio: retransmit_ratio(before, tcp_counters()),
+        jitter: relative_deviation(&rates),
+    }
+}
+
+/// `(OutSegs, RetransSegs)` of the kernel's TCP counters, or `None` where `/proc/net/snmp` is
+/// missing or does not look right.
+fn tcp_counters() -> Option<(u64, u64)> {
+    parse_tcp_counters(&std::fs::read_to_string("/proc/net/snmp").ok()?)
+}
+
+/// The `Tcp:` header line names the columns and the next `Tcp:` line carries the values.
+fn parse_tcp_counters(snmp: &str) -> Option<(u64, u64)> {
+    let mut lines = snmp.lines().filter(|line| line.starts_with("Tcp:"));
+    let names: Vec<&str> = lines.next()?.split_whitespace().collect();
+    let values: Vec<&str> = lines.next()?.split_whitespace().collect();
+    let at = |name: &str| {
+        let index = names.iter().position(|column| *column == name)?;
+        values.get(index)?.parse::<u64>().ok()
+    };
+    Some((at("OutSegs")?, at("RetransSegs")?))
+}
+
+/// Resent segments over sent ones between two readings, 0..1. Zero when a reading is missing,
+/// the counters went backwards (reset) or nothing was sent: "no loss seen", never an error.
+fn retransmit_ratio(before: Option<(u64, u64)>, after: Option<(u64, u64)>) -> f64 {
+    let (Some((out0, re0)), Some((out1, re1))) = (before, after) else {
+        return 0.0;
+    };
+    let (sent, resent) = (out1.saturating_sub(out0), re1.saturating_sub(re0));
+    if sent == 0 {
+        return 0.0;
+    }
+    (resent as f64 / sent as f64).clamp(0.0, 1.0)
+}
+
+/// Device that backs `path`, from the text of `/proc/self/mounts` (longest mount point wins).
+fn mount_device(mounts: &str, path: &std::path::Path) -> Option<String> {
+    mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (device, point) = (fields.next()?, fields.next()?);
+            path.starts_with(point).then_some((point.len(), device))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, device)| device.to_string())
+}
+
+/// The whole-disk name behind a `/dev/...` mount source ("mmcblk0p3" -> "mmcblk0"), or empty when
+/// the source is not a block device the kernel lists (overlay, tmpfs, a container's rootfs).
+fn block_device(source: &str) -> String {
+    let Some(name) = source.strip_prefix("/dev/") else {
+        return String::new();
+    };
+    let Ok(real) = std::fs::canonicalize(format!("/sys/class/block/{name}")) else {
+        return String::new();
+    };
+    let disk = if real.join("partition").exists() {
+        real.parent().and_then(|parent| parent.file_name())
+    } else {
+        real.file_name()
+    };
+    disk.map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Where the storage probes write. `AI_CLUSTER_STORAGE_PROBE_DIR` wins; otherwise the temp dir,
@@ -1300,6 +1388,53 @@ fn memory_bandwidth_score() -> f64 {
     best / REFERENCE_MEMORY_MBPS
 }
 
+/// Aggregate copy rate with up to `LOADED_THREADS` threads copying at once, over the same reference
+/// as the single-thread score. A barrier lines the runs up so the threads really overlap; each
+/// round adds the rates of the threads in that same round, and the best round is the score. Zero when the clock gave nothing usable.
+/// shortcut: copy only and at most 4 threads, to stay small on a 1 GiB board; upgrade when
+/// placement weighs memory-bound units by the aggregate bandwidth.
+fn memory_bandwidth_loaded_score() -> f64 {
+    const LOADED_THREADS: usize = 4;
+    const LOADED_BYTES: usize = MEMORY_PROBE_BYTES / 2;
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |count| count.get())
+        .min(LOADED_THREADS);
+    let barrier = std::sync::Barrier::new(threads);
+    let rounds: Vec<Vec<f64>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let source = vec![1u8; LOADED_BYTES];
+                    let mut target = vec![1u8; LOADED_BYTES];
+                    let mut rates = Vec::with_capacity(PROBE_RUNS);
+                    for _ in 0..PROBE_RUNS {
+                        barrier.wait();
+                        let started = Instant::now();
+                        target.copy_from_slice(std::hint::black_box(&source));
+                        std::hint::black_box(&target);
+                        rates.push(achieved_mbps(LOADED_BYTES, started.elapsed()) / 8.0);
+                    }
+                    rates
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap_or_default())
+            .collect()
+    });
+    // Rates of the same round add; a round no thread reported counts as zero.
+    let best = (0..PROBE_RUNS)
+        .map(|round| {
+            rounds
+                .iter()
+                .filter_map(|rates| rates.get(round))
+                .sum::<f64>()
+        })
+        .fold(0.0f64, f64::max);
+    best / REFERENCE_MEMORY_MBPS
+}
+
 /// Latency of a 4 KiB write followed by `fsync`, in milliseconds, or zero when the probe could
 /// not write. Small synced writes expose what sequential throughput hides: a seek on a HDD, the
 /// flush on a SATA SSD, almost nothing on NVMe.
@@ -1331,6 +1466,60 @@ fn storage_latency_ms() -> f64 {
     }
     let _ = std::fs::remove_file(&path);
     if best == f64::MAX { 0.0 } else { best }
+}
+
+/// Sequential read rate of the probe dir's disk over the reference, bypassing the page cache with
+/// O_DIRECT, or zero when it cannot (tmpfs refuses O_DIRECT, the probe could not write). Best of
+/// N like the write probe. The file is written and synced first, then read back whole.
+/// shortcut: one device (the probe dir's), upgrade when placement needs a rate per tier.
+#[cfg(target_os = "linux")]
+fn storage_read_score() -> f64 {
+    use std::io::{Read, Seek, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = probe_dir().join(format!("ai-cluster-read-{}-{seq}", std::process::id()));
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    else {
+        return 0.0;
+    };
+    let prepared = file
+        .write_all(&vec![1u8; STORAGE_PROBE_BYTES])
+        .and_then(|_| file.sync_all());
+    drop(file);
+    let mut best = 0.0f64;
+    // O_DIRECT wants the buffer, offset and length aligned to the block size: 4096 covers all.
+    const ALIGN: usize = 4096;
+    let mut raw = vec![0u8; STORAGE_PROBE_BYTES + ALIGN];
+    let skew = raw.as_ptr().align_offset(ALIGN);
+    let buffer = &mut raw[skew..skew + STORAGE_PROBE_BYTES];
+    if prepared.is_ok()
+        && let Ok(mut direct) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECT)
+            .open(&path)
+    {
+        for _ in 0..PROBE_RUNS {
+            let started = Instant::now();
+            let read = direct
+                .seek(std::io::SeekFrom::Start(0))
+                .and_then(|_| direct.read_exact(buffer));
+            if read.is_err() {
+                break;
+            }
+            best = best.max(achieved_mbps(STORAGE_PROBE_BYTES, started.elapsed()) / 8.0);
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+    best / REFERENCE_STORAGE_MBPS
+}
+
+#[cfg(not(target_os = "linux"))]
+fn storage_read_score() -> f64 {
+    0.0
 }
 
 fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
@@ -1383,10 +1572,19 @@ fn capability() -> CapabilityReport {
         compute_score: measurement.score,
         compute_median_score: measurement.median_score,
         compute_deviation: measurement.deviation,
+        baseline_confidence: measurement.confidence,
         storage_classes: storage_classes(),
         storage_score,
         storage_latency_ms: storage_latency_ms(),
+        storage_read_score: storage_read_score(),
+        storage_device: {
+            let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+            mount_device(&mounts, &probe_dir())
+                .map(|source| block_device(&source))
+                .unwrap_or_default()
+        },
         memory_bandwidth_score: memory_bandwidth_score(),
+        memory_bandwidth_loaded_score: memory_bandwidth_loaded_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
         shard_cache_bytes: if std::env::var_os("AI_CLUSTER_MODEL_DIR").is_some() {
@@ -2260,6 +2458,7 @@ tmpfs /run tmpfs rw 0 0
     #[test]
     fn memory_probe_reports_a_positive_rate() {
         assert!(memory_bandwidth_score() > 0.0);
+        assert!(memory_bandwidth_loaded_score() > 0.0);
     }
 
     #[test]
@@ -2282,6 +2481,41 @@ tmpfs /run tmpfs rw 0 0
     fn achieved_rate_is_megabits_per_second() {
         // 125 MB in one second is 1000 Mbps — the 1 GbE reference.
         assert!((achieved_mbps(125_000_000, Duration::from_secs(1)) - 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_leitura_direta_mede_ou_diz_que_nao_mediu() {
+        let score = storage_read_score();
+        eprintln!("storage_read_score={score}");
+        // zero é "não medido" (o sistema de arquivos recusa O_DIRECT); nunca negativo nem infinito
+        assert!(score.is_finite() && score >= 0.0);
+    }
+
+    #[test]
+    fn dispositivo_do_ponto_de_montagem_mais_longo() {
+        let mounts = "/dev/mmcblk0p3 / ext4 ro 0 0\ntmpfs /tmp tmpfs rw 0 0\n/dev/mmcblk0p4 /data ext4 rw 0 0\n";
+        let device = |p: &str| mount_device(mounts, std::path::Path::new(p));
+        assert_eq!(device("/data/state").as_deref(), Some("/dev/mmcblk0p4"));
+        assert_eq!(device("/tmp/x").as_deref(), Some("tmpfs"));
+        assert_eq!(device("/var/tmp").as_deref(), Some("/dev/mmcblk0p3"));
+        // fonte que não é bloco: vazio, nunca um nome inventado
+        assert_eq!(block_device("tmpfs"), "");
+        assert_eq!(block_device("/dev/nao-existe-xyz"), "");
+    }
+
+    #[test]
+    fn retransmissao_vem_do_delta_dos_contadores_tcp() {
+        let snmp = "Ip: Forwarding\nIp: 1\nTcp: RtoAlgorithm OutSegs RetransSegs InErrs\nTcp: 1 1000 25 0\n";
+        assert_eq!(parse_tcp_counters(snmp), Some((1000, 25)));
+        assert_eq!(parse_tcp_counters("Tcp: OutSegs\n"), None);
+        assert_eq!(parse_tcp_counters("lixo"), None);
+        // 10 reenvios em 200 enviados
+        let ratio = retransmit_ratio(Some((1000, 25)), Some((1200, 35)));
+        assert!((ratio - 0.05).abs() < 1e-9);
+        // sem leitura, sem envio ou contador que voltou: nenhuma perda vista
+        assert_eq!(retransmit_ratio(None, Some((10, 1))), 0.0);
+        assert_eq!(retransmit_ratio(Some((10, 1)), Some((10, 5))), 0.0);
+        assert_eq!(retransmit_ratio(Some((100, 5)), Some((50, 1))), 0.0);
     }
 
     #[test]

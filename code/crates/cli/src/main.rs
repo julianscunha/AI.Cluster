@@ -585,8 +585,37 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
     } else {
         "-".to_string()
     };
+    // Aggregate memory bandwidth with the cores busy together; against the single-thread score above
+    // it says whether memory scales with the cores. Zero is "not measured".
     println!(
-        "  compute_median_score={median} compute_deviation={:.3}",
+        "  memory_bandwidth_loaded_score={:.2}",
+        capability.memory_bandwidth_loaded_score
+    );
+    // O_DIRECT read rate and the block device the storage numbers were taken on; zero / empty
+    // mean "not measured" (tmpfs refuses O_DIRECT; containers have no block device to name).
+    println!(
+        "  storage_read_score={:.4} storage_device={}",
+        capability.storage_read_score,
+        if capability.storage_device.is_empty() {
+            "-"
+        } else {
+            &capability.storage_device
+        }
+    );
+    // Packet loss the TCP stack hid (retransmits) and run-to-run jitter of the link probe; zero
+    // jitter is "stable or not measured", the same convention as the deviation above.
+    println!(
+        "  network_retransmit_ratio={:.4} network_jitter={:.3}",
+        capability.network_retransmit_ratio, capability.network_jitter
+    );
+    // Baseline confidence: 1 = the registration runs agreed, low = the node was disturbed then.
+    let baseline = if capability.baseline_confidence > 0.0 {
+        format!("{:.3}", capability.baseline_confidence)
+    } else {
+        "-".to_string()
+    };
+    println!(
+        "  compute_median_score={median} compute_deviation={:.3} baseline_confidence={baseline}",
         capability.compute_deviation
     );
     // Zero means "not measured" — a container's veth has no negotiated link rate, and a

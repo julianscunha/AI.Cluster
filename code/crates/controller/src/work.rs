@@ -88,11 +88,8 @@ struct Inner {
     completed: Vec<CompletedWork>,
     /// Output matrix of every completed unit, keyed by work id. A unit's bound
     /// inputs are read from here at dispatch, so this is the controller-side
-    /// holding area for intermediate results.
-    ///
-    /// ponytail: outputs are kept for the process lifetime, so memory grows with
-    /// completed work. Drop an output once its dependents are all claimed, or cap
-    /// the history, when long-running controllers start to matter.
+    /// holding area for intermediate results. Each save drops the ones no unfinished unit
+    /// can read (`drop_unreferenced_outputs`), so it holds only what pending work needs.
     outputs: HashMap<String, Vec<f64>>,
     /// Dispatch attempts started per unit, keyed by work id. Bumped in `claim`,
     /// read when a unit is handed back, dropped once the unit is settled.
@@ -210,6 +207,20 @@ fn ready(unit: &WorkUnit, outputs: &HashMap<String, Vec<f64>>) -> bool {
         .iter()
         .all(|src| src.is_empty() || outputs.contains_key(*src));
     deps_done && inputs_available
+}
+
+/// How many completed units the store remembers (traces, work report, metrics). Past it the oldest
+/// go, so a controller that runs for months does not grow with all work ever done; the completed
+/// counters then count this window instead of the whole life.
+const MAX_COMPLETED: usize = 100_000;
+
+/// Keeps the newest `max` entries. Trims in chunks of a tenth so a full history does not shift the
+/// whole vector on every push.
+fn trim_history<T>(history: &mut Vec<T>, max: usize) {
+    let slack = (max / 10).max(1);
+    if history.len() > max + slack {
+        history.drain(..history.len() - max);
+    }
 }
 
 /// Drops every intermediate result no unfinished unit can read.
@@ -884,6 +895,7 @@ impl WorkStore {
             checksum: result.checksum,
         };
         inner.completed.push(completed.clone());
+        trim_history(&mut inner.completed, MAX_COMPLETED);
         if inner.keep.remove(&result.work_id) {
             if inner.results.len() == MAX_KEPT_RESULTS {
                 inner.results.pop_front();
@@ -1229,6 +1241,18 @@ mod tests {
         assert_eq!(learn(Some(2.0), 100, 0), Some(2.0));
         assert_eq!(learn(None, 1, 1_000_000), Some(RATIO_BAND.1));
         assert_eq!(corrected(None, 100), 100);
+    }
+
+    #[test]
+    fn o_historico_de_concluidos_tem_teto() {
+        let mut history: Vec<u32> = (0..100).collect();
+        trim_history(&mut history, 100);
+        assert_eq!(history.len(), 100, "dentro do teto, nada sai");
+        history.extend(100..111);
+        trim_history(&mut history, 100);
+        assert_eq!(history.len(), 100, "passou da folga: volta ao teto");
+        assert_eq!(history[0], 11, "sai o mais antigo");
+        assert_eq!(*history.last().unwrap(), 110);
     }
 
     #[test]

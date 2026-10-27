@@ -260,6 +260,61 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     );
     node_metric(
         &mut out,
+        "ai_cluster_node_baseline_confidence",
+        "Quão limpo foi o benchmark do registro, 0..1 (melhor execução sobre a mediana). Zero é não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.baseline_confidence)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_network_retransmit_ratio",
+        "Fração de segmentos TCP retransmitidos durante a sonda de rede do registro, 0..1. Zero é sem perda vista ou não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.network_retransmit_ratio)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_network_jitter",
+        "Desvio relativo da taxa entre as repetições da sonda de rede. Zero é estável ou não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.network_jitter)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_memory_bandwidth_loaded_score",
+        "Banda de memória com os núcleos copiando juntos, sobre 10 GB/s. Zero é não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.memory_bandwidth_loaded_score)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_storage_read_score",
+        "Leitura sequencial sem cache (O_DIRECT) sobre 500 MB/s. Zero é não medido.",
+        nodes,
+        |node| {
+            node.capability
+                .as_ref()
+                .map_or(0.0, |capability| capability.storage_read_score)
+        },
+    );
+    node_metric(
+        &mut out,
         "ai_cluster_node_health_score",
         "Saúde do nó: 1.0 saudável, 0 sem informação.",
         nodes,

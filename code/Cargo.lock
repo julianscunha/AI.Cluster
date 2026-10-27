@@ -96,6 +96,7 @@ dependencies = [
  "ai-cluster-common",
  "ai-cluster-engine",
  "ai-cluster-protocol",
+ "libc",
  "prost",
  "tokio",
  "tonic",

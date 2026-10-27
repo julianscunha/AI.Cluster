@@ -45,12 +45,12 @@ Os marcos de prova (M0–M7) ficam ao final.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Memória sob carga | Medir a memória com carga concorrente. Hoje só há banda de cópia single-thread, e nenhum consumidor no placement. | código |
+| Memória sob carga | O placement usar `memory_bandwidth_loaded_score` (a banda com os núcleos juntos já é medida e exposta) para unidades limitadas por memória. | código |
 | Aceleradores | Reportar e medir kernels de GPU e NPU. | hardware: GPU/NPU |
-| Storage | Medir leitura (exige O_DIRECT) e a medida por dispositivo. | código |
+| Storage | Medir cada dispositivo do nó (hoje só o do diretório da sonda, que `storage_device` identifica). | código |
 | Saúde de storage | SMART, erros e latência de escrita por dispositivo. | hardware: disco real com SMART |
-| Rede | Medir perda de pacotes e congestionamento. Hoje há vazão e latência de upload. | código |
-| Confiança do baseline | Dizer se o baseline de um nó foi limpo ou perturbado. | código |
+| Histórico do controller | `completed()` clona até 110 mil registros a cada scrape e a cada relatório; devolver só agregados ou iterar sob o lock. Os contadores de concluídas valem a janela de 100 mil quando ela enche. | código |
+| Rede | Perda por conexão (netlink); hoje a retransmissão TCP é a do host na sonda do registro, e só a sonda de upload mede. | código |
 | Hardware heterogêneo | Validar capacidades distintas com mais tipos de máquina. | hardware: x86 e ARM64 |
 
 ## F03 — Execução distribuída `[x]`
@@ -58,7 +58,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Item | O que falta | Dependência |
 |---|---|---|
 | ADR da fase | Confirmar se alguma decisão da fase precisa de ADR. | decisão |
-| Memória do grafo | Liberar output quando todos os dependentes forem reivindicados, ou limitar o histórico, para controllers de longa duração. | código |
 
 ## F04 — Escalonamento `[~]`
 

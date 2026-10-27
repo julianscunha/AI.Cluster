@@ -13,6 +13,10 @@ O motor de capacidade mede o que cada nó consegue fazer e converte o resultado 
 
 | Dimensão | Campos do relatório | Como é medida |
 |---|---|---|
+| Confiança do baseline | `baseline_confidence` | Melhor execução sobre a mediana do benchmark de registro, 0..1. Perto de 1 o baseline é limpo; baixo, o nó estava perturbado. Zero é não medido. |
+| Rede (qualidade) | `network_retransmit_ratio`, `network_jitter` | Na sonda de upload do registro: fração de segmentos TCP retransmitidos (`RetransSegs`/`OutSegs` de `/proc/net/snmp`, contadores do host) e desvio relativo da taxa entre as repetições. |
+| Storage (leitura) | `storage_read_score`, `storage_device` | Leitura sequencial com `O_DIRECT` (sem cache de páginas) sobre 500 MB/s; zero se o sistema de arquivos recusa (tmpfs). `storage_device` nomeia o disco medido, vazio em contêiner. |
+| Memória sob carga | `memory_bandwidth_loaded_score` | Cópia com até 4 threads ao mesmo tempo, somada, sobre 10 GB/s. Contra `memory_bandwidth_score` (1 thread) mostra se a memória escala com os núcleos. |
 | Compute | `compute_score`, `compute_median_score`, `compute_deviation`, `compute_confidence` | Multiplicação de matrizes 256×256 em `f64`, 5 execuções. O score é a melhor execução, por core, normalizado por 6,0 GFLOP/s (um core de referência vale 1,0). |
 | Compute corrente | `current_compute_score`, `compute_confidence` | Remedido com o nó ocioso a cada 60 s (`AI_CLUSTER_RECOMPUTE_INTERVAL_SECS`). |
 | Rede nominal | `network_score` | Velocidade negociada do link, relativa a 1 GbE. |
