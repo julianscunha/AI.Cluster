@@ -15,7 +15,7 @@ use ai_cluster_protocol::cluster::{
 use prost::Message;
 
 use crate::placement::{decide, fits, predicted_compute_us};
-use crate::reservations::{Reservation, Reservations};
+use crate::reservations::{Hold, Reservation, Reservations};
 
 /// Total dispatch attempts allowed per unit: the first try plus two reassignments.
 ///
@@ -225,6 +225,20 @@ fn trim_history<T>(history: &mut Vec<T>, max: usize) {
     if history.len() > max + slack {
         history.drain(..history.len() - max);
     }
+}
+
+/// The hold on `node_id` with the owner's load filled in, so a partial hold does not count the
+/// owner's own running units against the slots left for everyone else.
+fn hold_on(reservations: &Reservations, inner: &Inner, node_id: &str, now: u64) -> Option<Hold> {
+    let mut hold = reservations.hold(node_id, now)?;
+    hold.owner_in_flight = inner
+        .dispatched
+        .values()
+        .filter(|record| {
+            record.node_id.as_str() == node_id && record.unit.request_id == hold.request_id
+        })
+        .count() as u32;
+    Some(hold)
 }
 
 /// Units in flight on `node_id`: the slots it is using right now.
@@ -751,6 +765,15 @@ impl WorkStore {
         self.lock().queue.iter().any(|unit| unit.require_attested)
     }
 
+    /// Empties the attested set once no queued unit needs it, so a stale answer cannot outlive the
+    /// last unit that asked for it.
+    pub fn clear_attested(&self) {
+        let mut inner = self.lock();
+        if !inner.attested.is_empty() {
+            inner.attested.clear();
+        }
+    }
+
     /// Replaces the set of nodes known to be attested (see `Inner::attested`).
     pub fn set_attested(&self, nodes: HashSet<String>) {
         self.lock().attested = nodes;
@@ -790,7 +813,7 @@ impl WorkStore {
         // G6: a node held for a request takes only that request's units, even on this
         // ungated path. The hold is a property of the node, not of the placement policy,
         // so it must survive `AI_CLUSTER_PLACEMENT=off`.
-        let held = self.reservations.hold(node_id, now_unix_ms);
+        let held = hold_on(&self.reservations, &inner, node_id, now_unix_ms);
         let in_flight = in_flight_on(&inner, node_id);
         let index = {
             let outputs = &inner.outputs;
@@ -846,7 +869,7 @@ impl WorkStore {
     ) -> Option<WorkUnit> {
         let mut inner = self.lock();
         // G6: a node held for a request takes only that request's units.
-        let held = self.reservations.hold(node_id, now_unix_ms);
+        let held = hold_on(&self.reservations, &inner, node_id, now_unix_ms);
         let asking_in_flight = in_flight_on(&inner, node_id);
         let ranked = {
             let outputs = &inner.outputs;
@@ -862,18 +885,19 @@ impl WorkStore {
         };
         // Best rank first, but a unit this node is not the right home for (a better node, or
         // a hold for another node) must not block a lower-ranked unit it would take.
+        let mut attested_pool: Option<Vec<(String, CapabilityReport, HealthReport)>> = None;
         for index in ranked {
             let raw = predicted_compute_us(&inner.queue[index], capability);
             // A unit that demands attestation is ranked only among the attested nodes: a better
             // but unattested node could never take it, and must not make this one yield.
-            let attested_pool: Vec<(String, CapabilityReport, HealthReport)>;
             let pool = if inner.queue[index].require_attested {
-                attested_pool = candidates
-                    .iter()
-                    .filter(|(id, _, _)| inner.attested.contains(id))
-                    .cloned()
-                    .collect();
-                &attested_pool[..]
+                &attested_pool.get_or_insert_with(|| {
+                    candidates
+                        .iter()
+                        .filter(|(id, _, _)| inner.attested.contains(id))
+                        .cloned()
+                        .collect()
+                })[..]
             } else {
                 candidates
             };
@@ -882,7 +906,7 @@ impl WorkStore {
                 node_id,
                 pool,
                 |id| in_flight_on(&inner, id),
-                |id| self.reservations.hold(id, now_unix_ms),
+                |id| hold_on(&self.reservations, &inner, id, now_unix_ms),
                 tolerance,
             );
             if takes {
@@ -2473,6 +2497,32 @@ mod tests {
                 .work_id,
             "outra"
         );
+    }
+
+    #[test]
+    fn o_ranking_da_unidade_com_atestado_ignora_o_no_melhor_que_nao_e_atestado() {
+        let store = WorkStore::new();
+        store.enqueue([WorkUnit {
+            require_attested: true,
+            ..unit_for("sensivel", "req-s")
+        }]);
+        // "rapido" é muito mais barato mas não atestado; "lento" é atestado e pede com tolerância 0
+        let nodes = [
+            ("rapido".to_string(), capability(64, 8.0), healthy()),
+            ("lento".to_string(), capability(2, 0.5), healthy()),
+        ];
+        store.set_attested(["lento".to_string()].into());
+        let taken = store
+            .claim_placed("lento", &capability(2, 0.5), 1_000, &nodes, 0.0)
+            .expect("o atestado não cede a um nó que nunca poderia levar a unidade");
+        assert_eq!(taken.work_id, "sensivel");
+        // e o atestado vazio é limpo quando ninguém precisa dele
+        store.clear_attested();
+        store.enqueue([WorkUnit {
+            require_attested: true,
+            ..unit_for("outra", "req-s")
+        }]);
+        assert!(store.claim("lento", &capability(2, 0.5), 1_001).is_none());
     }
 
     #[test]

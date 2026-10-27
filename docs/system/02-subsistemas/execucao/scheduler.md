@@ -63,7 +63,7 @@ Enfileirar unidades exige o papel de operador. Quem pode pedir prioridade alta, 
 Um cliente pode reter um nó para a requisição dele antes de o trabalho existir.
 
 - Uma reserva prende um nó a um `request_id` por um tempo (padrão 60 s, `ttl_ms` configurável). Um nó tem no máximo uma reserva; uma nova substitui a antiga.
-- **Reserva parcial:** com `--slots N` a reserva guarda só N dos `work_slots` do nó. Outra requisição ainda usa o nó enquanto `unidades em voo + N < work_slots`; a requisição dona usa sempre. Sem `--slots` (ou `0`) o nó inteiro fica retido, como antes. A unidade é o slot porque é por ele que o placement admite trabalho e divide os núcleos. É contabilidade de admissão no controller: o worker não impõe o limite.
+- **Reserva parcial:** com `--slots N` a reserva guarda só N dos `work_slots` do nó. Outra requisição ainda usa o nó enquanto `unidades de outras requisições em voo + N < work_slots` (as unidades do dono ocupam os slots guardados e não contam); a requisição dona usa sempre. Sem `--slots` (ou `0`) o nó inteiro fica retido, como antes. A unidade é o slot porque é por ele que o placement admite trabalho e divide os núcleos. É contabilidade de admissão no controller: o worker não impõe o limite.
 - **Persistência:** as reservas vão no mesmo snapshot da fila (e na réplica I4), então sobrevivem a reinício do controller e são herdadas por um controller que assuma pela cópia de um nó. As vencidas são descartadas ao carregar.
 - Enquanto a reserva vale, o nó só aceita unidades daquela requisição, **mesmo com `AI_CLUSTER_PLACEMENT=off`**.
 - As unidades da requisição só rodam no nó reservado, mesmo que ele seja o mais caro.
@@ -78,7 +78,7 @@ ai-cluster reservations
 
 ## Exigência de atestado
 
-Uma unidade pode exigir um nó atestado (`require_attested`, `--require-attested` no `benchmark`): o nó roda a release desejada e a medida do slot confere com a assinada. O controller só a entrega a esses nós e a ordena só entre eles. Sem release publicada ninguém é atestado e a unidade espera. Veja [[adr-020-niveis-de-confianca-do-no]].
+Uma unidade pode exigir um nó atestado (`require_attested`, `--require-attested` no `benchmark`): o nó roda a release desejada e a medida do slot confere com a assinada. O controller só a entrega a esses nós e a ordena só entre eles. Sem release publicada ninguém é atestado, então o controller recusa a chamada (`FailedPrecondition`) em vez de deixar a unidade esperar sem aviso. O conjunto de atestados é refeito a cada pedido de trabalho enquanto houver uma unidade assim na fila e esvaziado quando não houver. Veja [[adr-020-niveis-de-confianca-do-no]].
 
 ## Concorrência local
 

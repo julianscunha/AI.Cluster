@@ -33,6 +33,9 @@ pub struct Reservation {
 pub struct Hold {
     pub request_id: String,
     pub slots: u32,
+    /// Unidades do dono em voo no nó agora: ocupam os slots guardados, então não tiram vaga dos
+    /// outros. Quem monta o `Hold` com a carga do nó preenche; `hold()` sozinho deixa 0.
+    pub owner_in_flight: u32,
 }
 
 impl Hold {
@@ -40,8 +43,9 @@ impl Hold {
     /// outras só quando a reserva é parcial e, somadas às unidades em voo, ainda deixam um slot
     /// livre além dos guardados. Reserva do nó inteiro (0 slots) não admite ninguém.
     pub fn admits(&self, request_id: &str, in_flight: u32, work_slots: u32) -> bool {
+        let others = in_flight.saturating_sub(self.owner_in_flight);
         self.request_id == request_id
-            || (self.slots > 0 && in_flight.saturating_add(self.slots) < work_slots.max(1))
+            || (self.slots > 0 && others.saturating_add(self.slots) < work_slots.max(1))
     }
 }
 
@@ -102,6 +106,7 @@ impl Reservations {
             Some(reservation) if reservation.expires_at_unix_ms > now => Some(Hold {
                 request_id: reservation.request_id.clone(),
                 slots: reservation.slots,
+                owner_in_flight: 0,
             }),
             Some(_) => {
                 held.remove(node_id);
@@ -212,6 +217,17 @@ mod tests {
         // 4 slots, 1 guardado: outra requisição entra até 2 em voo (2 + 1 < 4), não com 3
         assert!(hold.admits("req-y", 2, 4));
         assert!(!hold.admits("req-y", 3, 4));
+        // as unidades do dono usam o slot guardado: 1 do dono + 2 de outros ainda deixa entrar
+        let loaded = Hold {
+            owner_in_flight: 1,
+            ..hold.clone()
+        };
+        assert!(loaded.admits("req-y", 3, 4));
+        assert!(!loaded.admits("req-y", 4, 4));
+        assert!(
+            loaded.admits("req-y", 1, 2),
+            "2 slots, 1 do dono: o outro é dos outros"
+        );
         // a dona sempre entra
         assert!(hold.admits("req-x", 3, 4));
         // nó inteiro: ninguém mais

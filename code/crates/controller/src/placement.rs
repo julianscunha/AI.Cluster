@@ -426,6 +426,7 @@ mod tests {
         (id == node).then(|| Hold {
             request_id: request.to_string(),
             slots,
+            owner_in_flight: 0,
         })
     }
 

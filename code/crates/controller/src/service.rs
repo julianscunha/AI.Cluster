@@ -77,6 +77,42 @@ fn is_attested(identity: &NodeIdentity, want: &Release) -> bool {
         && identity.image_sha256 == want.image_sha256
 }
 
+#[cfg(test)]
+mod attestation_tests {
+    use super::*;
+
+    fn identity(version: &str, sha: &str) -> NodeIdentity {
+        NodeIdentity {
+            node_id: "n".into(),
+            runtime_version: version.into(),
+            image_sha256: sha.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn atestado_exige_versao_e_medida_iguais_as_da_release() {
+        let want = Release {
+            version: "11.1".into(),
+            image_sha256: "abc".into(),
+            ..Default::default()
+        };
+        assert!(is_attested(&identity("11.1", "abc"), &want));
+        assert!(
+            !is_attested(&identity("11.0", "abc"), &want),
+            "versão velha"
+        );
+        assert!(
+            !is_attested(&identity("11.1", "outra"), &want),
+            "slot diferente"
+        );
+        assert!(
+            !is_attested(&identity("11.1", ""), &want),
+            "sem medida ainda"
+        );
+    }
+}
+
 /// Gateways que o controller lembra ao mesmo tempo; um id novo acima disso é recusado.
 const MAX_GATEWAYS: usize = 64;
 /// Um gateway sem se apresentar há mais que isto deixa de contar como vivo (ele repete a cada 15 s).
@@ -543,6 +579,8 @@ impl ClusterControl for ClusterControlService {
         // measured slot matching the signed one; the set is rebuilt only while such a unit waits.
         if self.work.needs_attestation() {
             self.work.set_attested(self.attested_nodes());
+        } else {
+            self.work.clear_attested();
         }
         let claimed = if placement_enabled() {
             let candidates = self.registry.candidates();
@@ -656,6 +694,12 @@ impl ClusterControl for ClusterControlService {
         if request.rows == 0 || request.shared == 0 || request.cols == 0 {
             return Err(Status::invalid_argument(
                 "todas as dimensões da matriz devem ser maiores que zero",
+            ));
+        }
+        // Sem release publicada ninguém é atestado: a unidade esperaria para sempre sem aviso.
+        if request.require_attested && self.rollout.desired().is_none() {
+            return Err(Status::failed_precondition(
+                "require_attested exige uma release publicada (ai-cluster rollout): sem ela nenhum nó é atestado",
             ));
         }
         self.audit(
