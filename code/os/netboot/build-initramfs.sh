@@ -86,6 +86,7 @@ arg() { for word in $(cat /proc/cmdline); do case $word in aic.$1=*) echo "${wor
 CONTROLLER=$(arg controller); NODE=$(arg node); TOKEN=$(arg token); TTL=$(arg ttl)
 [ -n "$NODE" ] && hostname "$NODE"
 IP=$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | head -n 1)
+echo "== Real.AI.Cluster - AI Cluster OS (recuperacao) =="
 echo "== AI Cluster netboot: no=$NODE ip=$IP controller=$CONTROLLER ttl=${TTL:-0}"
 
 dropbear -r /etc/dropbear/key -p 22 -E 2>/tmp/dropbear.log &

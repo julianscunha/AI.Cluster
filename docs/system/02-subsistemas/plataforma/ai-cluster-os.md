@@ -98,6 +98,14 @@ Ver [[cli-tui]] para os argumentos e [[seguranca]] para a assinatura e a rotaç�
 
 Uma marca guarda a versão que acabou de ser tentada. Se o nó volta por rollback, não tenta a mesma versão de novo.
 
+## Identidade visual
+
+As telas do sistema mostram a mesma marca (grafo de nós, "Real.AI.Cluster" e "AI Cluster OS"), só em ASCII para funcionar na serial e no console:
+
+- **Login:** `/etc/issue` (antes do login, com nome do nó e tty) e `/etc/motd` (depois), no overlay comum.
+- **Boot:** uma linha de marca no `boot.cmd` (U-Boot) e no `grub.cfg` (x86), sem o desenho, porque os dois interpretam `\`.
+- **Recuperação:** o `init` do initramfs de netboot imprime a marca com "(recuperacao)".
+
 ## Limites conhecidos
 
 - **Sem imagem para ARM64.** O x86_64 exige UEFI com Secure Boot desligado e foi validado só em QEMU (sem hardware real, sem recuperação por rede, sem watchdog de placa-mãe); firmware de dispositivo (`linux-firmware`) não vem na imagem.
