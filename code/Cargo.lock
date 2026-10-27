@@ -13,11 +13,11 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-benchmark"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "ai-cluster-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-common",
  "ai-cluster-engine",
@@ -29,11 +29,11 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-common"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "ai-cluster-controller"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-common",
  "ai-cluster-protocol",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-common",
  "serde_json",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-gateway"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-common",
  "ai-cluster-engine",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "prost",
  "prost-types",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-protocol",
  "prost",
@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cluster-worker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ai-cluster-common",
  "ai-cluster-engine",
