@@ -33,7 +33,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 |---|---|---|
 | Runbook em duas máquinas | Executar o runbook em duas máquinas físicas independentes e registrar a tabela de execução. | hardware: duas máquinas físicas |
 | MVP distribuído | Repetir a varredura com dois workers em máquinas separadas e comparar com adicionar máquina. A prova atual é em um host só. | hardware: duas máquinas físicas |
-| Resolução de tempo | Trocar os timestamps de dispatch e conclusão de milissegundos para microssegundos, para medir unidades abaixo de 1 ms. | código |
 | Limiar térmico | Aquecer a placa até a saúde térmica cair. Não foi atingido (69 °C). | hardware: placa armv7 com carga térmica |
 | Testes iniciais | Confirmar que a suíte atual cobre os testes iniciais e fechar o documento. | código |
 

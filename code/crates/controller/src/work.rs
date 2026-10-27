@@ -46,6 +46,9 @@ pub struct CompletedWork {
 struct Dispatched {
     node_id: String,
     dispatched_at_unix_ms: u64,
+    /// Relógio monotônico do despacho, para medir a latência em microssegundos. Vazio num lease
+    /// restaurado do disco (o `Instant` não sobrevive ao processo): aí vale o relógio em ms.
+    started: Option<std::time::Instant>,
     /// Prediction carried from claim time to completion (H5). Held here because the
     /// node's capability is only in hand at claim time, not when the result comes back.
     predicted_compute_us: u64,
@@ -354,6 +357,7 @@ fn take_locked(
         Dispatched {
             node_id: node_id.to_string(),
             dispatched_at_unix_ms: now_unix_ms,
+            started: Some(std::time::Instant::now()),
             predicted_compute_us,
             raw_predicted_us,
             unit: unit.clone(),
@@ -468,6 +472,7 @@ impl WorkStore {
                     Dispatched {
                         node_id: lease.node_id,
                         dispatched_at_unix_ms: lease.dispatched_at_unix_ms,
+                        started: None,
                         predicted_compute_us: lease.predicted_compute_us,
                         raw_predicted_us: 0,
                         unit: lease.unit?,
@@ -832,9 +837,8 @@ impl WorkStore {
 
     /// Returns the record only when the unit was dispatched to the same node.
     ///
-    /// ponytail: latency derives from millisecond timestamps, so total/transfer
-    /// resolution is ~1ms; fine while the workload runs for hundreds of ms. Move to
-    /// microsecond timestamps when units shorter than ~10ms matter.
+    /// A latência vem dos timestamps em ms e é refinada para µs pelo relógio monotônico quando os
+    /// dois concordam; sem isso (lease restaurado, relógio injetado) a resolução é de ~1 ms.
     pub fn complete(&self, result: WorkResult, now_unix_ms: u64) -> Option<CompletedWork> {
         let mut inner = self.lock();
         let dispatched = inner.dispatched.get(&result.work_id)?;
@@ -851,9 +855,24 @@ impl WorkStore {
         ) {
             inner.learned.insert(result.node_id.clone(), ratio);
         }
-        let total_latency_us = now_unix_ms
+        // O relógio de parede só tem milissegundos; o monotônico tem microssegundos. Quando os dois
+        // concordam (diferem menos que o milissegundo do outro), vale o monotônico, que enxerga
+        // unidades abaixo de 1 ms. Num lease restaurado do disco, ou com um relógio injetado
+        // que se afasta do real, vale o de parede.
+        let coarse = now_unix_ms
             .saturating_sub(dispatched.dispatched_at_unix_ms)
             .saturating_mul(1_000);
+        let total_latency_us = match dispatched.started {
+            Some(started) => {
+                let precise = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                if precise.abs_diff(coarse) <= 1_000 {
+                    precise
+                } else {
+                    coarse
+                }
+            }
+            None => coarse,
+        };
         let completed = CompletedWork {
             work_id: result.work_id.clone(),
             node_id: result.node_id.clone(),
@@ -1570,6 +1589,46 @@ mod tests {
         // Never dispatchable: the bound source never completes.
         assert!(store.claim("node-a", &capability(8, 0.0), 1_000).is_none());
         assert_eq!(store.blocked(), 1);
+    }
+
+    #[test]
+    fn a_latencia_total_tem_resolucao_de_microssegundos() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1");
+        std::thread::sleep(std::time::Duration::from_micros(1_500));
+        let done = store
+            .complete(
+                WorkResult {
+                    work_id: "w1".into(),
+                    node_id: "node-a".into(),
+                    ..Default::default()
+                },
+                // o relógio em ms diz 1 ms; o monotônico enxerga ~1,5 ms e concorda dentro de 1 ms
+                1_001,
+            )
+            .expect("completa");
+        assert!(done.total_latency_us >= 1_500, "{}", done.total_latency_us);
+        assert!(done.total_latency_us < 2_000_000);
+        // o lease restaurado do disco não tem Instant e volta ao relógio em ms
+        let restored = WorkStore::new();
+        restored.enqueue([unit("w2")]);
+        restored
+            .claim("node-a", &capability(8, 0.0), 5_000)
+            .expect("w2");
+        let done = restored
+            .complete(
+                WorkResult {
+                    work_id: "w2".into(),
+                    node_id: "node-a".into(),
+                    ..Default::default()
+                },
+                5_010,
+            )
+            .expect("completa");
+        assert!(done.total_latency_us < 1_000_000);
     }
 
     #[test]
