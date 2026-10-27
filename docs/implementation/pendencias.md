@@ -47,6 +47,8 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
+| Relatório de trabalho | `completed()` ainda copia o histórico (até 110 mil registros) a cada `WorkReport`; devolver uma janela ou um iterador. As métricas já leem sem copiar. | código |
+| Jitter ambíguo | `network_jitter` 0 vale "estável" e "não medido" (menos de duas repetições); precisa de um sinal separado. | código |
 | Aceleradores | Reportar e medir kernels de GPU e NPU. | hardware: GPU/NPU |
 | Saúde de storage | SMART, erros e latência de escrita por dispositivo. | hardware: disco real com SMART |
 | Hardware heterogêneo | Validar capacidades distintas com mais tipos de máquina. | hardware: x86 e ARM64 |
@@ -61,6 +63,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
+| Custo do atestado e das reservas | Com `require_attested` na fila, cada pedido de trabalho refaz o conjunto de atestados (O(nós)) e o ranking filtra os candidatos por unidade (O(unidades × nós)) sob o lock; falta um teto de unidades que exigem atestado. Cada `reserve`/`release` grava o snapshot sob o lock, como o `enqueue`. | código |
 | Níveis de confiança | Fluxo de enrollment (token de uso único por nó, aprovação por regra) sobre os níveis já decididos no [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler local por GPU/NPU | Filas por recurso de GPU e NPU. Hoje só CPU. | hardware: GPU/NPU |
 | Localidade | Locality não entra no custo do placement. Depende de saídas residentes no worker: hoje as saídas ficam no controller, então não há transferência a evitar e um desconto por afinidade seria um parâmetro sem efeito medível. | código, depende de F12 (estado e saídas nos workers) |
@@ -93,6 +96,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
+| Gateways sem dono | O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada (inclusive a URL) de outro. Amarrar o id a algo do portador. | decisão, código |
 | Teste da réplica pendente | Provar que um nó pendente não escreve estado do controller no registro. A leitura (heartbeat) já só devolve a cópia a nó aprovado. | código |
 | Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial (as chamadas só respondem "desconhecido"; a cópia do estado não sai para ele). | código |
 | Registro alheio | Quem tem o token de join registra um `node_id` alheio como pendente e tenta tomá-lo. | código |
@@ -186,6 +190,8 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
+| Console do monitor validado | O `aic-console` (tty1, estilo ESXi) e o `aic-role` só foram testados num Alpine e no registro do nó. Falta ver a tela no monitor HDMI do Orange Pi e o `F2`/`F12` num teclado real. | hardware: Orange Pi com monitor e teclado |
+| Imagem fora da release | A release do GitHub traz só binários; a imagem do SO embute a chave pública de quem a assina, então cada operador monta a sua. Falta um fluxo documentado para gerar a imagem com a própria chave sem o repositório do autor. | código, documentação |
 | J1, imagem de disco para x86 | A imagem existe e foi validada em QEMU/UEFI. Falta validar em hardware real (firmware de placas de rede e vídeo, watchdog da placa-mãe, redimensionamento do ext4 de dados pelo `install-disk.sh` num disco real), Secure Boot e recuperação por rede/PXE. | hardware: PC x86 UEFI |
 | J2, imagem de SO | Não existe. O worker só roda como serviço de contêiner ou via `bootstrap.sh`. | código |
 | J3, bootstrap em VM | Testar `bootstrap.sh` numa VM com systemd. Hoje só leitura da unit em contêiner. | hardware: VM ou máquina com systemd |
