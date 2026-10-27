@@ -74,14 +74,21 @@ async fn handle(State(state): State<ExporterState>, headers: HeaderMap) -> impl 
             .into_response();
     }
     let (nodes_total, nodes_available) = state.registry.counts();
-    let summary = metrics::summarize(
-        nodes_total,
-        nodes_available,
-        &state.work.completed(),
+    let (pending, blocked, failed) = (
         state.work.pending() as u32,
         state.work.blocked() as u32,
         state.work.failed() as u32,
     );
+    let summary = state.work.with_completed(|completed| {
+        metrics::summarize(
+            nodes_total,
+            nodes_available,
+            completed,
+            pending,
+            blocked,
+            failed,
+        )
+    });
     let body = render(&summary, &state.registry.list());
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
 }

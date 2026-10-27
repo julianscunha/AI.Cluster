@@ -1170,15 +1170,21 @@ impl ClusterControl for ClusterControlService {
         // can land in either bucket, never both. These are point-in-time metrics, not a
         // transaction.
         let (nodes_total, nodes_available) = self.registry.counts();
-        let completed = self.work.completed();
-        Ok(Response::new(metrics::summarize(
-            nodes_total,
-            nodes_available,
-            &completed,
+        let (pending, blocked, failed) = (
             self.work.pending() as u32,
             self.work.blocked() as u32,
             self.work.failed() as u32,
-        )))
+        );
+        Ok(Response::new(self.work.with_completed(|completed| {
+            metrics::summarize(
+                nodes_total,
+                nodes_available,
+                completed,
+                pending,
+                blocked,
+                failed,
+            )
+        })))
     }
 
     async fn get_trace(

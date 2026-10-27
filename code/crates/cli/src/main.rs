@@ -479,6 +479,9 @@ fn sanitize_node(
             list.iter_mut().for_each(|item| *item = clean(item));
         }
         capability.storage_device = clean(&capability.storage_device);
+        for disk in &mut capability.storage_devices {
+            disk.name = clean(&disk.name);
+        }
     }
     node
 }
@@ -810,6 +813,13 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
             &capability.storage_device
         }
     );
+    // Each measured disk, not only the one the probes ran on; zero is "not measured".
+    for disk in &capability.storage_devices {
+        println!(
+            "  disco {}: escrita={:.4} leitura={:.4}",
+            disk.name, disk.write_score, disk.read_score
+        );
+    }
     // Packet loss the TCP stack hid (retransmits) and run-to-run jitter of the link probe; zero
     // jitter is "stable or not measured", the same convention as the deviation above.
     println!(

@@ -51,7 +51,7 @@ pub struct Candidate<'a> {
 /// `compute_score` when the worker reported one and falls back to thread count —
 /// the worker leaves `compute_score` at 0 until the capability benchmark runs.
 fn compute_rate(capability: &CapabilityReport) -> f64 {
-    let threads = f64::from(capability.cpu_threads).max(1.0);
+    let threads = effective_threads(capability);
     let per_thread = if capability.compute_score > 0.0 {
         capability.compute_score
     } else {
@@ -59,6 +59,29 @@ fn compute_rate(capability: &CapabilityReport) -> f64 {
     };
     // Each unit gets a slot's share of the cores, so that is the rate a unit really sees.
     threads * per_thread / f64::from(capability.work_slots.max(1))
+}
+
+/// How well memory keeps up when the cores work together, 0.25..1: the aggregate copy rate with up
+/// to four threads over what that many threads would do if memory scaled linearly. A board whose
+/// memory bus saturates (a single channel shared by every core) reads well below 1. One means
+/// "scales" and also "not measured", so a node that reported nothing keeps its thread count.
+fn memory_scaling(capability: &CapabilityReport) -> f64 {
+    let probed = f64::from(capability.cpu_threads.clamp(1, 4));
+    if probed < 2.0
+        || capability.memory_bandwidth_score <= 0.0
+        || capability.memory_bandwidth_loaded_score <= 0.0
+    {
+        return 1.0;
+    }
+    (capability.memory_bandwidth_loaded_score / (capability.memory_bandwidth_score * probed))
+        .clamp(0.25, 1.0)
+}
+
+/// Threads as the placement should count them: the first is whole, the rest are worth what the
+/// memory lets them be. Without a loaded measurement this is just the thread count.
+fn effective_threads(capability: &CapabilityReport) -> f64 {
+    let threads = f64::from(capability.cpu_threads).max(1.0);
+    1.0 + (threads - 1.0) * memory_scaling(capability)
 }
 
 /// Per-thread rate for a time prediction: the node's current measurement when it has one,
@@ -292,7 +315,7 @@ pub fn predicted_compute_us(unit: &WorkUnit, capability: &CapabilityReport) -> u
     if capability.compute_score <= 0.0 && capability.current_compute_score <= 0.0 {
         return 0;
     }
-    let threads = f64::from(capability.cpu_threads).max(1.0);
+    let threads = effective_threads(capability);
     let per_thread = per_thread_compute_current(capability) * typical_ratio(capability);
     let gflops = threads * per_thread * REFERENCE_CORE_GFLOPS;
     let flops = 2.0 * f64::from(unit.rows) * f64::from(unit.shared) * f64::from(unit.cols);
@@ -503,6 +526,33 @@ mod tests {
             cost(&cap, &health(0.0), 0, &u),
             cost(&cap, &health(1.0), 0, &u)
         );
+    }
+
+    #[test]
+    fn memoria_que_satura_vale_menos_que_a_contagem_de_threads() {
+        let mut cap = capability(4, 1.0, 1.0);
+        let unmeasured = compute_rate(&cap);
+        // 4 threads copiando juntas dão só 2x uma thread: a memória escala pela metade
+        cap.memory_bandwidth_score = 1.0;
+        cap.memory_bandwidth_loaded_score = 2.0;
+        assert!((memory_scaling(&cap) - 0.5).abs() < 1e-9);
+        assert!((effective_threads(&cap) - 2.5).abs() < 1e-9);
+        assert!(compute_rate(&cap) < unmeasured);
+        // memória que escala, ou ruído acima do linear, não passa de 1
+        cap.memory_bandwidth_loaded_score = 9.0;
+        assert_eq!(memory_scaling(&cap), 1.0);
+        // sem a medida sob carga, ou com uma thread só, nada muda
+        cap.memory_bandwidth_loaded_score = 0.0;
+        assert_eq!(compute_rate(&cap), unmeasured);
+        let mut one = capability(1, 1.0, 1.0);
+        one.memory_bandwidth_score = 1.0;
+        one.memory_bandwidth_loaded_score = 0.1;
+        assert_eq!(effective_threads(&one), 1.0);
+        // o piso evita que uma medida ruim zere o nó
+        let mut bad = capability(4, 1.0, 1.0);
+        bad.memory_bandwidth_score = 1.0;
+        bad.memory_bandwidth_loaded_score = 0.01;
+        assert_eq!(memory_scaling(&bad), 0.25);
     }
 
     #[test]

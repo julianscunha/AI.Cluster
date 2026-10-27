@@ -9,7 +9,7 @@ use ai_cluster_common::matrix::{Matrix, REFERENCE_CORE_GFLOPS, flops};
 use ai_cluster_protocol::cluster::{
     CapabilityReport, HealthReport, HealthStreamRequest, HeartbeatRequest, LeaveNodeRequest,
     NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, Release, RequestWorkRequest, StateReplica,
-    SubmitWorkResultRequest, WorkResult, WorkUnit,
+    StorageDevice, SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{ProbeClient, connect_node, connect_probe};
 use prost::Message;
@@ -1301,6 +1301,58 @@ fn block_device(source: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Disks the node can measure, one mount point each: `/dev/...` sources whose mount point accepts a
+/// new file, deduplicated by whole disk (the shortest mount point of a disk wins). Pseudo and RAM
+/// filesystems have no `/dev` source and fall out. The probe dir's own disk comes first.
+fn measurable_disks(mounts: &str, first: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
+    let mut seen: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut points: Vec<(String, std::path::PathBuf)> = mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (source, point) = (fields.next()?, fields.next()?);
+            source.starts_with("/dev/").then(|| {
+                // /proc/self/mounts escapes space as \040; a path with one is not worth probing
+                (block_device(source), std::path::PathBuf::from(point))
+            })
+        })
+        .filter(|(disk, point)| !disk.is_empty() && !point.to_string_lossy().contains('\\'))
+        .collect();
+    points.sort_by_key(|(_, point)| point.as_os_str().len());
+    if let Some(pos) = points
+        .iter()
+        .position(|(_, point)| first.starts_with(point))
+    {
+        let probe_disk = points[pos].0.clone();
+        points.retain(|(disk, _)| *disk != probe_disk);
+        seen.push((probe_disk, first.to_path_buf()));
+    }
+    for (disk, point) in points {
+        if !seen.iter().any(|(known, _)| *known == disk) {
+            seen.push((disk, point));
+        }
+    }
+    seen
+}
+
+/// Write and O_DIRECT read rate of every measurable disk (at most four, small probes), so placement
+/// and the operator see each device and not just the one the worker happens to run on. A disk whose
+/// mount point refuses a new file (read-only root, no permission) reports zero: not measured.
+fn storage_devices() -> Vec<StorageDevice> {
+    const MAX_DISKS: usize = 4;
+    const DISK_PROBE_BYTES: usize = 4 * 1024 * 1024;
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    measurable_disks(&mounts, &probe_dir())
+        .into_iter()
+        .take(MAX_DISKS)
+        .map(|(name, dir)| StorageDevice {
+            name,
+            write_score: storage_score_in(&dir, DISK_PROBE_BYTES),
+            read_score: storage_read_score_in(&dir, DISK_PROBE_BYTES),
+        })
+        .collect()
+}
+
 /// Where the storage probes write. `AI_CLUSTER_STORAGE_PROBE_DIR` wins; otherwise the temp dir,
 /// unless that is RAM (many embedded images mount `/tmp` as tmpfs, and the probe then measured
 /// memory: an SD card doing 6 MB/s scored as 780 MB/s), in which case `/var/tmp`.
@@ -1338,12 +1390,12 @@ fn ram_backed(mounts: &str, path: &std::path::Path) -> bool {
 /// answers and every node looks like RAM. Write only; read-back would hit the cache again.
 /// shortcut: measures the temp dir's device, not every device in `storage_classes`, upgrade
 /// when placement needs a rate per tier.
-fn storage_score() -> f64 {
+fn storage_score_in(dir: &std::path::Path, bytes: usize) -> f64 {
     use std::io::{Seek, Write};
     static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = probe_dir().join(format!("ai-cluster-probe-{}-{seq}", std::process::id()));
-    let block = vec![0u8; STORAGE_PROBE_BYTES];
+    let path = dir.join(format!("ai-cluster-probe-{}-{seq}", std::process::id()));
+    let block = vec![0u8; bytes];
     // create_new refuses a pre-planted path or symlink in a shared temp dir; the one handle
     // is rewritten from the start on each run.
     let Ok(mut file) = std::fs::OpenOptions::new()
@@ -1364,10 +1416,14 @@ fn storage_score() -> f64 {
             break;
         }
         // Bytes over seconds is MB/s once the megabit factor is taken back out.
-        best = best.max(achieved_mbps(STORAGE_PROBE_BYTES, started.elapsed()) / 8.0);
+        best = best.max(achieved_mbps(bytes, started.elapsed()) / 8.0);
     }
     let _ = std::fs::remove_file(&path);
     best / REFERENCE_STORAGE_MBPS
+}
+
+fn storage_score() -> f64 {
+    storage_score_in(&probe_dir(), STORAGE_PROBE_BYTES)
 }
 
 /// Single-thread copy rate over the reference, or zero when the clock gave nothing usable.
@@ -1473,12 +1529,12 @@ fn storage_latency_ms() -> f64 {
 /// N like the write probe. The file is written and synced first, then read back whole.
 /// shortcut: one device (the probe dir's), upgrade when placement needs a rate per tier.
 #[cfg(target_os = "linux")]
-fn storage_read_score() -> f64 {
+fn storage_read_score_in(dir: &std::path::Path, bytes: usize) -> f64 {
     use std::io::{Read, Seek, Write};
     use std::os::unix::fs::OpenOptionsExt;
     static PROBE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = probe_dir().join(format!("ai-cluster-read-{}-{seq}", std::process::id()));
+    let path = dir.join(format!("ai-cluster-read-{}-{seq}", std::process::id()));
     let Ok(mut file) = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1487,15 +1543,15 @@ fn storage_read_score() -> f64 {
         return 0.0;
     };
     let prepared = file
-        .write_all(&vec![1u8; STORAGE_PROBE_BYTES])
+        .write_all(&vec![1u8; bytes])
         .and_then(|_| file.sync_all());
     drop(file);
     let mut best = 0.0f64;
     // O_DIRECT wants the buffer, offset and length aligned to the block size: 4096 covers all.
     const ALIGN: usize = 4096;
-    let mut raw = vec![0u8; STORAGE_PROBE_BYTES + ALIGN];
+    let mut raw = vec![0u8; bytes + ALIGN];
     let skew = raw.as_ptr().align_offset(ALIGN);
-    let buffer = &mut raw[skew..skew + STORAGE_PROBE_BYTES];
+    let buffer = &mut raw[skew..skew + bytes];
     if prepared.is_ok()
         && let Ok(mut direct) = std::fs::OpenOptions::new()
             .read(true)
@@ -1510,15 +1566,19 @@ fn storage_read_score() -> f64 {
             if read.is_err() {
                 break;
             }
-            best = best.max(achieved_mbps(STORAGE_PROBE_BYTES, started.elapsed()) / 8.0);
+            best = best.max(achieved_mbps(bytes, started.elapsed()) / 8.0);
         }
     }
     let _ = std::fs::remove_file(&path);
     best / REFERENCE_STORAGE_MBPS
 }
 
-#[cfg(not(target_os = "linux"))]
 fn storage_read_score() -> f64 {
+    storage_read_score_in(&probe_dir(), STORAGE_PROBE_BYTES)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn storage_read_score_in(_dir: &std::path::Path, _bytes: usize) -> f64 {
     0.0
 }
 
@@ -1577,6 +1637,7 @@ fn capability() -> CapabilityReport {
         storage_score,
         storage_latency_ms: storage_latency_ms(),
         storage_read_score: storage_read_score(),
+        storage_devices: storage_devices(),
         storage_device: {
             let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
             mount_device(&mounts, &probe_dir())
@@ -2481,6 +2542,31 @@ tmpfs /run tmpfs rw 0 0
     fn achieved_rate_is_megabits_per_second() {
         // 125 MB in one second is 1000 Mbps — the 1 GbE reference.
         assert!((achieved_mbps(125_000_000, Duration::from_secs(1)) - 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn um_disco_por_dispositivo_inteiro_com_o_da_sonda_primeiro() {
+        let mounts = "/dev/mmcblk0p3 / ext4 ro 0 0\n/dev/mmcblk0p4 /data ext4 rw 0 0\ntmpfs /tmp tmpfs rw 0 0\n/dev/sda1 /mnt/x ext4 rw 0 0\n";
+        // sem /sys nesse ambiente de teste nenhum /dev/... é um disco que o kernel liste
+        assert!(measurable_disks(mounts, std::path::Path::new("/data/x")).is_empty());
+        assert!(
+            measurable_disks("tmpfs /tmp tmpfs rw 0 0\n", std::path::Path::new("/tmp")).is_empty()
+        );
+    }
+
+    #[test]
+    fn cada_disco_medido_tem_nome_e_notas_finitas() {
+        for disk in storage_devices() {
+            eprintln!("disco {} escrita={} leitura={}", disk.name, disk.write_score, disk.read_score);
+            assert!(!disk.name.is_empty() && disk.write_score.is_finite() && disk.read_score.is_finite());
+        }
+    }
+
+    #[test]
+    fn as_sondas_por_disco_voltam_zero_onde_nao_podem_gravar() {
+        let dir = std::path::Path::new("/nao/existe/mesmo");
+        assert_eq!(storage_score_in(dir, 4096), 0.0);
+        assert_eq!(storage_read_score_in(dir, 4096), 0.0);
     }
 
     #[test]

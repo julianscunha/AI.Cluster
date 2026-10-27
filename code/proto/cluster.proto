@@ -108,6 +108,18 @@ message CapabilityReport {
   /// as duas diz se a memória escala com os núcleos ou satura (SBC com barramento único satura).
   /// Zero é "não medido".
   double memory_bandwidth_loaded_score = 24;
+  /// Cada disco que o worker consegue medir (até quatro), não só o do diretório da sonda. Vazio é
+  /// "não medido": contêiner, ou nenhum ponto de montagem de disco aceita um arquivo novo.
+  repeated StorageDevice storage_devices = 25;
+}
+
+message StorageDevice {
+  /// Disco inteiro, sem a partição ("mmcblk0", "nvme0n1").
+  string name = 1;
+  /// Escrita sequencial com fsync sobre 500 MB/s, como `storage_score`. Zero é "não medido".
+  double write_score = 2;
+  /// Leitura sequencial com O_DIRECT sobre 500 MB/s, como `storage_read_score`. Zero é "não medido".
+  double read_score = 3;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.

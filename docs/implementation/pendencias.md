@@ -43,14 +43,12 @@ Os marcos de prova (M0–M7) ficam ao final.
 
 ## F02 — Capability e saúde `[~]`
 
+Todo o código da fase está feito; o que resta depende de hardware que o laboratório não tem.
+
 | Item | O que falta | Dependência |
 |---|---|---|
-| Memória sob carga | O placement usar `memory_bandwidth_loaded_score` (a banda com os núcleos juntos já é medida e exposta) para unidades limitadas por memória. | código |
 | Aceleradores | Reportar e medir kernels de GPU e NPU. | hardware: GPU/NPU |
-| Storage | Medir cada dispositivo do nó (hoje só o do diretório da sonda, que `storage_device` identifica). | código |
 | Saúde de storage | SMART, erros e latência de escrita por dispositivo. | hardware: disco real com SMART |
-| Histórico do controller | `completed()` clona até 110 mil registros a cada scrape e a cada relatório; devolver só agregados ou iterar sob o lock. Os contadores de concluídas valem a janela de 100 mil quando ela enche. | código |
-| Rede | Perda por conexão (netlink); hoje a retransmissão TCP é a do host na sonda do registro, e só a sonda de upload mede. | código |
 | Hardware heterogêneo | Validar capacidades distintas com mais tipos de máquina. | hardware: x86 e ARM64 |
 
 ## F03 — Execução distribuída `[x]`
@@ -125,7 +123,7 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Cluster sobre o `Transport` | O cluster ainda chama o gRPC direto. TCP e socket Unix existem como `Transport`, fora do caminho do cluster. | código |
 | E3, memória compartilhada | A variante existe, sem implementação. | código |
 | E4, USB | Vai para F18. | hardware: celulares |
-| E5, perda e congestionamento | Não são medidos. | código |
+| E5, perda e congestionamento | Perda por conexão e congestionamento contínuo (`TCP_INFO` ou netlink). Hoje só há a retransmissão TCP do host, medida na sonda do registro (F02). | código |
 
 ## F10 — Inteligência de storage `[~]`
 

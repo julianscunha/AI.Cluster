@@ -970,6 +970,12 @@ impl WorkStore {
         self.lock().completed.clone()
     }
 
+    /// Lê o histórico de concluídas sob o lock, sem copiá-lo: é o que cada scrape e cada
+    /// `GetMetrics` usam. `completed()` fica para o relatório de trabalho, que precisa das linhas.
+    pub fn with_completed<R>(&self, read: impl FnOnce(&[CompletedWork]) -> R) -> R {
+        read(&self.lock().completed)
+    }
+
     /// Queued plus in-flight units.
     pub fn pending(&self) -> usize {
         let inner = self.lock();
