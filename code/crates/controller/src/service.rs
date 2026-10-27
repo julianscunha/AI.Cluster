@@ -81,7 +81,13 @@ impl ClusterControlService {
             shards: Arc::new(ShardHub::default()),
             shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
-            rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into)),
+            rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
+                .with_wave(
+                    std::env::var("AI_CLUSTER_ROLLOUT_WAVE")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+                ),
         }
     }
 

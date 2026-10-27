@@ -35,4 +35,4 @@ O rollout pelo controller ([[f19-rollout-de-release]]) manda os nós gravarem um
 
 ## Itens abertos
 
-Revogação sem nova imagem (lista de revogação), https no `wget`, dm-verity, ondas de rollout além do canário e suporte a mais de uma placa por imagem (hoje `/etc/aic-board`).
+Revogação sem nova imagem (lista de revogação), https no `wget`, dm-verity, suporte a mais de uma placa por imagem (hoje `/etc/aic-board`).

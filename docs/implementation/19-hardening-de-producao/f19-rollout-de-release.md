@@ -25,7 +25,7 @@ O operador diz qual versão os nós devem rodar; o controller a anuncia, um can�
 
 **Controller** (`rollout.rs`, `service.rs`)
 - `SetRelease` (token de operador, auditado) valida o formato (sem usuário nem query no URL, hexadecimais, base64 de 64 bytes) e guarda a release em memória e, com `AI_CLUSTER_RELEASE_STATE`, num arquivo de uma linha. Ele **não** verifica a assinatura: só repassa.
-- O heartbeat devolve `release` a quem roda outra versão. Só entram no rollout os nós que declaram `can_update`; o primeiro deles a bater vira canário e os outros esperam o canário reportar a versão desejada **e** a medida que bate com a assinada. Canário que não chega em 10 min pausa o rollout (evento `rollout`) até novo `SetRelease`.
+- O heartbeat devolve `release` a quem roda outra versão. Só entram no rollout os nós que declaram `can_update`; o primeiro deles a bater vira canário e os outros esperam o canário reportar a versão desejada **e** a medida que bate com a assinada. Com `AI_CLUSTER_ROLLOUT_WAVE=N` só N nós atualizam ao mesmo tempo depois do canário (0 ou ausente = todos); a vaga volta quando o nó reporta a versão ou passados 10 min. Canário que não chega em 10 min pausa o rollout (evento `rollout`) até novo `SetRelease`.
 - `ListNodes` calcula `attested` na leitura (versão igual e medida igual à da release assinada); `ai-cluster nodes` mostra `VERSÃO` e `MEDIDA` ("confere" quando a medida bate com a assinada; é o que o nó reporta, não prova).
 
 **Worker**
@@ -60,6 +60,6 @@ O operador diz qual versão os nós devem rodar; o controller a anuncia, um can�
 > - **A medida não é attestation forte:** é software, reportada pelo próprio nó. Detecta slot corrompido ou errado e gravação ruim, não um nó comprometido (que mente). Integridade de verdade exige dm-verity com root hash assinado e/ou secure boot/TPM, que a placa não tem.
 > - **Rollback legítimo precisa de versão maior** (a ordem é numérica; não há downgrade).
 > - O `wget` da imagem só faz http e segue redirecionamentos (o SHA-256 e a assinatura limitam o dano); a marca `update-tried` guarda uma versão só.
-> - O canário é o primeiro nó apto; não há ondas além dele (N configurável) nem teste com mais de um nó atualizável.
+> - O canário é o primeiro nó apto; as ondas (`AI_CLUSTER_ROLLOUT_WAVE`) só têm teste unitário, sem teste com mais de um nó atualizável em hardware.
 > - Um controller malicioso pode mandar uma release com assinatura só no formato correto e segurar o worker fora do cluster até 20 min por tentativa (DoS de disponibilidade, sem instalar nada).
 > - A medida lê 512 MiB no boot (~25–40 s no SD) antes do worker subir.

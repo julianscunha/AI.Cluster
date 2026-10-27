@@ -16,6 +16,8 @@ struct State {
     canary: Option<String>,
     canary_since_ms: u64,
     paused: bool,
+    /// Nós liberados depois do canário que ainda não chegaram à versão (nó → quando foi liberado).
+    wave: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug, Default)]
@@ -23,6 +25,8 @@ pub struct Rollout {
     state: Mutex<State>,
     /// Arquivo de uma linha com a release desejada (sobrevive a reinício do controller).
     path: Option<PathBuf>,
+    /// Quantos nós atualizam ao mesmo tempo depois do canário (0 = todos).
+    wave_limit: usize,
 }
 
 /// Valida o que vai ser repassado a todos os nós e, depois, a um comando do worker.
@@ -89,7 +93,14 @@ impl Rollout {
                 ..State::default()
             }),
             path,
+            wave_limit: 0,
         }
+    }
+
+    /// Limita a quantos nós atualizam ao mesmo tempo depois do canário (`AI_CLUSTER_ROLLOUT_WAVE`).
+    pub fn with_wave(mut self, limit: usize) -> Self {
+        self.wave_limit = limit;
+        self
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -138,6 +149,9 @@ impl Rollout {
             return (None, None);
         };
         // um nó sem comando de atualização não entra no rollout nem vira canário
+        if version == desired.version {
+            state.wave.remove(node);
+        }
         if !can_update || version == desired.version || state.paused {
             return (None, None);
         }
@@ -165,6 +179,17 @@ impl Rollout {
                 let done = canary_version(&canary)
                     .is_some_and(|(v, m)| v == desired.version && m == desired.image_sha256);
                 if done {
+                    // onda: quem não chegou à versão em 10 min deixa de ocupar vaga
+                    state
+                        .wave
+                        .retain(|_, since| now_ms.saturating_sub(*since) <= CANARY_TIMEOUT_MS);
+                    if self.wave_limit > 0
+                        && !state.wave.contains_key(node)
+                        && state.wave.len() >= self.wave_limit
+                    {
+                        return (None, None);
+                    }
+                    state.wave.entry(node.to_string()).or_insert(now_ms);
                     (Some(desired), None)
                 } else {
                     (None, None)
@@ -228,6 +253,30 @@ mod tests {
         assert!(rollout.announce(true, "b", "1", a_novo, 2).0.is_some());
         // quem já está na versão não recebe nada
         assert!(rollout.announce(true, "a", "2", a_novo, 3).0.is_none());
+    }
+
+    #[test]
+    fn onda_limita_quantos_atualizam_juntos() {
+        let rollout = Rollout::new(None).with_wave(1);
+        rollout.set(Some(release("2")));
+        let none = |_: &str| None;
+        let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), "b".repeat(64)));
+        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
+        assert!(rollout.announce(true, "b", "1", a_novo, 1).0.is_some());
+        // vaga ocupada por b; c espera, b continua sendo anunciado
+        assert!(rollout.announce(true, "c", "1", a_novo, 2).0.is_none());
+        assert!(rollout.announce(true, "b", "1", a_novo, 3).0.is_some());
+        // b chegou à versão: libera a vaga
+        assert!(rollout.announce(true, "b", "2", a_novo, 4).0.is_none());
+        assert!(rollout.announce(true, "c", "1", a_novo, 5).0.is_some());
+        // b que nunca voltasse perderia a vaga depois do prazo
+        assert!(rollout.announce(true, "d", "1", a_novo, 6).0.is_none());
+        assert!(
+            rollout
+                .announce(true, "d", "1", a_novo, CANARY_TIMEOUT_MS + 6)
+                .0
+                .is_some()
+        );
     }
 
     #[test]
