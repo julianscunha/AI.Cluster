@@ -8,3 +8,6 @@ slot_dev() { case "$1" in A) echo /dev/mmcblk0p2;; B) echo /dev/mmcblk0p3;; *) r
 state_get() { dd if=/dev/mmcblk0 bs=512 skip=2016 count=1 2>/dev/null | tr -d '\0' | sed -n "s/^$1=//p"; }
 # conv=sync completa o setor com zeros
 state_set() { printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$1" "$2" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null; }
+cur_slot() { sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline | grep .; }
+# no armv7 o commit sempre regrava (zera também a contagem de boots da recuperação por rede)
+state_confirm() { state_set "$1" ""; }

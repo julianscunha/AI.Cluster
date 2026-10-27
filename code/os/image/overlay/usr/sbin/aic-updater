@@ -51,15 +51,17 @@ apply() {
 	uhost=${url#*://}; uhost=${uhost%%[:/]*}
 	[ -n "$chost" ] && [ "$chost" = "$uhost" ] || { fail "URL fora do host do controller; ignorado"; return; }
 	# em boot de teste (aic_try pendente) o slot atual não é o confirmado: gravar no outro destruiria o bom
-	if [ -n "$(state_get aic_try)" ]; then fail "slot ainda em teste; atualização adiada"; return; fi
+	try=$(state_get aic_try) || { fail "estado do A/B ilegível; atualização adiada"; return; }
+	[ -z "$try" ] || { fail "slot ainda em teste; atualização adiada"; return; }
 	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt $((slot_mib * 1400)) ] || { fail "pouco espaço em /data"; return; }
-	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	slot=$(cur_slot) || slot=
 	case "$slot" in A) target=B;; B) target=A;; *) fail "sem aic.slot; não é uma imagem A/B"; return;; esac
 	dev=$(slot_dev "$target") || { fail "sem partição do slot $target"; return; }
 	log "baixando $version para o slot $target"
 	rm -rf "$DL"; mkdir -m 700 "$DL" || { fail "sem diretório de download"; return; }
 	TMP=$DL/update.gz
-	wget -q -T 60 -O "$TMP" "$url" || { fail "download falhou"; rm -rf "$DL"; return; }
+	case "$url" in http://*|https://*) ;; *) fail "URL sem http(s); ignorado"; rm -rf "$DL"; return;; esac
+	wget -q -T 60 -O "$TMP" -- "$url" || { fail "download falhou"; rm -rf "$DL"; return; }
 	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { fail "SHA-256 não confere; descartado"; rm -rf "$DL"; return; }
 	gunzip -t "$TMP" 2>/dev/null || { fail "gzip corrompido; descartado"; rm -rf "$DL"; return; }
 	log "gravando $dev"

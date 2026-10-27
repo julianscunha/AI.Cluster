@@ -11,7 +11,8 @@ depend() {
 }
 
 start() {
-	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	. /usr/lib/aic/ab.sh
+	slot=$(cur_slot)
 	[ -n "$slot" ] || { einfo "sem aic.slot na linha de comando; nada a confirmar"; return 0; }
 	(
 		waited=0
@@ -42,7 +43,7 @@ start() {
 		done
 		# Estado do A/B: camada da plataforma (usr/lib/aic/ab.sh)
 		. /usr/lib/aic/ab.sh
-		state_set "$slot" "" || exit 1
+		state_confirm "$slot" || exit 1
 		logger -t aic-slot-commit "slot $slot confirmado"
 	) &
 }

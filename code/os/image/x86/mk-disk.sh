@@ -17,6 +17,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] && [ -n "$NODE" ] || { echo "falta --controller, --join-token ou --node-id" >&2; exit 2; }
+# os valores entram num arquivo que o root carrega no boot: só caracteres seguros
+for v in "$CONTROLLER" "$TOKEN" "$NODE"; do case "$v" in *[!A-Za-z0-9._:/@%+=-]*) echo "valor com caractere não permitido: $v" >&2; exit 2;; esac; done
+umask 077   # o .env temporário e a imagem carregam o token de join
+trap 'rm -f build/worker-x86.env build/authorized_keys-x86' EXIT
 [ -f build/rootfs-x86.ext4 ] || { echo "falta build/rootfs-x86.ext4 (rode x86/build-rootfs.sh)" >&2; exit 2; }
 cp x86/grub.cfg build/grub-x86.cfg
 {
@@ -32,7 +36,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" ai
   set -e
   cd /tmp
   # BOOTX64.EFI com a configuração embutida
-  grub-mkstandalone -O x86_64-efi -o BOOTX64.EFI --modules='part_gpt fat ext2 loadenv test regexp probe search normal linux echo' 'boot/grub/grub.cfg=/b/grub-x86.cfg' 2>/dev/null
+  grub-mkstandalone -O x86_64-efi -o BOOTX64.EFI --modules='part_gpt fat ext2 loadenv test regexp probe normal linux echo sleep reboot' 'boot/grub/grub.cfg=/b/grub-x86.cfg' 2>/dev/null
   # ESP: grubenv de 1024 bytes (slot A confirmado), pré-criado para o save_env gravar no lugar
   P1N=131072; P2N=2097152; P3N=2097152; P1S=2048; P2S=\$((P1S+P1N)); P3S=\$((P2S+P2N)); P4S=\$((P3S+P3N))
   TOTAL=\$(( $DISK_MIB * 2048 )); P4N=\$(( TOTAL - P4S - 2048 ))
@@ -57,5 +61,5 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" ai
   sgdisk -p disk.img
   cp disk.img /b/disk-x86.img
 "
-rm -f build/worker-x86.env build/authorized_keys-x86
+chmod 600 build/disk-x86.img
 ls -l build/disk-x86.img

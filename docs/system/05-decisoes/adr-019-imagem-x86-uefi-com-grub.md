@@ -44,3 +44,7 @@ O AI Cluster OS ([[adr-002-os-imutavel]], [[adr-017-instalacao-a-b-e-boot-de-red
 - Sem watchdog de hardware configurado fora do QEMU (`i6300esb`); em hardware real depende do driver da placa-mãe.
 - Sem Secure Boot, dm-verity nem TPM ([[adr-018-release-assinada-e-medida-do-slot]]).
 - Uma imagem suporta uma placa só (`/etc/aic-board`).
+- **Acesso físico não está no modelo de ameaça:** o GRUB não tem senha, o disco não é cifrado e, com Secure Boot desligado, quem tem o disco altera kernel e `grub.cfg`. Se o kernel não carrega, o GRUB reinicia (o contador de tentativas leva ao rollback) em vez de abrir o prompt.
+- A ESP usada pelo GRUB é a do disco de onde o `BOOTX64.EFI` foi carregado (`$cmdpath`), e o sistema em execução age sobre as partições 2 e 3 do disco da raiz. O slot em execução vem da partição da raiz montada, não da linha de comando. Dois discos com o mesmo PARTUUID (imagem gravada sem o `install-disk.sh`, que sorteia os GUIDs) fazem o initramfs recusar a raiz em vez de adivinhar.
+- A medida lê os `slot_mib` MiB da imagem; a partição tem 1 GiB, e o restante não é medido (a integridade do que foi gravado vem do SHA-256 assinado do `.gz`).
+- O `state_get` falha fechado: se a ESP não pode ser lida, a atualização é adiada, para nunca gravar por cima do slot confirmado durante um boot de teste. O `aic-slot-commit` só limpa o slot em teste se ele for o slot em execução, para não apagar um pedido de atualização que chegou durante o boot.
