@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 440" width="1100" height="440" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+  </defs>
+  <rect width="1100" height="440" rx="14" fill="#0f172a"/>
+
+  <rect x="30" y="30" width="300" height="130" rx="12" fill="#1e293b" stroke="#334155"/>
+  <text x="50" y="62" fill="#e2e8f0" font-size="17" font-weight="700">Seu computador</text>
+  <text x="50" y="86" fill="#94a3b8" font-size="13">qualquer máquina com acesso ao servidor</text>
+  <rect x="50" y="102" width="260" height="38" rx="8" fill="#0f172a" stroke="url(#g)" stroke-width="2"/>
+  <text x="180" y="127" fill="#38bdf8" font-size="14" text-anchor="middle" font-family="Consolas, monospace">ai-cluster nodes | approve | rollout</text>
+
+  <rect x="400" y="30" width="330" height="200" rx="12" fill="#1e293b" stroke="url(#g)" stroke-width="2.5"/>
+  <text x="420" y="62" fill="#e2e8f0" font-size="17" font-weight="700">Servidor Linux (sempre ligado)</text>
+  <text x="420" y="86" fill="#94a3b8" font-size="13">x86_64 ou ARM, qualquer distribuição com glibc</text>
+  <rect x="420" y="102" width="290" height="48" rx="8" fill="#0f172a" stroke="#334155"/>
+  <text x="565" y="123" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">ai-cluster-controller</text>
+  <text x="565" y="141" fill="#94a3b8" font-size="12" text-anchor="middle">porta 50051 · registro, fila, placement</text>
+  <rect x="420" y="160" width="290" height="48" rx="8" fill="#0f172a" stroke="#334155"/>
+  <text x="565" y="181" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">ai-cluster-gateway</text>
+  <text x="565" y="199" fill="#94a3b8" font-size="12" text-anchor="middle">porta 8080 · API OpenAI + pesos do modelo</text>
+
+  <rect x="800" y="30" width="270" height="130" rx="12" fill="#1e293b" stroke="#334155"/>
+  <text x="820" y="62" fill="#e2e8f0" font-size="17" font-weight="700">Seus aplicativos</text>
+  <text x="820" y="86" fill="#94a3b8" font-size="13">SDK OpenAI, curl, agentes, UIs</text>
+  <text x="820" y="130" fill="#38bdf8" font-size="13" font-family="Consolas, monospace">POST /v1/chat/completions</text>
+
+  <g stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M330 120H398"/><path d="M798 120H732"/>
+  </g>
+
+  <text x="30" y="285" fill="#e2e8f0" font-size="17" font-weight="700">Dispositivos que você quer aproveitar (cada um roda um worker)</text>
+  <g>
+    <rect x="30" y="302" width="240" height="100" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="50" y="330" fill="#e2e8f0" font-size="15" font-weight="600">PC / notebook / servidor</text>
+    <text x="50" y="352" fill="#94a3b8" font-size="12">Linux existente + bootstrap.sh</text>
+    <text x="50" y="372" fill="#38bdf8" font-size="12" font-family="Consolas, monospace">ai-cluster-worker</text>
+    <rect x="300" y="302" width="240" height="100" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="320" y="330" fill="#e2e8f0" font-size="15" font-weight="600">Placa ARM (SBC)</text>
+    <text x="320" y="352" fill="#94a3b8" font-size="12">AI Cluster OS gravado no cartão</text>
+    <text x="320" y="372" fill="#38bdf8" font-size="12" font-family="Consolas, monospace">worker + atualização A/B</text>
+    <rect x="570" y="302" width="240" height="100" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="590" y="330" fill="#e2e8f0" font-size="15" font-weight="600">Mais um nó…</text>
+    <text x="590" y="352" fill="#94a3b8" font-size="12">entra com o token de join</text>
+    <text x="590" y="372" fill="#94a3b8" font-size="12">e você aprova</text>
+    <rect x="840" y="302" width="230" height="100" rx="12" fill="none" stroke="#334155" stroke-dasharray="6 5"/>
+    <text x="955" y="358" fill="#64748b" font-size="13" text-anchor="middle">workers conectam no controller</text>
+  </g>
+  <g stroke="#38bdf8" stroke-width="2" fill="none" stroke-dasharray="6 5" marker-end="url(#a)">
+    <path d="M150 300C150 270 400 250 480 232"/><path d="M420 300C420 270 520 255 540 232"/><path d="M690 300C690 270 620 255 600 232"/>
+  </g>
+  <text x="330" y="262" fill="#38bdf8" font-size="12">conexão de saída para :50051</text>
+</svg>

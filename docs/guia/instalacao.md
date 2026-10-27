@@ -32,7 +32,7 @@ Os binários saem em `code/target/release/`:
 | `ai-cluster-gateway` | Gateway de inferência |
 | `ai-cluster` | CLI |
 
-## Cluster de desenvolvimento
+## Cluster de desenvolvimento (só para quem desenvolve o projeto)
 
 `scripts/dev-cluster.sh` (ou `scripts/dev-cluster.ps1` no Windows) sobe um cluster em contêineres Docker, na mesma máquina:
 
@@ -155,3 +155,28 @@ A inferência usa pesos locais que o repositório não versiona (`code/models/` 
 Exemplo: `huggingface-cli download openai-community/gpt2 model.safetensors vocab.json merges.txt config.json --local-dir code/models/gpt2`.
 
 O diretório é apontado por `AI_CLUSTER_GPT2_DIR` e `AI_CLUSTER_SMOLLM2_DIR` (veja [[configuracao]]). Sem os pesos, o cluster, a CLI e o benchmark funcionam; só a inferência de linguagem fica indisponível.
+
+## Controller e gateway como serviço (systemd)
+
+O repositório instala a unit do worker (`bootstrap.sh`), mas não a do controller nem a do gateway. Exemplo para o controller, em `/etc/systemd/system/ai-cluster-controller.service`:
+
+```ini
+[Unit]
+Description=AI Cluster controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/ai-cluster/controller.env
+ExecStart=/opt/ai-cluster/bin/ai-cluster-controller
+StateDirectory=aic
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/ai-cluster/controller.env` (modo 0600, dono root) guarda as variáveis `AI_CLUSTER_*` do passo "Produção com TLS", uma por linha, no formato `CHAVE=valor`. Com `StateDirectory=aic` o estado fica em `/var/lib/aic`. Depois: `systemctl daemon-reload && systemctl enable --now ai-cluster-controller`. O gateway segue o mesmo modelo, trocando o binário e as variáveis.

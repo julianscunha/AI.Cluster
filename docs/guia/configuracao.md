@@ -87,9 +87,9 @@ Convenções:
 | `AI_CLUSTER_GPT2_DIR` | — | Liga o modelo `gpt2` com os pesos neste diretório (verificados pelo manifest, se houver). |
 | `AI_CLUSTER_GPT2_SHARDS` | — | Ids de nó separados por vírgula. As projeções do `gpt2` passam a rodar nesses workers. |
 | `AI_CLUSTER_GPT2_SUBDIR` | `gpt2` | Subdiretório do modelo sob `AI_CLUSTER_MODEL_DIR` nos workers. |
-| `AI_CLUSTER_SMOLLM2_DIR` | — | Liga o modelo `smollm2-135m` (base, sem template de chat). |
+| `AI_CLUSTER_SMOLLM2_DIR` | — | Pasta com os pesos do `smollm2-135m` (base, sem template de chat) neste servidor; liga o modelo. |
 | `AI_CLUSTER_SMOLLM2_SHARDS` | — | Nós que guardam as projeções do `smollm2-135m`. |
-| `AI_CLUSTER_SMOLLM2_SUBDIR` | `smollm2` | Subdiretório dos pesos nos workers. |
+| `AI_CLUSTER_SMOLLM2_SUBDIR` | `smollm2` | Pasta dos pesos dentro de `AI_CLUSTER_MODEL_DIR` nos workers (só para fatias). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` | — | Liga o modelo `smollm2-135m-instruct` (com template ChatML). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Nós que guardam as projeções do `smollm2-135m-instruct`. |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SUBDIR` | `smollm2-instruct` | Subdiretório dos pesos nos workers. |

@@ -17,91 +17,147 @@
 
 **Transforme as máquinas paradas que você já tem (PCs velhos, notebooks, servidores, Raspberry/Orange Pi) em um único pool de computação para IA.**
 
-Cada uma é fraca; juntas rodam um modelo. O AI Cluster descobre e admite os nós com segurança, mede o que cada um aguenta, divide o trabalho, **fatia os pesos do modelo entre as máquinas** e continua funcionando quando uma delas cai. Escrito em Rust, com API compatível com OpenAI.
+Cada uma é fraca; juntas rodam um modelo. O AI Cluster admite os nós com segurança, mede o que cada um aguenta, divide o trabalho, **fatia os pesos do modelo entre as máquinas** e continua funcionando quando uma delas cai. Escrito em Rust, com API compatível com OpenAI.
 
 <p align="center">
   <img src="docs/assets/architecture.svg" alt="Arquitetura: cliente, gateway, controller e workers" width="100%">
 </p>
 
-## Por que usar
+## Como funciona na prática
 
-- **Reaproveita hardware de qualquer arquitetura:** x86_64 e ARM no mesmo cluster, sem GPU obrigatória.
-- **Inferência distribuída de verdade:** os pesos ficam residentes nos workers; só passam resultados parciais. Se um worker cai, as faixas dele são reatribuídas na hora.
-- **Nós entram e saem sem cerimônia:** join com token, aprovação, drain, saída limpa, quarentena automática de nó que erra.
-- **Segurança por papéis:** credenciais separadas para entrar, operar e inferir; mTLS opcional; o gateway roda sem o token de operador.
-- **Sistema operacional próprio para SBCs:** imagem Alpine A/B com rollback automático, **atualização assinada (Ed25519)** e rollout com canário feito pelo controller.
-- **Observável:** métricas Prometheus, eventos, traces de requisição e painel no terminal.
+O AI Cluster é um sistema Linux com **papéis**. Você escolhe onde cada um roda:
+
+<p align="center">
+  <img src="docs/assets/deployment.svg" alt="Controller e gateway em um servidor, workers nos dispositivos, CLI no seu computador" width="100%">
+</p>
+
+| Papel | O que é | Onde roda | Quantos |
+|---|---|---|---|
+| **Controller** | Cérebro do cluster: registra os nós, distribui o trabalho, guarda estado e métricas. | Um servidor Linux que fica sempre ligado. | 1 |
+| **Worker** | Executa o trabalho e guarda as fatias do modelo na memória. | **Cada dispositivo que você quer aproveitar**: PC, notebook, servidor, placa ARM. | quantos você tiver |
+| **Gateway** | A API (`/v1/chat/completions`, compatível com OpenAI) que seus aplicativos chamam. | No mesmo servidor do controller (ou em outro Linux com acesso a ele). | 1 |
+| **CLI `ai-cluster`** | Como você administra e monitora: listar nós, aprovar, atualizar. | Seu computador, ou o próprio servidor. | — |
+
+Fluxo de uso:
+
+1. **Instale o controller** no servidor e anote os dois tokens (join e operador).
+2. **Instale o worker** em cada dispositivo, apontando para o controller. É uma máquina Linux de verdade rodando o worker, sem contêiner no meio.
+3. **Aprove** cada nó novo e **monitore** tudo pela CLI.
+4. **Suba o gateway** com o modelo e aponte seus aplicativos para ele.
+5. Para placas ARM, use o **AI Cluster OS**, um sistema próprio que se atualiza sozinho com segurança.
+
+## Pré-requisitos
+
+| Onde | Precisa de |
+|---|---|
+| **Servidor do controller/gateway** | Linux (x86_64 ou ARM, glibc), acesso de rede dos workers à porta `50051` e dos clientes à `8080`. O gateway com SmolLM2 mantém o modelo em memória (cerca de 1 GB). |
+| **Cada worker** | Linux (x86_64 ou ARMv7), `root` para instalar, systemd recomendado, conexão de saída até a porta `50051` do controller. Memória livre para a fatia do modelo que ele vai guardar. |
+| **Máquina de build** (uma vez) | Linux com Rust estável ≥ 1.85 (`rustup`). Compila os binários; servidores e dispositivos não precisam de Rust. Para gerar binário ARMv7 a partir de x86, Docker nessa máquina. |
+| **Seu computador** | O binário `ai-cluster` e acesso de rede ao controller. |
+| **Modelos** | Pesos GPT-2 ou SmolLM2 no servidor do gateway ([onde baixar](docs/guia/instalacao.md#pesos-dos-modelos)). Opcional: sem eles o cluster funciona, só não responde chat. |
+
+Docker **não** é requisito para usar o AI Cluster. Ele só aparece para quem desenvolve o projeto (veja o fim deste README).
+
+## Instalação passo a passo
+
+### 1. Compile os binários (uma vez)
+
+Em uma máquina Linux de build:
+
+```bash
+git clone https://github.com/julianscunha/Real.AI.Cluster.git
+cd Real.AI.Cluster/code
+cargo build --release --workspace
+# binários em target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, ai-cluster
+```
+
+Copie `ai-cluster-controller` e `ai-cluster-gateway` para o servidor, `ai-cluster` para quem vai administrar e `ai-cluster-worker` para cada dispositivo **da mesma arquitetura**. Para placas ARMv7 compile com `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (veja o [guia de instalação](docs/guia/instalacao.md)). Ainda não há binários pré-compilados para download.
+
+### 2. Controller (no servidor)
+
+```bash
+export AI_CLUSTER_JOIN_TOKEN=$(openssl rand -hex 24)       # os workers usam para entrar
+export AI_CLUSTER_OPERATOR_TOKEN=$(openssl rand -hex 24)   # você usa para administrar
+echo "join=$AI_CLUSTER_JOIN_TOKEN operador=$AI_CLUSTER_OPERATOR_TOKEN"   # guarde os dois
+
+mkdir -p /var/lib/aic
+AI_CLUSTER_INSECURE=1 \
+AI_CLUSTER_NODES=/var/lib/aic/nodes AI_CLUSTER_STATE=/var/lib/aic/state.bin AI_CLUSTER_EVENTS=/var/lib/aic/events.log \
+./ai-cluster-controller        # escuta em 0.0.0.0:50051
+```
+
+> `AI_CLUSTER_INSECURE=1` desliga o TLS: use só em rede local confiável. Em qualquer outra rede configure o TLS (certificado do controller e `AI_CLUSTER_TLS_CA` nos workers): [`docs/guia/instalacao.md`](docs/guia/instalacao.md#produção-com-tls). Para manter o controller ligado após reinício, rode-o como serviço do systemd.
+
+### 3. Worker (em cada dispositivo)
+
+Copie `ai-cluster-worker`, `code/os/bootstrap.sh` e o token de join para o dispositivo e, como root:
+
+```bash
+echo '<token-de-join>' > /root/join-token && chmod 600 /root/join-token
+sudo ./bootstrap.sh --controller http://<ip-do-servidor>:50051 --insecure \
+  --join-token-file /root/join-token --binary ./ai-cluster-worker --node-id sala-pc1
+```
+
+O script cria o usuário, instala o worker como serviço do systemd e confirma que ele se registrou. (`--insecure` só porque o exemplo usa `http://`; com TLS use `https://` e a CA.)
+
+### 4. Aprove e monitore (CLI)
+
+```bash
+export AI_CLUSTER_CONTROLLER=http://<ip-do-servidor>:50051 AI_CLUSTER_OPERATOR_TOKEN=<token-de-operador>
+ai-cluster nodes             # o nó novo aparece, pendente
+ai-cluster approve sala-pc1  # só nós aprovados recebem trabalho
+ai-cluster dashboard --watch 2
+ai-cluster events            # entradas, saídas, falhas
+```
 
 <p align="center">
   <img src="docs/assets/terminal-nodes.svg" alt="Saída real do ai-cluster nodes com um PC x86 e um Orange Pi" width="100%">
 </p>
 
-## O que você precisa
+### 5. Gateway e inferência
 
-| Item | Requisito |
-|---|---|
-| **Onde rodar os comandos** | No seu computador, **dentro da pasta `code/` do repositório clonado**. Os comandos abaixo levantam um cluster de teste em contêineres Docker na própria máquina; você não precisa de várias máquinas para experimentar. |
-| **Sistema** | Linux, macOS ou Windows (com Docker Desktop). No Windows use o Git Bash ou o PowerShell. |
-| **Docker** | Docker Engine ou Docker Desktop em execução. |
-| **RAM / disco** | ~4 GB livres de RAM e ~6 GB de disco para a compilação. |
-| **Rust** | Só se for compilar sem Docker: Rust estável ≥ 1.85 (edition 2024). `protoc` já vem embutido. |
-| **Modelos de IA** | Opcionais. A inferência com GPT-2 ou SmolLM2 precisa dos pesos em `code/models/` ([como obter](docs/guia/instalacao.md)); o cluster, a CLI e o benchmark funcionam sem eles. |
-| **Rede** | Em cluster real, os nós precisam alcançar a porta do controller (padrão `50051`). |
-
-## Comece em 5 minutos (uma máquina, sem hardware extra)
+No servidor, com os pesos do SmolLM2 em `/srv/models/smollm2`:
 
 ```bash
-git clone https://github.com/julianscunha/Real.AI.Cluster.git
-cd Real.AI.Cluster/code                    # todos os comandos a seguir rodam aqui
-
-bash scripts/dev-cluster.sh build          # compila (alguns minutos na primeira vez)
-bash scripts/dev-cluster.sh up 2           # sobe 1 controller + 2 workers em contêineres
-bash scripts/dev-cluster.sh cli nodes      # lista os nós e a saúde de cada um
-bash scripts/dev-cluster.sh cli dashboard --watch 2
-bash scripts/dev-cluster.sh cli benchmark --size 256 --repetitions 8
-bash scripts/dev-cluster.sh gateway       # (opcional) API em 127.0.0.1:8080; exige os pesos em code/models/smollm2
-bash scripts/dev-cluster.sh down           # desliga tudo
+AI_CLUSTER_INSECURE=1 AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8080 \
+AI_CLUSTER_CONTROLLER=http://127.0.0.1:50051 AI_CLUSTER_OPERATOR_TOKEN=<token-de-operador> \
+AI_CLUSTER_API_KEY=<chave-dos-seus-apps> \
+AI_CLUSTER_SMOLLM2_DIR=/srv/models/smollm2 \
+./ai-cluster-gateway
 ```
 
-No Windows (PowerShell): `scripts\dev-cluster.ps1` com os mesmos argumentos.
+```bash
+curl http://<ip-do-servidor>:8080/v1/chat/completions \
+  -H "Authorization: Bearer <chave-dos-seus-apps>" -H "Content-Type: application/json" \
+  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":16}'
+```
 
-> O cluster de desenvolvimento roda **sem TLS e com tokens fixos**. É só para a sua máquina; nunca o exponha em uma rede aberta. Para produção veja [`docs/guia/operacao.md`](docs/guia/operacao.md).
-
-Quer rodar os testes? `cd code && cargo test --workspace --all-features` (ou veja [`docs/guia/testes.md`](docs/guia/testes.md)).
-
-## Cluster de verdade: várias máquinas
-
-1. Em uma máquina, rode o **controller**; nas outras, o **worker** apontando para ele (`AI_CLUSTER_CONTROLLER=http://<ip-do-controller>:50051`).
-2. Cada nó novo entra com o *join token* e é aprovado por você: `ai-cluster approve <nó>`.
-3. Acompanhe com `ai-cluster nodes`, `dashboard` e `events`.
-
-Passo a passo, TLS, tokens e todas as variáveis de ambiente: [`docs/guia/instalacao.md`](docs/guia/instalacao.md) e [`docs/guia/configuracao.md`](docs/guia/configuracao.md).
-
-## Inferência distribuída
-
-O gateway expõe `POST /v1/chat/completions` (com SSE), `GET /v1/models` e `/metrics`. Cada projeção de peso é dividida entre os workers, que a mantêm na memória.
+Para **dividir o modelo entre os workers**, instale os pesos também neles (`--model-dir` do `bootstrap.sh`) e inicie o gateway com `AI_CLUSTER_SMOLLM2_SHARDS=sala-pc1,sala-pc2`: cada worker guarda uma fatia na memória e o gateway soma os resultados parciais.
 
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="Uma camada do modelo dividida entre três workers" width="100%">
 </p>
 
-```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer dev-key" -H "Content-Type: application/json" \
-  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":16}'
-```
+Todas as variáveis, tenants, cotas e a API completa: [`docs/guia/configuracao.md`](docs/guia/configuracao.md) e [`docs/guia/api.md`](docs/guia/api.md).
 
-Com `dev-cluster.sh gateway` a chave é `dev-key` e o modelo leva cerca de 30 s para carregar. Detalhes da API, modelos suportados e como ligar as fatias nos workers: [`docs/guia/api.md`](docs/guia/api.md).
+### 6. Placas ARM: AI Cluster OS
 
-## AI Cluster OS: atualização segura de nós
-
-Em placas ARM o projeto traz uma imagem imutável com dois slots (A/B). O operador assina a release; o controller a anuncia, um nó canário atualiza primeiro e os demais seguem em ondas. Se o nó novo não ficar saudável, o boot volta ao slot anterior sozinho.
+Em SBCs você pode gravar o **AI Cluster OS**, uma imagem Alpine imutável com dois slots (A/B). O operador assina a atualização; o controller a anuncia, um nó canário atualiza primeiro e os demais seguem em ondas. Se o nó novo não ficar saudável, o boot volta ao slot anterior sozinho.
 
 <p align="center">
   <img src="docs/assets/os-update.svg" alt="Fluxo de atualização assinada com slots A/B" width="100%">
 </p>
 
-Instalação em placa e rollout: [`docs/guia/operacao.md`](docs/guia/operacao.md). Os limites de segurança conhecidos estão em [`SECURITY.md`](SECURITY.md).
+Gerar a imagem, gravar o cartão e publicar releases: [`docs/guia/instalacao.md`](docs/guia/instalacao.md) e [`docs/guia/operacao.md`](docs/guia/operacao.md).
+
+## O que você ganha
+
+- **Hardware de qualquer arquitetura:** x86_64 e ARM no mesmo cluster, sem GPU obrigatória.
+- **Inferência distribuída de verdade:** os pesos ficam residentes nos workers; só passam resultados parciais. Se um worker cai, o trabalho dele é reatribuído na hora.
+- **Nós entram e saem sem cerimônia:** join com token, aprovação, drain, saída limpa, quarentena automática de nó que erra.
+- **Segurança por papéis:** credenciais separadas para entrar, operar e inferir; TLS e mTLS; o gateway roda sem o token de operador.
+- **Atualização segura do sistema:** release assinada (Ed25519), canário, ondas e rollback automático.
+- **Observável:** métricas Prometheus em `:9101`, eventos, traces de requisição e painel no terminal.
 
 ## Estado do projeto
 
@@ -115,18 +171,31 @@ Pré-produção: o núcleo (cluster, placement, inferência distribuída, segura
 | Entender como funciona e como é estruturado | [`docs/system/`](docs/system/system.md) (arquitetura, protocolo, modelo de dados, decisões) |
 | Contribuir com código | [`CONTRIBUTING.md`](CONTRIBUTING.md) e [`AGENTS.md`](AGENTS.md) |
 
-A pasta `docs/` é um *vault* do Obsidian, mas lê-se bem no GitHub.
-
 ## Estrutura do repositório
 
 ```
 code/
   crates/{common,protocol,controller,worker,transport,benchmark,cli,engine,gateway}
   proto/cluster.proto      contrato de comunicação (ai.cluster.v1)
-  os/                      imagem A/B, netboot, instalador
-  scripts/ tests/          cluster de desenvolvimento, testes de ponta a ponta
+  os/                      bootstrap.sh, imagem A/B, netboot, instalador
+  scripts/ tests/          build ARM, cluster de desenvolvimento, testes de ponta a ponta
 docs/                      guia/, system/, implementation/ (pendências)
 ```
+
+## Para quem desenvolve o projeto
+
+Há um cluster de desenvolvimento em contêineres Docker, que roda tudo na sua máquina para testar mudanças. **Não é o jeito de usar o AI Cluster**: é ferramenta de desenvolvimento (sem TLS, tokens fixos).
+
+```bash
+cd code
+bash scripts/dev-cluster.sh build && bash scripts/dev-cluster.sh up 2   # controller + 2 workers
+bash scripts/dev-cluster.sh cli nodes
+bash scripts/dev-cluster.sh gateway                                     # API em 127.0.0.1:8080, chave dev-key
+bash scripts/dev-cluster.sh down
+cargo test --workspace --all-features
+```
+
+Mais em [`CONTRIBUTING.md`](CONTRIBUTING.md) e [`docs/guia/testes.md`](docs/guia/testes.md).
 
 ## Contribua
 
