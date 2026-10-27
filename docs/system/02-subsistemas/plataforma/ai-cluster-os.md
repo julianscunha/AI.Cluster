@@ -104,6 +104,7 @@ As telas do sistema mostram a mesma marca (grafo de nós, "Real.AI.Cluster" e "A
 
 - **Login:** `/etc/issue` (antes do login, com nome do nó e tty) e `/etc/motd` (depois), no overlay comum.
 - **Boot:** uma linha de marca no `boot.cmd` (U-Boot) e no `grub.cfg` (x86), sem o desenho, porque os dois interpretam `\`.
+- **Console no monitor (tty1):** o `aic-console` (`/usr/sbin`, no lugar do getty do tty1) mostra, no estilo do DCUI do ESXi, a versão, o slot, o hardware, a rede, o controller e o estado do worker, e se redesenha a cada 5 s. `F2` mostra os registros do worker; `F12` reinicia ou desliga. Não há shell nem login nele: a administração é por SSH (chave) ou pelo `ai-cluster` a partir de outra máquina. A serial continua com o getty de login. O token nunca é lido (só `AI_CLUSTER_NODE_ID` e `AI_CLUSTER_CONTROLLER` de `/data/worker.env`).
 - **Recuperação:** o `init` do initramfs de netboot imprime a marca com "(recuperacao)".
 
 ## Limites conhecidos

@@ -18,10 +18,11 @@ RUN echo "$AIC_RELEASE" > /etc/aic-release
 
 # O rootfs sai de um contêiner, mas roda em hardware: sem isto o OpenRC se acha num contêiner e pula
 # localmount, networking e outros (keyword -docker).
-RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=/dev/watchdog' >> /etc/conf.d/watchdog && echo 'WATCHDOG_OPTS="-t 5 -T 15"' >> /etc/conf.d/watchdog && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /etc/init.d/aic-measure \
+RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=/dev/watchdog' >> /etc/conf.d/watchdog && echo 'WATCHDOG_OPTS="-t 5 -T 15"' >> /etc/conf.d/watchdog && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic-console /etc/init.d/aic-measure \
  # raiz somente leitura: o que muda vive em /data (disco) ou em tmpfs
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
+ && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|' /etc/inittab \
  && rc-update add devfs sysinit && rc-update add mdev sysinit && rc-update add haveged boot && rc-update add dmesg sysinit && rc-update add procfs boot && rc-update add sysfs sysinit \
  && rc-update add swclock boot && rc-update add localmount boot && rc-update add modules boot && rc-update add sysctl boot \
  && rc-update add hostname boot && rc-update add bootmisc boot && rc-update add syslog boot \

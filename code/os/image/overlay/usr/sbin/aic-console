@@ -1,0 +1,120 @@
+#!/bin/sh
+# Console do AI Cluster OS no monitor (tty1): a tela de estado do nó, no estilo do DCUI do ESXi.
+# Só mostra e só oferece o que não precisa de senha: estado, registros e reiniciar/desligar.
+# Acesso de administração é por SSH (chave) ou pelo ai-cluster no controller; não há shell aqui.
+#   F2  registros do worker      F12  reiniciar ou desligar
+# ASCII puro: vale para o console do kernel e para a serial.
+
+ESC=$(printf '\033')
+export TERM=linux
+dmesg -n 1 2>/dev/null
+printf '%s[?25l' "$ESC"
+trap 'printf "%s[?25h%s[0m%s[2J%s[H" "$ESC" "$ESC" "$ESC" "$ESC"' EXIT
+trap 'exit 0' INT TERM
+
+COLS=$(stty size 2>/dev/null | cut -d' ' -f2)
+[ "${COLS:-0}" -ge 60 ] 2>/dev/null || COLS=80
+
+# uma linha de dado: rótulo à esquerda, valor à direita
+row() { printf '   %s[36m%-13s%s[0m %s%s[K\n' "$ESC" "$1" "$ESC" "$2" "$ESC"; }
+# barra de largura total, com o texto de cada lado
+bar() { # cor esquerda direita
+	local pad=$((COLS - ${#2} - ${#3} - 2))
+	[ "$pad" -lt 1 ] && pad=1
+	printf '%s[%sm %s%*s%s %s[0m\n' "$ESC" "$1" "$2" "$pad" "" "$3" "$ESC"
+}
+
+env_value() { # chave do /data/worker.env, sem aspas; o token nunca é lido
+	sed -n "s/^$1=//p" /data/worker.env 2>/dev/null | head -n 1 | tr -d "\"'"
+}
+
+draw() {
+	local release slot board cpu cores mem ip up node controller worker
+	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
+	cpu=$(sed -n 's/^\(model name\|Hardware\)[ \t]*: //p' /proc/cpuinfo | head -n 1)
+	cores=$(grep -c '^processor' /proc/cpuinfo)
+	mem=$(awk '/^MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo)
+	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s (%s)", sep, $4, $2; sep = ", " }')
+	up=$(awk '{ s = int($1); printf "%dd %02dh %02dm", s / 86400, (s % 86400) / 3600, (s % 3600) / 60 }' /proc/uptime)
+	node=$(env_value AI_CLUSTER_NODE_ID)
+	controller=$(env_value AI_CLUSTER_CONTROLLER)
+	if pidof ai-cluster-worker >/dev/null 2>&1; then
+		worker="${ESC}[32mem execucao${ESC}[0m"
+	else
+		worker="${ESC}[31mparado${ESC}[0m"
+	fi
+
+	printf '%s[H' "$ESC"
+	bar '1;37;44' "Real.AI.Cluster" "AI Cluster OS $release"
+	printf '%s[K\n' "$ESC"
+	printf '   o---o        %s[1mAI Cluster OS%s[0m %s%s[K\n' "$ESC" "$ESC" "$release" "$ESC"
+	printf '  / \\ / \\       IA distribuida em hardware comum%s[K\n' "$ESC"
+	printf ' o---o---o      slot %s%s[K\n' "${slot:-?}" "$ESC"
+	printf '  \\ / \\ /%s[K\n' "$ESC"
+	printf '   o---o%s[K\n' "$ESC"
+	printf '%s[K\n' "$ESC"
+	row "No"          "${node:-$(hostname)}"
+	row "Hardware"    "${board:-?}  ${cores:-?} nucleo(s)  ${mem:-?}"
+	row "Processador" "${cpu:-?}"
+	row "Rede"        "${ip:-sem endereco}"
+	row "Controller"  "${controller:-nao configurado}"
+	row "Worker"      "$worker"
+	row "Ativo ha"    "$up"
+	printf '%s[K\n' "$ESC"
+	printf '   Para administrar este no, use o ai-cluster a partir de outra maquina%s[K\n' "$ESC"
+	printf '   (ai-cluster --controller %s nodes).%s[K\n' "${controller:-URL}" "$ESC"
+	printf '%s[J' "$ESC"
+	# rodapé na última linha
+	printf '%s[999;1H' "$ESC"
+	bar '30;47' "<F2> Registros" "<F12> Reiniciar/Desligar"
+	printf '%s[A' "$ESC"
+}
+
+# Lê uma tecla; F2 e F12 chegam como sequências de escape. Devolve: f2, f12, esc ou o caractere.
+key() { # espera em segundos
+	local k seq=
+	IFS= read -rsn1 -t "$1" k || return 1
+	if [ "$k" = "$ESC" ]; then
+		while IFS= read -rsn1 -t 1 c; do
+			seq="$seq$c"
+			case "$seq" in
+			'[[B' | OQ) echo f2; return 0 ;;
+			'[24~') echo f12; return 0 ;;
+			esac
+			[ ${#seq} -ge 4 ] && break
+		done
+		echo esc
+	else
+		echo "$k"
+	fi
+}
+
+screen_logs() {
+	printf '%s[2J%s[H' "$ESC" "$ESC"
+	bar '1;37;44' "Registros do worker" "qualquer tecla volta"
+	tail -n $(($(stty size | cut -d' ' -f1) - 3)) /var/log/ai-cluster-worker.log 2>/dev/null | cut -c1-"$COLS"
+	IFS= read -rsn1 _
+	printf '%s[2J' "$ESC"
+}
+
+screen_power() {
+	printf '%s[2J%s[H' "$ESC" "$ESC"
+	bar '1;37;44' "Reiniciar ou desligar" ""
+	printf '\n   [R] Reiniciar este no\n   [D] Desligar este no\n   Outra tecla cancela.\n'
+	case "$(key 30)" in
+	r | R) printf '\n   Reiniciando...\n'; reboot; sleep 60 ;;
+	d | D) printf '\n   Desligando...\n'; poweroff; sleep 60 ;;
+	esac
+	printf '%s[2J' "$ESC"
+}
+
+printf '%s[2J' "$ESC"
+while :; do
+	draw
+	case "$(key 5)" in
+	f2) screen_logs ;;
+	f12) screen_power ;;
+	esac
+done
