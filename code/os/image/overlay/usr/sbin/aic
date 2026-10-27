@@ -1,0 +1,71 @@
+#!/bin/sh
+# aic - a porta de entrada das ferramentas do no (AI Cluster OS). Um comando, subcomandos, --help em
+# todos. O software do cluster (ai-cluster, ai-cluster-worker...) e outro conjunto: veja `aic help`.
+
+usage() {
+	cat <<'USO'
+aic - ferramentas deste no do AI Cluster OS
+
+uso: aic <comando> [opcoes]
+
+comandos:
+  status            resumo do no: papel, estado do worker, controller, registro, versao e slot
+  role [--short]    o papel do no no cluster (so a configuracao local)
+  version           versao do sistema, placa e slot em uso
+  logs [-f]         ultimos registros do worker (-f acompanha)
+  update            estado da ultima atualizacao (somente leitura)
+  passwd [--remove] define ou remove a senha do console do monitor (root)
+  help              esta ajuda
+
+Cada comando aceita --help. Para o cluster inteiro (nos, topologia, rollout) use, de outra maquina:
+  ai-cluster --controller <url> topology
+USO
+}
+
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+help | -h | --help)
+	usage
+	;;
+status)
+	case "${1:-}" in -h | --help) echo "uso: aic status   (o mesmo que aic role, sem --short)"; exit 0 ;; esac
+	exec /usr/sbin/aic-role
+	;;
+role)
+	exec /usr/sbin/aic-role "$@"
+	;;
+version)
+	case "${1:-}" in -h | --help) echo "uso: aic version"; exit 0 ;; esac
+	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	echo "AI Cluster OS $(cat /etc/aic-release 2>/dev/null || echo dev)  placa ${board:-?}  slot ${slot:-?}"
+	;;
+logs)
+	case "${1:-}" in
+	-h | --help) echo "uso: aic logs [-f]   (registros do worker; -f acompanha)"; exit 0 ;;
+	-f) exec tail -f /var/log/ai-cluster-worker.log ;;
+	*) exec tail -n 50 /var/log/ai-cluster-worker.log ;;
+	esac
+	;;
+update)
+	case "${1:-}" in -h | --help) echo "uso: aic update   (estado da ultima atualizacao; somente leitura)"; exit 0 ;; esac
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	echo "versao $(cat /etc/aic-release 2>/dev/null || echo dev)  slot ${slot:-?}"
+	if [ -r /data/state/update-result ]; then
+		echo "ultimo resultado:"
+		sed 's/^/  /' /data/state/update-result
+	else
+		echo "sem registro de atualizacao neste no"
+	fi
+	;;
+passwd)
+	exec /usr/sbin/aic-passwd "$@"
+	;;
+*)
+	echo "aic: comando desconhecido: $cmd" >&2
+	usage >&2
+	exit 2
+	;;
+esac

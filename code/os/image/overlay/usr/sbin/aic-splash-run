@@ -1,0 +1,60 @@
+#!/bin/sh
+# Tela de carregamento do AI Cluster OS: o logotipo e uma barra de progresso real no tty2, desde o
+# começo do boot. O progresso é a fração de serviços já iniciados sobre os dos runlevels sysinit,
+# boot e default. Termina quando o aic-console assume o tty1 (/run/aic-console.up) ou ao receber
+# TERM. Sempre sai com 0: um erro aqui nunca pode atrasar o boot.
+
+usage() {
+	cat <<'USO'
+aic-splash-run - tela de carregamento (logotipo e progresso no tty2)
+
+uso interno: iniciado pelo servico aic-splash no sysinit; termina quando o aic-console assume o tty1.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
+# No tty2: o OpenRC escreve no tty1 (que e o /dev/console no Orange Pi) e sujaria a tela. O splash
+# troca para o tty2 e o aic-console volta para o tty1 quando assume.
+TTY=/dev/tty2
+[ -c "$TTY" ] || exit 0
+exec >"$TTY" 2>&1 </dev/null
+trap 'exit 0' TERM INT
+
+dmesg -n 1 2>/dev/null
+chvt 2 2>/dev/null
+. /usr/lib/aic/ui.sh
+term_size
+term_margins
+tty_enter
+
+total=0
+for level in sysinit boot default; do
+	n=$(ls "/etc/runlevels/$level" 2>/dev/null | wc -l)
+	total=$((total + n))
+done
+[ "$total" -gt 0 ] || total=1
+release=$(cat /etc/aic-release 2>/dev/null || echo dev)
+
+printf '%s[2J' "$ESC"
+top=$((LINES_N / 2 - 8))
+[ "$top" -lt 1 ] && top=1
+logo "$top" $(((COLS_N - 11) / 2 + 1))
+center $((top + 6)) "${ESC}[1;97m" "AI Cluster OS"
+center $((top + 7)) "$C_TEXT" "IA distribuida em hardware comum"
+center $((top + 8)) "$C_HINT" "versao $release"
+
+width=40
+[ "$COLS_N" -lt 60 ] && width=$((COLS_N - 20))
+bar_col=$(((COLS_N - width - 5) / 2 + 1))
+while [ ! -e /run/aic-console.up ]; do
+	started=$(ls /run/openrc/started 2>/dev/null | wc -l)
+	pct=$((started * 100 / total))
+	[ "$pct" -gt 99 ] && pct=99
+	last=$(ls -t /run/openrc/started 2>/dev/null | head -n 1 | cut -c1-30)
+	at $((top + 11)) "$bar_col"
+	printf '%s %3d%%%s' "$(progress "$pct" "$width")" "$pct" "$ESC[K"
+	at $((top + 12)) "$bar_col"
+	printf '%siniciando: %s%s%s' "$C_HINT" "${last:--}" "$ESC[K" "$C_RESET"
+	sleep 1
+done
+exit 0

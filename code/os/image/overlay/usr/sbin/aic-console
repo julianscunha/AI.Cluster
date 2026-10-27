@@ -1,86 +1,66 @@
 #!/bin/sh
-# Console do AI Cluster OS no monitor (tty1): a tela de estado do nó, no estilo do DCUI do ESXi.
-# Só mostra e só oferece o que não precisa de senha: estado, registros e reiniciar/desligar.
-# Acesso de administração é por SSH (chave) ou pelo ai-cluster no controller; não há shell aqui.
-#   F2  registros do worker      F12  reiniciar ou desligar
-# ASCII puro: vale para o console do kernel e para a serial.
+# Console do AI Cluster OS no monitor (tty1), no estilo do DCUI do ESXi: uma tela de repouso parada,
+# <F2> para entrar (login) no menu "Personalizar o sistema" e <F12> para reiniciar ou desligar.
+#
+# Sem redesenho periódico: a tela é montada em memória a cada 5 s e só vai ao terminal quando o
+# conteúdo mudou. A senha do console é opcional (/data/console-pass, definida por SSH com
+# `aic-passwd`); sem ela, F2 e F12 abrem direto e a tela avisa. Não há shell neste console:
+# cada item do menu chama um comando fixo.
 
-ESC=$(printf '\033')
+usage() {
+	cat <<'USO'
+aic-console - console do monitor (tty1): tela de repouso, login e menu
+
+uso interno: iniciado pelo init no tty1 (respawn); nao e para rodar a mao.
+  <F2>   login e menu "Personalizar o sistema" (registros, rede, worker, energia, atualizacao)
+  <F12>  reiniciar ou desligar
+Variavel: AIC_CONSOLE_ASCII=1 desenha so em ASCII (serial). A senha vem do aic-passwd.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
+. /usr/lib/aic/ui.sh
+
 export TERM=linux
+PASSFILE=/data/console-pass
+FAILFILE=/run/aic-console-fail
+
 dmesg -n 1 2>/dev/null
-printf '%s[?25l' "$ESC"
-trap 'printf "%s[?25h%s[0m%s[2J%s[H" "$ESC" "$ESC" "$ESC" "$ESC"' EXIT
+# a tela de carregamento termina quando o console assume o tty1
+: > /run/aic-console.up 2>/dev/null
+chvt 1 2>/dev/null
+[ -r /run/aic-splash.pid ] && kill "$(cat /run/aic-splash.pid)" 2>/dev/null
+
+trap 'printf "%s[?7h%s[?25h%s[0m%s[2J%s[H" "$ESC" "$ESC" "$ESC" "$ESC" "$ESC"' EXIT
 trap 'exit 0' INT TERM
 
-COLS=$(stty size 2>/dev/null | cut -d' ' -f2)
-[ "${COLS:-0}" -ge 60 ] 2>/dev/null || COLS=80
+term_size
+term_margins
+tty_enter
 
-# uma linha de dado: rótulo à esquerda, valor à direita
-row() { printf '   %s[36m%-13s%s[0m %s%s[K\n' "$ESC" "$1" "$ESC" "$2" "$ESC"; }
-# barra de largura total, com o texto de cada lado
-bar() { # cor esquerda direita
-	local pad=$((COLS - ${#2} - ${#3} - 2))
-	[ "$pad" -lt 1 ] && pad=1
-	printf '%s[%sm %s%*s%s %s[0m\n' "$ESC" "$1" "$2" "$pad" "" "$3" "$ESC"
-}
-
-env_value() { # chave do /data/worker.env, sem aspas; o token nunca é lido
+# valor de uma chave do worker.env, sem aspas e sem controle; o token nunca é lido
+env_value() {
 	sed -n "s/^$1=//p" /data/worker.env 2>/dev/null | head -n 1 | tr -d "\"'" | tr -d '\000-\037\177'
 }
 
-draw() {
-	local release slot board cpu cores mem ip up node controller worker
-	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
-	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
-	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
-	cpu=$(sed -n 's/^\(model name\|Hardware\)[ \t]*: //p' /proc/cpuinfo | head -n 1)
-	cores=$(grep -c '^processor' /proc/cpuinfo)
-	mem=$(awk '/^MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo)
-	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s (%s)", sep, $4, $2; sep = ", " }')
-	node=$(env_value AI_CLUSTER_NODE_ID)
-	controller=$(env_value AI_CLUSTER_CONTROLLER)
-	if pidof ai-cluster-worker >/dev/null 2>&1; then
-		worker="${ESC}[32mem execucao${ESC}[0m"
-	else
-		worker="${ESC}[31mparado${ESC}[0m"
-	fi
+has_password() { [ -s "$PASSFILE" ]; }
 
-	printf '%s[H' "$ESC"
-	bar '1;37;44' "Real.AI.Cluster" "AI Cluster OS $release"
-	printf '%s[K\n' "$ESC"
-	printf '   o---o        %s[1mAI Cluster OS%s[0m %s%s[K\n' "$ESC" "$ESC" "$release" "$ESC"
-	printf '  / \\ / \\       IA distribuida em hardware comum%s[K\n' "$ESC"
-	printf ' o---o---o      slot %s%s[K\n' "${slot:-?}" "$ESC"
-	printf '  \\ / \\ /%s[K\n' "$ESC"
-	printf '   o---o%s[K\n' "$ESC"
-	printf '%s[K\n' "$ESC"
-	row "No"          "${node:-$(hostname)}"
-	row "Papel"       "$(/usr/sbin/aic-role --short)"
-	row "Hardware"    "${board:-?}  ${cores:-?} nucleo(s)  ${mem:-?}"
-	row "Processador" "${cpu:-?}"
-	row "Rede"        "${ip:-sem endereco}"
-	row "Controller"  "${controller:-nao configurado}"
-	row "Worker"      "$worker"
-	printf '%s[K\n' "$ESC"
-	printf '   Para administrar este no, use o ai-cluster a partir de outra maquina%s[K\n' "$ESC"
-	printf '   (ai-cluster --controller %s nodes).%s[K\n' "${controller:-URL}" "$ESC"
-	printf '%s[J' "$ESC"
-	# rodapé na última linha
-	printf '%s[999;1H' "$ESC"
-	bar '30;47' "<F2> Registros" "<F12> Reiniciar/Desligar"
-	printf '%s[A' "$ESC"
-}
-
-# Lê uma tecla; F2 e F12 chegam como sequências de escape. Devolve: f2, f12, esc ou o caractere.
+# Lê uma tecla e devolve um nome: f2, f12, up, down, enter, esc ou o próprio caractere.
 key() { # espera em segundos
-	local k seq=
+	local k c seq=
 	IFS= read -rsn1 -t "$1" k || return 1
+	if [ -z "$k" ]; then
+		echo enter
+		return 0
+	fi
 	if [ "$k" = "$ESC" ]; then
 		while IFS= read -rsn1 -t 1 c; do
 			seq="$seq$c"
 			case "$seq" in
 			'[[B' | OQ) echo f2; return 0 ;;
 			'[24~') echo f12; return 0 ;;
+			'[A') echo up; return 0 ;;
+			'[B') echo down; return 0 ;;
 			esac
 			[ ${#seq} -ge 4 ] && break
 		done
@@ -90,37 +70,274 @@ key() { # espera em segundos
 	fi
 }
 
-screen_logs() {
-	printf '%s[2J%s[H' "$ESC" "$ESC"
-	bar '1;37;44' "Registros do worker" "qualquer tecla volta"
-	tail -n $(($(stty size | cut -d' ' -f1) - 3)) /var/log/ai-cluster-worker.log 2>/dev/null | cut -c1-"$COLS"
-	IFS= read -rsn1 _
-	printf '%s[2J' "$ESC"
+# ---------- tela de repouso ----------
+
+# Uma linha de status dentro do painel: bolinha colorida, rótulo e valor (cortado para caber).
+statline() { # linha coluna-do-painel largura cor-da-bolinha rótulo valor
+	local value
+	value=$(printf '%s' "$6" | cut -c1-$(($3 - 18)))
+	at "$1" $(($2 + 2))
+	printf '%s%s %s%-12s%s%s%s' "$4" "$G_NODE" "$C_LOGO" "$5" "$C_VALUE" "$value" "$C_RESET"
 }
 
-screen_power() {
-	printf '%s[2J%s[H' "$ESC" "$ESC"
-	bar '1;37;44' "Reiniciar ou desligar" ""
-	printf '\n   [R] Reiniciar este no\n   [D] Desligar este no\n   Outra tecla cancela.\n'
-	case "$(key 30)" in
-	r | R) printf '\n   Reiniciando...\n'; reboot; sleep 60 ;;
-	d | D) printf '\n   Desligando...\n'; poweroff; sleep 60 ;;
+draw() {
+	local release slot board cpu cores mem ip node controller worker registered role
+	local dot_worker dot_net dot_reg ip_short top b pc pw
+	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
+	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
+	cpu=$(sed -n 's/^\(model name\|Hardware\)[ \t]*: //p' /proc/cpuinfo | head -n 1)
+	cores=$(grep -c '^processor' /proc/cpuinfo)
+	mem=$(awk '/^MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo)
+	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s (%s)", sep, $4, $2; sep = ", " }')
+	ip_short=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR == 1 { sub("/.*", "", $4); print $4 }')
+	node=$(env_value AI_CLUSTER_NODE_ID)
+	controller=$(env_value AI_CLUSTER_CONTROLLER)
+	role=$(/usr/sbin/aic-role --short)
+	registered=$(/usr/sbin/aic-role | sed -n 's/^Registrado: *//p')
+	if pidof ai-cluster-worker >/dev/null 2>&1; then
+		worker="em execucao"
+		dot_worker=$C_OK
+	else
+		worker="parado"
+		dot_worker=$C_BAD
+	fi
+	if [ -n "$ip" ]; then dot_net=$C_OK; else dot_net=$C_BAD; fi
+	case "$registered" in
+	sim*) dot_reg=$C_OK ;;
+	*) dot_reg=$C_WARN ;;
 	esac
-	printf '%s[2J' "$ESC"
+
+	printf '%s[H%s[2J' "$ESC" "$ESC"
+	band 1 "$C_BAR" "AI Cluster OS $release" "${node:-$(hostname)}  ${ip_short:-sem rede}"
+
+	# o painel de estado: 70 colunas, centrado no bloco de 80
+	pw=70
+	[ "$COLS_N" -lt 76 ] && pw=$((COLS_N - 6))
+	pc=$((MX + (80 - pw) / 2 + 1))
+	top=$((MY + 3))
+	if [ "$LINES_N" -ge 24 ]; then
+		logo "$top" $((MX + 8))
+		at $((top + 1)) $((MX + 28)); printf '%sAI Cluster OS%s' "${ESC}[1;97m" "$C_RESET"
+		at $((top + 2)) $((MX + 28)); printf '%sIA distribuida em hardware comum%s' "$C_TEXT" "$C_RESET"
+		at $((top + 3)) $((MX + 28)); printf '%sReal.AI.Cluster%s' "$C_LOGO" "$C_RESET"
+		at $((top + 4)) $((MX + 28)); printf '%sversao %s  -  slot %s%s' "$C_HINT" "$release" "${slot:-?}" "$C_RESET"
+		b=$((top + 6))
+	else
+		b=$top
+	fi
+	box "$b" "$pc" "$pw" 8 "Estado do no"
+	statline $((b + 1)) "$pc" "$pw" "$C_OK" "Papel" "$role"
+	statline $((b + 2)) "$pc" "$pw" "$dot_worker" "Worker" "$worker"
+	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "${ip:-sem endereco}"
+	statline $((b + 4)) "$pc" "$pw" "$C_OK" "Hardware" "${board:-?}  ${cores:-?} nucleo(s)  ${mem:-?}"
+	statline $((b + 5)) "$pc" "$pw" "$C_OK" "Controller" "${controller:-nao configurado}"
+	statline $((b + 6)) "$pc" "$pw" "$dot_reg" "Registro" "${registered:-?}"
+
+	if [ "$LINES_N" -ge 22 ]; then
+		at $((b + 9)) "$pc"; printf '%sPara gerenciar este no use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
+		at $((b + 10)) $((pc + 2)); printf '%sai-cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
+		at $((b + 11)) "$pc"; printf '%sNeste no:%s  %saic help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
+	fi
+	if ! has_password; then
+		at $((LINES_N - 1)) "$pc"
+		printf '%sConsole sem senha: defina por SSH com  aic passwd%s' "$C_WARN" "$C_RESET"
+	fi
+	band "$LINES_N" "$C_FOOT" "<F2> Login / Personalizar" "<F12> Reiniciar / Desligar"
 }
+
+# ---------- telas secundárias ----------
+
+page() { # título
+	term_size
+	printf '%s[H%s[2J' "$ESC" "$ESC"
+	band 1 "$C_BAR" "$1" "$(hostname)"
+}
+
+pause_key() {
+	at "$LINES_N" 1
+	printf '%s %-*s%s' "$C_FOOT" $((COLS_N - 1)) "Qualquer tecla volta" "$C_RESET"
+	key 120 >/dev/null
+}
+
+# Confirma com s/n; qualquer outra tecla cancela.
+confirm() { # pergunta
+	at $((LINES_N - 3)) 4
+	printf '%s%s [s/N] %s' "$C_WARN" "$1" "$C_RESET"
+	case "$(key 30)" in s | S) return 0 ;; *) return 1 ;; esac
+}
+
+# Pede a senha. Devolve 0 se confere (ou se não há senha), 1 se não. Três erros seguidos travam a
+# entrada por 30 s, dobrando a cada nova rodada de três.
+login() {
+	has_password || return 0
+	local tries=0 pw hash salt calc fails delay
+	while [ "$tries" -lt 3 ]; do
+		page "Autenticacao do console"
+		at 4 4; printf '%sInforme a senha do console.%s' "$C_TEXT" "$C_RESET"
+		at 6 4; printf '%sSenha:%s ' "$C_LOGO" "$C_RESET"
+		printf '%s[?25h' "$ESC"
+		pw=
+		IFS= read -rs -t 60 pw
+		printf '%s[?25l' "$ESC"
+		[ -n "$pw" ] || return 1
+		hash=$(cat "$PASSFILE" 2>/dev/null)
+		salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+		calc=$(printf '%s' "$pw" | openssl passwd -6 -stdin -salt "$salt" 2>/dev/null)
+		pw=
+		if [ -n "$calc" ] && [ "$calc" = "$hash" ]; then
+			rm -f "$FAILFILE"
+			return 0
+		fi
+		tries=$((tries + 1))
+		fails=$(( $(cat "$FAILFILE" 2>/dev/null || echo 0) + 1 ))
+		echo "$fails" > "$FAILFILE"
+		at 8 4; printf '%sSenha incorreta.%s' "$C_BAD" "$C_RESET"
+		sleep 2
+	done
+	delay=$((30 * (1 << (($(cat "$FAILFILE" 2>/dev/null || echo 3) / 3) - 1))))
+	[ "$delay" -gt 300 ] && delay=300
+	page "Autenticacao do console"
+	at 4 4; printf '%sMuitas tentativas. Aguarde %s s.%s' "$C_BAD" "$delay" "$C_RESET"
+	sleep "$delay"
+	return 1
+}
+
+act_logs() {
+	page "Registros do worker"
+	tail -n $((LINES_N - 3)) /var/log/ai-cluster-worker.log 2>/dev/null | cut -c1-"$((COLS_N - 2))" | sed 's/[^[:print:]]/ /g' | {
+		local r=2
+		while IFS= read -r line; do
+			at "$r" 2; printf '%s%s' "$C_TEXT" "$line"
+			r=$((r + 1))
+		done
+	}
+	pause_key
+}
+
+act_network() {
+	page "Rede (somente leitura)"
+	local r=3
+	{
+		ip -4 -o addr show 2>/dev/null | awk '{ print $2 "  " $4 }'
+		ip route 2>/dev/null | head -n 4
+		sed -n 's/^nameserver /dns  /p' /etc/resolv.conf 2>/dev/null | head -n 3
+	} | sed 's/[^[:print:]]/ /g' | while IFS= read -r line; do
+		at "$r" 4; printf '%s%s%s' "$C_VALUE" "$line" "$C_RESET"
+		r=$((r + 1))
+	done
+	pause_key
+}
+
+act_update() {
+	page "Atualizacao do sistema"
+	at 3 4; printf '%sVersao:%s %s   %sslot:%s %s' "$C_LOGO" "$C_VALUE" "$(cat /etc/aic-release 2>/dev/null)" "$C_LOGO" "$C_VALUE" "$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)"
+	local r=5 line
+	if [ -r /data/state/update-result ]; then
+		at 4 4; printf '%sUltimo resultado:%s' "$C_LOGO" "$C_RESET"
+		head -n 8 /data/state/update-result | sed 's/[^[:print:]]/ /g' | while IFS= read -r line; do
+			at "$r" 6; printf '%s%s%s' "$C_TEXT" "$line" "$C_RESET"
+			r=$((r + 1))
+		done
+	else
+		at 5 4; printf '%sSem registro de atualizacao neste no.%s' "$C_TEXT" "$C_RESET"
+	fi
+	pause_key
+}
+
+act_restart_worker() {
+	page "Reiniciar o worker"
+	if confirm "Reiniciar o servico ai-cluster-worker?"; then
+		at 5 4; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"
+		if rc-service ai-cluster-worker restart >/dev/null 2>&1; then
+			at 6 4; printf '%sConcluido.%s' "$C_OK" "$C_RESET"
+		else
+			at 6 4; printf '%sFalhou; veja os registros do worker.%s' "$C_BAD" "$C_RESET"
+		fi
+		sleep 2
+	fi
+}
+
+act_reboot() {
+	page "Reiniciar este no"
+	if confirm "Reiniciar este no agora?"; then
+		at 5 4; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"
+		reboot
+		sleep 60
+	fi
+}
+
+act_poweroff() {
+	page "Desligar este no"
+	if confirm "Desligar este no agora?"; then
+		at 5 4; printf '%sDesligando...%s' "$C_TEXT" "$C_RESET"
+		poweroff
+		sleep 60
+	fi
+}
+
+# O menu "Personalizar o sistema": setas ou número escolhem, Enter abre, Esc volta.
+menu() {
+	local sel=1 total=6 i k label
+	while :; do
+		page "Personalizar o sistema"
+		i=1
+		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o worker" "Reiniciar este no" "Desligar este no" "Atualizacao do sistema"; do
+			at $((3 + i)) 6
+			if [ "$i" -eq "$sel" ]; then
+				printf '%s %d. %-40s%s' "$C_FOOT" "$i" "$label" "$C_RESET"
+			else
+				printf '%s %d. %-40s%s' "$C_VALUE" "$i" "$label" "$C_RESET"
+			fi
+			i=$((i + 1))
+		done
+		at "$LINES_N" 1
+		printf '%s %-*s%s' "$C_FOOT" $((COLS_N - 1)) "Setas ou numero escolhem   Enter abre   Esc volta" "$C_RESET"
+		k=$(key 120) || return 0
+		case "$k" in
+		up) [ "$sel" -gt 1 ] && sel=$((sel - 1)) ;;
+		down) [ "$sel" -lt "$total" ] && sel=$((sel + 1)) ;;
+		[1-6]) sel=$k; k=enter ;;
+		esc) return 0 ;;
+		esac
+		if [ "$k" = enter ]; then
+			case "$sel" in
+			1) act_logs ;;
+			2) act_network ;;
+			3) act_restart_worker ;;
+			4) act_reboot ;;
+			5) act_poweroff ;;
+			6) act_update ;;
+			esac
+		fi
+	done
+}
+
+power_dialog() {
+	page "Reiniciar ou desligar"
+	at 4 6; printf '%s[R]%s Reiniciar este no' "$C_LOGO" "$C_RESET"
+	at 5 6; printf '%s[D]%s Desligar este no' "$C_LOGO" "$C_RESET"
+	at 7 6; printf '%sOutra tecla cancela.%s' "$C_HINT" "$C_RESET"
+	case "$(key 30)" in
+	r | R) at 9 6; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"; reboot; sleep 60 ;;
+	d | D) at 9 6; printf '%sDesligando...%s' "$C_TEXT" "$C_RESET"; poweroff; sleep 60 ;;
+	esac
+}
+
+# ---------- laço principal ----------
 
 printf '%s[2J' "$ESC"
-# Sem redesenho periódico: a tela é montada em memória a cada 5 s e só vai ao terminal quando o
-# conteúdo mudou (o IP que aparece depois do boot, o worker que cai). Nada pisca enquanto nada muda.
 shown=
 while :; do
+	term_size
+	term_margins
 	screen=$(draw)
 	if [ "$screen" != "$shown" ]; then
 		printf '%s' "$screen"
 		shown=$screen
 	fi
 	case "$(key 5)" in
-	f2) screen_logs; shown= ;;
-	f12) screen_power; shown= ;;
+	f2) login && menu; shown= ;;
+	f12) login && power_dialog; shown= ;;
 	esac
 done

@@ -21,6 +21,15 @@ type: sistema/moc
 
 A documentação descreve **como o sistema é e como usá-lo**, não como foi construído: sem fases, histórico, evidências de laboratório nem nomes ou endereços de máquinas de teste. Capacidade que ainda não existe aparece uma vez, como `> Planejado: …`.
 
+## Nomes de comandos
+
+Dois prefixos, cada um com um papel:
+
+- **`ai-cluster*`** é o software do cluster, o que o operador instala e roda: a CLI `ai-cluster` e os binários `ai-cluster-controller`, `ai-cluster-worker`, `ai-cluster-gateway` e `ai-cluster-benchmark`.
+- **`aic-*`** são as ferramentas do SO do nó, que só existem dentro da imagem. A porta de entrada é o comando único `aic <subcomando>`; as ferramentas internas (`aic-console`, `aic-updater`, `aic-update-request`, `aic-splash-run`) são chamadas pelo sistema, não à mão.
+
+Todo comando aceita `--help`.
+
 ## Arquivos e links
 
 - Nomes em kebab-case, ASCII, pt-br sem acento. O título com acento vai no frontmatter.

@@ -4,6 +4,18 @@
 #   aic-role --short  uma linha, para o console
 # Quem aprova o nó é o controller: confira lá com `ai-cluster nodes` (coluna CONFIANÇA).
 
+usage() {
+	cat <<'USO'
+aic-role - diz o papel deste no no cluster, lendo so a configuracao local
+
+uso: aic-role [--short]
+  sem argumento   resumo: no, papel, estado do worker, controller, registro, versao e slot
+  --short         so o papel, em uma linha (e o que o console mostra)
+A estrutura do cluster e a aprovacao dos nos sao do controller: ai-cluster topology.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
 ENV_FILE=${AIC_WORKER_ENV:-/data/worker.env}
 CMDLINE=${AIC_CMDLINE:-/proc/cmdline}
 
@@ -20,7 +32,7 @@ if grep -q 'aic\.controller=' "$CMDLINE" 2>/dev/null || [ "$(value AI_CLUSTER_PR
 	role="recuperacao (so presenca: registra e responde, nao recebe trabalho)"
 else
 	role="worker de computacao"
-	[ -n "$model_dir" ] && role="$role + hospeda fatias de modelo (cache ${cache_mb:-2048} MB)"
+	[ -n "$model_dir" ] && role="$role + fatias de modelo (${cache_mb:-2048} MB)"
 fi
 
 if [ "$1" = "--short" ]; then

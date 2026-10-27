@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# Tela de carregamento do AI Cluster OS (logotipo e progresso no tty1). Roda em segundo plano e nunca
+# bloqueia o boot.
+name="aic-splash"
+description="Tela de carregamento do AI Cluster OS"
+command="/usr/sbin/aic-splash-run"
+command_background=true
+pidfile="/run/aic-splash.pid"
+
+depend() {
+	# Sem `before *`: ele criaria um ciclo (precisa do devfs e quereria rodar antes dele). A tela de
+	# carregamento começa assim que /dev existe; o resto do sysinit segue em paralelo.
+	need devfs
+	after mdev sysfs procfs
+}

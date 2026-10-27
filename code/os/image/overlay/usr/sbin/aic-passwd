@@ -1,0 +1,46 @@
+#!/bin/sh
+# Define (ou remove) a senha do console do monitor (F2 e F12 no tty1). Rode como root, por SSH:
+#   aic-passwd            pede a senha duas vezes
+#   aic-passwd --remove   tira a senha (o console volta a abrir sem login)
+# A senha vai para /data/console-pass como hash SHA-512 com sal (openssl passwd -6); nunca em claro.
+usage() {
+	cat <<'USO'
+aic-passwd - define ou remove a senha do console do monitor (F2 e F12 no tty1)
+
+uso: aic-passwd [--remove]
+  sem argumento   pede a senha duas vezes (8 caracteres ou mais, ASCII)
+  --remove        tira a senha; o console volta a abrir sem login
+Rode como root, por SSH. A senha fica em /data/console-pass como hash SHA-512 com sal.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
+FILE=/data/console-pass
+
+[ "$(id -u)" = 0 ] || { echo "rode como root" >&2; exit 1; }
+
+if [ "$1" = "--remove" ]; then
+	rm -f "$FILE"
+	echo "senha do console removida"
+	exit 0
+fi
+
+printf 'Nova senha do console: '
+IFS= read -rs p1
+echo
+printf 'Repita a senha: '
+IFS= read -rs p2
+echo
+
+[ "$p1" = "$p2" ] || { echo "as senhas nao conferem" >&2; exit 1; }
+[ "${#p1}" -ge 8 ] || { echo "use ao menos 8 caracteres" >&2; exit 1; }
+# o console le a senha byte a byte: so ASCII imprimivel, para o hash bater sempre
+case "$p1" in
+*[!\ -~]*) echo "use so caracteres ASCII imprimiveis" >&2; exit 1 ;;
+esac
+
+salt=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)
+hash=$(printf '%s' "$p1" | openssl passwd -6 -stdin -salt "$salt") || exit 1
+umask 077
+printf '%s\n' "$hash" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE" || exit 1
+echo "senha do console definida"

@@ -3,6 +3,17 @@
 # assinatura e a versão antes de pedir: sem isso um controller malicioso seguraria o worker fora do
 # cluster com uma release inventada. Quem de fato verifica de novo e grava o slot é o aic-updater (root).
 # `--verify` só confere (o worker chama antes de drenar) e não grava o pedido.
+usage() {
+	cat <<'USO'
+aic-update-request - o worker pede uma atualizacao (confere a assinatura antes)
+
+uso interno: aic-update-request [--verify] <versao> <url> <sha256> <sha256-da-imagem> <assinatura>
+  --verify   so confere a assinatura e a versao (o worker chama antes de drenar); nao grava o pedido
+Quem aplica e o aic-updater.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
 verify=; [ "$1" = --verify ] && { verify=1; shift; }
 [ $# -eq 5 ] || exit 2
 . /etc/aic-board   # board=…

@@ -2,6 +2,17 @@
 # Aplica a release pedida (F19): confere a assinatura, baixa para /data, confere o SHA-256, grava o
 # slot inativo, relê o slot e compara com a medida assinada, marca-o em teste (aic_try) e reinicia.
 # A confirmação e o rollback são do u-boot e do aic-slot-commit.
+usage() {
+	cat <<'USO'
+aic-updater - aplica a release pedida pelo controller (atualizacao A/B)
+
+uso interno: roda como servico (root); le /data/state/update-request, confere a assinatura e o
+SHA-256, grava o slot inativo, marca-o em teste e reinicia. Sem argumentos.
+Para ver o estado: aic update.
+USO
+}
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
 REQ=/data/state/update-request
 DL=/data/.update   # só do root: o worker grava em /data/state, não aqui
 PUBS=/etc/aic-release.d   # uma ou mais públicas (rotação): vale se qualquer uma confere
