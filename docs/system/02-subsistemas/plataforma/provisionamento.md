@@ -15,6 +15,7 @@ Provisionamento é o caminho de uma máquina até ser um nó do cluster. Hoje el
 |---|---|---|
 | Worker sobre Linux existente | Máquina com Linux já instalado, com systemd ou sem | `os/bootstrap.sh` como root. Ver [[ai-cluster-os]]. |
 | Imagem em cartão | Placa armv7 com o AI Cluster OS | `install-disk.py` grava a imagem a partir de um ambiente em memória. |
+| Imagem em disco x86_64 | PC, notebook ou servidor UEFI | `x86/install-disk.sh` grava a imagem GPT (ESP, slots A/B, dados) a partir de qualquer Linux; apaga o disco inteiro. |
 | Boot pela rede | Placa armv7 que já tem um sistema qualquer | `install-netboot.sh`, com retorno ao cartão. |
 
 Em qualquer caminho, o worker chama o controller com o token de join e recebe uma credencial. A máquina entra pendente, e o operador aprova com `ai-cluster approve`. Ver [[seguranca]].
@@ -47,6 +48,6 @@ Sem reinstalação, a máquina continua com o Linux que já tinha, e pacotes e c
 
 - **Aprovação manual de cada nó.** Não há enrollment automático.
 - **Sem reinstalação pelo cluster.** Reinstalar um nó é trabalho do operador, com cartão ou boot de rede.
-- **Imagem só para armv7.** Outras arquiteturas entram pelo caminho de bootstrap, que depende do Linux já instalado.
+- **Imagem para armv7 e x86_64.** ARM64 entra pelo caminho de bootstrap, que depende do Linux já instalado. A imagem x86_64 foi validada só em QEMU.
 - **Entrada sem verificação de origem.** O binário do worker usado no bootstrap não é verificado por assinatura, e o token de join fica em claro no arquivo de ambiente do worker.
 - **Sem medição de hardware antes de alterar a máquina.** O operador decide se a placa serve.

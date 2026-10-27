@@ -40,8 +40,9 @@ start() {
 			sleep 5
 			waited=$((waited + 5))
 		done
-		# Estado do A/B: setor cru 2016 (o u-boot não escreve na FAT); conv=sync completa o setor com zeros.
-		printf 'aic_slot=%s\naic_try=\naic_tries=\naic_boots=\n' "$slot" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || exit 1
+		# Estado do A/B: camada da plataforma (usr/lib/aic/ab.sh)
+		. /usr/lib/aic/ab.sh
+		state_set "$slot" "" || exit 1
 		logger -t aic-slot-commit "slot $slot confirmado"
 	) &
 }

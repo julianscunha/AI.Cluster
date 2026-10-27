@@ -6,6 +6,7 @@ REQ=/data/state/update-request
 DL=/data/.update   # só do root: o worker grava em /data/state, não aqui
 PUBS=/etc/aic-release.d   # uma ou mais públicas (rotação): vale se qualquer uma confere
 . /etc/aic-board   # board=… slot_mib=…
+. /usr/lib/aic/ab.sh   # slot_dev, state_get, state_set da plataforma
 log() { logger -t aic-updater "$*"; }
 # a recusa vai para um arquivo que o worker lê: ele não fica esperando um reinício que não vem
 # noclobber (O_EXCL) não segue link simbólico plantado pelo worker no diretório dele
@@ -50,10 +51,11 @@ apply() {
 	uhost=${url#*://}; uhost=${uhost%%[:/]*}
 	[ -n "$chost" ] && [ "$chost" = "$uhost" ] || { fail "URL fora do host do controller; ignorado"; return; }
 	# em boot de teste (aic_try pendente) o slot atual não é o confirmado: gravar no outro destruiria o bom
-	if dd if=/dev/mmcblk0 bs=512 skip=2016 count=1 2>/dev/null | tr '\0' ' ' | grep -q 'aic_try=[AB]'; then fail "slot ainda em teste; atualização adiada"; return; fi
-	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt 700000 ] || { fail "pouco espaço em /data"; return; }
+	if [ -n "$(state_get aic_try)" ]; then fail "slot ainda em teste; atualização adiada"; return; fi
+	[ "$(df -k /data | awk 'NR==2 {print $4}')" -gt $((slot_mib * 1400)) ] || { fail "pouco espaço em /data"; return; }
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
-	case "$slot" in A) target=B; dev=/dev/mmcblk0p3;; B) target=A; dev=/dev/mmcblk0p2;; *) fail "sem aic.slot; não é uma imagem A/B"; return;; esac
+	case "$slot" in A) target=B;; B) target=A;; *) fail "sem aic.slot; não é uma imagem A/B"; return;; esac
+	dev=$(slot_dev "$target") || { fail "sem partição do slot $target"; return; }
 	log "baixando $version para o slot $target"
 	rm -rf "$DL"; mkdir -m 700 "$DL" || { fail "sem diretório de download"; return; }
 	TMP=$DL/update.gz
@@ -68,7 +70,7 @@ apply() {
 	written=$(dd if="$dev" bs=1M count="$slot_mib" 2>/dev/null | sha256sum | cut -d' ' -f1)
 	[ "$written" = "$image_sha" ] || { fail "o slot $target não confere com a medida assinada; não será usado"; return; }
 	# slot atual continua o confirmado; o novo entra em teste com duas tentativas (boot.cmd)
-	printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$slot" "$target" | dd of=/dev/mmcblk0 bs=512 seek=2016 count=1 conv=sync,fsync 2>/dev/null || { fail "não gravou o estado"; return; }
+	state_set "$slot" "$target" || { fail "não gravou o estado"; return; }
 	log "slot $target em teste; reiniciando"
 	sync
 	reboot

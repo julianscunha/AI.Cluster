@@ -9,11 +9,11 @@ type: sistema/subsistema
 
 O AI Cluster OS é o sistema mínimo, imutável e orientado a compute de cada nó. Ele existe para que um nó seja só um worker: sem ambiente de desktop, sem serviços de consumo, com o runtime do worker instalado e supervisionado, e com atualização que se reverte. Não é uma distribuição nova. É uma imagem de uma distribuição Linux existente, montada e assinada pelo projeto. Voltar para [[plataforma]].
 
-> Planejado: imagens para x86_64 e ARM64, além da imagem armv7 descrita abaixo.
+> Planejado: imagem para ARM64. As imagens armv7 (u-boot) e x86_64 (UEFI com GRUB, [[adr-019-imagem-x86-uefi-com-grub]]) existem; o x86_64 foi validado em QEMU, ainda não em hardware real.
 
 ## Imagem
 
-A imagem atual é para armv7, com a base Alpine Linux 3.20 e OpenRC.
+As imagens são para armv7 (placas com u-boot) e x86_64 (PCs e servidores com UEFI), com a base Alpine Linux 3.20 e OpenRC. A parte comum (serviços, raiz somente leitura, release assinada, rollout) é a mesma; muda o boot e onde fica o estado do A/B. No x86_64 o kernel `linux-lts` está dentro do slot, o GRUB guarda o estado no `grubenv` da ESP e os slots são as partições 2 e 3 do disco da raiz.
 
 - **Serviços:** só o worker, em binário musl, e o mínimo de apoio: servidor SSH somente com chave, sincronização de relógio e um gerador de entropia, porque a placa não tem fonte de aleatoriedade suficiente.
 - **Raiz somente leitura.** `/var/log` e `/tmp` são tmpfs.
@@ -100,7 +100,7 @@ Uma marca guarda a versão que acabou de ser tentada. Se o nó volta por rollbac
 
 ## Limites conhecidos
 
-- **Só armv7.** Não há imagem para x86_64 nem para ARM64.
+- **Sem imagem para ARM64.** O x86_64 exige UEFI com Secure Boot desligado e foi validado só em QEMU (sem hardware real, sem recuperação por rede, sem watchdog de placa-mãe); firmware de dispositivo (`linux-firmware`) não vem na imagem.
 - **Sem secure boot, dm-verity ou TPM.** A medida mostra que o slot tem o conteúdo esperado, mas um nó comprometido pode informar qualquer valor. Ver [[seguranca]].
 - **Sem downgrade pela via normal.** A versão precisa ser maior. Um rollback legítimo exige uma versão nova com o conteúdo antigo.
 - **Controller não verifica a assinatura.** Ele guarda a release como recebida. Um pedido inválido ainda faz o nó drenar e voltar.
@@ -112,7 +112,7 @@ Uma marca guarda a versão que acabou de ser tentada. Se o nó volta por rollbac
 - **Token de join em claro** em `worker.env` e no script de boot do cartão.
 - **Só instalação sob controle do operador.** Não há instalação disparada pelo cluster.
 
-> Planejado: imagens para x86_64 e ARM64, com geração automática por arquitetura.
+> Planejado: imagem ARM64 e geração automática por arquitetura.
 > Planejado: reinstalação de um nó disparada pelo cluster, com a imagem escolhida pelo planejador.
 > Planejado: boot assinado, dm-verity e medida ligada a hardware.
 > Planejado: minimização de serviços e ajuste de kernel, medido antes de virar padrão.

@@ -35,7 +35,7 @@
     <rect x="30" y="302" width="240" height="100" rx="12" fill="#1e293b" stroke="#334155"/>
     <text x="50" y="330" fill="#e2e8f0" font-size="15" font-weight="600">PC / notebook / servidor</text>
     <text x="50" y="352" fill="#94a3b8" font-size="12">hoje: Linux existente + bootstrap.sh</text>
-    <text x="50" y="372" fill="#38bdf8" font-size="12">AI Cluster OS x86_64: em desenvolvimento</text>
+    <text x="50" y="372" fill="#38bdf8" font-size="12">AI Cluster OS x86_64 UEFI: disponível (QEMU)</text>
     <rect x="300" y="302" width="240" height="100" rx="12" fill="#1e293b" stroke="#334155"/>
     <text x="320" y="330" fill="#e2e8f0" font-size="15" font-weight="600">Placa ARM (SBC)</text>
     <text x="320" y="352" fill="#94a3b8" font-size="12">AI Cluster OS: cartão formatado</text>

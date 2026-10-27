@@ -11,7 +11,8 @@ SLOT=${1:-512M}
 mkdir -p build
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/x86_64-unknown-linux-musl/release/ai-cluster-worker /out/ai-cluster-worker-x86
-cp build/ai-cluster-worker-x86 ai-cluster-worker
+# AIC_WORKER_FILE troca o binário do worker (teste de rollback com um worker que nunca se registra)
+cp "${AIC_WORKER_FILE:-build/ai-cluster-worker-x86}" ai-cluster-worker
 rm -rf aic-release.d; mkdir aic-release.d
 for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }

@@ -197,7 +197,7 @@ Os marcos de prova (M0–M7) ficam ao final.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| J1, imagem de disco para x86 | Não existe. | código, hardware: x86 |
+| J1, imagem de disco para x86 | A imagem existe e foi validada em QEMU/UEFI. Falta validar em hardware real (firmware de placas de rede e vídeo, watchdog da placa-mãe, redimensionamento do ext4 de dados pelo `install-disk.sh` num disco real), Secure Boot e recuperação por rede/PXE. | hardware: PC x86 UEFI |
 | J2, imagem de SO | Não existe. O worker só roda como serviço de contêiner ou via `bootstrap.sh`. | código |
 | J3, bootstrap em VM | Testar `bootstrap.sh` numa VM com systemd. Hoje só leitura da unit em contêiner. | hardware: VM ou máquina com systemd |
 | J4, reimage automático | Reprovisionamento pelo controller, sem operação manual. | código, hardware: máquina limpa |

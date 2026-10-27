@@ -12,7 +12,8 @@ depend() {
 start() {
 	. /etc/aic-board
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
-	case "$slot" in A) dev=/dev/mmcblk0p2;; B) dev=/dev/mmcblk0p3;; *) return 0;; esac
+	. /usr/lib/aic/ab.sh
+	case "$slot" in A|B) dev=$(slot_dev "$slot") || return 0;; *) return 0;; esac
 	ebegin "Medindo o slot $slot"
 	nice -n 10 dd if="$dev" bs=1M count="$slot_mib" 2>/dev/null | sha256sum | cut -d' ' -f1 > /run/aic-measure
 	eend 0

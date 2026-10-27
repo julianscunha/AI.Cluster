@@ -37,7 +37,7 @@ O worker sobe de um Linux instalado à mão. Para reimage e atualização sem in
 
 ## Limites
 
-- Só armv7 foi testado; ARM64 e x86 exigem instalador e bootloader próprios.
+- A imagem armv7 foi a primeira; o x86_64 UEFI veio com GRUB ([[adr-019-imagem-x86-uefi-com-grub]]). ARM64 exige instalador e bootloader próprios.
 - O u-boot não verifica assinatura do boot. A release é assinada e conferida no nó ([[adr-018-release-assinada-e-medida-do-slot]]).
 - Token dedicado (curto ou de uso único) para a recuperação: hoje a recuperação usa o token de join.
 - O instalador aceita a chave de host do initramfs sem verificação (`AutoAddPolicy`); preferir chave pública é planejado.

@@ -140,7 +140,29 @@ Releases assinadas para a atualização pelo controller são geradas com `os/ima
 
 ## Outras arquiteturas
 
-Para um Linux x86 ou ARM64 qualquer, compile o binário para essa arquitetura e use `bootstrap.sh` ou o contêiner. Não há imagem de disco nem atualização A/B para elas.
+Para um Linux ARM64 qualquer, compile o binário para essa arquitetura e use `bootstrap.sh` ou o contêiner. Não há imagem de disco nem atualização A/B para ARM64.
+
+## Imagem do AI Cluster OS (x86_64 UEFI)
+
+A imagem x86_64 formata o disco do PC, notebook ou servidor e o deixa só como worker: GPT com ESP, slots A e B e `/data`, GRUB EFI, kernel `linux-lts` do Alpine dentro do slot, atualização assinada e rollback automático ([[adr-019-imagem-x86-uefi-com-grub]]). **Validada em QEMU/UEFI; ainda não em hardware real.** Requer UEFI com Secure Boot desligado. Os comandos rodam em `code/`, numa máquina com Docker e as chaves de release (`release-keys.sh`):
+
+```bash
+bash scripts/build-armv7.sh            # só na primeira vez: cria a imagem de build aic-rust-zig:1
+bash scripts/build-x86.sh              # worker musl x86_64
+AIC_RELEASE=1.0 bash os/image/x86/build-rootfs.sh        # build/rootfs-x86.ext4 (kernel, initramfs e worker)
+bash os/image/x86/mk-disk.sh --controller https://controller.exemplo:50051 \
+  --join-token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img
+```
+
+A imagem leva a identidade do nó (`worker.env`), então é uma por nó. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:
+
+```bash
+sudo sh os/image/x86/install-disk.sh build/disk-x86.img /dev/sdX --yes   # APAGA o disco inteiro
+```
+
+O script grava a imagem, move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados até o fim do disco. Depois, dê boot pelo disco em modo UEFI. As releases para atualizar o nó são assinadas com a placa `x86_64-uefi`: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> x86_64-uefi` (o `.gz` e o `.ext4` são o `build/rootfs-x86.ext4` comprimido e sem comprimir).
+
+Para experimentar sem hardware, `bash os/image/x86/run-qemu.sh` sobe o disco num QEMU com OVMF dentro de um contêiner na rede `aic-net` (o boot sem KVM leva alguns minutos); `docker logs aic-vm` mostra o console. Sem firmware de hardware (`linux-firmware`) a imagem só enxerga placas de rede e de disco que funcionam sem blobs; para as demais, acrescente o pacote de firmware correspondente ao `x86/Dockerfile`.
 
 ## Pesos dos modelos
 

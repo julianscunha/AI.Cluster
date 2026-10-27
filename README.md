@@ -41,7 +41,7 @@ O AI Cluster é um sistema Linux com **papéis**. Você escolhe onde cada um rod
 Fluxo de uso:
 
 1. **Instale o controller** no servidor e anote os dois tokens (join e operador).
-2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7**; para **x86_64 e ARM64 ela ainda está em desenvolvimento**, e nesse meio-tempo o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
+2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7** (testada em hardware) e para **PCs x86_64 UEFI** (validada em QEMU, ainda não em hardware real); para **ARM64 ainda não existe**. Nos casos sem imagem o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
 3. **Aprove** cada nó novo e **monitore** tudo pela CLI.
 4. **Suba o gateway** com o modelo e aponte seus aplicativos para ele.
 
@@ -50,7 +50,7 @@ Fluxo de uso:
 | Onde | Precisa de |
 |---|---|
 | **Servidor do controller/gateway** | Linux (x86_64 ou ARM, glibc), acesso de rede dos workers à porta `50051` e dos clientes à `8080`. O gateway com SmolLM2 mantém o modelo em memória (cerca de 1 GB). |
-| **Cada worker** | **AI Cluster OS** (placa ARMv7: o cartão é apagado e regravado) **ou**, enquanto a imagem x86_64/ARM64 não existe, um Linux x86_64/ARMv7 já instalado com `root` e, de preferência, systemd. Nos dois casos: conexão de saída até a porta `50051` do controller e memória livre para a fatia do modelo. |
+| **Cada worker** | **AI Cluster OS** (placa ARMv7 ou PC x86_64 UEFI: o disco é apagado e regravado) **ou** um Linux x86_64/ARMv7/ARM64 já instalado com `root` e, de preferência, systemd. Nos dois casos: conexão de saída até a porta `50051` do controller e memória livre para a fatia do modelo. |
 | **Máquina de build** (uma vez) | Linux com Rust estável ≥ 1.85 (`rustup`). Compila os binários; servidores e dispositivos não precisam de Rust. Para gerar binário ARMv7 a partir de x86, Docker nessa máquina. |
 | **Seu computador** | O binário `ai-cluster` e acesso de rede ao controller. |
 | **Modelos** | Pesos GPT-2 ou SmolLM2 no servidor do gateway ([onde baixar](docs/guia/instalacao.md#pesos-dos-modelos)). Opcional: sem eles o cluster funciona, só não responde chat. |
@@ -91,7 +91,7 @@ AI_CLUSTER_NODES=/var/lib/aic/nodes AI_CLUSTER_STATE=/var/lib/aic/state.bin AI_C
 
 **Caminho recomendado: AI Cluster OS (placas ARMv7).** O dispositivo é formatado e passa a rodar o sistema do projeto, já com o worker, o controller configurado e atualização A/B assinada. Veja o passo 6.
 
-**Caminho de transição: worker sobre o Linux existente.** É o único disponível hoje para desktops e servidores x86_64 e para ARM64, enquanto as imagens desses não existem. Nada é formatado, e o dispositivo continua um Linux comum: sem atualização A/B nem rollback de boot. Copie `ai-cluster-worker`, `code/os/bootstrap.sh` e o token de join para o dispositivo e, como root:
+**Caminho de transição: worker sobre o Linux existente.** Serve a ARM64 (ainda sem imagem) e a quem ainda não quer formatar o PC (a imagem x86_64 é recente e só foi validada em QEMU). Nada é formatado, e o dispositivo continua um Linux comum: sem atualização A/B nem rollback de boot. Copie `ai-cluster-worker`, `code/os/bootstrap.sh` e o token de join para o dispositivo e, como root:
 
 ```bash
 echo '<token-de-join>' > /root/join-token && chmod 600 /root/join-token
@@ -145,7 +145,7 @@ Todas as variáveis, tenants, cotas e a API completa: [`docs/guia/configuracao.m
 
 O **AI Cluster OS** é o destino do projeto para qualquer dispositivo: uma imagem Alpine imutável, com dois slots (A/B), que apaga o sistema anterior e deixa a máquina só com o que um worker precisa. O operador assina a atualização; o controller a anuncia, um nó canário atualiza primeiro e os demais seguem em ondas. Se o nó novo não ficar saudável, o boot volta ao slot anterior sozinho.
 
-**Disponibilidade hoje:** placas **ARMv7** (testado em Orange Pi PC). **Ainda não existe imagem para x86_64 (UEFI) nem ARM64**; elas são o próximo passo do projeto (veja [`pendencias.md`](docs/implementation/pendencias.md)). Até lá, desktops e servidores usam o caminho de transição do passo 3.
+**Disponibilidade hoje:** placas **ARMv7** (testado em Orange Pi PC) e PCs **x86_64 UEFI** (validado em QEMU com OVMF, falta testar em hardware real; exige Secure Boot desligado; veja o [guia](docs/guia/instalacao.md#imagem-do-ai-cluster-os-x86_64-uefi)). **Ainda não existe imagem para ARM64**, que é o próximo passo do projeto (veja [`pendencias.md`](docs/implementation/pendencias.md)). Até lá, desktops e servidores usam o caminho de transição do passo 3.
 
 <p align="center">
   <img src="docs/assets/os-update.svg" alt="Fluxo de atualização assinada com slots A/B" width="100%">
