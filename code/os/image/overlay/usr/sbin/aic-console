@@ -23,13 +23,14 @@ case "${1:-}" in -h | --help) usage; exit 0 ;; esac
 
 export TERM=linux
 PASSFILE=/data/console-pass
-FAILFILE=/run/aic-console-fail
+FAILFILE=/run/aic-console-fail     # tentativas erradas desde o último acerto
+UNTILFILE=/run/aic-console-until   # até quando (segundos de uptime) a entrada está travada
 
 dmesg -n 1 2>/dev/null
-# a tela de carregamento termina quando o console assume o tty1
+# a tela de carregamento termina sozinha quando vê este arquivo (sem kill: um pid velho poderia
+# ser de outro processo)
 : > /run/aic-console.up 2>/dev/null
 chvt 1 2>/dev/null
-[ -r /run/aic-splash.pid ] && kill "$(cat /run/aic-splash.pid)" 2>/dev/null
 
 trap 'printf "%s[?7h%s[?25h%s[0m%s[2J%s[H" "$ESC" "$ESC" "$ESC" "$ESC" "$ESC"' EXIT
 trap 'exit 0' INT TERM
@@ -43,7 +44,11 @@ env_value() {
 	sed -n "s/^$1=//p" /data/worker.env 2>/dev/null | head -n 1 | tr -d "\"'" | tr -d '\000-\037\177'
 }
 
-has_password() { [ -s "$PASSFILE" ]; }
+# Falha fechado: um arquivo de senha que existe mas está vazio ou truncado conta como senha
+# definida (e o login recusa), em vez de abrir o console sem senha.
+has_password() { [ -e "$PASSFILE" ]; }
+
+uptime_s() { cut -d. -f1 /proc/uptime; }
 
 # Lê uma tecla e devolve um nome: f2, f12, up, down, enter, esc ou o próprio caractere.
 key() { # espera em segundos
@@ -167,11 +172,45 @@ confirm() { # pergunta
 	case "$(key 30)" in s | S) return 0 ;; *) return 1 ;; esac
 }
 
-# Pede a senha. Devolve 0 se confere (ou se não há senha), 1 se não. Três erros seguidos travam a
-# entrada por 30 s, dobrando a cada nova rodada de três.
+# Registra uma tentativa errada (ou vazia, ou que estourou o tempo). A cada três seguidas a entrada
+# trava por 30 s, dobrando a cada rodada (até 480 s), contado em segundos de uptime: sair e voltar
+# ao F2 não reinicia a conta.
+record_fail() {
+	local fails round delay
+	fails=$(( $(cat "$FAILFILE" 2>/dev/null || echo 0) + 1 ))
+	echo "$fails" > "$FAILFILE"
+	if [ $((fails % 3)) -eq 0 ]; then
+		round=$((fails / 3 - 1))
+		[ "$round" -gt 4 ] && round=4
+		delay=$((30 * (1 << round)))
+		echo $(($(uptime_s) + delay)) > "$UNTILFILE"
+	fi
+}
+
+# Pede a senha. Devolve 0 se confere (ou se não há senha), 1 se não.
 login() {
 	has_password || return 0
-	local tries=0 pw hash salt calc fails delay
+	local tries=0 pw hash salt calc until left
+	until=$(cat "$UNTILFILE" 2>/dev/null || echo 0)
+	left=$((until - $(uptime_s)))
+	if [ "$left" -gt 0 ]; then
+		page "Autenticacao do console"
+		at 4 4; printf '%sEntrada travada por tentativas erradas. Aguarde %s s.%s' "$C_BAD" "$left" "$C_RESET"
+		sleep 3
+		return 1
+	fi
+	hash=$(cat "$PASSFILE" 2>/dev/null)
+	case "$hash" in
+	'$6$'*'$'*) ;;
+	*)
+		page "Autenticacao do console"
+		at 4 4; printf '%sO arquivo de senha do console esta invalido.%s' "$C_BAD" "$C_RESET"
+		at 5 4; printf '%sDefina de novo por SSH: aic passwd%s' "$C_TEXT" "$C_RESET"
+		sleep 4
+		return 1
+		;;
+	esac
+	salt=$(printf '%s' "$hash" | cut -d'$' -f3)
 	while [ "$tries" -lt 3 ]; do
 		page "Autenticacao do console"
 		at 4 4; printf '%sInforme a senha do console.%s' "$C_TEXT" "$C_RESET"
@@ -180,26 +219,20 @@ login() {
 		pw=
 		IFS= read -rs -t 60 pw
 		printf '%s[?25l' "$ESC"
-		[ -n "$pw" ] || return 1
-		hash=$(cat "$PASSFILE" 2>/dev/null)
-		salt=$(printf '%s' "$hash" | cut -d'$' -f3)
-		calc=$(printf '%s' "$pw" | openssl passwd -6 -stdin -salt "$salt" 2>/dev/null)
+		calc=
+		[ -n "$pw" ] && calc=$(printf '%s' "$pw" | openssl passwd -6 -stdin -salt "$salt" 2>/dev/null)
 		pw=
 		if [ -n "$calc" ] && [ "$calc" = "$hash" ]; then
-			rm -f "$FAILFILE"
+			rm -f "$FAILFILE" "$UNTILFILE"
 			return 0
 		fi
+		record_fail
 		tries=$((tries + 1))
-		fails=$(( $(cat "$FAILFILE" 2>/dev/null || echo 0) + 1 ))
-		echo "$fails" > "$FAILFILE"
 		at 8 4; printf '%sSenha incorreta.%s' "$C_BAD" "$C_RESET"
 		sleep 2
+		# se esta tentativa travou a entrada, não pede outra
+		[ "$(cat "$UNTILFILE" 2>/dev/null || echo 0)" -gt "$(uptime_s)" ] && return 1
 	done
-	delay=$((30 * (1 << (($(cat "$FAILFILE" 2>/dev/null || echo 3) / 3) - 1))))
-	[ "$delay" -gt 300 ] && delay=300
-	page "Autenticacao do console"
-	at 4 4; printf '%sMuitas tentativas. Aguarde %s s.%s' "$C_BAD" "$delay" "$C_RESET"
-	sleep "$delay"
 	return 1
 }
 

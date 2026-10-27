@@ -42,5 +42,5 @@ esac
 salt=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)
 hash=$(printf '%s' "$p1" | openssl passwd -6 -stdin -salt "$salt") || exit 1
 umask 077
-printf '%s\n' "$hash" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE" || exit 1
+printf '%s\n' "$hash" > "$FILE.tmp" && sync && mv "$FILE.tmp" "$FILE" && sync || exit 1
 echo "senha do console definida"

@@ -23,7 +23,7 @@ trap 'exit 0' TERM INT
 dmesg -n 1 2>/dev/null
 chvt 2 2>/dev/null
 . /usr/lib/aic/ui.sh
-term_size
+TERM_DEV=$TTY term_size
 term_margins
 tty_enter
 

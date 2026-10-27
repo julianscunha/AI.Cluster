@@ -22,7 +22,7 @@ RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=
  # raiz somente leitura: o que muda vive em /data (disco) ou em tmpfs
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
- && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|' /etc/inittab \
+ && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|; /^tty[2-6]::/d' /etc/inittab \
  && rc-update add devfs sysinit && rc-update add aic-splash sysinit && rc-update add mdev sysinit && rc-update add haveged boot && rc-update add dmesg sysinit && rc-update add procfs boot && rc-update add sysfs sysinit \
  && rc-update add swclock boot && rc-update add localmount boot && rc-update add modules boot && rc-update add sysctl boot \
  && rc-update add hostname boot && rc-update add bootmisc boot && rc-update add syslog boot \

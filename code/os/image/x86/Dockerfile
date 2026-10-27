@@ -33,7 +33,7 @@ RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && mkdir -p /data /mnt
  && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic /usr/sbin/aic-console /usr/sbin/aic-role /usr/sbin/aic-passwd /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
- && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|' /etc/inittab \
+ && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|; /^tty[2-6]::/d' /etc/inittab \
  && sed -i 's|^#ttyS0.*|ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100|' /etc/inittab \
  && rc-update add devfs sysinit && rc-update add aic-splash sysinit && rc-update add mdev sysinit && rc-update add hwdrivers sysinit && rc-update add haveged boot && rc-update add dmesg sysinit && rc-update add procfs boot && rc-update add sysfs sysinit \
  && rc-update add hwclock boot && rc-update add localmount boot && rc-update add modules boot && rc-update add sysctl boot \

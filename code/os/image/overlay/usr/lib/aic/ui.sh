@@ -29,7 +29,8 @@ fi
 # Tamanho do terminal (linhas colunas), com piso para o desenho não quebrar.
 term_size() {
 	local size
-	size=$(stty size 2>/dev/null)
+	# TERM_DEV: o terminal a medir quando o stdin não é ele (o splash lê de /dev/null)
+	size=$(stty ${TERM_DEV:+-F "$TERM_DEV"} size 2>/dev/null)
 	LINES_N=${size%% *}
 	COLS_N=${size##* }
 	[ "${LINES_N:-0}" -ge 10 ] 2>/dev/null || LINES_N=25

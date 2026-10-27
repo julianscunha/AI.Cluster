@@ -1072,7 +1072,9 @@ async fn print_dashboard(
             .await?
             .into_inner()
             .reservations;
-        // Controller antigo não conhece o RPC: a seção some. Outra falha é avisada.
+        // Controller antigo não conhece o RPC: a seção some. Outra falha é avisada, depois do painel
+        // (no `--watch` a limpeza da tela apagaria o aviso se ele saísse antes).
+        let mut gateway_warning: Option<String> = None;
         let (gateways, gateways_now) = match client
             .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
             .await
@@ -1083,10 +1085,7 @@ async fn print_dashboard(
             }
             Err(status) if status.code() == tonic::Code::Unimplemented => (Vec::new(), 0),
             Err(status) => {
-                eprintln!(
-                    "aviso: não consegui listar os gateways: {}",
-                    clean(status.message())
-                );
+                gateway_warning = Some(clean(status.message()));
                 (Vec::new(), 0)
             }
         };
@@ -1177,6 +1176,9 @@ async fn print_dashboard(
             }
         }
 
+        if let Some(warning) = gateway_warning {
+            eprintln!("aviso: não consegui listar os gateways: {warning}");
+        }
         if watch_secs == 0 {
             return Ok(());
         }
@@ -1335,21 +1337,21 @@ fn pretty_dashboard(
             clean(&reservation.node_id),
             clean(&reservation.request_id),
             paint(
-                &if reservation.slots == 0 {
-                    "no inteiro".to_string()
-                } else {
-                    format!("{} slot(s)", reservation.slots)
-                },
+                &format!(
+                    "{}  expira em {left}s",
+                    if reservation.slots == 0 {
+                        "no inteiro".to_string()
+                    } else {
+                        format!("{} slot(s)", reservation.slots)
+                    }
+                ),
                 Tone::Dim
             ),
         ));
-        let _ = left;
     }
     out
 }
 
-/// A seção INFERÊNCIA do painel: uma bloco por gateway, com o que ele mediu e a idade do último
-/// sinal quando está sem sinal, para ninguém ler números velhos como atuais. Linhas puras, testáveis.
 /// As quatro linhas do que um gateway mediu: totais, latências, taxas com tendência e cache.
 fn gateway_detail(stats: &ai_cluster_protocol::cluster::GatewayStats) -> Vec<String> {
     let mut out = Vec::new();
@@ -1388,6 +1390,9 @@ fn gateway_detail(stats: &ai_cluster_protocol::cluster::GatewayStats) -> Vec<Str
     out
 }
 
+/// A seção INFERÊNCIA do painel em chave=valor: um bloco por gateway, com o que ele mediu e a idade
+/// do último sinal quando está sem sinal, para ninguém ler números velhos como atuais. Linhas puras,
+/// testáveis.
 fn gateway_lines(
     gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
     now_ms: u64,

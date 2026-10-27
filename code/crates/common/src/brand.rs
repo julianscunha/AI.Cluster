@@ -93,9 +93,12 @@ pub struct Glyphs {
 
 pub fn glyphs() -> Glyphs {
     let ascii = std::env::var("AI_CLUSTER_ASCII").is_ok_and(|v| v == "1")
-        || std::env::var("LANG")
-            .or_else(|_| std::env::var("LC_ALL"))
-            .is_ok_and(|v| !v.is_empty() && !v.to_uppercase().contains("UTF"));
+        // a primeira variável de locale definida decide (ordem do POSIX: LC_ALL, LC_CTYPE, LANG)
+        || ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .find(|value| !value.is_empty())
+            .is_some_and(|value| !value.to_uppercase().contains("UTF"));
     if ascii {
         Glyphs {
             node: "o",
