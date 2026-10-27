@@ -1,0 +1,2 @@
+FROM debian:12-slim
+RUN apt-get update -qq && apt-get install -y -qq e2fsprogs dosfstools mtools gdisk grub-efi-amd64-bin grub-common && rm -rf /var/lib/apt/lists/*
