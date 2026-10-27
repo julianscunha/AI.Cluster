@@ -14,11 +14,14 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-armv7:/t -v "$(pwd -W 2>/dev/nu
   cp /t/armv7-unknown-linux-musleabihf/release/ai-cluster-worker /out/ai-cluster-worker
 cp build/ai-cluster-worker ai-cluster-worker
 # chave pública das releases (release-keys.sh): a imagem só instala o que o operador assinou
-PUB=${AIC_KEYS:-$HOME/.aic}/release.pub
-[ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
-cp "$PUB" aic-release.pub
+# rotação: AIC_PUBS lista várias públicas (a antiga e a nova); basta uma conferir a assinatura
+rm -rf aic-release.d; mkdir aic-release.d
+for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
+  [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
+  cp "$PUB" "aic-release.d/$(basename "$PUB")"
+done
 docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs:dev .
-rm -f ai-cluster-worker aic-release.pub
+rm -rf ai-cluster-worker aic-release.d
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar
 docker rm "$CID" >/dev/null

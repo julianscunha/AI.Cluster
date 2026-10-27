@@ -4,7 +4,7 @@
 # A confirmação e o rollback são do u-boot e do aic-slot-commit.
 REQ=/data/state/update-request
 DL=/data/.update   # só do root: o worker grava em /data/state, não aqui
-PUB=/etc/aic-release.pub
+PUBS=/etc/aic-release.d   # uma ou mais públicas (rotação): vale se qualquer uma confere
 . /etc/aic-board   # board=… slot_mib=…
 log() { logger -t aic-updater "$*"; }
 # a recusa vai para um arquivo que o worker lê: ele não fica esperando um reinício que não vem
@@ -32,7 +32,11 @@ apply() {
 	w=$(mktemp -d /run/aic-upd.XXXXXX) || { fail "sem diretório de trabalho"; return; }
 	printf 'aic-release-v1\n%s\n%s\n%s\n%s\n' "$board" "$version" "$sha" "$image_sha" > "$w/msg"
 	printf '%s' "$signature" | base64 -d > "$w/sig" 2>/dev/null
-	if ! openssl pkeyutl -verify -pubin -inkey "$PUB" -rawin -in "$w/msg" -sigfile "$w/sig" >/dev/null 2>&1; then
+	ok=
+	for k in "$PUBS"/*.pub; do
+		openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$w/msg" -sigfile "$w/sig" >/dev/null 2>&1 && { ok=1; break; }
+	done
+	if [ -z "$ok" ]; then
 		fail "assinatura inválida para $board $version; ignorado"; rm -rf "$w"; return
 	fi
 	rm -rf "$w"

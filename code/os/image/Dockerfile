@@ -11,7 +11,7 @@ RUN apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev
 
 COPY overlay/ /
 COPY ai-cluster-worker /usr/bin/ai-cluster-worker
-COPY aic-release.pub /etc/aic-release.pub
+COPY aic-release.d/ /etc/aic-release.d/
 # versão da imagem: o worker a reporta ao controller (rollout, F19)
 ARG AIC_RELEASE=dev
 RUN echo "$AIC_RELEASE" > /etc/aic-release

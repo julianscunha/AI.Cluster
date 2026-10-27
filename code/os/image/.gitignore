@@ -1,4 +1,4 @@
 build/
 /ai-cluster-worker
-/aic-release.pub
+/aic-release.d/
 __pycache__/

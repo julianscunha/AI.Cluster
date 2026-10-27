@@ -35,7 +35,7 @@ Derivado de `code/` (verdade do que roda), do [[implementation]] (tabela de fase
 | [[fase-16-aceleradores\|F16]] | Aceleradores | `[ ]` | M6 | — |
 | [[fase-17-runtime-adaptativo\|F17]] | Runtime adaptativo | `[~]` | melhora estatística | — |
 | [[fase-18-worker-movel\|F18]] | Worker móvel | `[~]` | M7 | Q6 (bateria) feito; resto precisa de celulares |
-| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto, mTLS e upgrade/rollback local feitos; rollout com canário, release assinada e attestation de software feitos em um nó; falta rotação de chave, dm-verity/TPM e ondas |
+| [[fase-19-hardening-de-producao\|F19]] | Hardening de produção | `[~]` | soak e failure injection | auditoria, soak curto, mTLS e upgrade/rollback local feitos; rollout com canário, release assinada e attestation de software feitos em um nó; rotação de chave por imagem validada; falta lista de revogação, dm-verity/TPM e ondas |
 
 Marcos (M0–M7) e seus critérios: [[marcos]].
 
