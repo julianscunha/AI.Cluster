@@ -97,6 +97,9 @@ enum Command {
         /// Quanto tempo a reserva vale, em ms. 0 usa o padrão do controller.
         #[arg(long, default_value_t = 0)]
         ttl_ms: u64,
+        /// Quantos slots de trabalho do nó guardar para a requisição. 0 retém o nó inteiro.
+        #[arg(long, default_value_t = 0)]
+        slots: u32,
     },
     /// Reservas ativas: nó, requisição dona e vencimento.
     Reservations,
@@ -267,7 +270,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             node,
             request_id,
             ttl_ms,
-        } => run_reserve(&cli.controller, &node, &request_id, ttl_ms).await?,
+            slots,
+        } => run_reserve(&cli.controller, &node, &request_id, ttl_ms, slots).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
         Command::Approve { node } => approve_node(&cli.controller, &node).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
@@ -348,6 +352,7 @@ async fn run_reserve(
     node: &str,
     request_id: &str,
     ttl_ms: u64,
+    slots: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let response = client
@@ -355,6 +360,7 @@ async fn run_reserve(
             node_id: node.to_string(),
             request_id: request_id.to_string(),
             ttl_ms,
+            slots,
         })
         .await?
         .into_inner();
@@ -379,11 +385,22 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
         .into_inner()
         .reservations;
     println!("RESERVAS {}", reservations.len());
-    println!("{:<20} {:<16} {:>14}", "NÓ", "REQUISIÇÃO", "EXPIRA_EM_MS");
+    println!(
+        "{:<20} {:<16} {:>14} {:>6}",
+        "NÓ", "REQUISIÇÃO", "EXPIRA_EM_MS", "SLOTS"
+    );
     for reservation in reservations {
         println!(
-            "{:<20} {:<16} {:>14}",
-            reservation.node_id, reservation.request_id, reservation.expires_at_unix_ms
+            "{:<20} {:<16} {:>14} {:>6}",
+            clean(&reservation.node_id),
+            clean(&reservation.request_id),
+            reservation.expires_at_unix_ms,
+            // 0 guarda o nó inteiro
+            if reservation.slots == 0 {
+                "todos".to_string()
+            } else {
+                reservation.slots.to_string()
+            }
         );
     }
     Ok(())

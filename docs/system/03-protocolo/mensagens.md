@@ -112,7 +112,7 @@ Comportamento de cada campo e limites: [[canal-de-fatias]].
 | Mensagem | Campos (número) | Notas |
 |---|---|---|
 | `Reservation` | `node_id` (1), `request_id` (2), `expires_at_unix_ms` (3) | expira sozinha |
-| `ReserveRequest` / `ReserveResponse` | `node_id` (1), `request_id` (2), `ttl_ms` (3) / `granted` (1), `expires_at_unix_ms` (2), `message` (3) | `ttl_ms` 0 usa 60 s |
+| `ReserveRequest` / `ReserveResponse` | `node_id` (1), `request_id` (2), `ttl_ms` (3), `slots` (4) / `granted` (1), `expires_at_unix_ms` (2), `message` (3) | `ttl_ms` 0 usa 60 s; `slots` 0 retém o nó inteiro |
 | `ListReservationsRequest` / `ListReservationsResponse` | — / `reservations` (1) | |
 | `ReleaseReservationRequest` / `ReleaseReservationResponse` | `node_id` (1) / `released` (1) | um nó tem no máximo uma reserva |
 

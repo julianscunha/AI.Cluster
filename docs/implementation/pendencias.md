@@ -63,10 +63,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 |---|---|---|
 | Níveis de confiança | `UNKNOWN` até `TRUSTED`, dependendo de um fluxo de enrollment. Hoje só há pendente e aprovado, mais quarentena automática. | decisão, código |
 | Scheduler local por GPU/NPU | Filas por recurso de GPU e NPU. Hoje só CPU. | hardware: GPU/NPU |
-| Reserva parcial | Reservar parte da capacidade de um nó. Exige modelo de capacidade por nó. | código |
-| Persistência de reservas | Reservas não sobrevivem a reinício. | código |
-| Localidade | Locality não entra no custo do placement. | código |
-| Prova de filas de recurso | Testes de prioridade e de fila por recurso em cenário real. | código |
+| Localidade | Locality não entra no custo do placement. Depende de saídas residentes no worker: hoje as saídas ficam no controller, então não há transferência a evitar e um desconto por afinidade seria um parâmetro sem efeito medível. | código, depende de F12 (estado e saídas nos workers) |
 
 ## F05 — Observabilidade `[x]`
 

@@ -12,6 +12,8 @@
 use ai_cluster_common::matrix::REFERENCE_CORE_GFLOPS;
 use ai_cluster_protocol::cluster::{CapabilityReport, HealthReport, WorkUnit};
 
+use crate::reservations::Hold;
+
 /// Relative weight of one unit of compute work.
 const COMPUTE_WEIGHT: f64 = 1.0;
 /// Relative weight of one byte moved.
@@ -183,7 +185,7 @@ pub fn decide(
     asking: &str,
     candidates: &[(String, CapabilityReport, HealthReport)],
     in_flight: impl Fn(&str) -> u32,
-    held: impl Fn(&str) -> Option<String>,
+    held: impl Fn(&str) -> Option<Hold>,
     tolerance: f64,
 ) -> bool {
     let mut best: Option<f64> = None;
@@ -196,8 +198,14 @@ pub fn decide(
         if in_flight >= capability.work_slots.max(1) || !fits(unit, capability) {
             continue;
         }
-        match held(id).as_deref() {
-            Some(request) if request != unit.request_id.as_str() => continue,
+        match held(id) {
+            // Another request holds the node: it is a candidate only while a partial hold leaves
+            // a slot free beyond the held ones.
+            Some(hold) if hold.request_id != unit.request_id => {
+                if !hold.admits(&unit.request_id, in_flight, capability.work_slots) {
+                    continue;
+                }
+            }
             Some(_) => {
                 held_somewhere = true;
                 held_here |= id == asking;
@@ -413,17 +421,46 @@ mod tests {
         ));
     }
 
+    fn hold_of(id: &str, node: &str, request: &str, slots: u32) -> Option<Hold> {
+        (id == node).then(|| Hold {
+            request_id: request.to_string(),
+            slots,
+        })
+    }
+
+    #[test]
+    fn uma_reserva_parcial_nao_tira_o_no_das_outras_requisicoes() {
+        let mut unit = unit(64, 64, 64);
+        unit.request_id = "req-b".to_string();
+        let mut pool = pool();
+        // 4 slots em cada nó; o rápido tem 1 guardado para req-a
+        for (_, capability, _) in &mut pool {
+            capability.work_slots = 4;
+        }
+        let idle = |_: &str| 0;
+        let partial = |id: &str| hold_of(id, "fast", "req-a", 1);
+        // sobra slot além do guardado: o nó rápido continua sendo o melhor lugar para req-b
+        assert!(decide(&unit, "fast", &pool, idle, partial, 0.1));
+        // três em voo + um guardado = quatro: sem folga, o nó sai e o lento assume
+        let three = |id: &str| u32::from(id == "fast") * 3;
+        assert!(!decide(&unit, "fast", &pool, three, partial, 0.1));
+        assert!(decide(&unit, "slow", &pool, three, partial, 0.1));
+        // reserva do nó inteiro: o rápido nunca é candidato para req-b
+        let whole = |id: &str| hold_of(id, "fast", "req-a", 0);
+        assert!(!decide(&unit, "fast", &pool, idle, whole, 0.1));
+    }
+
     #[test]
     fn decide_gives_a_held_unit_only_to_the_held_node() {
         let mut unit = unit(64, 64, 64);
         unit.request_id = "req-a".to_string();
         let idle = |_: &str| 0;
-        let held_slow = |id: &str| (id == "slow").then(|| "req-a".to_string());
+        let held_slow = |id: &str| hold_of(id, "slow", "req-a", 0);
         // The hold outranks cost: the cheaper node must yield to the held one.
         assert!(decide(&unit, "slow", &pool(), idle, held_slow, 0.1));
         assert!(!decide(&unit, "fast", &pool(), idle, held_slow, 0.1));
         // A node held for another request is no candidate for this unit.
-        let held_other = |id: &str| (id == "fast").then(|| "req-b".to_string());
+        let held_other = |id: &str| hold_of(id, "fast", "req-b", 0);
         assert!(!decide(&unit, "fast", &pool(), idle, held_other, 0.1));
         assert!(decide(&unit, "slow", &pool(), idle, held_other, 0.1));
     }

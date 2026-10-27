@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ai_cluster_protocol::cluster::{
-    CapabilityReport, HealthReport, StateReplica, TraceEntry, WorkLease, WorkOutput, WorkResult,
-    WorkSnapshot, WorkUnit,
+    CapabilityReport, HealthReport, ReservationEntry, StateReplica, TraceEntry, WorkLease,
+    WorkOutput, WorkResult, WorkSnapshot, WorkUnit,
 };
 use prost::Message;
 
@@ -221,6 +221,15 @@ fn trim_history<T>(history: &mut Vec<T>, max: usize) {
     if history.len() > max + slack {
         history.drain(..history.len() - max);
     }
+}
+
+/// Units in flight on `node_id`: the slots it is using right now.
+fn in_flight_on(inner: &Inner, node_id: &str) -> u32 {
+    inner
+        .dispatched
+        .values()
+        .filter(|record| record.node_id.as_str() == node_id)
+        .count() as u32
 }
 
 /// Drops every intermediate result no unfinished unit can read.
@@ -491,6 +500,19 @@ impl WorkStore {
                 ))
             })
             .collect();
+        self.reservations.restore(
+            snapshot.reservations.into_iter().map(|entry| {
+                (
+                    entry.node_id,
+                    Reservation {
+                        request_id: entry.request_id,
+                        expires_at_unix_ms: entry.expires_at_unix_ms,
+                        slots: entry.slots,
+                    },
+                )
+            }),
+            crate::registry::unix_ms(),
+        );
         self.sequence.store(snapshot.sequence, Ordering::Relaxed);
         (inner.queue.len(), inner.dispatched.len())
     }
@@ -555,6 +577,17 @@ impl WorkStore {
                 })
                 .collect(),
             epoch_unix_ms: epoch,
+            reservations: self
+                .reservations
+                .list(crate::registry::unix_ms())
+                .into_iter()
+                .map(|(node_id, reservation)| ReservationEntry {
+                    node_id,
+                    request_id: reservation.request_id,
+                    expires_at_unix_ms: reservation.expires_at_unix_ms,
+                    slots: reservation.slots,
+                })
+                .collect(),
         };
         // Encoded once, written twice: serialisation is the expensive part and both files
         // hold the same bytes. Each rename is atomic on its own, so whichever write is
@@ -672,12 +705,35 @@ impl WorkStore {
     /// Retém um nó para uma requisição futura (G6) até `ttl_ms` a partir de `now`.
     /// TTL zero usa o padrão de [`crate::reservations::DEFAULT_TTL_MS`].
     pub fn reserve(&self, node_id: &str, request_id: &str, ttl_ms: u64, now: u64) -> Reservation {
-        self.reservations.reserve(node_id, request_id, ttl_ms, now)
+        self.reserve_slots(node_id, request_id, 0, ttl_ms, now)
+    }
+
+    /// Como [`Self::reserve`], guardando só `slots` slots do nó (0 é o nó inteiro). A reserva vai
+    /// para o snapshot junto com a fila, então sobrevive a um reinício.
+    pub fn reserve_slots(
+        &self,
+        node_id: &str,
+        request_id: &str,
+        slots: u32,
+        ttl_ms: u64,
+        now: u64,
+    ) -> Reservation {
+        let mut inner = self.lock();
+        let reservation = self
+            .reservations
+            .reserve_slots(node_id, request_id, slots, ttl_ms, now);
+        self.save_locked(&mut inner);
+        reservation
     }
 
     /// Libera a reserva de um nó. False quando não havia reserva ativa.
     pub fn release_reservation(&self, node_id: &str) -> bool {
-        self.reservations.release(node_id)
+        let mut inner = self.lock();
+        let released = self.reservations.release(node_id);
+        if released {
+            self.save_locked(&mut inner);
+        }
+        released
     }
 
     /// Reservas ativas em `now`, ordenadas por nó. As vencidas são descartadas na leitura.
@@ -719,15 +775,16 @@ impl WorkStore {
         // G6: a node held for a request takes only that request's units, even on this
         // ungated path. The hold is a property of the node, not of the placement policy,
         // so it must survive `AI_CLUSTER_PLACEMENT=off`.
-        let held = self.reservations.held_for(node_id, now_unix_ms);
+        let held = self.reservations.hold(node_id, now_unix_ms);
+        let in_flight = in_flight_on(&inner, node_id);
         let index = {
             let outputs = &inner.outputs;
             *ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
-                    && held
-                        .as_deref()
-                        .is_none_or(|request| request == unit.request_id)
+                    && held.as_ref().is_none_or(|hold| {
+                        hold.admits(&unit.request_id, in_flight, capability.work_slots)
+                    })
             })
             .first()?
         };
@@ -772,15 +829,16 @@ impl WorkStore {
     ) -> Option<WorkUnit> {
         let mut inner = self.lock();
         // G6: a node held for a request takes only that request's units.
-        let held = self.reservations.held_for(node_id, now_unix_ms);
+        let held = self.reservations.hold(node_id, now_unix_ms);
+        let asking_in_flight = in_flight_on(&inner, node_id);
         let ranked = {
             let outputs = &inner.outputs;
             ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
-                    && held
-                        .as_deref()
-                        .is_none_or(|request| request == unit.request_id.as_str())
+                    && held.as_ref().is_none_or(|hold| {
+                        hold.admits(&unit.request_id, asking_in_flight, capability.work_slots)
+                    })
             })
         };
         // Best rank first, but a unit this node is not the right home for (a better node, or
@@ -791,14 +849,8 @@ impl WorkStore {
                 &inner.queue[index],
                 node_id,
                 candidates,
-                |id| {
-                    inner
-                        .dispatched
-                        .values()
-                        .filter(|record| record.node_id.as_str() == id)
-                        .count() as u32
-                },
-                |id| self.reservations.held_for(id, now_unix_ms),
+                |id| in_flight_on(&inner, id),
+                |id| self.reservations.hold(id, now_unix_ms),
                 tolerance,
             );
             if takes {
@@ -2343,6 +2395,95 @@ mod tests {
                 .expect("the held node takes its request's unit")
                 .work_id,
             "w1"
+        );
+    }
+
+    /// Nó com `work_slots` slots, para os testes de fila por recurso.
+    fn slotted(slots: u32) -> CapabilityReport {
+        CapabilityReport {
+            work_slots: slots,
+            ..capability(4, 1.0)
+        }
+    }
+
+    #[test]
+    fn fila_por_recurso_um_slot_serve_uma_unidade_por_vez_pela_prioridade() {
+        let store = WorkStore::new();
+        store.enqueue([
+            with_priority("baixa", 0),
+            with_priority("alta", 3),
+            with_priority("media", 1),
+        ]);
+        let node = ("n1".to_string(), slotted(1), healthy());
+        let candidates = [node.clone()];
+        let ask = |now| store.claim_placed("n1", &node.1, now, &candidates, 0.0);
+
+        // com um slot só, a mais prioritária sai primeiro e o nó não recebe outra enquanto roda
+        assert_eq!(ask(1_000).unwrap().work_id, "alta");
+        assert!(ask(1_001).is_none(), "slot ocupado: nada novo");
+        store.complete(
+            WorkResult {
+                node_id: "n1".into(),
+                ..result("alta", 1)
+            },
+            1_002,
+        );
+        assert_eq!(ask(1_003).unwrap().work_id, "media");
+    }
+
+    #[test]
+    fn fila_por_recurso_dois_slots_levam_as_duas_mais_prioritarias() {
+        let store = WorkStore::new();
+        store.enqueue([
+            with_priority("baixa", 0),
+            with_priority("alta", 3),
+            with_priority("media", 1),
+        ]);
+        let node = ("n1".to_string(), slotted(2), healthy());
+        let candidates = [node.clone()];
+        let ask = |now| store.claim_placed("n1", &node.1, now, &candidates, 0.0);
+
+        assert_eq!(ask(1_000).unwrap().work_id, "alta");
+        assert_eq!(ask(1_001).unwrap().work_id, "media");
+        assert!(ask(1_002).is_none(), "os dois slots estão em uso");
+    }
+
+    #[test]
+    fn reserva_parcial_deixa_o_no_atender_outras_requisicoes_ate_o_limite() {
+        let store = WorkStore::new();
+        store.enqueue([unit_for("o1", "req-outro"), unit_for("o2", "req-outro")]);
+        // 2 slots, 1 guardado para req-dono: req-outro usa um e o segundo espera
+        store.reserve_slots("n1", "req-dono", 1, 0, 1_000);
+        let node = ("n1".to_string(), slotted(2), healthy());
+        let candidates = [node.clone()];
+        let ask = |now| store.claim_placed("n1", &node.1, now, &candidates, 0.0);
+
+        assert_eq!(ask(1_001).unwrap().work_id, "o1");
+        assert!(ask(1_002).is_none(), "o último slot é do dono da reserva");
+    }
+
+    #[test]
+    fn as_reservas_sobrevivem_ao_reinicio_e_as_vencidas_somem() {
+        let dir = std::env::temp_dir().join(format!("aic-resv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.bin");
+        let now = crate::registry::unix_ms();
+        {
+            let store = WorkStore::with_state(path.clone());
+            store.reserve_slots("n-viva", "req-x", 2, 60_000, now);
+            store.reserve("n-curta", "req-y", 1, now);
+            store.reserve("n-solta", "req-z", 60_000, now);
+            assert!(store.release_reservation("n-solta"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let reloaded = WorkStore::with_state(path);
+        let listed = reloaded.reservations(crate::registry::unix_ms());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].0, "n-viva");
+        assert_eq!(
+            (listed[0].1.request_id.as_str(), listed[0].1.slots),
+            ("req-x", 2)
         );
     }
 

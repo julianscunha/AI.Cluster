@@ -64,7 +64,7 @@ Um nó que devolve três resultados inválidos seguidos (checksum errado) vai pa
 
 **Volta de um nó offline.** O worker tenta pedir trabalho de novo a cada segundo. Depois de 30 recusas seguidas, encerra. Se for reiniciado, registra-se de novo.
 
-**Reservas.** `ai-cluster reserve <nó> <request_id>` retém o nó inteiro para uma requisição. Até o vencimento (60 s por padrão, `--ttl-ms` muda), só as unidades dessa requisição vão para o nó. `ai-cluster release <nó>` libera antes. As reservas não sobrevivem a reinício.
+**Reservas.** `ai-cluster reserve <nó> <request_id>` retém o nó inteiro para uma requisição (`--slots N` guarda só N slots de trabalho e deixa o resto do nó para outras). Até o vencimento (60 s por padrão, `--ttl-ms` muda), só as unidades dessa requisição vão para o nó. `ai-cluster release <nó>` libera antes. As reservas sobrevivem a reinício do controller.
 
 ## Eventos e trilha de auditoria
 

@@ -62,13 +62,15 @@ Enfileirar unidades exige o papel de operador. Quem pode pedir prioridade alta, 
 
 Um cliente pode reter um nó para a requisição dele antes de o trabalho existir.
 
-- Uma reserva prende um nó inteiro a um `request_id` por um tempo (padrão 60 s, `ttl_ms` configurável). Um nó tem no máximo uma reserva; uma nova substitui a antiga.
+- Uma reserva prende um nó a um `request_id` por um tempo (padrão 60 s, `ttl_ms` configurável). Um nó tem no máximo uma reserva; uma nova substitui a antiga.
+- **Reserva parcial:** com `--slots N` a reserva guarda só N dos `work_slots` do nó. Outra requisição ainda usa o nó enquanto `unidades em voo + N < work_slots`; a requisição dona usa sempre. Sem `--slots` (ou `0`) o nó inteiro fica retido, como antes. A unidade é o slot porque é por ele que o placement admite trabalho e divide os núcleos. É contabilidade de admissão no controller: o worker não impõe o limite.
+- **Persistência:** as reservas vão no mesmo snapshot da fila (e na réplica I4), então sobrevivem a reinício do controller e são herdadas por um controller que assuma pela cópia de um nó. As vencidas são descartadas ao carregar.
 - Enquanto a reserva vale, o nó só aceita unidades daquela requisição, **mesmo com `AI_CLUSTER_PLACEMENT=off`**.
 - As unidades da requisição só rodam no nó reservado, mesmo que ele seja o mais caro.
 - A expiração é verificada quando alguém pergunta pela reserva, não por um temporizador. Um cliente que some libera o nó no primeiro consulta depois do vencimento.
 
 ```bash
-ai-cluster reserve <nó> <requisição> --ttl-ms 60000
+ai-cluster reserve <nó> <requisição> --ttl-ms 60000 [--slots 1]
 ai-cluster benchmark --request-id <requisição>
 ai-cluster release <nó>
 ai-cluster reservations

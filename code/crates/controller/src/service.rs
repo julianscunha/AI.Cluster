@@ -1253,9 +1253,13 @@ impl ClusterControl for ClusterControlService {
             }));
         }
         let now = unix_ms();
-        let reservation =
-            self.work
-                .reserve(&request.node_id, &request.request_id, request.ttl_ms, now);
+        let reservation = self.work.reserve_slots(
+            &request.node_id,
+            &request.request_id,
+            request.slots,
+            request.ttl_ms,
+            now,
+        );
         self.events.record(
             now,
             "node_reserved",
@@ -1283,6 +1287,7 @@ impl ClusterControl for ClusterControlService {
                 node_id,
                 request_id: reservation.request_id,
                 expires_at_unix_ms: reservation.expires_at_unix_ms,
+                slots: reservation.slots,
             })
             .collect();
         Ok(Response::new(ListReservationsResponse { reservations }))
@@ -2365,6 +2370,7 @@ mod tests {
             node_id: node_id.to_string(),
             request_id: request_id.to_string(),
             ttl_ms,
+            slots: 0,
         })
     }
 

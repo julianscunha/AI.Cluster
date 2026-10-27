@@ -2557,8 +2557,15 @@ tmpfs /run tmpfs rw 0 0
     #[test]
     fn cada_disco_medido_tem_nome_e_notas_finitas() {
         for disk in storage_devices() {
-            eprintln!("disco {} escrita={} leitura={}", disk.name, disk.write_score, disk.read_score);
-            assert!(!disk.name.is_empty() && disk.write_score.is_finite() && disk.read_score.is_finite());
+            eprintln!(
+                "disco {} escrita={} leitura={}",
+                disk.name, disk.write_score, disk.read_score
+            );
+            assert!(
+                !disk.name.is_empty()
+                    && disk.write_score.is_finite()
+                    && disk.read_score.is_finite()
+            );
         }
     }
 

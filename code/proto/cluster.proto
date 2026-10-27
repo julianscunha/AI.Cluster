@@ -544,6 +544,8 @@ message Reservation {
   /// Unix ms em que a reserva expira sozinha, para um cliente que reservou e sumiu não
   /// segurar o nó para sempre.
   uint64 expires_at_unix_ms = 3;
+  /// Slots do nó que a reserva guarda para a requisição dona; 0 é o nó inteiro.
+  uint32 slots = 4;
 }
 
 message ReserveRequest {
@@ -552,6 +554,10 @@ message ReserveRequest {
   string request_id = 2;
   /// Quanto tempo a reserva vale, a partir de agora. 0 usa o padrão do controller.
   uint64 ttl_ms = 3;
+  /// Quantos slots de trabalho (`work_slots`) do nó ficam guardados para a requisição. As outras
+  /// requisições só usam o nó enquanto sobrar slot além dos guardados. 0 retém o nó inteiro, como
+  /// antes; o campo novo mantém o wire compatível nos dois sentidos.
+  uint32 slots = 4;
 }
 
 message ReserveResponse {
@@ -686,6 +692,16 @@ message WorkSnapshot {
   /// estado: um controller que o recarrega sabe com que idade a sua cópia sai, e um nó
   /// compara a cópia dele contra isso. Sem o campo aqui todo restart pareceria época zero.
   uint64 epoch_unix_ms = 7;
+  /// Reservas de nó ainda válidas. Vão no mesmo snapshot (e na réplica I4) para sobreviverem a um
+  /// reinício e serem herdadas por um controller que assuma pela cópia de um nó.
+  repeated ReservationEntry reservations = 8;
+}
+
+message ReservationEntry {
+  string node_id = 1;
+  string request_id = 2;
+  uint64 expires_at_unix_ms = 3;
+  uint32 slots = 4;
 }
 
 /// Posse de uma unidade despachada: quem a segura e desde quando. `unit` viaja junto porque

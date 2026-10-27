@@ -46,7 +46,7 @@ A tabela de nós traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERS�
 
 | Comando | Função |
 |---|---|
-| `ai-cluster reserve <nó> <requisição> [--ttl-ms N]` | Retém um nó para uma requisição. `0` usa o padrão do controller (60 s). |
+| `ai-cluster reserve <nó> <requisição> [--ttl-ms N] [--slots N]` | Retém um nó para uma requisição. `0` usa o padrão do controller (60 s). `--slots` guarda só N slots; `0` é o nó inteiro. |
 | `ai-cluster reservations` | Lista nó, requisição dona e vencimento. |
 | `ai-cluster release <nó>` | Libera a reserva antes do vencimento. Nó sem reserva não é erro. |
 
