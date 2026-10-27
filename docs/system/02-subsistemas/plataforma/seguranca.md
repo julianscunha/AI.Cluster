@@ -101,7 +101,7 @@ Cada release de imagem é assinada com Ed25519 pelo operador. A chave privada fi
 - O download só vem do host do controller, e só é gravado depois de conferir o SHA-256 e a estrutura gzip.
 - Assinatura inválida é recusada, e o nó volta ao cluster. Ver [[ai-cluster-os]] para o fluxo completo.
 
-O controller guarda a release sem verificar a assinatura: a checagem é do nó. Um controller comprometido pode, portanto, tirar nós do cluster por alguns segundos com uma versão inventada, porque o nó drena antes de recusar.
+O controller guarda a release sem verificar a assinatura: a checagem é do nó. O worker confere a assinatura (`aic-update-request --verify`) **antes de drenar**, então um controller comprometido não consegue tirar o nó do cluster com uma versão inventada: o nó recusa, registra a recusa uma vez e segue trabalhando.
 
 ### Rotação de chave
 

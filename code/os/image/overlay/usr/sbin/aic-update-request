@@ -2,6 +2,8 @@
 # Chamado pelo worker (usuário sem privilégio) quando o controller manda uma release (F19). Confere a
 # assinatura e a versão antes de pedir: sem isso um controller malicioso seguraria o worker fora do
 # cluster com uma release inventada. Quem de fato verifica de novo e grava o slot é o aic-updater (root).
+# `--verify` só confere (o worker chama antes de drenar) e não grava o pedido.
+verify=; [ "$1" = --verify ] && { verify=1; shift; }
 [ $# -eq 5 ] || exit 2
 . /etc/aic-board   # board=…
 case "$1" in ''|*[!0-9.]*) echo "versão inválida" >&2; exit 3;; esac
@@ -15,5 +17,6 @@ for k in /etc/aic-release.d/*.pub; do
 	openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$w/msg" -sigfile "$w/sig" >/dev/null 2>&1 && { ok=1; break; }
 done
 [ -n "$ok" ] || { echo "assinatura não confere" >&2; exit 3; }
+[ -z "$verify" ] || exit 0
 umask 077
 printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" > /data/state/update-request.tmp && mv /data/state/update-request.tmp /data/state/update-request

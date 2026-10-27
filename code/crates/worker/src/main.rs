@@ -223,6 +223,47 @@ fn accept_update(release: &Release, current: &str, tried: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
 }
 
+/// Pergunta ao comando de atualização (`--verify`) se a assinatura da release confere, antes de o
+/// worker drenar: sem isso um controller malicioso tira o nó do cluster com uma versão inventada.
+async fn update_verified(command: &str, release: &Release) -> bool {
+    // Roda no laço do heartbeat: sem prazo, um comando travado faria o controller dar o nó por morto.
+    let run = tokio::process::Command::new(command)
+        .arg("--verify")
+        .args([
+            &release.version,
+            &release.url,
+            &release.sha256,
+            &release.image_sha256,
+            &release.signature,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status();
+    match time::timeout(Duration::from_secs(10), run).await {
+        Ok(Ok(status)) => {
+            if !status.success() {
+                println!(
+                    "conferência da release {} falhou: {status}",
+                    release.version
+                );
+            }
+            status.success()
+        }
+        Ok(Err(err)) => {
+            println!("não consegui rodar {command} --verify: {err}");
+            false
+        }
+        Err(_) => {
+            println!(
+                "conferência da release {} passou de 10 s; recusada",
+                release.version
+            );
+            false
+        }
+    }
+}
+
 fn update_mark_path() -> PathBuf {
     std::env::var_os("AI_CLUSTER_UPDATE_MARK")
         .map_or_else(|| "/data/state/update-tried".into(), Into::into)
@@ -378,6 +419,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (broken, update, update_cmd) = (broken.clone(), update.clone(), update_cmd.clone());
         async move {
             let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+            let mut rejected = String::new(); // versão/assinatura recusada: não reconfere a cada heartbeat
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {}
@@ -401,14 +443,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             store_state_replica(&replica);
                         }
                         if let Some(release) = beat.release
-                            && update_cmd.is_some()
+                            && let Some(command) = update_cmd.as_deref()
                         {
                             let tried =
                                 std::fs::read_to_string(update_mark_path()).unwrap_or_default();
-                            if accept_update(&release, &runtime_version(), &tried) {
-                                println!("atualização pedida versão={}", release.version);
-                                *update.lock().unwrap_or_else(|p| p.into_inner()) = Some(release);
-                                broken.store(true, Ordering::Relaxed);
+                            let key = format!("{}/{}", release.version, release.signature);
+                            if accept_update(&release, &runtime_version(), &tried)
+                                && rejected != key
+                            {
+                                if update_verified(command, &release).await {
+                                    println!("atualização pedida versão={}", release.version);
+                                    *update.lock().unwrap_or_else(|p| p.into_inner()) =
+                                        Some(release);
+                                    broken.store(true, Ordering::Relaxed);
+                                } else {
+                                    println!(
+                                        "release {} recusada; o nó continua no cluster",
+                                        release.version
+                                    );
+                                    rejected = key;
+                                }
                             }
                         }
                         if !beat.acknowledged {
@@ -1938,6 +1992,34 @@ mod tests {
         assert_eq!(measurement_confidence(&[1.0, 1.0, 1.0]), 1.0);
         // The best run is the fastest and the median sits above it, so the fraction is < 1.
         assert!(measurement_confidence(&[1.0, 1.2, 1.4]) < 1.0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn so_drena_se_o_comando_confere_a_release() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aic-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let release = Release {
+            version: "2".into(),
+            url: "http://h/x.gz".into(),
+            sha256: "a".repeat(64),
+            image_sha256: "b".repeat(64),
+            signature: format!("{}==", "A".repeat(86)),
+        };
+        // só aceita se o primeiro argumento for --verify e houver os cinco campos
+        let ok = script("ok.sh", r#"[ "$1" = --verify ] && [ $# -eq 6 ]"#);
+        let recusa = script("no.sh", "exit 3");
+        assert!(update_verified(&ok, &release).await);
+        assert!(!update_verified(&recusa, &release).await);
+        assert!(!update_verified("/nao/existe", &release).await);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

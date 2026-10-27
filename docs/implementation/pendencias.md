@@ -259,7 +259,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 | dm-verity com root hash assinado | Integridade do disco no boot. A medida atual é de software e não prova integridade contra um nó comprometido. | hardware: placa com dm-verity |
 | TPM e secure boot | Attestation forte e verificação de boot. | hardware: TPM, placa com secure boot |
 | Token dedicado de recuperação (ADR-017) | A recuperação pela rede usa o token de join, em claro no `boot.scr`. Falta um token curto ou de uso único, com `ttl` na recuperação. | código, hardware: placa armv7 para validar |
-| Verificação antes de drenar | Um controller malicioso consegue tirar o worker do cluster por alguns segundos com uma versão inventada, porque o worker drena antes de o updater rejeitar a assinatura. Falta conferir a assinatura no worker antes de drenar. | código |
 | Downgrade | O rollout não faz downgrade, e a ordem de versões é numérica. Falta decidir se um rollback legítimo precisa de versão maior. | decisão |
 | Marca de versão tentada | Guarda só uma versão. Versões diferentes repetem o ciclo. | código |
 | Trilha de auditoria persistente | Eventos de approve, revoke e leave ficam em anel de memória, e o arquivo não é assinado nem à prova de adulteração. | código, decisão |
