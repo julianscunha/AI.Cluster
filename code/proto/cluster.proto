@@ -78,6 +78,9 @@ message CapabilityReport {
   /// (menor de várias, como as outras sondas). É o que separa HDD de SSD de NVMe quando a vazão
   /// sequencial engana. Zero é "não medido", nunca "disco instantâneo". Menor é melhor.
   double storage_latency_ms = 17;
+  /// Bytes que o worker aceita manter residentes como fatias de modelo (`AI_CLUSTER_SHARD_CACHE_MB`).
+  /// Zero é "não participa do canal de fatias" (sem `AI_CLUSTER_MODEL_DIR`) ou worker antigo.
+  uint64 shard_cache_bytes = 18;
 }
 
 // Sonda de throughput: o worker sobe `payload` e cronometra o RPC.
@@ -334,6 +337,22 @@ message ShardOp {
   uint32 row_end = 5;
   /// As faixas são colunas de um tensor `[in, out]` (GPT-2), não linhas de um `[out, in]`.
   bool by_columns = 6;
+}
+
+message ShardCapacityRequest {
+  repeated string node_ids = 1;
+}
+
+message NodeShardCapacity {
+  string node_id = 1;
+  /// Nó registrado, aprovado e vivo.
+  bool available = 2;
+  uint64 shard_cache_bytes = 3;
+  uint64 memory_bytes = 4;
+}
+
+message ShardCapacityResponse {
+  repeated NodeShardCapacity nodes = 1;
 }
 
 message ShardMatmulRequest {
@@ -630,6 +649,9 @@ service ClusterControl {
   rpc ShardChannel(stream ShardResult) returns (stream ShardCompute);
   /// Só operador: roda `x * fatia^T` em cada nó indicado e devolve as saídas na mesma ordem.
   rpc ShardMatmul(ShardMatmulRequest) returns (ShardMatmulResponse);
+  /// Token de inferência ou de operador: quanto cada nó nomeado aceita guardar de fatias, para o
+  /// gateway recusar na subida um modelo que os nós não comportam.
+  rpc ShardCapacity(ShardCapacityRequest) returns (ShardCapacityResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);

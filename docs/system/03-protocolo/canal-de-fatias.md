@@ -50,7 +50,8 @@ Semântica da faixa:
 |---|---|
 | Abertura de `ShardChannel` | nó no metadado `x-ai-cluster-node-id`, registrado, aprovado, elegível e com a credencial exata do nó |
 | `ShardMatmul` | token de inferência ou de operador |
-| Qualquer outro RPC com o token de inferência | `PermissionDenied`: o token só passa para `ShardMatmul` |
+| `ShardCapacity` | token de inferência ou de operador |
+| Qualquer outro RPC com o token de inferência | `PermissionDenied`: o token só passa para `ShardMatmul` e `ShardCapacity` |
 
 - O token de operador **não** abre o canal: sem a credencial do nó, `ShardChannel` é recusado.
 - Um RPC novo fica fora do alcance do token de inferência até alguém liberá-lo. Isso vale por construção, não por lista de exceções.
@@ -63,6 +64,20 @@ Semântica da faixa:
 - Depois de registrar a sessão, o controller confere a elegibilidade de novo, para que um nó revogado no intervalo não fique com sessão.
 - Keepalive HTTP/2 de 10 s nos dois lados detecta conexão meio aberta.
 - O worker reconecta a cada 2 s. Um motivo de recusa é impresso uma vez, não a cada tentativa.
+
+## Admissão por capacidade
+
+Ao subir, o gateway confere se os nós do modelo comportam as fatias, em vez de deixar o erro aparecer na primeira chamada.
+
+- O modelo calcula quanto cada nó guarda: as fatias ficam residentes em `f64`, então o custo é `linhas da faixa × elementos por linha × 8` somado nas projeções.
+- O worker reporta no registro quanto aceita guardar (`shard_cache_bytes`, vindo de `AI_CLUSTER_SHARD_CACHE_MB`; zero sem `AI_CLUSTER_MODEL_DIR`).
+- O gateway chama `ShardCapacity` com os nós do modelo. O controller responde, para cada um, se está disponível (registrado, aprovado e vivo), o cache de fatias e a RAM. Só devolve o que o próprio nó reportou.
+- O pedido cabe se `bytes ≤ min(cache, RAM)` (a RAM só entra se foi reportada). Senão o gateway recusa a subida: `nó w1 precisa de 3.0 GB de fatias e aceita 2.0 GB (faltam 1.0 GB)`.
+- Falha fechada: nó ausente, indisponível ou com cache zero (worker antigo) também recusa. Nós que ainda estão registrando ganham até 30 s.
+- A carga do modelo já recusa uma faixa que passe do teto de 256 MiB por fatia, e o gateway só deixa 80% da RAM do nó para as fatias.
+- O token de inferência passa a ler, dos nós que nomeia, se estão vivos e quanto aceitam guardar; não enumera nós, porque precisa conhecer o id.
+- Worker antigo (sem o campo de cache) recusa o modelo fatiado: atualize os workers antes do gateway.
+- Não cobre o failover (a faixa de um nó que cai vai para os vivos sem reserva de espaço) nem uma mudança de cache depois da subida.
 
 ## Relay no controller
 

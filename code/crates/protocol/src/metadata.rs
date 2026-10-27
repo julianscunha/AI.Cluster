@@ -376,6 +376,10 @@ impl ServerMetadata {
 /// Path of `ShardMatmul`, the one call the inference token may make.
 const SHARD_MATMUL_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardMatmul";
 
+/// Path of `ShardCapacity`, the other call the inference token may make: how much slice memory
+/// the nodes it names accept.
+const SHARD_CAPACITY_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardCapacity";
+
 /// The calls a node in network recovery may make: show up, stay alive, say how it is, leave.
 const RECOVERY_PATHS: &[&str] = &[
     "/ai.cluster.v1.ClusterControl/RegisterNode",
@@ -394,9 +398,9 @@ pub struct ScopeGate<S> {
     allowed: &'static [&'static str],
 }
 
-/// The inference token reaches `ShardMatmul` only.
+/// The inference token reaches `ShardMatmul` and `ShardCapacity` only.
 pub fn inference_gate<S>(inner: S, token: &str) -> ScopeGate<S> {
-    scope_gate(inner, token, &[SHARD_MATMUL_PATH])
+    scope_gate(inner, token, &[SHARD_MATMUL_PATH, SHARD_CAPACITY_PATH])
 }
 
 /// The recovery token reaches [`RECOVERY_PATHS`] only.
@@ -694,6 +698,7 @@ mod tests {
             response.headers().get("grpc-status").is_none()
         };
         assert!(call("inf", SHARD_MATMUL_PATH).await);
+        assert!(call("inf", SHARD_CAPACITY_PATH).await);
         for path in [
             "/ai.cluster.v1.ClusterControl/ListNodes",
             "/ai.cluster.v1.ClusterControl/ShardChannel",

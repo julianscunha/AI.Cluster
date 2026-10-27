@@ -10,6 +10,7 @@ use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
 use crate::shard::{Executor, Weight, apply};
 use ai_cluster_common::matrix::Matrix;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -110,7 +111,7 @@ impl Gpt2 {
                 weight: if nodes.is_empty() {
                     Weight::Local(tensors.matrix(&weight)?)
                 } else {
-                    Weight::split(&nodes, &weight, output, true)?
+                    Weight::split(&nodes, &weight, output, input, true)?
                 },
                 bias: tensors.vector(&format!("{base}.bias"))?,
                 input,
@@ -194,6 +195,17 @@ impl LanguageModel for Gpt2 {
 
     fn kv_bytes_per_position(&self) -> usize {
         self.blocks.len() * 2 * self.wte.cols as usize * std::mem::size_of::<f64>()
+    }
+
+    fn resident_bytes(&self) -> BTreeMap<String, u64> {
+        crate::shard::resident_bytes(self.blocks.iter().flat_map(|b| {
+            [
+                &b.qkv.weight,
+                &b.attn_out.weight,
+                &b.fc.weight,
+                &b.proj.weight,
+            ]
+        }))
     }
 
     /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,

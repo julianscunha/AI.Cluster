@@ -12,6 +12,7 @@ use crate::model::LanguageModel;
 use crate::safetensors::Tensors;
 use crate::shard::{Executor, Weight, apply, transposed};
 use ai_cluster_common::matrix::Matrix;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -135,7 +136,7 @@ impl Llama {
             if nodes.is_empty() {
                 return Ok(Weight::Local(transposed(&tensors.matrix(&name)?)));
             }
-            Weight::split(&nodes, &name, rows, false)
+            Weight::split(&nodes, &name, rows, cols, false)
         };
         let vector = |name: String, len: usize| -> Result<Vec<f64>, String> {
             let v = tensors.vector(&name)?;
@@ -286,6 +287,14 @@ impl LanguageModel for Llama {
 
     fn kv_bytes_per_position(&self) -> usize {
         self.blocks.len() * 2 * self.kv_heads * self.head_dim * std::mem::size_of::<f64>()
+    }
+
+    fn resident_bytes(&self) -> BTreeMap<String, u64> {
+        crate::shard::resident_bytes(
+            self.blocks
+                .iter()
+                .flat_map(|b| [&b.q, &b.k, &b.v, &b.o, &b.gate, &b.up, &b.down]),
+        )
     }
 
     fn forward(&self, tokens: &[u32], cache: &mut KvCache) -> Result<Vec<f64>, String> {

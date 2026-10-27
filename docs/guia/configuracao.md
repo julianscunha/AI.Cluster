@@ -51,7 +51,7 @@ Convenções:
 | `AI_CLUSTER_STATE_REPLICA` | não guarda cópia | Arquivo onde o nó guarda uma cópia do estado do controller. Serve para recuperar a fila se o volume do controller morrer. |
 | `AI_CLUSTER_WORK_SLOTS` | `1` (1 a 64) | Unidades executadas ao mesmo tempo. Os cores reportados são divididos entre elas. |
 | `AI_CLUSTER_MODEL_DIR` | — | Raiz dos modelos. Ativa o canal de fatias residentes. Cada diretório com `manifest.json` é verificado na subida; divergência encerra o worker. |
-| `AI_CLUSTER_SHARD_CACHE_MB` | `2048` | Memória máxima das fatias residentes (despejo LRU). |
+| `AI_CLUSTER_SHARD_CACHE_MB` | `2048` | Memória máxima das fatias residentes (despejo LRU). O worker reporta o valor, e o gateway recusa na subida um modelo que não cabe ("faltam X GB"). |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | `1` ou `true`: diretório de modelo sem `manifest.json` é erro. |
 | `AI_CLUSTER_UPDATE_CMD` | — | Comando de atualização, executado sem shell com versão, URL, SHA-256 da release, SHA-256 da imagem e assinatura. Sem ele o nó não participa do rollout. |
 | `AI_CLUSTER_UPDATE_MARK` | `/data/state/update-tried` | Arquivo com a última versão tentada. Impede repetir a atualização depois de um rollback. |

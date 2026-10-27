@@ -8,7 +8,7 @@
 
 use crate::safetensors::read_band;
 use ai_cluster_common::matrix::Matrix;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -34,22 +34,35 @@ pub struct Slice {
 /// A projection: held here as `[in, out]`, or cut into slices that live on other nodes.
 pub(crate) enum Weight {
     Local(Matrix),
-    /// Slices in output order; their outputs concatenate by columns.
-    Remote(Vec<Slice>),
+    /// Slices in output order; their outputs concatenate by columns. The second field is how many
+    /// elements one output row (or column) of a slice holds, to size what a node keeps resident.
+    Remote(Vec<Slice>, usize),
 }
 
 impl Weight {
-    /// `extent` output rows (or columns) cut into equal bands, one per node, in node order.
+    /// `extent` output rows (or columns) cut into equal bands, one per node, in node order; each
+    /// output row (or column) holds `width` elements.
     pub(crate) fn split(
         nodes: &[String],
         tensor: &str,
         extent: usize,
+        width: usize,
         by_columns: bool,
     ) -> Result<Self, String> {
         if extent < nodes.len() {
             return Err(format!(
                 "{tensor}: {extent} linhas para {} nós",
                 nodes.len()
+            ));
+        }
+        // A faixa de um nó vira uma fatia residente de uma vez só: acima do teto o worker a recusaria
+        // na primeira chamada, então o modelo é recusado já na carga.
+        let widest = extent.div_ceil(nodes.len()) as u64 * width as u64 * size_of::<f64>() as u64;
+        if widest > MAX_SLICE_BYTES as u64 {
+            return Err(format!(
+                "{tensor}: a faixa de cada nó teria {} MiB, acima do teto de {} MiB por fatia; use mais nós",
+                widest >> 20,
+                MAX_SLICE_BYTES >> 20
             ));
         }
         let bounds = |i: usize| (i * extent / nodes.len()) as u32;
@@ -65,8 +78,27 @@ impl Weight {
                     by_columns,
                 })
                 .collect(),
+            width,
         ))
     }
+}
+
+/// What each node keeps resident for these weights: `f64` per element, as the worker stores a
+/// slice. A node that holds bands of several weights adds them up.
+pub(crate) fn resident_bytes<'a>(
+    weights: impl IntoIterator<Item = &'a Weight>,
+) -> BTreeMap<String, u64> {
+    let mut need = BTreeMap::new();
+    for weight in weights {
+        if let Weight::Remote(parts, width) = weight {
+            for part in parts {
+                let rows = u64::from(part.row_end - part.row_start);
+                *need.entry(part.node.clone()).or_insert(0) +=
+                    rows * *width as u64 * size_of::<f64>() as u64;
+            }
+        }
+    }
+    need
 }
 
 /// `x * w` for each weight, in order. Every remote weight goes out in one executor call, so
@@ -80,7 +112,7 @@ pub(crate) fn apply(
     let slices: Vec<Slice> = weights
         .iter()
         .filter_map(|w| match w {
-            Weight::Remote(parts) => Some(parts.iter().cloned()),
+            Weight::Remote(parts, _) => Some(parts.iter().cloned()),
             Weight::Local(_) => None,
         })
         .flatten()
@@ -101,7 +133,7 @@ pub(crate) fn apply(
             Weight::Local(w) => x
                 .multiply_with_threads(w, threads)
                 .ok_or_else(|| "formas incompatíveis na multiplicação".to_string()),
-            Weight::Remote(parts) => {
+            Weight::Remote(parts, _) => {
                 let pieces: Vec<Matrix> = remote.by_ref().take(parts.len()).collect();
                 join_columns(&pieces, x.rows, parts)
             }
@@ -461,6 +493,34 @@ mod tests {
             .unwrap();
         assert_eq!((y.rows, y.cols, y.data), (1, 1, vec![12.0]));
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn resident_bytes_soma_o_que_cada_no_guarda() {
+        // 10 linhas em 3 nós (3, 3, 4 pela divisão), 5 elementos por linha, duas projeções
+        let nodes: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        let w = Weight::split(&nodes, "t", 10, 5, false).unwrap();
+        let need = resident_bytes([&w, &w]);
+        assert_eq!(need["a"], 2 * 3 * 5 * 8);
+        assert_eq!(need["b"], 2 * 3 * 5 * 8);
+        assert_eq!(need["c"], 2 * 4 * 5 * 8);
+        assert_eq!(need.values().sum::<u64>(), 2 * 10 * 5 * 8);
+        assert!(
+            resident_bytes([&Weight::Local(Matrix {
+                rows: 1,
+                cols: 1,
+                data: vec![0.0]
+            })])
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn faixa_acima_do_teto_por_fatia_e_recusada_na_carga() {
+        let nodes: Vec<String> = ["a", "b"].map(String::from).to_vec();
+        // 8192 linhas x 8192 colunas x 8 bytes = 512 MiB no total, 256 MiB por nó: no teto
+        assert!(Weight::split(&nodes, "t", 8192, 8192, false).is_ok());
+        assert!(Weight::split(&nodes, "t", 8194, 8192, false).is_err());
     }
 
     #[test]

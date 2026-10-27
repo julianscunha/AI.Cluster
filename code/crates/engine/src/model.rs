@@ -1,6 +1,7 @@
 //! What the gateway needs from a language model, whatever its architecture.
 
 use crate::cache::KvCache;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub trait LanguageModel {
@@ -13,6 +14,12 @@ pub trait LanguageModel {
     /// Bytes the KV cache holds per position (keys and values of every layer), zero if unknown.
     fn kv_bytes_per_position(&self) -> usize {
         0
+    }
+
+    /// Bytes each node keeps resident for this model's remote slices (empty when every weight is
+    /// local), for checking that the nodes can hold them before serving.
+    fn resident_bytes(&self) -> BTreeMap<String, u64> {
+        BTreeMap::new()
     }
 
     /// Runs `tokens` as the next positions after what `cache` already holds, extends the cache,

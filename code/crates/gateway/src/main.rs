@@ -26,7 +26,7 @@ use ai_cluster_engine::{
 };
 use ai_cluster_protocol::cluster::{
     CancelRequestRequest, EnqueueGraphRequest, GetOutputRequest, GetTraceRequest,
-    ShardMatmulRequest, ShardOp,
+    NodeShardCapacity, ShardCapacityRequest, ShardMatmulRequest, ShardOp,
 };
 use ai_cluster_protocol::metadata::{
     FAILED_NODE_HEADER, INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MetadataClient,
@@ -250,6 +250,90 @@ const LLAMAS: &[LlamaSpec] = &[
 fn manifest_required() -> bool {
     std::env::var("AI_CLUSTER_REQUIRE_MANIFEST")
         .is_ok_and(|value| matches!(value.trim(), "1" | "true"))
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / (1u64 << 30) as f64)
+}
+
+/// Whether every node can hold what the model keeps resident on it: `need` against the slice
+/// cache the node reported and, when it reported memory, against its RAM. Fail-closed: an
+/// unavailable node, or one with no slice cache (an old worker, or one without a model root),
+/// refuses the model instead of failing on the first request.
+///
+/// The error says whether waiting could help: a node that is not registered yet may still show up,
+/// but a node whose cache is too small never fits.
+fn check_fit(
+    id: &str,
+    need: &std::collections::BTreeMap<String, u64>,
+    nodes: &[NodeShardCapacity],
+) -> Result<(), (String, bool)> {
+    for (node, bytes) in need {
+        let Some(cap) = nodes.iter().find(|cap| cap.node_id == *node) else {
+            let msg = format!("{id}: o controller não respondeu sobre o nó {node}");
+            return Err((msg, true));
+        };
+        if !cap.available {
+            let msg = format!("{id}: nó {node} não está registrado, aprovado e vivo");
+            return Err((msg, true));
+        }
+        if cap.shard_cache_bytes == 0 {
+            let msg = format!(
+                "{id}: nó {node} não reporta cache de fatias (sem AI_CLUSTER_MODEL_DIR ou worker antigo)"
+            );
+            return Err((msg, false));
+        }
+        // 80% da RAM: o resto é do sistema, do worker e do pico de carga de uma fatia
+        let room = if cap.memory_bytes > 0 {
+            cap.shard_cache_bytes.min(cap.memory_bytes / 5 * 4)
+        } else {
+            cap.shard_cache_bytes
+        };
+        if *bytes > room {
+            let msg = format!(
+                "{id}: nó {node} precisa de {} de fatias e aceita {} (faltam {}); suba AI_CLUSTER_SHARD_CACHE_MB no worker ou acrescente nós ao *_SHARDS do modelo",
+                gib(*bytes),
+                gib(room),
+                gib(bytes - room)
+            );
+            return Err((msg, false));
+        }
+    }
+    Ok(())
+}
+
+/// Asks the controller what the shard nodes accept and refuses the model if they cannot hold it.
+/// Nodes that are still registering are given up to 30 s, so the start order does not matter.
+async fn admit(
+    client: &MetadataClient,
+    id: &str,
+    need: &std::collections::BTreeMap<String, u64>,
+) -> Result<(), String> {
+    if need.is_empty() {
+        return Ok(());
+    }
+    let node_ids: Vec<String> = need.keys().cloned().collect();
+    let mut last = String::new();
+    for attempt in 0..15 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let mut client = client.clone();
+        match client
+            .shard_capacity(ShardCapacityRequest {
+                node_ids: node_ids.clone(),
+            })
+            .await
+        {
+            Ok(response) => match check_fit(id, need, &response.into_inner().nodes) {
+                Ok(()) => return Ok(()),
+                Err((err, false)) => return Err(err),
+                Err((err, true)) => last = err,
+            },
+            Err(err) => last = format!("{id}: capacidade dos nós: {}", err.message()),
+        }
+    }
+    Err(last)
 }
 
 fn load_llama(client: &MetadataClient, spec: &LlamaSpec) -> Result<Option<Llm>, String> {
@@ -1345,6 +1429,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(stats),
             )
         };
+        admit(&client, "gpt2", &model.resident_bytes()).await?;
         llms.push(Arc::new(Llm {
             id: "gpt2",
             version,
@@ -1359,6 +1444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     for spec in LLAMAS {
         if let Some(llm) = load_llama(&client, spec)? {
+            admit(&client, llm.id, &llm.model.resident_bytes()).await?;
             llms.push(Arc::new(llm));
         }
     }
@@ -1388,6 +1474,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+    fn cap(node: &str, available: bool, cache: u64, memory: u64) -> NodeShardCapacity {
+        NodeShardCapacity {
+            node_id: node.into(),
+            available,
+            shard_cache_bytes: cache,
+            memory_bytes: memory,
+        }
+    }
+
+    #[test]
+    fn admissao_diz_quanto_falta() {
+        let need = std::collections::BTreeMap::from([("w1".to_string(), 3u64 << 30)]);
+        assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 8 << 30)]).is_ok());
+        // o cache não comporta: diz o tamanho e quanto falta, e esperar não adianta
+        let (err, retry) = check_fit("m", &need, &[cap("w1", true, 2 << 30, 8 << 30)]).unwrap_err();
+        assert!(!retry);
+        assert!(
+            err.contains("precisa de 3.0 GB") && err.contains("faltam 1.0 GB"),
+            "{err}"
+        );
+        // a RAM do nó manda quando é menor que o cache, com 20% de folga para o resto do sistema
+        assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 2 << 30)]).is_err());
+        assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 3 << 30)]).is_err());
+        assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 4 << 30)]).is_ok());
+        // memória não reportada (0) não bloqueia
+        assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 0)]).is_ok());
+    }
+
+    #[test]
+    fn admissao_falha_fechada() {
+        let need = std::collections::BTreeMap::from([("w1".to_string(), 1u64)]);
+        // nó que ainda não apareceu: vale esperar
+        assert!(check_fit("m", &need, &[]).unwrap_err().1);
+        assert!(
+            check_fit("m", &need, &[cap("w1", false, 1 << 30, 0)])
+                .unwrap_err()
+                .1
+        );
+        // worker antigo ou sem raiz de modelos (cache 0): não adianta esperar
+        assert!(
+            !check_fit("m", &need, &[cap("w1", true, 0, 8 << 30)])
+                .unwrap_err()
+                .1
+        );
+        // outro nó na resposta não vale pelo w1
+        assert!(check_fit("m", &need, &[cap("w2", true, 1 << 30, 0)]).is_err());
+    }
+
     use super::*;
 
     #[test]

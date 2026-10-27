@@ -147,5 +147,13 @@ CODE=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" \
 [ "$CODE" = 503 ] || fail "sem nenhum worker o pedido deveria dar 503, deu: $CODE"
 echo "OK: 503 sem nenhum worker"
 
+echo "=== D) admissão: um nó com cache pequeno demais recusa o modelo na subida ==="
+MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-3 "${common[@]}"   -v "$PWD/models:/models:ro" -e AI_CLUSTER_MODEL_DIR=/models -e AI_CLUSTER_SHARD_CACHE_MB=1   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=worker-3   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
+sleep 6
+ADMIT=$(MSYS_NO_PATHCONV=1 docker run --rm --name aic-gateway-d "${common[@]}" -e AI_CLUSTER_API_KEY=$KEY   -e AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE   -v "$PWD/models/$DIR:/model:ro" -e AI_CLUSTER_${VAR}_DIR=/model   -e AI_CLUSTER_${VAR}_SHARDS=worker-3 -e AI_CLUSTER_${VAR}_SUBDIR=$DIR   -e AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8081 -e AI_CLUSTER_CONTROLLER=$CONTROLLER   "$IMG" sh -c "exec $R/ai-cluster-gateway" 2>&1)
+echo "$ADMIT" | tail -2
+echo "$ADMIT" | grep -q "faltam" || fail "o gateway deveria recusar o modelo que não cabe no nó"
+echo "OK: o gateway recusou na subida dizendo quanto falta"
+
 teardown
 echo "=== J5 canal residente OK ==="

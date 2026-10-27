@@ -385,13 +385,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resident weight slices (J5): only a node that was told where the models live opens the
     // channel. The cap bounds the memory the slices may hold.
     let shard_channel = std::env::var_os("AI_CLUSTER_MODEL_DIR").map(|root| {
-        let cap_mb = std::env::var("AI_CLUSTER_SHARD_CACHE_MB")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .unwrap_or(2048);
         let store = std::sync::Arc::new(ai_cluster_engine::ShardStore::new(
             PathBuf::from(root),
-            cap_mb.saturating_mul(1024 * 1024),
+            usize::try_from(shard_cache_bytes()).unwrap_or(usize::MAX),
             cores,
         ));
         tokio::spawn(shards::run(client.clone(), node_id.clone(), store))
@@ -1341,6 +1337,18 @@ fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
 
+/// Memória que as fatias residentes podem ocupar neste nó: `AI_CLUSTER_SHARD_CACHE_MB` (padrão
+/// 2048). Zero sem `AI_CLUSTER_MODEL_DIR`, porque o nó nem abre o canal de fatias.
+fn shard_cache_bytes() -> u64 {
+    let mb = std::env::var("AI_CLUSTER_SHARD_CACHE_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(2048);
+    // Em 32 bits o cache real não passa de usize::MAX; reporta o mesmo valor que o ShardStore usa.
+    let bytes = mb.saturating_mul(1024 * 1024);
+    usize::try_from(bytes).map_or(usize::MAX as u64, |_| bytes)
+}
+
 fn capability() -> CapabilityReport {
     // Report fewer threads than the host has so a placement test can stand a weak
     // node next to a strong one without a second machine. Unset means report reality.
@@ -1381,6 +1389,11 @@ fn capability() -> CapabilityReport {
         memory_bandwidth_score: memory_bandwidth_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
+        shard_cache_bytes: if std::env::var_os("AI_CLUSTER_MODEL_DIR").is_some() {
+            shard_cache_bytes()
+        } else {
+            0
+        },
         ..Default::default()
     }
 }

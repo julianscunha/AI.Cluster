@@ -10,12 +10,13 @@ use ai_cluster_protocol::cluster::{
     HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
     LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
     ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
-    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
-    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
-    SetReleaseRequest, SetReleaseResponse, ShardCompute, ShardMatmulRequest, ShardMatmulResponse,
-    ShardOutput, ShardResult, SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry,
-    WorkReportRequest, WorkReportResponse, WorkUnit,
+    NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest,
+    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
+    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
+    RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest, SetReleaseResponse,
+    ShardCapacityRequest, ShardCapacityResponse, ShardCompute, ShardMatmulRequest,
+    ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
+    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{
     NODE_ID_HEADER, is_recovery, node_credential, require_inference, require_operator,
@@ -828,6 +829,32 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(Box::pin(
             tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(frames),
         )))
+    }
+
+    /// Quanto cada nó nomeado aceita guardar de fatias (admissão por capacidade). Só diz o que o
+    /// próprio nó reportou; nó desconhecido ou fora do ar volta como indisponível.
+    async fn shard_capacity(
+        &self,
+        request: Request<ShardCapacityRequest>,
+    ) -> Result<Response<ShardCapacityResponse>, Status> {
+        require_inference(&request)?;
+        let ids = request.into_inner().node_ids;
+        if ids.is_empty() || ids.len() > MAX_SHARD_OPS {
+            return Err(Status::invalid_argument("lista de nós inválida"));
+        }
+        let nodes = ids
+            .into_iter()
+            .map(|node_id| {
+                let capability = self.registry.capability(&node_id).unwrap_or_default();
+                NodeShardCapacity {
+                    available: self.registry.is_available(&node_id),
+                    shard_cache_bytes: capability.shard_cache_bytes,
+                    memory_bytes: capability.memory_bytes,
+                    node_id,
+                }
+            })
+            .collect();
+        Ok(Response::new(ShardCapacityResponse { nodes }))
     }
 
     /// Runs one activation against several weight slices on the nodes that hold them (J5).
@@ -2290,6 +2317,54 @@ mod tests {
             .unwrap()
             .into_inner();
         assert!(!again.released);
+    }
+
+    fn inference<T>(message: T) -> Request<T> {
+        let mut request = Request::new(message);
+        request
+            .extensions_mut()
+            .insert(ai_cluster_protocol::metadata::Inference);
+        request
+    }
+
+    #[tokio::test]
+    async fn shard_capacity_diz_o_que_o_no_aceita_guardar() {
+        let service = service();
+        service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("w1")),
+                capability: Some(CapabilityReport {
+                    memory_bytes: 8,
+                    shard_cache_bytes: 4,
+                    ..Default::default()
+                }),
+                replica: None,
+            }))
+            .await
+            .unwrap();
+        let ask = |ids: &[&str]| ShardCapacityRequest {
+            node_ids: ids.iter().map(|id| id.to_string()).collect(),
+        };
+        let answer = service
+            .shard_capacity(inference(ask(&["w1", "ninguem"])))
+            .await
+            .unwrap()
+            .into_inner()
+            .nodes;
+        assert_eq!(
+            (
+                answer[0].available,
+                answer[0].shard_cache_bytes,
+                answer[0].memory_bytes
+            ),
+            (true, 4, 8)
+        );
+        assert!(!answer[1].available);
+        // sem token de inferência ou de operador, não responde; lista vazia ou grande demais, também
+        let denied = service.shard_capacity(Request::new(ask(&["w1"]))).await;
+        assert_eq!(denied.unwrap_err().code(), tonic::Code::PermissionDenied);
+        let empty = service.shard_capacity(inference(ask(&[]))).await;
+        assert_eq!(empty.unwrap_err().code(), tonic::Code::InvalidArgument);
     }
 
     #[tokio::test]
