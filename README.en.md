@@ -59,6 +59,7 @@ bash scripts/dev-cluster.sh up 2           # start 1 controller + 2 workers in c
 bash scripts/dev-cluster.sh cli nodes      # list nodes and their health
 bash scripts/dev-cluster.sh cli dashboard --watch 2
 bash scripts/dev-cluster.sh cli benchmark --size 256 --repetitions 8
+bash scripts/dev-cluster.sh gateway       # (optional) API at 127.0.0.1:8080; needs the weights in code/models/smollm2
 bash scripts/dev-cluster.sh down           # stop everything
 ```
 
@@ -85,12 +86,12 @@ The gateway exposes `POST /v1/chat/completions` (with SSE), `GET /v1/models` and
 </p>
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer <your-key>" -H "Content-Type: application/json" \
-  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":32}'
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer dev-key" -H "Content-Type: application/json" \
+  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":16}'
 ```
 
-API details, supported models and how to enable slicing on workers: [`docs/guia/api.md`](docs/guia/api.md).
+With `dev-cluster.sh gateway` the key is `dev-key` and the model takes about 30 s to load. API details, supported models and how to enable slicing on workers: [`docs/guia/api.md`](docs/guia/api.md).
 
 ## AI Cluster OS: safe node updates
 

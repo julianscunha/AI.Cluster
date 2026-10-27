@@ -183,8 +183,8 @@ message HeartbeatResponse {
   Release release = 3;
 }
 
-/// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato; quem confia no controller
-/// confia nesta release (assinatura é trabalho futuro).
+/// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato e a assinatura Ed25519
+/// do operador cobre placa, versão e as duas somas; quem confere é o nó (aic-updater), não o controller.
 message Release {
   string version = 1;
   string url = 2;

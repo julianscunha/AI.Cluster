@@ -59,6 +59,7 @@ bash scripts/dev-cluster.sh up 2           # sobe 1 controller + 2 workers em co
 bash scripts/dev-cluster.sh cli nodes      # lista os nós e a saúde de cada um
 bash scripts/dev-cluster.sh cli dashboard --watch 2
 bash scripts/dev-cluster.sh cli benchmark --size 256 --repetitions 8
+bash scripts/dev-cluster.sh gateway       # (opcional) API em 127.0.0.1:8080; exige os pesos em code/models/smollm2
 bash scripts/dev-cluster.sh down           # desliga tudo
 ```
 
@@ -85,12 +86,12 @@ O gateway expõe `POST /v1/chat/completions` (com SSE), `GET /v1/models` e `/met
 </p>
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer <sua-chave>" -H "Content-Type: application/json" \
-  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Olá!"}],"max_tokens":32}'
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer dev-key" -H "Content-Type: application/json" \
+  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":16}'
 ```
 
-Detalhes da API, modelos suportados e como ligar as fatias nos workers: [`docs/guia/api.md`](docs/guia/api.md).
+Com `dev-cluster.sh gateway` a chave é `dev-key` e o modelo leva cerca de 30 s para carregar. Detalhes da API, modelos suportados e como ligar as fatias nos workers: [`docs/guia/api.md`](docs/guia/api.md).
 
 ## AI Cluster OS: atualização segura de nós
 

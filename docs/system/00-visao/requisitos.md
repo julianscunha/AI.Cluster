@@ -21,13 +21,13 @@ A coluna **Disponibilidade** indica o que existe hoje para cada requisito:
 
 | ID | Requisito | Disponibilidade |
 |---|---|---|
-| FR-001 | Descobrir novos nós automaticamente. | parcial |
+| FR-001 | Descobrir novos nós automaticamente. | planejado |
 | FR-002 | Identificar hardware e arquitetura. | parcial |
 | FR-003 | Medir capacidade real por benchmark. | parcial |
 | FR-004 | Recalcular capacidade do cluster após entrada/saída de nós. | parcial |
 | FR-005 | Suportar nós heterogêneos. | parcial |
-| FR-006 | Suportar hot-plug e hot-remove planejado. | parcial |
-| FR-007 | Recuperar estado após falha de node. | parcial |
+| FR-006 | Suportar hot-plug e hot-remove planejado. | disponível |
+| FR-007 | Recuperar estado após falha de node. | disponível |
 | FR-008 | Excluir nós comprometidos via quarantine/revoke. | disponível |
 
 ### SO / Provisioning
@@ -73,11 +73,11 @@ A coluna **Disponibilidade** indica o que existe hoje para cada requisito:
 | ID | Requisito | Disponibilidade |
 |---|---|---|
 | FR-050 | Mostrar nodes em tempo real. | disponível |
-| FR-051 | Mostrar health, capacity e trust separadamente. | parcial |
+| FR-051 | Mostrar health, capacity e trust separadamente. | disponível |
 | FR-052 | Detectar thermal throttling. | disponível |
 | FR-053 | Detectar degradação de storage. | planejado |
 | FR-054 | Mostrar métricas de rede. | parcial |
-| FR-055 | Mostrar tokens input/output/cached/avoided. | parcial |
+| FR-055 | Mostrar tokens input/output/cached/avoided. | disponível |
 | FR-056 | Mostrar TTFT, ITL, tokens/s e latência. | disponível |
 | FR-057 | Mostrar expected vs actual. | disponível |
 | FR-058 | Mostrar trace completo de request. | parcial |
