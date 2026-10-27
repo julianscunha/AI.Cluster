@@ -7,7 +7,7 @@ use ai_cluster_protocol::cluster::{
     ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
     SetReleaseRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
-use ai_cluster_protocol::metadata::connect_operator;
+use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -30,6 +30,8 @@ struct Cli {
 enum Command {
     Status,
     Nodes,
+    /// A estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel.
+    Topology,
     /// Um nó só, com a capability e a saúde completas (B4).
     Node {
         #[command(subcommand)]
@@ -187,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
+        Command::Topology => print_topology(&cli.controller).await?,
         Command::Node { action } => match action {
             NodeAction::Show { id } => print_node(&cli.controller, &id).await?,
         },
@@ -501,6 +504,88 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             },
             if node.attested { "confere" } else { "-" },
         );
+    }
+    Ok(())
+}
+
+/// O papel de um nó, pelo que o controller sabe: o id de recuperação (`-rec`) é o boot de rede,
+/// que só marca presença; um cache de fatias maior que zero é um nó que guarda partes de modelo.
+fn node_role(node_id: &str, shard_cache_bytes: u64) -> &'static str {
+    if node_id.ends_with(RECOVERY_NODE_SUFFIX) {
+        "Recuperação (só presença, não recebe trabalho)"
+    } else if shard_cache_bytes > 0 {
+        "Computação + fatias de modelo"
+    } else {
+        "Computação"
+    }
+}
+
+/// A árvore do cluster: o controller na raiz, um ramo por papel, um nó por folha. Linhas puras para
+/// poder testar. Papéis vazios não aparecem. O gateway não se registra no controller, então não
+/// entra aqui.
+fn topology_lines(
+    controller: &str,
+    nodes: &[ai_cluster_protocol::cluster::NodeSnapshot],
+) -> Vec<String> {
+    let mut groups: Vec<(&'static str, Vec<String>)> = Vec::new();
+    for node in nodes {
+        let identity = node.identity.clone().unwrap_or_default();
+        let capability = node.capability.clone().unwrap_or_default();
+        let role = node_role(&identity.node_id, capability.shard_cache_bytes);
+        let mut facts = format!(
+            "{} {} {}t {:.1}GB v{}",
+            node.state,
+            identity.architecture,
+            capability.cpu_threads,
+            capability.memory_bytes as f64 / 1_073_741_824.0,
+            if identity.runtime_version.is_empty() {
+                "-"
+            } else {
+                &identity.runtime_version
+            },
+        );
+        if capability.shard_cache_bytes > 0 {
+            facts.push_str(&format!(" cache={}MB", capability.shard_cache_bytes >> 20));
+        }
+        if !node.trusted {
+            facts.push_str(" PENDENTE de aprovação");
+        }
+        let line = format!("{}  {facts}", identity.node_id);
+        match groups.iter_mut().find(|(name, _)| *name == role) {
+            Some((_, lines)) => lines.push(line),
+            None => groups.push((role, vec![line])),
+        }
+    }
+    let mut out = vec![format!("controller {controller}  ({} nós)", nodes.len())];
+    let last_group = groups.len().saturating_sub(1);
+    for (g, (role, lines)) in groups.iter().enumerate() {
+        let (branch, pad) = if g == last_group {
+            ("└─", "   ")
+        } else {
+            ("├─", "│  ")
+        };
+        out.push(format!("{branch} {role} ({})", lines.len()));
+        for (i, line) in lines.iter().enumerate() {
+            let leaf = if i + 1 == lines.len() {
+                "└─"
+            } else {
+                "├─"
+            };
+            out.push(format!("{pad}{leaf} {line}"));
+        }
+    }
+    out
+}
+
+async fn print_topology(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let nodes = client
+        .list_nodes(ListNodesRequest {})
+        .await?
+        .into_inner()
+        .nodes;
+    for line in topology_lines(endpoint, &nodes) {
+        println!("{line}");
     }
     Ok(())
 }
@@ -1070,4 +1155,54 @@ fn run_local_baseline(size: u32, repetitions: u32) -> Result<(), Box<dyn std::er
         total.as_micros()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_cluster_protocol::cluster::{CapabilityReport, NodeIdentity, NodeSnapshot};
+
+    fn node(id: &str, shard_cache_bytes: u64, trusted: bool) -> NodeSnapshot {
+        NodeSnapshot {
+            identity: Some(NodeIdentity {
+                node_id: id.into(),
+                architecture: "arm".into(),
+                runtime_version: "11.0".into(),
+                ..Default::default()
+            }),
+            capability: Some(CapabilityReport {
+                cpu_threads: 4,
+                shard_cache_bytes,
+                ..Default::default()
+            }),
+            state: "READY".into(),
+            trusted,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn o_papel_vem_do_id_de_recuperacao_e_do_cache_de_fatias() {
+        assert!(node_role("pi-rec", 1 << 30).starts_with("Recuperação"));
+        assert_eq!(node_role("pi", 1 << 30), "Computação + fatias de modelo");
+        assert_eq!(node_role("pi", 0), "Computação");
+    }
+
+    #[test]
+    fn a_arvore_agrupa_por_papel_e_marca_o_pendente() {
+        let nodes = [
+            node("a", 2 << 30, true),
+            node("b", 0, false),
+            node("c", 0, true),
+        ];
+        let tree = topology_lines("http://x:1", &nodes);
+        assert_eq!(tree[0], "controller http://x:1  (3 nós)");
+        assert_eq!(tree[1], "├─ Computação + fatias de modelo (1)");
+        assert!(tree[2].starts_with("│  └─ a  READY arm 4t"));
+        assert!(tree[2].contains("cache=2048MB"));
+        assert_eq!(tree[3], "└─ Computação (2)");
+        assert!(tree[4].starts_with("   ├─ b ") && tree[4].contains("PENDENTE"));
+        assert!(tree[5].starts_with("   └─ c "));
+        assert_eq!(topology_lines("u", &[]), vec!["controller u  (0 nós)"]);
+    }
 }
