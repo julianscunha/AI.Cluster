@@ -54,7 +54,7 @@ O worker lê `/proc` e `/sys` a cada heartbeat e envia:
 
 Da medição do registro (capability) saem também, no `nodes` da CLI e no exporter: `baseline_confidence` (baseline limpo ou perturbado), `network_retransmit_ratio` e `network_jitter` (perda e oscilação da sonda de rede), `storage_read_score` (leitura com `O_DIRECT`) e `memory_bandwidth_loaded_score` (memória com os núcleos juntos).
 
-O controller lembra as últimas 100 mil unidades concluídas; as contagens de concluídas passam a valer essa janela quando ela enche.
+O roll-up do controller (`GetMetrics` e o exporter) traz também as médias de rede e storage dos nós prontos que mediram e as unidades concluídas por segundo em 1 e 5 minutos (zero sem história que cubra a janela). O controller lembra as últimas 100 mil unidades concluídas; as contagens de concluídas passam a valer essa janela quando ela enche.
 
 Zero significa "não medido", não "zero". Na primeira leitura, CPU e IOPS são zero. Sem sensor de temperatura, a temperatura é zero.
 

@@ -79,17 +79,20 @@ async fn handle(State(state): State<ExporterState>, headers: HeaderMap) -> impl 
         state.work.blocked() as u32,
         state.work.failed() as u32,
     );
+    let nodes = state.registry.list();
     let summary = state.work.with_completed(|completed| {
-        metrics::summarize(
+        let mut summary = metrics::summarize(
             nodes_total,
             nodes_available,
             completed,
             pending,
             blocked,
             failed,
-        )
+        );
+        metrics::add_rollups(&mut summary, &nodes, completed, crate::registry::unix_ms());
+        summary
     });
-    let body = render(&summary, &state.registry.list());
+    let body = render(&summary, &nodes);
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
 }
 
@@ -146,6 +149,42 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
         "ai_cluster_units_completed",
         "Unidades concluídas que o controller ainda retém.",
         f64::from(summary.units_completed),
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_units_per_second_1m",
+        "Unidades concluídas por segundo nos últimos 60 s. Zero sem história que cubra a janela.",
+        summary.units_per_second_1m,
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_units_per_second_5m",
+        "Unidades concluídas por segundo nos últimos 300 s. A razão 1m/5m é a tendência.",
+        summary.units_per_second_5m,
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_avg_network_score",
+        "Média do score de rede dos nós prontos que mediram. Zero é nenhum nó mediu.",
+        summary.avg_network_score,
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_avg_storage_score",
+        "Média da escrita sequencial dos nós prontos que mediram, sobre 500 MB/s.",
+        summary.avg_storage_score,
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_avg_storage_read_score",
+        "Média da leitura O_DIRECT dos nós prontos que mediram, sobre 500 MB/s.",
+        summary.avg_storage_read_score,
+    );
+    gauge(
+        &mut out,
+        "ai_cluster_avg_storage_latency_ms",
+        "Média da latência de escrita com fsync (ms) dos nós prontos que mediram.",
+        summary.avg_storage_latency_ms,
     );
     gauge(
         &mut out,
@@ -440,6 +479,9 @@ mod tests {
             p95_compute_time_us: 200,
             p50_latency_us: 250,
             p95_latency_us: 800,
+            units_per_second_1m: 0.5,
+            avg_network_score: 2.0,
+            ..Default::default()
         }
     }
 
@@ -452,6 +494,8 @@ mod tests {
         assert!(out.contains("ai_cluster_compute_time_us_total 300\n"));
         assert!(out.contains("ai_cluster_predicted_compute_time_us_total 40\n"));
         assert!(out.contains("ai_cluster_p95_latency_us 800\n"));
+        assert!(out.contains("ai_cluster_units_per_second_1m 0.5\n"));
+        assert!(out.contains("ai_cluster_avg_network_score 2\n"));
         // Every metric declares its type exactly once; a repeat makes a strict parser fail.
         assert_eq!(out.matches("# TYPE ai_cluster_nodes_total").count(), 1);
     }

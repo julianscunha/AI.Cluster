@@ -1112,6 +1112,19 @@ async fn print_dashboard(
             metrics.avg_latency_us,
             metrics.total_predicted_compute_us
         );
+        println!(
+            "TAXA unidades_por_s_1m={:.3} unidades_por_s_5m={:.3} tendencia={}",
+            metrics.units_per_second_1m,
+            metrics.units_per_second_5m,
+            trend(metrics.units_per_second_1m, metrics.units_per_second_5m)
+        );
+        println!(
+            "MEDIAS rede={:.2} escrita={:.2} leitura={:.2} latencia_escrita_ms={:.2}",
+            metrics.avg_network_score,
+            metrics.avg_storage_score,
+            metrics.avg_storage_read_score,
+            metrics.avg_storage_latency_ms
+        );
         println!();
         println!("RESERVAS {}", reservations.len());
         for reservation in reservations {
@@ -1127,6 +1140,23 @@ async fn print_dashboard(
         // Ctrl-C encerra o processo pelo sinal padrão: não é preciso tratá-lo aqui.
         tokio::time::sleep(Duration::from_secs(watch_secs)).await;
     }
+}
+
+/// A tendência entre a taxa de 1 min e a de 5 min: `-` sem as duas, senão a razão e uma seta. A
+/// divisão por zero fica aqui, no leitor, em vez de no protocolo.
+fn trend(rate_1m: f64, rate_5m: f64) -> String {
+    if rate_1m <= 0.0 || rate_5m <= 0.0 {
+        return "-".to_string();
+    }
+    let ratio = rate_1m / rate_5m;
+    let arrow = if ratio > 1.1 {
+        "↑"
+    } else if ratio < 0.9 {
+        "↓"
+    } else {
+        "→"
+    };
+    format!("{arrow}{ratio:.2}x")
 }
 
 /// Prints the units a client request produced and what each one cost (H3).
@@ -1350,6 +1380,15 @@ mod tests {
             .unwrap()
             .node_id;
         assert!(!id.chars().any(char::is_control), "{id:?}");
+    }
+
+    #[test]
+    fn a_tendencia_e_a_razao_entre_as_taxas() {
+        assert_eq!(trend(0.0, 1.0), "-");
+        assert_eq!(trend(1.0, 0.0), "-");
+        assert_eq!(trend(2.0, 1.0), "↑2.00x");
+        assert_eq!(trend(0.5, 1.0), "↓0.50x");
+        assert_eq!(trend(1.05, 1.0), "→1.05x");
     }
 
     #[test]

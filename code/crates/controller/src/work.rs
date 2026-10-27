@@ -40,6 +40,8 @@ pub struct CompletedWork {
     /// against `compute_time_us`, the worker's measurement, to expose the model's error.
     pub predicted_compute_us: u64,
     pub checksum: f64,
+    /// Quando a unidade concluiu (unix ms), para as taxas por segundo.
+    pub completed_at_unix_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1001,6 +1003,7 @@ impl WorkStore {
             transfer_time_us: total_latency_us.saturating_sub(result.compute_time_us),
             predicted_compute_us: dispatched.predicted_compute_us,
             checksum: result.checksum,
+            completed_at_unix_ms: now_unix_ms,
         };
         inner.completed.push(completed.clone());
         trim_history(&mut inner.completed, MAX_COMPLETED);

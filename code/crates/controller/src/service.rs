@@ -1247,15 +1247,18 @@ impl ClusterControl for ClusterControlService {
             self.work.blocked() as u32,
             self.work.failed() as u32,
         );
+        let nodes = self.registry.list();
         Ok(Response::new(self.work.with_completed(|completed| {
-            metrics::summarize(
+            let mut summary = metrics::summarize(
                 nodes_total,
                 nodes_available,
                 completed,
                 pending,
                 blocked,
                 failed,
-            )
+            );
+            metrics::add_rollups(&mut summary, &nodes, completed, unix_ms());
+            summary
         })))
     }
 
@@ -2565,6 +2568,63 @@ mod tests {
             .extensions_mut()
             .insert(ai_cluster_protocol::metadata::Inference);
         request
+    }
+
+    #[tokio::test]
+    async fn um_no_pendente_nao_escreve_estado_no_controller() {
+        use ai_cluster_protocol::cluster::{StateReplica, WorkSnapshot};
+        use prost::Message;
+        let dir = std::env::temp_dir().join(format!("aic-pend-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let work = Arc::new(WorkStore::with_state(dir.join("state.bin")));
+        let registry = Arc::new(Registry::requiring_approval());
+        let service = ClusterControlService::new(
+            registry.clone(),
+            work.clone(),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
+        // uma cópia com uma unidade pendente, de uma época bem nova
+        let copy = StateReplica {
+            epoch_unix_ms: u64::MAX / 2,
+            snapshot: WorkSnapshot {
+                pending: vec![unit("copiada")],
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        };
+        let register = |replica: Option<StateReplica>| RegisterNodeRequest {
+            identity: Some(identity("node-a")),
+            capability: None,
+            replica,
+        };
+        service
+            .register_node(Request::new(register(Some(copy.clone()))))
+            .await
+            .unwrap();
+        assert!(!registry.is_trusted("node-a"));
+        assert_eq!(
+            work.pending(),
+            0,
+            "nó pendente não escreve o estado do controller"
+        );
+        // confiável desde o registro (sem exigir aprovação), a mesma cópia vale
+        let trusted_dir = dir.join("confiavel");
+        std::fs::create_dir_all(&trusted_dir).unwrap();
+        let work = Arc::new(WorkStore::with_state(trusted_dir.join("state.bin")));
+        let service = ClusterControlService::new(
+            Arc::new(Registry::new()),
+            work.clone(),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
+        service
+            .register_node(Request::new(register(Some(copy))))
+            .await
+            .unwrap();
+        let restored = work.pending();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(restored, 1);
     }
 
     #[tokio::test]

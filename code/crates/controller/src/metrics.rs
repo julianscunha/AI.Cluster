@@ -5,7 +5,7 @@
 //! up into the numbers a dashboard or a `status` wants. The arithmetic lives here, apart
 //! from the locks, so averages and the empty-cluster case are tested directly.
 
-use ai_cluster_protocol::cluster::MetricsResponse;
+use ai_cluster_protocol::cluster::{MetricsResponse, NodeSnapshot};
 
 use crate::work::CompletedWork;
 
@@ -92,15 +92,113 @@ pub fn summarize(
         p95_compute_time_us: percentile(&compute_times, 0.95),
         p50_latency_us: percentile(&latencies, 0.50),
         p95_latency_us: percentile(&latencies, 0.95),
+        ..Default::default()
     }
+}
+
+/// Média dos valores positivos: zero quando nenhum nó mediu.
+fn mean_measured(values: impl Iterator<Item = f64>) -> f64 {
+    let (sum, count) = values
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold((0.0, 0u32), |(sum, count), value| (sum + value, count + 1));
+    if count == 0 {
+        0.0
+    } else {
+        sum / f64::from(count)
+    }
+}
+
+/// Unidades concluídas por segundo na janela `[now - window_ms, now]`. Zero enquanto o histórico
+/// não cobre a janela inteira (a unidade mais antiga que o controller guarda é mais nova que o
+/// início da janela): extrapolar de pouca história inventaria uma taxa.
+fn units_per_second(completed: &[CompletedWork], now_ms: u64, window_ms: u64) -> f64 {
+    let start = now_ms.saturating_sub(window_ms);
+    let oldest = completed.iter().map(|c| c.completed_at_unix_ms).min();
+    match oldest {
+        Some(oldest) if oldest <= start => {
+            let in_window = completed
+                .iter()
+                .filter(|c| c.completed_at_unix_ms > start)
+                .count();
+            in_window as f64 / (window_ms as f64 / 1000.0)
+        }
+        _ => 0.0,
+    }
+}
+
+/// Acrescenta ao roll-up o que depende dos nós (rede e storage) e do tempo (taxas por segundo).
+/// Separado de [`summarize`] para que ele continue puro sobre contagens e unidades.
+pub fn add_rollups(
+    metrics: &mut MetricsResponse,
+    nodes: &[NodeSnapshot],
+    completed: &[CompletedWork],
+    now_ms: u64,
+) {
+    let ready: Vec<_> = nodes
+        .iter()
+        .filter(|node| node.trusted && node.state == "READY")
+        .filter_map(|node| node.capability.as_ref())
+        .collect();
+    metrics.avg_network_score = mean_measured(ready.iter().map(|c| c.network_score));
+    metrics.avg_storage_score = mean_measured(ready.iter().map(|c| c.storage_score));
+    metrics.avg_storage_read_score = mean_measured(ready.iter().map(|c| c.storage_read_score));
+    metrics.avg_storage_latency_ms = mean_measured(ready.iter().map(|c| c.storage_latency_ms));
+    metrics.units_per_second_1m = units_per_second(completed, now_ms, 60_000);
+    metrics.units_per_second_5m = units_per_second(completed, now_ms, 300_000);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn o_roll_up_de_rede_e_storage_ignora_quem_nao_mediu_e_quem_nao_esta_pronto() {
+        use ai_cluster_protocol::cluster::CapabilityReport;
+        let node = |state: &str, trusted: bool, network: f64, storage: f64| NodeSnapshot {
+            state: state.into(),
+            trusted,
+            capability: Some(CapabilityReport {
+                network_score: network,
+                storage_score: storage,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let nodes = [
+            node("READY", true, 1.0, 0.4),
+            node("READY", true, 3.0, 0.0),
+            node("OFFLINE", true, 100.0, 100.0),
+            node("READY", false, 100.0, 100.0),
+        ];
+        let mut metrics = MetricsResponse::default();
+        add_rollups(&mut metrics, &nodes, &[], 1_000);
+        assert_eq!(metrics.avg_network_score, 2.0, "média de 1 e 3");
+        assert_eq!(metrics.avg_storage_score, 0.4, "o zero não puxa a média");
+        assert_eq!(metrics.avg_storage_read_score, 0.0, "ninguém mediu");
+    }
+
+    #[test]
+    fn a_taxa_por_segundo_so_vale_com_historico_que_cobre_a_janela() {
+        let at = |ms| CompletedWork {
+            completed_at_unix_ms: ms,
+            ..completed(1, 1)
+        };
+        // 3 unidades nos últimos 60 s, e uma antiga (150 s antes) que prova a história
+        let now = 400_000;
+        let history = [at(250_000), at(350_000), at(360_000), at(390_000)];
+        let mut metrics = MetricsResponse::default();
+        add_rollups(&mut metrics, &[], &history, now);
+        assert!((metrics.units_per_second_1m - 3.0 / 60.0).abs() < 1e-9);
+        // a janela de 5 min começa em 100 000 e a unidade mais antiga é de 250 000: sem história
+        assert_eq!(metrics.units_per_second_5m, 0.0);
+        let mut empty = MetricsResponse::default();
+        add_rollups(&mut empty, &[], &[], now);
+        assert_eq!(empty.units_per_second_1m, 0.0);
+    }
+
     fn completed(compute_time_us: u64, total_latency_us: u64) -> CompletedWork {
         CompletedWork {
+            completed_at_unix_ms: 0,
             work_id: "w".to_string(),
             node_id: "n".to_string(),
             request_id: "req-test".to_string(),

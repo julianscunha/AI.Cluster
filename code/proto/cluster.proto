@@ -671,6 +671,16 @@ message MetricsResponse {
   /// a distância entre o que o placement esperava custar e o que a máquina gastou.
   /// Zero quando nenhuma unidade concluída teve previsão — "não previsto", não "instantâneo".
   uint64 total_predicted_compute_us = 15;
+  /// Médias sobre os nós prontos e aprovados que mediram o item (valor > 0); zero é "nenhum nó
+  /// mediu", nunca "rede ou disco ruins". Mesmas escalas dos scores do `CapabilityReport`.
+  double avg_network_score = 16;
+  double avg_storage_score = 17;
+  double avg_storage_read_score = 18;
+  double avg_storage_latency_ms = 19;
+  /// Unidades concluídas por segundo nos últimos 60 s e 300 s. A razão entre as duas é a
+  /// tendência (maior que 1 acelera). Zero antes de a janela ter história, nunca extrapolado.
+  double units_per_second_1m = 20;
+  double units_per_second_5m = 21;
 }
 
 message GetMetricsRequest {}

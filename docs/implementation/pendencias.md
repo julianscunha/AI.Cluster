@@ -73,10 +73,9 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 | Item | O que falta | Dependência |
 |---|---|---|
 | Painel de inferência | `ai-cluster dashboard` não mostra TTFT, ITL, tokens por segundo nem cache KV. As fontes já existem no `/metrics` do gateway. | código |
-| Séries temporais | Taxa por segundo e tendência. Hoje só totais, médias e percentis do instante. | código |
+| Séries temporais | Taxa por segundo e tendência do gateway (requisições e tokens). O controller já publica unidades por segundo em 1 e 5 min. | código |
 | Persistência de traces | Traces não sobrevivem a reinício. | código |
 | Métricas de inferência persistidas | Contadores do gateway zeram no reinício. | código |
-| Rede e storage no roll-up | Os scores de rede e storage ficam fora do roll-up. | código |
 | Tokens evitados | Contagem de tokens poupados pelo cache no painel. | código |
 | Exportação de eventos | Enviar eventos a um coletor externo. | código |
 
@@ -97,7 +96,6 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 | Item | O que falta | Dependência |
 |---|---|---|
 | Gateways sem dono | O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada (inclusive a URL) de outro. Amarrar o id a algo do portador. | decisão, código |
-| Teste da réplica pendente | Provar que um nó pendente não escreve estado do controller no registro. A leitura (heartbeat) já só devolve a cópia a nó aprovado. | código |
 | Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial (as chamadas só respondem "desconhecido"; a cópia do estado não sai para ele). | código |
 | Registro alheio | Quem tem o token de join registra um `node_id` alheio como pendente e tenta tomá-lo. | código |
 | Escopo do operador | O operador age sobre qualquer nó, sem escopo. | decisão, código |
@@ -107,7 +105,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Latência do canal de fatias | O canal residente (ADR-009) já tirou a fila de unidades do caminho: medido em 2026-10-27 com a SmolLM2 e 2 workers no mesmo host, são 120 chamadas por token a 7,8 ms cada (cerca de 1,5 ms de relay e 6,3 ms de cálculo), ou seja, uns 0,9 s por token contra cerca de 105 ms local. O que resta é o número de idas e voltas em série (cada camada espera a anterior) e a disputa por núcleos entre workers no mesmo host. Medir em máquinas separadas antes de otimizar. | código, hardware: duas máquinas físicas |
+| Latência do canal de fatias | Cada camada espera a anterior (cerca de 120 idas e voltas por token) e workers no mesmo host disputam núcleos. Medir em máquinas separadas antes de otimizar. | código, hardware: duas máquinas físicas |
 | Amostragem | Temperatura, top-p e `n` não existem. | código |
 | Stream | Não há `usage` no stream, e `completion_tokens` não conta o token de fim. | código |
 | Modelo no gateway | Sem o model runtime distribuído, o gateway concentra o modelo na RAM. | código (depende de F12) |
@@ -256,7 +254,7 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 | Token de recuperação de uso único (ADR-017) | O token de recuperação já tem escopo mínimo, mas não expira nem é de uso único; trocá-lo exige regravar o `boot.scr`. | código, hardware: placa armv7 para validar |
 | Downgrade | O rollout não faz downgrade, e a ordem de versões é numérica. Falta decidir se um rollback legítimo precisa de versão maior. | decisão |
 | Marca de versão tentada | Guarda só uma versão. Versões diferentes repetem o ciclo. | código |
-| Trilha de auditoria persistente | Eventos de approve, revoke e leave ficam em anel de memória, e o arquivo não é assinado nem à prova de adulteração. | código, decisão |
+| Trilha de auditoria persistente | O log de eventos persiste (`AI_CLUSTER_EVENTS` ou `AI_CLUSTER_DATA_DIR`), mas não é assinado nem à prova de adulteração. | código, decisão |
 | Revogação de operador | Não há. O token de operador só troca reiniciando o controller. | código |
 | Rotação periódica de tokens | Não há. | código |
 | Injeção de falha | Falta partição de rede e controller reiniciado no meio da carga. | código |
@@ -271,7 +269,6 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 | Marco | Estado | O que falta | Dependência |
 |---|---|---|---|
 | M0, prova de compute em dois nós | Parcial | Duas máquinas físicas. | hardware: duas máquinas físicas |
-| M1, DAG tolerante a falhas em três nós | Concluído | Nada. | — |
 | M2, provisionamento automático | Não iniciado | Máquina limpa com bootstrap, imagem instalada automaticamente e nó que reingressa READY. | hardware: máquina limpa |
 | M3, inteligência de storage | Parcial | Políticas aplicadas dinamicamente, dashboard de saúde, SMART e alocação por classe. | hardware: disco real |
 | M4, protótipo LLM em CPU | Parcial | Overhead de comunicação decomposto no trace, e tokens esperado e real. Modelo dividido só nas projeções. | código |
