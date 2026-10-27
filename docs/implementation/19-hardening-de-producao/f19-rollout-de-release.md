@@ -32,7 +32,7 @@ O operador diz qual versão os nós devem rodar; o controller a anuncia, um can�
 - Reporta a versão da imagem (`/etc/aic-release`, gravada no build com `AIC_RELEASE`) e a medida do slot (`/run/aic-measure`) em `NodeIdentity`. Com `AI_CLUSTER_UPDATE_CMD`, ao receber release nova valida os caracteres, drena (como no SIGTERM), faz `leave_node` e roda o comando sem shell. A versão tentada fica em `/data/state/update-tried`: se o nó volta por rollback, não repete. Depois do pedido, espera até 20 min pelo reinício; se o updater recusa, lê o motivo em `update-result` e volta ao cluster.
 
 **Imagem** (`aic-update-request`, `aic-updater`, `aic-measure`)
-- `aic-update-request` (usuário do worker) deixa o pedido em `/data/state`; o `aic-updater` (root) revalida, **verifica a assinatura** com a chave da imagem (placa em `/etc/aic-board`), **recusa versão que não seja mais nova** (`sort -V`), só baixa de URL no host do controller, adia enquanto `aic_try` está pendente, exige espaço em `/data`, confere SHA-256 e gzip, grava o slot inativo, **relê o slot e compara com a medida assinada** e só então marca `aic_try` e reinicia.
+- `aic-update-request` (usuário do worker) **confere a assinatura** e só então deixa o pedido em `/data/state`; o `aic-updater` (root) revalida, **verifica a assinatura** com a chave da imagem (placa em `/etc/aic-board`), **recusa versão que não seja mais nova** (`sort -V`), só baixa de URL no host do controller, adia enquanto `aic_try` está pendente, exige espaço em `/data`, confere SHA-256 e gzip, grava o slot inativo, **relê o slot e compara com a medida assinada** e só então marca `aic_try` e reinicia.
 - `aic-measure` (antes do worker) calcula o SHA-256 da partição inteira do slot ativo; o `mke2fs` usa `^has_journal` e o fstab passno `0` para o hash ser estável.
 
 ## Evidência (Orange Pi PC, armv7)
@@ -41,6 +41,7 @@ O operador diz qual versão os nós devem rodar; o controller a anuncia, um can�
 - Assinatura adulterada (1 caractere): `assinatura inválida … ignorado`, nenhum download, slot e `aic_try` intactos, nó de volta ao cluster.
 - Revisão de segurança aplicada e repetida no Pi (4.3 → adulterada recusada → 4.4): mensagem e assinatura num diretório do root (0700), `update-result` gravado sem seguir link simbólico, download em diretório só do root, versão só com números e pontos, recusa se a versão instalada é ilegível, canário só conta com medida igual à assinada.
 - Rotação de chave: `5.0` (duas públicas, assinada com a antiga) e `5.1` (só a nova, assinada com a nova) instaladas; depois `5.2` assinada com a chave antiga: `assinatura inválida … ignorado`, nó em `5.1` intacto.
+- Release `5.4` com assinatura do formato certo e inválida: o `aic-update-request` recusa, o worker volta e o nó fica `READY` em menos de 40 s (antes segurava até 20 min). `5.3` (com o novo `aic-update-request`) instalada por rollout assinado.
 - Versão menor assinada (`2.5` sobre `3.0`): `versão 2.5 não é mais nova que 3.0; recusada`.
 - Testes unitários: validação (inclui assinatura), canário, canário com medida errada, nó sem `can_update`, pausa, persistência, heartbeat anunciando só a quem difere, `accept_update`.
 - A medida do ext4 com journal **não** era estável (um bloco do journal mudava depois do mount ro): por isso `^has_journal`.
@@ -61,5 +62,5 @@ O operador diz qual versão os nós devem rodar; o controller a anuncia, um can�
 > - **Rollback legítimo precisa de versão maior** (a ordem é numérica; não há downgrade).
 > - O `wget` da imagem só faz http e segue redirecionamentos (o SHA-256 e a assinatura limitam o dano); a marca `update-tried` guarda uma versão só.
 > - O canário é o primeiro nó apto; as ondas (`AI_CLUSTER_ROLLOUT_WAVE`) só têm teste unitário, sem teste com mais de um nó atualizável em hardware.
-> - Um controller malicioso pode mandar uma release com assinatura só no formato correto e segurar o worker fora do cluster até 20 min por tentativa (DoS de disponibilidade, sem instalar nada).
+> - Um controller malicioso ainda pode tirar o worker do cluster por alguns segundos por versão inventada (drena, sai, volta): o `aic-update-request` confere a assinatura antes de pedir, mas o worker já drenou. A marca `update-tried` guarda só uma versão, então versões diferentes repetem o ciclo.
 > - A medida lê 512 MiB no boot (~25–40 s no SD) antes do worker subir.
