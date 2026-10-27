@@ -56,13 +56,11 @@ O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUS
    AI_CLUSTER_OPERATOR_TOKEN=<token-de-operador> \
    AI_CLUSTER_TLS_CERT=/etc/aic/server.pem \
    AI_CLUSTER_TLS_KEY=/etc/aic/server.key \
-   AI_CLUSTER_NODES=/var/lib/aic/nodes \
-   AI_CLUSTER_STATE=/var/lib/aic/state.bin \
-   AI_CLUSTER_EVENTS=/var/lib/aic/events.log \
+   AI_CLUSTER_DATA_DIR=/var/lib/aic \
    ai-cluster-controller
    ```
 
-   Sem o par de certificado o controller não sobe (a menos de `AI_CLUSTER_INSECURE=1`). Os caminhos de `NODES`, `STATE` e `EVENTS` devem estar em volume que sobrevive a reinício.
+   Sem o par de certificado o controller não sobe (a menos de `AI_CLUSTER_INSECURE=1`). `AI_CLUSTER_DATA_DIR` deve estar em volume que sobrevive a reinício: nele ficam o registro de nós (`nodes`), a fila (`state.bin`) e os eventos (`events.log`).
 3. Suba cada worker apontando para `https://` e a CA:
 
    ```bash

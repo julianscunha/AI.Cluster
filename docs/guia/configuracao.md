@@ -26,6 +26,7 @@ Convenções:
 | `AI_CLUSTER_RECOVERY_TOKEN` | — | Token de recuperação pela rede: só registrar, heartbeat, saúde e sair. É o que vai em claro no `boot.scr` do cartão; tem de ser diferente dos outros. |
 | `AI_CLUSTER_AUTO_APPROVE` | desligado | `1` ou `true`: todo nó que se registra é aprovado na hora. |
 | `AI_CLUSTER_HEARTBEAT_GRACE_MS` | `15000` | Sem heartbeat por esse tempo, o nó vai a `OFFLINE` e suas unidades em voo voltam à fila. |
+| `AI_CLUSTER_DATA_DIR` | memória | Diretório (criado se faltar) onde o controller guarda o registro de nós (`nodes`), a fila (`state.bin`) e os eventos (`events.log`). Uma variável só para tudo sobreviver a reinício; as três abaixo, se definidas, valem mais que o diretório. |
 | `AI_CLUSTER_NODES` | memória | Arquivo com aprovações e credenciais dos nós. Texto claro, modo 0600. Sem ele, o registro some no reinício. |
 | `AI_CLUSTER_STATE` | memória | Arquivo do snapshot da fila, das unidades em voo e dos resultados ainda necessários. A cópia fica em `<arquivo>.replica`, ao lado. |
 | `AI_CLUSTER_EVENTS` | memória | Arquivo da linha do tempo de eventos. Sobrevive a reinício; é reescrito com as últimas 256 linhas ao passar de 1024. |

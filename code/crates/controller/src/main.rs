@@ -16,6 +16,30 @@ use tokio::time;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
+/// Where a piece of controller state lives: the variable that names its file, or `file` inside
+/// `AI_CLUSTER_DATA_DIR` (one variable that makes the registry, the queue and the events survive a
+/// restart). `None` is memory only. A file named by its own variable wins over the directory.
+fn state_path(var: &str, file: &str) -> Option<std::path::PathBuf> {
+    resolve_state_path(
+        std::env::var(var).ok().as_deref(),
+        std::env::var("AI_CLUSTER_DATA_DIR").ok().as_deref(),
+        file,
+    )
+}
+
+fn resolve_state_path(
+    explicit: Option<&str>,
+    dir: Option<&str>,
+    file: &str,
+) -> Option<std::path::PathBuf> {
+    fn set(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+    set(explicit)
+        .map(std::path::PathBuf::from)
+        .or_else(|| set(dir).map(|dir| std::path::Path::new(dir).join(file)))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::var("AI_CLUSTER_ADDR")
@@ -81,22 +105,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Registry::requiring_approval()
     };
+    if let Ok(dir) = std::env::var("AI_CLUSTER_DATA_DIR")
+        && !dir.trim().is_empty()
+    {
+        std::fs::create_dir_all(dir.trim())
+            .map_err(|err| format!("AI_CLUSTER_DATA_DIR {dir}: {err}"))?;
+    }
     // AI_CLUSTER_NODES names a file where approvals and credentials survive a restart (S5).
-    let registry = Arc::new(match std::env::var("AI_CLUSTER_NODES") {
-        Ok(path) if !path.trim().is_empty() => registry.persisted(path),
-        _ => registry,
+    let registry = Arc::new(match state_path("AI_CLUSTER_NODES", "nodes") {
+        Some(path) => registry.persisted(path),
+        None => registry,
     });
     // AI_CLUSTER_STATE names a snapshot file. Unset means memory only, which is what
     // the benchmark runs use; point it at a mounted volume so a restart keeps the
     // queue instead of losing it with the container.
-    let work = Arc::new(match std::env::var("AI_CLUSTER_STATE") {
-        Ok(path) if !path.trim().is_empty() => WorkStore::with_state(path),
-        _ => WorkStore::new(),
+    let work = Arc::new(match state_path("AI_CLUSTER_STATE", "state.bin") {
+        Some(path) => WorkStore::with_state(path),
+        None => WorkStore::new(),
     });
     // AI_CLUSTER_EVENTS names a file where the event timeline survives a restart (F06).
-    let events = Arc::new(match std::env::var("AI_CLUSTER_EVENTS") {
-        Ok(path) if !path.trim().is_empty() => EventLog::new().persisted(path),
-        _ => EventLog::new(),
+    let events = Arc::new(match state_path("AI_CLUSTER_EVENTS", "events.log") {
+        Some(path) => EventLog::new().persisted(path),
+        None => EventLog::new(),
     });
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
@@ -246,4 +276,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .serve(addr)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_state_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn o_diretorio_de_dados_da_o_padrao_e_o_arquivo_explicito_vence() {
+        assert_eq!(resolve_state_path(None, None, "nodes"), None);
+        assert_eq!(resolve_state_path(Some(" "), Some(""), "nodes"), None);
+        assert_eq!(
+            resolve_state_path(None, Some("/var/lib/aic"), "nodes"),
+            Some(PathBuf::from("/var/lib/aic/nodes"))
+        );
+        assert_eq!(
+            resolve_state_path(Some("/x/n"), Some("/var/lib/aic"), "nodes"),
+            Some(PathBuf::from("/x/n"))
+        );
+    }
 }

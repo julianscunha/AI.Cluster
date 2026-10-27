@@ -40,7 +40,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Item | O que falta | Dependência |
 |---|---|---|
 | Cluster de 2 a 4 máquinas | Validar entrada e saída em máquinas físicas. Hoje só há containers. | hardware: 2 a 4 máquinas físicas |
-| Persistência do registro | O registro de nós não sobrevive a reinício, a não ser por `AI_CLUSTER_NODES`. | código |
 | Event bus | Hoje é um anel de eventos, não um barramento. | código |
 | Intervalo de despacho | Cada worker recebe uma unidade por heartbeat (5 s). Revisar quando o throughput importar. | código |
 
@@ -94,7 +93,6 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Replicação da fila | A cópia fica só num nó e o controller a oferece inteira a cada gravação. Falta fator de replicação, portador designado e identidade de cluster na cópia. | código |
 | Posse persistida | A posse de uma unidade só vai ao disco quando outra mutação acontece depois do despacho. Uma queda logo após despachar pode rodar a unidade duas vezes. Persistir só a tabela de leases seria o próximo passo. | código |
 | Journal | O snapshot reescreve o estado vivo inteiro a cada mutação. Falta um journal de deltas ou snapshot periódico. | código |
-| Registro persistido | O registro de nós depende de `AI_CLUSTER_NODES` para sobreviver. | código |
 | Checkpoint de unidade | Retomar uma unidade no meio do cálculo. Hoje recalcula do zero. | código |
 | Diretório de estado | Referências lógicas de estado (`state://`). | código, decisão |
 | Reatribuição | Uma unidade reoferecida pode voltar ao nó que falhou, se não houver outro nó. | código |
