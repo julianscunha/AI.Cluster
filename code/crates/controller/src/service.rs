@@ -18,7 +18,8 @@ use ai_cluster_protocol::cluster::{
     WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::metadata::{
-    NODE_ID_HEADER, node_credential, require_inference, require_operator,
+    NODE_ID_HEADER, is_recovery, node_credential, require_inference, require_operator,
+    require_recovery_scope,
 };
 use tonic::{Request, Response, Status};
 
@@ -143,6 +144,7 @@ fn authorize_node<T>(
     request: &Request<T>,
     node_id: &str,
 ) -> Result<(), Status> {
+    require_recovery_scope(request, node_id)?;
     if require_operator(request).is_ok() || registry.authorizes(node_id, node_credential(request)) {
         Ok(())
     } else {
@@ -217,6 +219,10 @@ impl ClusterControl for ClusterControlService {
         request: Request<RegisterNodeRequest>,
     ) -> Result<Response<RegisterNodeResponse>, Status> {
         let presented = node_credential(&request).to_vec();
+        let recovery = is_recovery(&request);
+        if let Some(identity) = &request.get_ref().identity {
+            require_recovery_scope(&request, &identity.node_id)?;
+        }
         let request = request.into_inner();
         let identity = request
             .identity
@@ -241,7 +247,8 @@ impl ClusterControl for ClusterControlService {
         };
         // S2: an unapproved node must not be able to write controller state, so its copy is
         // ignored until it is trusted. A node that comes back after approval offers it again.
-        if let Some(replica) = request.replica.filter(|_| record.trusted) {
+        // O token de recuperação nunca injeta estado, nem que o registro saia confiável (auto-approve).
+        if let Some(replica) = request.replica.filter(|_| record.trusted && !recovery) {
             self.work.restore(&replica);
         }
         self.events.record(now, "node_registered", node_id.clone());
@@ -326,6 +333,7 @@ impl ClusterControl for ClusterControlService {
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
         authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
+        let recovery = is_recovery(&request);
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
@@ -339,7 +347,7 @@ impl ClusterControl for ClusterControlService {
         let replica = self
             .work
             .state_replica()
-            .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms)
+            .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms && !recovery)
             .map(|replica| (*replica).clone());
         let now = unix_ms();
         let version = self
@@ -360,7 +368,8 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(HeartbeatResponse {
             acknowledged,
             replica,
-            release,
+            // o nó de recuperação não recebe a release nem a cópia do estado
+            release: release.filter(|_| !recovery),
         }))
     }
 
@@ -2018,6 +2027,47 @@ mod tests {
             }))
             .await
             .unwrap();
+    }
+
+    fn recovery<T>(message: T) -> Request<T> {
+        let mut request = Request::new(message);
+        request
+            .extensions_mut()
+            .insert(ai_cluster_protocol::metadata::Recovery);
+        request
+    }
+
+    #[tokio::test]
+    async fn o_token_de_recuperacao_so_fala_por_no_com_sufixo_rec() {
+        let (service, _work) = service_with_work();
+        register(&service, "node-a", 4).await;
+        let register_as = |id: &str| {
+            recovery(RegisterNodeRequest {
+                identity: Some(identity(id)),
+                capability: Some(CapabilityReport::default()),
+                replica: None,
+            })
+        };
+        // não registra (nem troca a credencial de) um nó real
+        let err = service
+            .register_node(register_as("node-a"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        service
+            .register_node(register_as("node-a-rec"))
+            .await
+            .unwrap();
+        // heartbeat de nó alheio ou desconhecido: negado, sem vazar a cópia do estado
+        for id in ["node-a", "inventado"] {
+            let beat = recovery(HeartbeatRequest {
+                node_id: id.into(),
+                unix_ms: 0,
+                replica_epoch_unix_ms: 0,
+            });
+            let err = service.heartbeat(beat).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::PermissionDenied, "{id}");
+        }
     }
 
     fn reserve_request(node_id: &str, request_id: &str, ttl_ms: u64) -> Request<ReserveRequest> {

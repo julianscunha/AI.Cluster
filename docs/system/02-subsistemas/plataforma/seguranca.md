@@ -31,6 +31,7 @@ Segurança cobre quem é cada participante do cluster, o que cada um pode fazer,
 | `AI_CLUSTER_JOIN_TOKEN` | Controller, workers, CLI | Segredo de entrada. Obrigatório no controller. |
 | `AI_CLUSTER_OPERATOR_TOKEN` | Controller, CLI, gateway, exportador | Segredo de administração. Obrigatório no controller. Precisa ser diferente do de join. |
 | `AI_CLUSTER_INFERENCE_TOKEN` | Controller, gateway | Segredo do papel de inferência. Opcional. Diferente dos outros dois. |
+| `AI_CLUSTER_RECOVERY_TOKEN` | Controller, cartão do nó | Segredo da recuperação pela rede. Opcional. Só registra, dá heartbeat e reporta saúde; o worker de recuperação não pede trabalho. Diferente dos outros. |
 | `AI_CLUSTER_API_KEY`, `AI_CLUSTER_TENANTS` | Gateway | Chaves das aplicações. Diferentes de todos os tokens do cluster. |
 | `AI_CLUSTER_TLS_CERT`, `AI_CLUSTER_TLS_KEY` | Controller | Certificado do servidor, sempre em par. |
 | `AI_CLUSTER_TLS_CA` | Clientes | CA que valida o controller. |

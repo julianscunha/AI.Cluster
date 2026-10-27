@@ -9,8 +9,8 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
     INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV,
-    ServerMetadata, TLS_CLIENT_CA_ENV, inference_gate, inference_token, insecure_allowed,
-    join_token, operator_token,
+    RECOVERY_TOKEN_ENV, ServerMetadata, TLS_CLIENT_CA_ENV, inference_gate, inference_token,
+    insecure_allowed, join_token, operator_token, recovery_gate, recovery_token,
 };
 use tokio::time;
 use tonic::service::interceptor::InterceptedService;
@@ -54,9 +54,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let auth =
-        ServerMetadata::new(&token, &operator).with_inference(inference.as_deref().unwrap_or(""));
+    // Optional fourth secret (F19, ADR-017): the token a node in network recovery carries in clear
+    // on its card. It reaches only the calls that show a node up and must differ from the others.
+    let recovery = recovery_token();
+    if recovery
+        .as_ref()
+        .is_some_and(|t| *t == token || *t == operator || inference.as_ref() == Some(t))
+    {
+        return Err(format!(
+            "{RECOVERY_TOKEN_ENV} deve ser diferente de {JOIN_TOKEN_ENV}, {OPERATOR_TOKEN_ENV} e {INFERENCE_TOKEN_ENV}"
+        )
+        .into());
+    }
+    let auth = ServerMetadata::new(&token, &operator)
+        .with_inference(inference.as_deref().unwrap_or(""))
+        .with_recovery(recovery.as_deref().unwrap_or(""));
     let gate = inference.clone().unwrap_or_default();
+    let recovery_scope = recovery.clone().unwrap_or_default();
 
     // S2: a new node waits for `ai-cluster approve` unless the operator opts out, which is
     // what a closed lab network or the E2E scripts do.
@@ -222,10 +236,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("controller escutando em {addr} (graça de heartbeat {grace_ms}ms)");
     builder
         .add_service(InterceptedService::new(
-            inference_gate(server, &gate),
+            recovery_gate(inference_gate(server, &gate), &recovery_scope),
             auth.clone(),
         ))
-        .add_service(InterceptedService::new(inference_gate(probe, &gate), auth))
+        .add_service(InterceptedService::new(
+            recovery_gate(inference_gate(probe, &gate), &recovery_scope),
+            auth,
+        ))
         .serve(addr)
         .await?;
     Ok(())

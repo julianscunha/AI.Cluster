@@ -18,6 +18,7 @@ Há três segredos de cluster e uma chave de API para aplicações.
 | Join | `AI_CLUSTER_JOIN_TOKEN` | Registrar nó, heartbeat, pedir trabalho, devolver resultado, sair. | Aprovar nó, enfileirar trabalho, reservar, ler eventos administrativos. Recebe `PermissionDenied`. |
 | Operador | `AI_CLUSTER_OPERATOR_TOKEN` | Tudo que é administrativo: aprovar e revogar nó, enfileirar trabalho e grafos, reservar, cancelar requisição, rollout, ler resultados. Também lê o estado do cluster. | Ser usado como token de nó. |
 | Inferência | `AI_CLUSTER_INFERENCE_TOKEN` (opcional) | Só `ShardMatmul` e o canal de fatias. Permite ao gateway rodar modelos nos workers sem o token de operador. | Qualquer outra chamada. |
+| Recuperação | `AI_CLUSTER_RECOVERY_TOKEN` (opcional) | Só aparecer no cluster: registrar, heartbeat, saúde e sair. É o token que o nó guarda em claro para a recuperação pela rede. | Pedir trabalho, entregar resultado, ver nós, release e qualquer chamada de operador. |
 | Chave de API | `AI_CLUSTER_API_KEY` ou `AI_CLUSTER_TENANTS` | Usar a API do gateway, conforme o tenant ([[api]]). | Falar com o controller. |
 
 Regras:

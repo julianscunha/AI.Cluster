@@ -158,6 +158,19 @@ pub fn inference_token() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Environment variable holding the recovery token (F19, ADR-017). It is what a node in network
+/// recovery carries (in clear, in the boot script on its card): it may register, heartbeat, report
+/// health and leave, and nothing else, so a leak does not let anyone take work or results. Optional.
+pub const RECOVERY_TOKEN_ENV: &str = "AI_CLUSTER_RECOVERY_TOKEN";
+
+/// The recovery token from the environment; unset or blank is "none".
+pub fn recovery_token() -> Option<String> {
+    std::env::var(RECOVERY_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 /// Marker the interceptor leaves in a request's extensions when the caller proved the
 /// inference token.
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +185,29 @@ pub fn require_inference<T>(request: &Request<T>) -> Result<(), Status> {
             "esta operação exige o token de operador ou de inferência",
         ))
     }
+}
+
+/// Marker the interceptor leaves when the caller proved the recovery token.
+#[derive(Clone, Copy, Debug)]
+pub struct Recovery;
+
+/// Suffix every node id registered with the recovery token must carry, so that token can never
+/// speak for (or replace) a real node.
+pub const RECOVERY_NODE_SUFFIX: &str = "-rec";
+
+/// Whether the call came in with the recovery token.
+pub fn is_recovery<T>(request: &Request<T>) -> bool {
+    request.extensions().get::<Recovery>().is_some()
+}
+
+/// A recovery call may speak only for a node id ending in [`RECOVERY_NODE_SUFFIX`].
+pub fn require_recovery_scope<T>(request: &Request<T>, node_id: &str) -> Result<(), Status> {
+    if is_recovery(request) && !node_id.ends_with(RECOVERY_NODE_SUFFIX) {
+        return Err(Status::permission_denied(
+            "o token de recuperação só vale para nós com sufixo -rec",
+        ));
+    }
+    Ok(())
 }
 
 /// Marker the interceptor leaves in a request's extensions when the caller proved the
@@ -290,6 +326,7 @@ pub struct ServerMetadata {
     token: std::sync::Arc<str>,
     operator: std::sync::Arc<str>,
     inference: std::sync::Arc<str>,
+    recovery: std::sync::Arc<str>,
 }
 
 impl ServerMetadata {
@@ -298,7 +335,15 @@ impl ServerMetadata {
             token: token.into(),
             operator: operator.into(),
             inference: "".into(),
+            recovery: "".into(),
         }
+    }
+
+    /// Also accepts the recovery token; pair it with [`recovery_gate`], which keeps it to the calls
+    /// a node in recovery needs.
+    pub fn with_recovery(mut self, recovery: &str) -> Self {
+        self.recovery = recovery.into();
+        self
     }
 
     /// Also accepts the inference token; pair it with [`inference_gate`], which keeps it to
@@ -312,27 +357,47 @@ impl ServerMetadata {
 /// Path of `ShardMatmul`, the one call the inference token may make.
 const SHARD_MATMUL_PATH: &str = "/ai.cluster.v1.ClusterControl/ShardMatmul";
 
-/// Wraps a service so a caller presenting the inference token reaches `ShardMatmul` and gets
-/// `PermissionDenied` on every other path. Fail-closed by construction: a new RPC is out of
-/// reach of that token until someone says otherwise here.
+/// The calls a node in network recovery may make: show up, stay alive, say how it is, leave.
+const RECOVERY_PATHS: &[&str] = &[
+    "/ai.cluster.v1.ClusterControl/RegisterNode",
+    "/ai.cluster.v1.ClusterControl/Heartbeat",
+    "/ai.cluster.v1.ClusterControl/ReportHealth",
+    "/ai.cluster.v1.ClusterControl/LeaveNode",
+];
+
+/// Wraps a service so a caller presenting a scoped token reaches only `allowed` paths and gets
+/// `PermissionDenied` on every other. Fail-closed by construction: a new RPC is out of reach of
+/// that token until someone says otherwise here.
 #[derive(Clone)]
-pub struct InferenceGate<S> {
+pub struct ScopeGate<S> {
     inner: S,
     token: std::sync::Arc<str>,
+    allowed: &'static [&'static str],
 }
 
-pub fn inference_gate<S>(inner: S, token: &str) -> InferenceGate<S> {
-    InferenceGate {
+/// The inference token reaches `ShardMatmul` only.
+pub fn inference_gate<S>(inner: S, token: &str) -> ScopeGate<S> {
+    scope_gate(inner, token, &[SHARD_MATMUL_PATH])
+}
+
+/// The recovery token reaches [`RECOVERY_PATHS`] only.
+pub fn recovery_gate<S>(inner: S, token: &str) -> ScopeGate<S> {
+    scope_gate(inner, token, RECOVERY_PATHS)
+}
+
+fn scope_gate<S>(inner: S, token: &str, allowed: &'static [&'static str]) -> ScopeGate<S> {
+    ScopeGate {
         inner,
         token: token.into(),
+        allowed,
     }
 }
 
-impl<S: tonic::server::NamedService> tonic::server::NamedService for InferenceGate<S> {
+impl<S: tonic::server::NamedService> tonic::server::NamedService for ScopeGate<S> {
     const NAME: &'static str = S::NAME;
 }
 
-impl<S, B> tonic::codegen::Service<tonic::codegen::http::Request<B>> for InferenceGate<S>
+impl<S, B> tonic::codegen::Service<tonic::codegen::http::Request<B>> for ScopeGate<S>
 where
     S: tonic::codegen::Service<
             tonic::codegen::http::Request<B>,
@@ -362,13 +427,10 @@ where
             .map_or(&b""[..], |value| value.as_bytes());
         if !self.token.is_empty()
             && same_token(self.token.as_bytes(), presented)
-            && request.uri().path() != SHARD_MATMUL_PATH
+            && !self.allowed.contains(&request.uri().path())
         {
             return Box::pin(async {
-                Ok(
-                    Status::permission_denied("o token de inferência só vale para ShardMatmul")
-                        .into_http(),
-                )
+                Ok(Status::permission_denied("este token não vale para esta chamada").into_http())
             });
         }
         // The clone that was polled ready is the one that serves the call.
@@ -408,7 +470,8 @@ impl Interceptor for ServerMetadata {
         let is_node = !self.token.is_empty() && same_token(self.token.as_bytes(), given);
         let is_inference =
             !self.inference.is_empty() && same_token(self.inference.as_bytes(), given);
-        if !is_operator && !is_node && !is_inference {
+        let is_recovery = !self.recovery.is_empty() && same_token(self.recovery.as_bytes(), given);
+        if !is_operator && !is_node && !is_inference && !is_recovery {
             return Err(Status::unauthenticated("token ausente ou inválido"));
         }
         if is_operator {
@@ -416,6 +479,9 @@ impl Interceptor for ServerMetadata {
         }
         if is_inference {
             request.extensions_mut().insert(Inference);
+        }
+        if is_recovery {
+            request.extensions_mut().insert(Recovery);
         }
         let version = request
             .metadata()
@@ -619,6 +685,52 @@ mod tests {
         }
         // Other tokens are not the gate's business (the interceptor judges them).
         assert!(call("op-secret", "/ai.cluster.v1.ClusterControl/ListNodes").await);
+    }
+
+    #[tokio::test]
+    async fn the_gate_lets_the_recovery_token_only_show_the_node_up() {
+        use tonic::codegen::Service;
+        let mut gate = recovery_gate(Reached, "rec");
+        let mut call = async |token: &str, path: &str| {
+            let request = tonic::codegen::http::Request::builder()
+                .uri(path)
+                .header(AUTH_HEADER, token)
+                .body(())
+                .unwrap();
+            let response = gate.call(request).await.unwrap();
+            response.headers().get("grpc-status").is_none()
+        };
+        for path in RECOVERY_PATHS {
+            assert!(call("rec", path).await, "{path}");
+        }
+        for path in [
+            "/ai.cluster.v1.ClusterControl/RequestWork",
+            "/ai.cluster.v1.ClusterControl/SubmitWorkResult",
+            "/ai.cluster.v1.ClusterControl/SetRelease",
+            "/ai.cluster.v1.ClusterControl/ShardMatmul",
+            "/ai.cluster.v1.ClusterControl/RegisterNode/",
+            "/ai.cluster.v1.LinkProbe/Probe",
+        ] {
+            assert!(!call("rec", path).await, "{path}");
+        }
+        assert!(call("secret", "/ai.cluster.v1.ClusterControl/RequestWork").await);
+    }
+
+    #[test]
+    fn the_recovery_token_is_never_operator_or_inference() {
+        let mut server = ServerMetadata::new("secret", "op-secret").with_recovery("rec");
+        let with = |token: &str| {
+            ClientMetadata::with_token(token)
+                .call(Request::new(()))
+                .unwrap()
+        };
+        let recovery = server.call(with("rec")).unwrap();
+        assert!(require_operator(&recovery).is_err());
+        assert!(require_inference(&recovery).is_err());
+        let wrong = ClientMetadata::with_token("rec2")
+            .call(Request::new(()))
+            .unwrap();
+        assert!(server.call(wrong).is_err());
     }
 
     #[test]

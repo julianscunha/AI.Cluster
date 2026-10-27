@@ -258,7 +258,7 @@ Os marcos de prova (M0–M7) ficam ao final.
 | Ondas de rollout | `AI_CLUSTER_ROLLOUT_WAVE` tem teste unitário. Falta validar com mais de um nó atualizável. | hardware: dois nós atualizáveis |
 | dm-verity com root hash assinado | Integridade do disco no boot. A medida atual é de software e não prova integridade contra um nó comprometido. | hardware: placa com dm-verity |
 | TPM e secure boot | Attestation forte e verificação de boot. | hardware: TPM, placa com secure boot |
-| Token dedicado de recuperação (ADR-017) | A recuperação pela rede usa o token de join, em claro no `boot.scr`. Falta um token curto ou de uso único, com `ttl` na recuperação. | código, hardware: placa armv7 para validar |
+| Token de recuperação de uso único (ADR-017) | O token de recuperação já tem escopo mínimo, mas não expira nem é de uso único; trocá-lo exige regravar o `boot.scr`. | código, hardware: placa armv7 para validar |
 | Downgrade | O rollout não faz downgrade, e a ordem de versões é numérica. Falta decidir se um rollback legítimo precisa de versão maior. | decisão |
 | Marca de versão tentada | Guarda só uma versão. Versões diferentes repetem o ciclo. | código |
 | Trilha de auditoria persistente | Eventos de approve, revoke e leave ficam em anel de memória, e o arquivo não é assinado nem à prova de adulteração. | código, decisão |

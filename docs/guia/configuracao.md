@@ -23,6 +23,7 @@ Convenções:
 | `AI_CLUSTER_JOIN_TOKEN` | — (obrigatória) | Token de join: registro e trabalho de nós. Sem ele o controller não sobe. |
 | `AI_CLUSTER_OPERATOR_TOKEN` | — (obrigatória) | Token de operador: aprovação, fila, reservas, rollout. Tem de ser diferente do de join. |
 | `AI_CLUSTER_INFERENCE_TOKEN` | — | Token de inferência: só `ShardMatmul`. Tem de ser diferente dos outros dois. |
+| `AI_CLUSTER_RECOVERY_TOKEN` | — | Token de recuperação pela rede: só registrar, heartbeat, saúde e sair. É o que vai em claro no `boot.scr` do cartão; tem de ser diferente dos outros. |
 | `AI_CLUSTER_AUTO_APPROVE` | desligado | `1` ou `true`: todo nó que se registra é aprovado na hora. |
 | `AI_CLUSTER_HEARTBEAT_GRACE_MS` | `15000` | Sem heartbeat por esse tempo, o nó vai a `OFFLINE` e suas unidades em voo voltam à fila. |
 | `AI_CLUSTER_NODES` | memória | Arquivo com aprovações e credenciais dos nós. Texto claro, modo 0600. Sem ele, o registro some no reinício. |

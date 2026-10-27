@@ -91,7 +91,8 @@ echo "== AI Cluster netboot: no=$NODE ip=$IP controller=$CONTROLLER ttl=${TTL:-0
 dropbear -r /etc/dropbear/key -p 22 -E 2>/tmp/dropbear.log &
 
 case "$CONTROLLER" in http://*) export AI_CLUSTER_INSECURE=1 ;; esac
-export AI_CLUSTER_CONTROLLER="$CONTROLLER" AI_CLUSTER_JOIN_TOKEN="$TOKEN" AI_CLUSTER_NODE_ID="$NODE"
+# aic.token é o token de RECUPERAÇÃO (só registra e dá heartbeat), nunca o de join; o worker só aparece
+export AI_CLUSTER_CONTROLLER="$CONTROLLER" AI_CLUSTER_JOIN_TOKEN="$TOKEN" AI_CLUSTER_NODE_ID="$NODE" AI_CLUSTER_PRESENCE_ONLY=1
 cd /tmp
 /opt/ai-cluster-worker >/tmp/worker.log 2>&1 &
 

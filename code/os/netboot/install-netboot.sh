@@ -2,7 +2,7 @@
 # Liga o boot pela rede num nó Armbian/u-boot (F15 J4/J5): o u-boot tenta baixar kernel, dtb e
 # initramfs do servidor TFTP e, se qualquer passo falhar, segue para o boot local de sempre.
 #
-#   sh install-netboot.sh install <ip-do-servidor> <id-do-nó> <token-de-join> <controller> [ttl]
+#   sh install-netboot.sh install <ip-do-servidor> <id-do-nó, terminado em -rec> <token-de-recuperação> <controller> [ttl]
 #   sh install-netboot.sh remove
 #
 # Roda NO nó, como root. Guarda o original em /boot/boot.cmd.orig e /boot/boot.scr.orig; `remove`
@@ -21,7 +21,7 @@ remove)
   exit 0
   ;;
 install) ;;
-*) echo "uso: $0 install <servidor> <nó> <token> <controller> [ttl] | remove" >&2; exit 2 ;;
+*) echo "uso: $0 install <servidor> <nó> <token-de-recuperação> <controller> [ttl] | remove" >&2; exit 2 ;;
 esac
 
 SERVER=$2; NODE=$3; TOKEN=$4; CONTROLLER=$5; TTL=${6:-0}

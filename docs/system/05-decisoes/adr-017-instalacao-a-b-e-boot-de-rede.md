@@ -39,7 +39,7 @@ O worker sobe de um Linux instalado à mão. Para reimage e atualização sem in
 
 - A imagem armv7 foi a primeira; o x86_64 UEFI veio com GRUB ([[adr-019-imagem-x86-uefi-com-grub]]). ARM64 exige instalador e bootloader próprios.
 - O u-boot não verifica assinatura do boot. A release é assinada e conferida no nó ([[adr-018-release-assinada-e-medida-do-slot]]).
-- Token dedicado (curto ou de uso único) para a recuperação: hoje a recuperação usa o token de join.
+- O token de recuperação (`AI_CLUSTER_RECOVERY_TOKEN`) só registra, dá heartbeat e reporta saúde, e o worker de recuperação não pede trabalho (`AI_CLUSTER_PRESENCE_ONLY`). O nó de recuperação tem de se chamar `<nó>-rec` (o controller recusa outro id com esse token, e não entrega a ele a cópia do estado nem a release). Vazar o `boot.scr` não dá o token de join. Não é de uso único nem expira: trocá-lo exige regravar o `boot.scr` dos nós.
 - O instalador aceita a chave de host do initramfs sem verificação (`AutoAddPolicy`); preferir chave pública é planejado.
 - Sem checksum do setor de estado. O arquivo `recovery` força a recuperação até alguém removê-lo, porque o u-boot não escreve na FAT.
 - O servidor de boot é um script Python com uma thread por transferência; a versão como serviço com retentativas é planejada ([[provisionamento]]).

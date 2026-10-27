@@ -508,9 +508,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Consecutive refusals that are not final. An offline mark heals in a heartbeat or two; a
     // node that is draining, quarantined or removed never does, so it gives up and leaves.
     let mut refused = 0u32;
+    let presence_only = std::env::var("AI_CLUSTER_PRESENCE_ONLY")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true"));
     loop {
         if shutdown.is_finished() || broken.load(Ordering::Relaxed) {
             break;
+        }
+        // Recuperação de rede: só aparece no cluster (o token dela não pede trabalho).
+        if presence_only {
+            tokio::select! {
+                _ = time::sleep(Duration::from_secs(3600)) => {}
+                _ = &mut shutdown => break,
+            }
+            continue;
         }
         // Wait for a free slot before asking: a unit taken with no slot to run it would sit
         // here while another node could have started it.

@@ -41,6 +41,7 @@ def main():
     ap.add_argument('--node-id', required=True)
     ap.add_argument('--ssh-key', help='chave pública que poderá entrar por SSH no nó instalado')
     ap.add_argument('--recovery-server', help='IP do servidor TFTP da recuperação pela rede')
+    ap.add_argument('--recovery-token', help='token de recuperação (AI_CLUSTER_RECOVERY_TOKEN do controller); vai em claro no boot.scr, por isso não é o token de join')
     ap.add_argument('--insecure', action='store_true', default=True,
                     help='controller em http (rede de bancada); padrão ligado')
     ap.add_argument('--yes', action='store_true', help='confirma que o cartão inteiro será apagado')
@@ -48,10 +49,12 @@ def main():
 
     if args.recovery_server:
         ipaddress.ip_address(args.recovery_server)  # sem isto, uma quebra de linha injetaria comandos no boot.scr
+        if not args.recovery_token or args.recovery_token == args.join_token:
+            sys.exit('a recuperação exige --recovery-token, diferente do token de join')
     password = os.environ.get('AIC_SSH_PASSWORD')
     if not password:
         sys.exit('defina AIC_SSH_PASSWORD (a senha não vai na linha de comando)')
-    for value in (args.controller, args.join_token, args.node_id):
+    for value in (args.controller, args.join_token, args.node_id, args.recovery_token or 'x'):
         if not value or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/@=+-' for c in value):
             sys.exit(f'caractere não permitido em: {value!r}')
 
@@ -130,7 +133,7 @@ def main():
         # As definições da recuperação pela rede vão dentro do boot.scr: o u-boot as lê sem `source` nem `env import`.
         settings = (f'setenv nb_server {args.recovery_server}\n'
                     f'setenv nb_args "aic.controller={args.controller} aic.node={args.node_id}-rec '
-                    f'aic.token={args.join_token} aic.ttl=0"\n')
+                    f'aic.token={args.recovery_token} aic.ttl=0"\n')
         boot_cmd = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'boot.cmd'), encoding='utf-8').read()
         chan = client.get_transport().open_session()
         chan.exec_command(f'mount -t vfat {DEVICE}p1 /mnt/boot && cat > /mnt/boot/boot.scr && sync && umount /mnt/boot')
