@@ -254,7 +254,7 @@ pub type ProbeClient = LinkProbeClient<
 
 /// Stamps every outgoing call with the protocol version, a fresh correlation id
 /// and the auth context.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ClientMetadata {
     token: String,
     credential: NodeCredential,
@@ -262,8 +262,27 @@ pub struct ClientMetadata {
 
 /// The credential a node received at registration, shared with the interceptor of every client
 /// cloned from the connection, so one `set` after `RegisterNode` stamps all later calls.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct NodeCredential(std::sync::Arc<std::sync::Mutex<String>>);
+
+// Secrets stay out of `{:?}`: a log line or a failed assert must not print them.
+impl std::fmt::Debug for NodeCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeCredential(<redigido>)")
+    }
+}
+
+impl std::fmt::Debug for ClientMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClientMetadata(<redigido>)")
+    }
+}
+
+impl std::fmt::Debug for ServerMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ServerMetadata(<redigido>)")
+    }
+}
 
 impl NodeCredential {
     pub fn set(&self, value: &str) {
@@ -321,7 +340,7 @@ impl Interceptor for ClientMetadata {
 /// Rejects calls that lack the join or operator token (the latter also marks the request as
 /// [`Operator`]) or do not announce the protocol version this build
 /// speaks. The token check comes first, so an unauthenticated caller learns nothing else.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerMetadata {
     token: std::sync::Arc<str>,
     operator: std::sync::Arc<str>,

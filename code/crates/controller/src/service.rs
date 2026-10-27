@@ -347,7 +347,11 @@ impl ClusterControl for ClusterControlService {
         let replica = self
             .work
             .state_replica()
-            .filter(|replica| replica.epoch_unix_ms > request.replica_epoch_unix_ms && !recovery)
+            .filter(|replica| {
+                replica.epoch_unix_ms > request.replica_epoch_unix_ms
+                    && !recovery
+                    && self.registry.is_trusted(&request.node_id)
+            })
             .map(|replica| (*replica).clone());
         let now = unix_ms();
         let version = self
@@ -1688,6 +1692,108 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    fn with_credential<T>(mut request: Request<T>, credential: &str) -> Request<T> {
+        request.metadata_mut().insert(
+            ai_cluster_protocol::metadata::NODE_AUTH_HEADER,
+            credential.parse().unwrap(),
+        );
+        request
+    }
+
+    #[tokio::test]
+    async fn a_node_cannot_act_in_the_name_of_another_with_its_own_credential() {
+        let service = service();
+        let mut credential = std::collections::HashMap::new();
+        for id in ["node-a", "node-b"] {
+            let registered = service
+                .register_node(Request::new(RegisterNodeRequest {
+                    identity: Some(identity(id)),
+                    capability: None,
+                    replica: None,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            credential.insert(id, registered.node_credential);
+        }
+        // credencial de B nas chamadas que falam por A
+        let b = credential["node-b"].clone();
+        let node_a = || "node-a".to_string();
+        let refused = [
+            service
+                .leave_node(with_credential(
+                    Request::new(LeaveNodeRequest { node_id: node_a() }),
+                    &b,
+                ))
+                .await
+                .map(|_| ()),
+            service
+                .request_work(with_credential(
+                    Request::new(RequestWorkRequest { node_id: node_a() }),
+                    &b,
+                ))
+                .await
+                .map(|_| ()),
+            service
+                .heartbeat(with_credential(
+                    Request::new(HeartbeatRequest {
+                        node_id: node_a(),
+                        ..Default::default()
+                    }),
+                    &b,
+                ))
+                .await
+                .map(|_| ()),
+            service
+                .submit_work_result(with_credential(
+                    Request::new(SubmitWorkResultRequest {
+                        result: Some(WorkResult {
+                            work_id: "w".into(),
+                            node_id: node_a(),
+                            ..Default::default()
+                        }),
+                    }),
+                    &b,
+                ))
+                .await
+                .map(|_| ()),
+        ];
+        for result in refused {
+            assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+        }
+        // A continua no cluster: o LeaveNode alheio não a tirou
+        let nodes = service
+            .list_nodes(Request::new(ListNodesRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .nodes;
+        assert!(nodes.iter().any(|node| {
+            node.identity
+                .as_ref()
+                .is_some_and(|i| i.node_id == "node-a")
+        }));
+    }
+
+    #[test]
+    fn o_segredo_nao_aparece_no_debug() {
+        let registry = Registry::new();
+        let record = registry.register(identity("node-a"), CapabilityReport::default(), 1);
+        assert!(!record.credential.is_empty());
+        assert!(!format!("{record:?}").contains(&record.credential));
+        let credential = ai_cluster_protocol::metadata::NodeCredential::default();
+        credential.set("segredo-do-no");
+        assert!(!format!("{credential:?}").contains("segredo-do-no"));
+        let client = ai_cluster_protocol::metadata::ClientMetadata::with_token("token-secreto");
+        assert!(!format!("{client:?}").contains("token-secreto"));
+        let server =
+            ai_cluster_protocol::metadata::ServerMetadata::new("token-secreto", "op-secreto");
+        assert!(!format!("{server:?}").contains("secreto"));
+        // só nó aprovado recebe estado do controller
+        assert!(registry.is_trusted("node-a"));
+        assert!(!Registry::requiring_approval().is_trusted("node-a"));
     }
 
     #[tokio::test]

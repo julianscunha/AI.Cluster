@@ -46,7 +46,7 @@ fn eligible(record: &NodeRecord) -> bool {
         )
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NodeRecord {
     pub identity: NodeIdentity,
     pub capability: CapabilityReport,
@@ -66,6 +66,19 @@ pub struct NodeRecord {
     pub credential: String,
     pub registered_at_unix_ms: u64,
     pub last_heartbeat_unix_ms: u64,
+}
+
+// The credential is a secret: a `{:?}` in a log or a failed assert must not print it.
+impl std::fmt::Debug for NodeRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeRecord")
+            .field("identity", &self.identity)
+            .field("state", &self.state)
+            .field("trusted", &self.trusted)
+            .field("quarantined", &self.quarantined)
+            .field("credential", &"<redigido>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl NodeRecord {
@@ -392,6 +405,13 @@ impl Registry {
             .clone();
         self.remember(&identity.node_id, &record.credential, record.trusted);
         Some(record)
+    }
+
+    /// Whether `node_id` is registered and approved. Only such a node is handed controller state.
+    pub fn is_trusted(&self, node_id: &str) -> bool {
+        self.lock()
+            .get(node_id)
+            .is_some_and(|record| record.trusted)
     }
 
     /// Whether a call that speaks for `node_id` may proceed. An unknown node has no secret to

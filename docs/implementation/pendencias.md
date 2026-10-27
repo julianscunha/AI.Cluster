@@ -105,11 +105,9 @@ Os marcos de prova (M0–M7) ficam ao final.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Teste de credencial alheia | Provar que um nó com credencial própria não chama `LeaveNode` nem `SubmitWorkResult` em nome de outro nó. Hoje só há leitura de código. | código |
-| Teste da réplica pendente | Provar que um nó pendente não escreve estado do controller. | código |
-| Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial. | código |
+| Teste da réplica pendente | Provar que um nó pendente não escreve estado do controller no registro. A leitura (heartbeat) já só devolve a cópia a nó aprovado. | código |
+| Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial (as chamadas só respondem "desconhecido"; a cópia do estado não sai para ele). | código |
 | Registro alheio | Quem tem o token de join registra um `node_id` alheio como pendente e tenta tomá-lo. | código |
-| Segredo no `Debug` | `NodeRecord` e `NodeCredential` imprimem o segredo em `Debug`. | código |
 | Escopo do operador | O operador age sobre qualquer nó, sem escopo. | decisão, código |
 | Segredos fora de variável | Tokens, credenciais e chaves de TLS em arquivo com permissão restrita ou em cofre. | código |
 
