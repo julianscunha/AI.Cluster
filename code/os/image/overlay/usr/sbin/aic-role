@@ -8,7 +8,7 @@ ENV_FILE=${AIC_WORKER_ENV:-/data/worker.env}
 CMDLINE=${AIC_CMDLINE:-/proc/cmdline}
 
 # valor de uma chave do worker.env, sem aspas; o token nunca é lido
-value() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | head -n 1 | tr -d "\"'"; }
+value() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | head -n 1 | tr -d "\"'" | tr -d '\000-\037\177'; }
 
 node=$(value AI_CLUSTER_NODE_ID)
 controller=$(value AI_CLUSTER_CONTROLLER)

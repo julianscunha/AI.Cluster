@@ -230,9 +230,21 @@ fn announce_gateway(client: &MetadataClient, llms: &[Arc<Llm>], addr: SocketAddr
             shard_nodes: llm.shards.clone(),
         })
         .collect();
+    // O controller recusa para sempre um id ou uma URL fora do padrão; melhor dizer isso uma vez, na
+    // partida, do que repetir o erro a cada apresentação.
+    let plain = |text: &str, max: usize| {
+        !text.is_empty() && text.len() <= max && text.chars().all(|c| c.is_ascii_graphic())
+    };
+    if !plain(&id, 64) || !(url.is_empty() || plain(&url, 256)) {
+        eprintln!(
+            "AI_CLUSTER_GATEWAY_ID/URL fora do padrão (ASCII gráfico, id até 64 e URL até 256): o gateway não se apresenta ao controller"
+        );
+        return;
+    }
     let mut client = client.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(GATEWAY_REPORT_SECS));
+        let mut failing = false;
         loop {
             tick.tick().await;
             let report = ReportGatewayRequest {
@@ -240,8 +252,17 @@ fn announce_gateway(client: &MetadataClient, llms: &[Arc<Llm>], addr: SocketAddr
                 url: url.clone(),
                 models: models.clone(),
             };
-            if let Err(err) = client.report_gateway(report).await {
-                eprintln!("não consegui me apresentar ao controller: {err}");
+            // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
+            match client.report_gateway(report).await {
+                Err(err) if !failing => {
+                    failing = true;
+                    eprintln!("não consegui me apresentar ao controller: {err}");
+                }
+                Ok(_) if failing => {
+                    failing = false;
+                    eprintln!("apresentação ao controller restabelecida");
+                }
+                _ => {}
             }
         }
     });

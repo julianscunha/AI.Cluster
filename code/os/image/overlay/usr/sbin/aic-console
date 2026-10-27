@@ -25,7 +25,7 @@ bar() { # cor esquerda direita
 }
 
 env_value() { # chave do /data/worker.env, sem aspas; o token nunca é lido
-	sed -n "s/^$1=//p" /data/worker.env 2>/dev/null | head -n 1 | tr -d "\"'"
+	sed -n "s/^$1=//p" /data/worker.env 2>/dev/null | head -n 1 | tr -d "\"'" | tr -d '\000-\037\177'
 }
 
 draw() {

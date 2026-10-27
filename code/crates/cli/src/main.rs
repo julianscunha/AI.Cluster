@@ -440,13 +440,74 @@ async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// Texto vindo do controller, seguro para a tela do operador: controle (ESC, CSI, OSC) e os
+/// caracteres invisíveis que reordenam ou escondem texto viram `?`. O nó escolhe o próprio id e a
+/// própria versão ao se registrar, mesmo pendente, então a CLI não pode confiar neles.
+fn clean(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let hidden = matches!(
+                c,
+                '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+            );
+            if c.is_control() || hidden { '?' } else { c }
+        })
+        .collect()
+}
+
+fn sanitize_node(
+    mut node: ai_cluster_protocol::cluster::NodeSnapshot,
+) -> ai_cluster_protocol::cluster::NodeSnapshot {
+    node.state = clean(&node.state);
+    if let Some(identity) = node.identity.as_mut() {
+        for field in [
+            &mut identity.node_id,
+            &mut identity.device_id,
+            &mut identity.architecture,
+            &mut identity.os_version,
+            &mut identity.runtime_version,
+        ] {
+            *field = clean(field);
+        }
+    }
+    if let Some(capability) = node.capability.as_mut() {
+        for list in [
+            &mut capability.storage_classes,
+            &mut capability.precisions,
+            &mut capability.accelerators,
+        ] {
+            list.iter_mut().for_each(|item| *item = clean(item));
+        }
+        capability.storage_device = clean(&capability.storage_device);
+    }
+    node
+}
+
+fn sanitize_gateway(
+    mut gateway: ai_cluster_protocol::cluster::GatewayInfo,
+) -> ai_cluster_protocol::cluster::GatewayInfo {
+    gateway.gateway_id = clean(&gateway.gateway_id);
+    gateway.url = clean(&gateway.url);
+    for model in &mut gateway.models {
+        model.model_id = clean(&model.model_id);
+        model
+            .shard_nodes
+            .iter_mut()
+            .for_each(|node| *node = clean(node));
+    }
+    gateway
+}
+
 async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let nodes = client
         .list_nodes(ListNodesRequest {})
         .await?
         .into_inner()
-        .nodes;
+        .nodes
+        .into_iter()
+        .map(sanitize_node)
+        .collect::<Vec<_>>();
     println!("NÓS {}", nodes.len());
     println!(
         "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8}",
@@ -620,13 +681,31 @@ async fn print_topology(endpoint: &str) -> Result<(), Box<dyn std::error::Error>
         .list_nodes(ListNodesRequest {})
         .await?
         .into_inner()
-        .nodes;
-    // Controller antigo não conhece o RPC: sem gateways na árvore, sem erro.
-    let gateways = client
+        .nodes
+        .into_iter()
+        .map(sanitize_node)
+        .collect::<Vec<_>>();
+    // Controller antigo não conhece o RPC: árvore sem o ramo, sem erro. Qualquer outra falha (rede,
+    // permissão) é avisada, para a ausência do gateway não passar por "não há gateway".
+    let gateways = match client
         .list_gateways(ai_cluster_protocol::cluster::ListGatewaysRequest {})
         .await
-        .map(|response| response.into_inner().gateways)
-        .unwrap_or_default();
+    {
+        Ok(response) => response
+            .into_inner()
+            .gateways
+            .into_iter()
+            .map(sanitize_gateway)
+            .collect(),
+        Err(status) if status.code() == tonic::Code::Unimplemented => Vec::new(),
+        Err(status) => {
+            eprintln!(
+                "aviso: não consegui listar os gateways: {}",
+                clean(status.message())
+            );
+            Vec::new()
+        }
+    };
     for line in topology_lines(endpoint, &nodes, &gateways) {
         println!("{line}");
     }
@@ -660,9 +739,10 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
                 .is_some_and(|identity| identity.node_id == id)
         });
     let Some(node) = node else {
-        println!("NÓ {id} não encontrado");
+        println!("NÓ {} não encontrado", clean(id));
         return Ok(());
     };
+    let node = sanitize_node(node);
     let identity = node.identity.unwrap_or_default();
     let capability = node.capability.unwrap_or_default();
     let health = node.health.unwrap_or_default();
@@ -1222,6 +1302,18 @@ mod tests {
             trusted,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn texto_do_controller_nao_leva_controle_nem_invisiveis_para_a_tela() {
+        assert_eq!(clean("ok-1"), "ok-1");
+        assert_eq!(clean("a\u{1b}[2Jb"), "a?[2Jb");
+        assert_eq!(clean("x\u{202E}y\u{200B}z\u{7f}"), "x?y?z?");
+        let id = sanitize_node(node("n\u{1b}]52;c;x\u{7}", 0, true))
+            .identity
+            .unwrap()
+            .node_id;
+        assert!(!id.chars().any(char::is_control), "{id:?}");
     }
 
     #[test]

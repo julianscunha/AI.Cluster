@@ -190,3 +190,4 @@ Hoje o controle é por nó e por papel, não por unidade. Qualquer nó aprovado 
 - **Segredos em claro** em variáveis de ambiente e em arquivos.
 - **Atestação só de software.** Um nó comprometido pode mentir sobre a medida.
 - **Sem rotação de chave de release por revogação.** Só por substituição de imagem.
+- **Gateways sem dono.** O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada de outro (inclusive a URL que o operador vê). O controller limita a 64 entradas e troca a mais antiga sem sinal por uma nova. Ids e URLs aceitam só ASCII gráfico, e a CLI troca controle e caracteres invisíveis por `?` em todo texto vindo do controller (nós e gateways).

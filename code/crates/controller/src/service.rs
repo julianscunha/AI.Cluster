@@ -77,12 +77,13 @@ const GATEWAY_ALIVE_MS: u64 = 45_000;
 /// Valida o que o gateway diz de si: tamanhos limitados e sem caracteres de controle, porque o
 /// texto vai para a tela do operador.
 fn valid_gateway(request: &ReportGatewayRequest) -> bool {
+    // ASCII gráfico: sem controle, sem espaço e sem os invisíveis do Unicode que disfarçam texto.
     let text = |value: &str, max: usize| {
-        !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+        !value.is_empty() && value.len() <= max && value.chars().all(|c| c.is_ascii_graphic())
     };
     text(&request.gateway_id, 64)
         && request.url.len() <= 256
-        && !request.url.chars().any(char::is_control)
+        && request.url.chars().all(|c| c.is_ascii_graphic())
         && request.models.len() <= 32
         && request.models.iter().all(|model| {
             text(&model.model_id, 64)
@@ -883,7 +884,21 @@ impl ClusterControl for ClusterControlService {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !gateways.contains_key(&request.gateway_id) && gateways.len() >= MAX_GATEWAYS {
-                return Err(Status::resource_exhausted("gateways demais"));
+                // Um gateway morto não segura a vaga para sempre: sai o que está sem sinal há mais
+                // tempo. Se todos estão vivos, quem chega espera.
+                let stale = gateways
+                    .values()
+                    .filter(|gateway| {
+                        now.saturating_sub(gateway.last_seen_unix_ms) > GATEWAY_ALIVE_MS
+                    })
+                    .min_by_key(|gateway| gateway.last_seen_unix_ms)
+                    .map(|gateway| gateway.gateway_id.clone());
+                match stale {
+                    Some(id) => {
+                        gateways.remove(&id);
+                    }
+                    None => return Err(Status::resource_exhausted("gateways demais")),
+                }
             }
             gateways
                 .insert(
@@ -2507,6 +2522,13 @@ mod tests {
         for bad in [report("", &[]), report("g\nx", &[]), report("gw2", &[""])] {
             assert!(service.report_gateway(inference(bad)).await.is_err());
         }
+        // texto que disfarça (inversão de direção, largura zero) também é recusado
+        assert!(
+            service
+                .report_gateway(inference(report("gw\u{202E}x", &[])))
+                .await
+                .is_err()
+        );
         // listar é do operador: o token de inferência não passa
         assert!(
             service
@@ -2514,6 +2536,38 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn gateways_demais_esperam_ou_trocam_o_morto() {
+        let service = service();
+        let report = |id: String| {
+            inference(ReportGatewayRequest {
+                gateway_id: id,
+                url: String::new(),
+                models: vec![],
+            })
+        };
+        for n in 0..MAX_GATEWAYS {
+            service
+                .report_gateway(report(format!("g{n}")))
+                .await
+                .unwrap();
+        }
+        // todos vivos: o 65º espera
+        assert!(service.report_gateway(report("novo".into())).await.is_err());
+        // um deles fica sem sinal: o 65º entra no lugar dele
+        service
+            .gateways
+            .lock()
+            .unwrap()
+            .get_mut("g7")
+            .unwrap()
+            .last_seen_unix_ms = 1;
+        service.report_gateway(report("novo".into())).await.unwrap();
+        let gateways = service.gateways.lock().unwrap();
+        assert!(gateways.contains_key("novo") && !gateways.contains_key("g7"));
+        assert_eq!(gateways.len(), MAX_GATEWAYS);
     }
 
     #[tokio::test]
