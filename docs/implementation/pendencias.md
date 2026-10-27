@@ -167,6 +167,8 @@ Os marcos de prova (M0–M7) ficam ao final.
 | N1, registro de modelos | Não há registro central. Modelos são diretórios apontados por variável. | código |
 | N2, manifest | Sem lista de tensores nem assinatura. | código, decisão |
 | N3, variantes e precisão | Só fp32. Não há quantizados. | código |
+| Compatibilidade de arquiteturas | O motor Llama recusa na carga: embeddings não amarrados (a maioria dos 7B tem a saída separada), `rope_scaling` (Llama 3.x), viés de atenção e de MLP, MoE, sliding window e ativações diferentes de `silu`. Só GPT-2 e Llama com embeddings amarrados rodam. Falta suportar saída não amarrada e `rope_scaling`, com paridade numérica contra `transformers`, e publicar no guia a lista de modelos suportados e recusados. | código, dados (pesos de um modelo-alvo para a paridade) |
+| Memória do gateway com modelo grande | As projeções vão para os workers, mas a tabela de embeddings, as normalizações e o KV cache ficam no gateway. Medir o consumo com um modelo de 7B e decidir se a tabela de embeddings também precisa ser fatiada. | código, dados |
 | N4, fatias pré-carregadas | Fatias não são pré-carregadas, porque não há réplica. | código |
 | N5, cache de modelo | Não há cache de modelo no controller nem prefetch. | código |
 | N7, pipeline | Paralelismo de pipeline não existe. | código |
