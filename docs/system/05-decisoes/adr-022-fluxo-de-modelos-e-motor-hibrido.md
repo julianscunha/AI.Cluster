@@ -57,12 +57,20 @@ Medido com o llama.cpp (commit `8ca4060`), GGUF Q4_K_M, compilado para x86 gené
 - **O RPC com o armv7 não funcionou:** PC x86 → Pi falha logo na conexão (`Remote RPC server crashed or returned malformed response`, o servidor só registra o fechamento) e Pi → Pi no próprio Pi não terminou o teste em mais de 15 minutos (processo parado). A causa não foi isolada: a estrutura das mensagens não usa `size_t` e não achei diferença de largura de palavra. O servidor RPC do llama.cpp é experimental e declara `Never expose the RPC server to an open network`.
 - **Os pesos não passam pelo nosso canal:** no RPC do llama.cpp quem carrega o arquivo (o nó principal) envia os tensores aos servidores RPC na carga. Portanto a etapa E4 (envio de pesos por gRPC) só vale se o motor próprio continuar no caminho.
 
-### Decisão pendente do dono
+### Plano escolhido: llama.cpp em todos os nós (validado em 2026-10-28)
 
-O RPC do llama.cpp serve a nós de 64 bits. Para os nós armv7 há três caminhos, e a escolha define o resto do roadmap:
+O dono escolheu corrigir o RPC no armv7 (plano 2). Foram três defeitos do llama.cpp em 32 bits, corrigidos em `code/third_party/llama.cpp/armv7.patch` (commit fixado `8ca4060`):
 
-1. **Dois planos de dados:** x86 e ARM64 usam o RPC do llama.cpp; o armv7 continua no motor próprio (fatias por linhas) ou roda modelos pequenos sozinho com o llama.cpp.
-2. **Corrigir o RPC no armv7:** investigar e enviar a correção ao llama.cpp (ou manter um patch). Custo e prazo incertos.
-3. **Camada de distribuição própria sobre a biblioteca do llama.cpp:** usar o llama.cpp só para calcular e distribuir pelo nosso canal. É o caminho mais longo.
+1. o tamanho da mensagem do cliente ia como `size_t` (4 bytes), e o protocolo manda 8;
+2. o mesmo no sentido servidor → cliente (`send_msg`);
+3. `GGML_MEM_ALIGN` valia 4 em 32 bits, mas `ggml_tensor` tem `int64_t`; o compilador emite cargas NEON com dica de alinhamento de 8 e o Cortex-A7 dá SIGBUS.
 
-Recomendação: **1 agora** (entrega a demo em nós de 64 bits e dá ao Pi o papel de nó pequeno com o llama.cpp local) e **2 em paralelo**, medindo o custo de corrigir.
+**Resultado:** um cliente x86 usa o Pi (armv7, 1 GB) como servidor RPC e roda o SmolLM2 360M com todas as camadas nele a 2,3 tokens/s (2,6 sem RPC). Com metade das camadas no Pi, 3,8 tokens/s; sozinho no PC, 42. O Pi limita a velocidade de quem o usa: dividir um modelo que já cabe em uma máquina com um nó lento piora a velocidade; o ganho vem quando o modelo não cabe em uma máquina só.
+
+**Limite descoberto:** um cliente de 32 bits não usa um servidor de 64 bits (os ponteiros remotos de 64 bits são truncados no cliente). O nó principal que carrega o modelo e coordena o RPC é de 64 bits; os nós armv7 entram como servidores.
+
+### Decisões que ainda cabem ao dono, para as etapas E5 a E8
+
+1. **Segurança do `rpc-server`:** ele não tem autenticação nem criptografia. Proposta: o worker o escuta só em 127.0.0.1 e o nosso worker o expõe por um proxy com mTLS amarrado ao `node_id` (ADR-022, rede entre workers).
+2. **Quem é o nó principal** (carrega o GGUF e roda o `llama-server`): o gateway atual (contêiner no servidor), ou o worker de 64 bits mais forte escolhido pelo controller.
+3. **Como o worker executa o `rpc-server`:** processo filho do worker (o controller manda iniciar e parar), com o binário na imagem do SO.
