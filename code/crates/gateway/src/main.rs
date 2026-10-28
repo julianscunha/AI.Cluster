@@ -246,11 +246,33 @@ fn gateway_state_path(id: &str) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(dir).join(format!("gateway-{safe}-{:08x}.state", hash as u32)))
 }
 
+/// As chaves que o controller entrega: só as bem formadas (hash de 32 bytes e nome seguro).
+fn grants_from(list: &[ai_cluster_protocol::cluster::TenantGrant]) -> Vec<request_manager::Grant> {
+    list.iter()
+        .filter_map(|grant| {
+            let sha256 = <[u8; 32]>::try_from(grant.key_sha256.as_slice()).ok()?;
+            let safe = !grant.tenant.is_empty()
+                && grant.tenant.len() <= 64
+                && grant
+                    .tenant
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+            safe.then(|| request_manager::Grant {
+                name: grant.tenant.clone(),
+                sha256,
+                models: (!grant.models.is_empty()).then(|| grant.models.clone()),
+            })
+        })
+        .collect()
+}
+
 fn announce_gateway(
     client: &MetadataClient,
     llms: &[Arc<Llm>],
     addr: SocketAddr,
     cache: Arc<cache::ResponseCache>,
+    tenants: Arc<request_manager::Tenants>,
+    llama: Arc<llama::Manager>,
 ) {
     let id = std::env::var("AI_CLUSTER_GATEWAY_ID").unwrap_or_else(|_| format!("gateway-{addr}"));
     let url = std::env::var("AI_CLUSTER_GATEWAY_URL").unwrap_or_else(|_| format!("http://{addr}"));
@@ -331,18 +353,26 @@ fn announce_gateway(
                 url: url.clone(),
                 models: models.clone(),
                 stats: Some(stats),
+                running: llama.status(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {
-                Err(err) if !failing => {
-                    failing = true;
-                    eprintln!("não consegui me apresentar ao controller: {err}");
+                Err(err) => {
+                    if !failing {
+                        failing = true;
+                        eprintln!("não consegui me apresentar ao controller: {err}");
+                    }
                 }
-                Ok(_) if failing => {
-                    failing = false;
-                    eprintln!("apresentação ao controller restabelecida");
+                Ok(response) => {
+                    if failing {
+                        failing = false;
+                        eprintln!("apresentação ao controller restabelecida");
+                    }
+                    // O controller entrega as chaves (em hash) e o modelo que quer; o gateway aplica.
+                    let reply = response.into_inner();
+                    tenants.set_grants(grants_from(&reply.tenants));
+                    llama.apply(reply.desired.as_ref()).await;
                 }
-                _ => {}
             }
         }
     });
@@ -631,7 +661,7 @@ struct Gateway {
     slots: Arc<Semaphore>,
     llms: Arc<Vec<Arc<Llm>>>,
     /// Modelo servido pelo llama-server (ADR-022); `None` sem `AI_CLUSTER_LLAMA_MODEL`.
-    llama: Option<Arc<llama::Llama>>,
+    llama: Arc<llama::Manager>,
     /// One generation at a time across all models, handed out by priority class: it is CPU-bound
     /// and every thread is already used by the matmul.
     admission: Arc<Admission>,
@@ -695,7 +725,7 @@ async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response 
                 cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
         }));
     }
-    if let Some(llama) = gateway.llama.as_ref().filter(|l| tenant.allows(&l.id)) {
+    if let Some(llama) = gateway.llama.current().filter(|l| tenant.allows(&l.id)) {
         data.push(json!({
             "id": llama.id,
             "object": "model",
@@ -1315,7 +1345,7 @@ async fn llama_route(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let Some(llama) = gateway.llama.clone() else {
+    let Some(llama) = gateway.llama.current() else {
         return next.run(request).await;
     };
     let (parts, body) = request.into_parts();
@@ -1828,8 +1858,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "AI_CLUSTER_CACHE_ENTRIES",
         256,
     ) as usize));
-    let llama = llama::from_env()?.map(llama::start).transpose()?;
-    announce_gateway(&client, &llms, addr, response_cache.clone());
+    let llama_base = llama::Base::from_env()?;
+    let llama = Arc::new(match llama::from_env()? {
+        Some(config) => llama::Manager::fixed(llama_base, config)?,
+        None => llama::Manager::new(llama_base),
+    });
+    announce_gateway(
+        &client,
+        &llms,
+        addr,
+        response_cache.clone(),
+        tenants.clone(),
+        llama.clone(),
+    );
     let gateway = Gateway {
         client: operator_client,
         tenants,

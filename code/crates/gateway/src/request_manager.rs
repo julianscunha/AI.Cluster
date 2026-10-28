@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_protocol::metadata::same_token;
 use axum::http::{HeaderMap, header};
+use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 /// Priority classes of the API (`inference-api`), lowest first. A higher class is served first.
@@ -122,7 +123,17 @@ impl Tenant {
 #[derive(Debug)]
 pub struct Tenants {
     list: Vec<Arc<Tenant>>,
+    /// Chaves que o controller entrega (só o hash): entram e saem a cada apresentação.
+    granted: Mutex<Vec<([u8; 32], Arc<Tenant>)>>,
     pub window: Duration,
+}
+
+/// Uma chave de API do controller: o tenant, o `sha256` da chave e os modelos que ela alcança.
+pub struct Grant {
+    pub name: String,
+    pub sha256: [u8; 32],
+    /// `None` = todos os modelos.
+    pub models: Option<Vec<String>>,
 }
 
 /// Parses `name=key[,models=a|b][,tokens=N][,class=batch]` entries separated by `;`.
@@ -182,8 +193,32 @@ impl Tenants {
     pub fn new(list: Vec<Tenant>, window: Duration) -> Self {
         Self {
             list: list.into_iter().map(Arc::new).collect(),
+            granted: Mutex::new(Vec::new()),
             window,
         }
+    }
+
+    /// Troca as chaves do controller. Quem continua com o mesmo nome e hash mantém o tenant (e os
+    /// contadores); o resto sai.
+    pub fn set_grants(&self, grants: Vec<Grant>) {
+        let mut granted = self
+            .granted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = Vec::with_capacity(grants.len());
+        for grant in grants {
+            let kept = granted
+                .iter()
+                .find(|(sha, tenant)| *sha == grant.sha256 && tenant.name == grant.name)
+                .map(|(_, tenant)| tenant.clone());
+            let tenant = kept.unwrap_or_else(|| {
+                let mut tenant = Tenant::new(&grant.name, "");
+                tenant.models = grant.models.clone();
+                Arc::new(tenant)
+            });
+            next.push((grant.sha256, tenant));
+        }
+        *granted = next;
     }
 
     /// The tenant whose key the call carries as `Authorization: Bearer`. Every key is compared,
@@ -201,6 +236,19 @@ impl Tenants {
                 && found.is_none()
             {
                 found = Some(tenant.clone());
+            }
+        }
+        // As chaves do controller chegam em hash: confere o hash do que o cliente mandou, de todas.
+        if !given.is_empty() {
+            let hash: [u8; 32] = Sha256::digest(given.as_bytes()).into();
+            let granted = self
+                .granted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (sha, tenant) in granted.iter() {
+                if same_token(sha, &hash) && found.is_none() {
+                    found = Some(tenant.clone());
+                }
             }
         }
         found
@@ -223,7 +271,19 @@ impl Tenants {
         ] {
             out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} {kind}\n"));
             // A tenant sees its own counters, not the others'.
-            for tenant in self.list.iter().filter(|tenant| tenant.name == only.name) {
+            let granted: Vec<Arc<Tenant>> = self
+                .granted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .iter()
+                .map(|(_, tenant)| tenant.clone())
+                .collect();
+            for tenant in self
+                .list
+                .iter()
+                .chain(granted.iter())
+                .filter(|tenant| tenant.name == only.name)
+            {
                 let value = if name.ends_with("tokens_total") {
                     tenant.tokens_total.load(Ordering::Relaxed)
                 } else {
@@ -522,5 +582,40 @@ mod tests {
         // The slot is still usable once the holder lets go.
         drop(held);
         assert!(admission.acquire(Class::Normal).await.is_ok());
+    }
+    #[test]
+    fn controller_keys_authenticate_by_hash_and_keep_their_counters() {
+        use sha2::{Digest, Sha256};
+        let tenants = Tenants::new(Vec::new(), Duration::from_secs(60));
+        let hash: [u8; 32] = Sha256::digest(b"aic_segredo").into();
+        let grant = || Grant {
+            name: "default".into(),
+            sha256: hash,
+            models: None,
+        };
+        let headers = |key: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(
+                header::AUTHORIZATION,
+                format!("Bearer {key}").parse().unwrap(),
+            );
+            h
+        };
+        assert!(tenants.authenticate(&headers("aic_segredo")).is_none());
+        tenants.set_grants(vec![grant()]);
+        let first = tenants
+            .authenticate(&headers("aic_segredo"))
+            .expect("chave do controller");
+        assert_eq!(first.name, "default");
+        assert!(tenants.authenticate(&headers("errada")).is_none());
+        assert!(tenants.authenticate(&HeaderMap::new()).is_none());
+        // A mesma chave na apresentação seguinte mantém o tenant e os contadores.
+        first.charge(10);
+        tenants.set_grants(vec![grant()]);
+        let again = tenants.authenticate(&headers("aic_segredo")).unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        // Sem a chave na lista, ela deixa de valer.
+        tenants.set_grants(Vec::new());
+        assert!(tenants.authenticate(&headers("aic_segredo")).is_none());
     }
 }

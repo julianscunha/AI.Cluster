@@ -332,6 +332,91 @@ message CheckModelResponse {
   string message = 8;
 }
 
+/// Estado do modelo do llama.cpp no gateway (ADR-022).
+enum ModelState {
+  MODEL_STATE_UNSPECIFIED = 0;
+  MODEL_STOPPED = 1;
+  MODEL_LOADING = 2;
+  MODEL_READY = 3;
+  MODEL_FAILED = 4;
+}
+
+/// Um worker que serve o `rpc-server` do llama.cpp, por onde o gateway chega a ele (túnel mTLS).
+message RpcEndpoint {
+  string node_id = 1;
+  // host:porta do túnel.
+  string address = 2;
+}
+
+/// O modelo que o controller quer no gateway. Ausente na resposta do ReportGateway = parar.
+message DesiredModel {
+  // Sobe a cada mudança (modelo novo, worker novo ou que saiu); o gateway reaplica quando muda.
+  uint64 generation = 1;
+  string model_id = 2;
+  // Caminho do GGUF relativo à pasta de modelos (`AI_CLUSTER_MODELS_DIR`), que o gateway também monta.
+  string model_path = 3;
+  uint64 context = 4;
+  // Camadas enviadas aos workers (-ngl).
+  uint32 gpu_layers = 5;
+  // Na ordem em que o llama-server os recebe (--rpc).
+  repeated RpcEndpoint endpoints = 6;
+}
+
+/// Uma chave de API que o gateway aceita: só o hash, nunca a chave.
+message TenantGrant {
+  string tenant = 1;
+  bytes key_sha256 = 2;
+  // Vazio = todos os modelos.
+  repeated string models = 3;
+}
+
+/// O que o gateway diz da geração que aplicou.
+message ModelStatus {
+  string model_id = 1;
+  ModelState state = 2;
+  string reason = 3;
+  uint64 generation = 4;
+  double tokens_per_second = 5;
+}
+
+message StartModelRequest {
+  string model_id = 1;
+  // Contexto em tokens; 0 = o padrão (4096, limitado ao do modelo).
+  uint64 context = 2;
+}
+
+message ApiKey {
+  string tenant = 1;
+  // Em claro só aqui, na criação. O controller guarda o hash.
+  string key = 2;
+}
+
+message StartModelResponse {
+  bool ok = 1;
+  string message = 2;
+  uint64 generation = 3;
+  CheckModelResponse check = 4;
+  // Chaves novas desta chamada (vazio se já existiam).
+  repeated ApiKey keys = 5;
+}
+
+message StopModelRequest {}
+
+message StopModelResponse {
+  uint64 generation = 1;
+}
+
+message ModelStatusRequest {}
+
+message ModelStatusResponse {
+  // Ausente = nenhum modelo pedido.
+  DesiredModel desired = 1;
+  // Último estado que o gateway reportou para a geração pedida.
+  ModelStatus running = 2;
+  // Prefixos das chaves (nunca a chave).
+  repeated string key_prefixes = 3;
+}
+
 message ListModelsRequest {}
 
 message ListModelsResponse {
@@ -503,9 +588,16 @@ message ReportGatewayRequest {
   repeated GatewayModel models = 3;
   /// Ausente num gateway antigo: o painel diz "sem dados", não mostra zeros.
   GatewayStats stats = 4;
+  /// O modelo do llama.cpp que o gateway aplicou e como está.
+  ModelStatus running = 5;
 }
 
-message ReportGatewayResponse {}
+message ReportGatewayResponse {
+  // O modelo desejado; ausente = o gateway para o llama-server. Só o gateway com token de inferência
+  // recebe isto, e nunca um segredo: as chaves vão em hash.
+  DesiredModel desired = 1;
+  repeated TenantGrant tenants = 2;
+}
 
 message ListGatewaysRequest {}
 
@@ -883,6 +975,9 @@ service ClusterControl {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc CheckModel(CheckModelRequest) returns (CheckModelResponse);
+  rpc StartModel(StartModelRequest) returns (StartModelResponse);
+  rpc StopModel(StopModelRequest) returns (StopModelResponse);
+  rpc ModelStatus(ModelStatusRequest) returns (ModelStatusResponse);
   rpc LeaveNode(LeaveNodeRequest) returns (LeaveNodeResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);

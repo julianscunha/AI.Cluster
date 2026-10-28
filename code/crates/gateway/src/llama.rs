@@ -19,6 +19,8 @@ use futures_core::Stream;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 
+use ai_cluster_protocol::cluster::{DesiredModel, ModelState, ModelStatus};
+
 use crate::request_manager::{Permit, Tenant};
 
 type HttpClient = Client<HttpConnector, Body>;
@@ -190,9 +192,38 @@ pub struct Llama {
     state: Mutex<State>,
     tokens_per_second: Mutex<f64>,
     client: HttpClient,
+    /// Túneis e supervisor; abortados quando o modelo sai (o filho morre junto: `kill_on_drop`).
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// A geração do plano do controller que este processo aplica (0 = configuração do ambiente).
+    pub generation: u64,
+}
+
+impl Drop for Llama {
+    fn drop(&mut self) {
+        for task in self
+            .tasks
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain(..)
+        {
+            task.abort();
+        }
+    }
 }
 
 impl Llama {
+    /// Encerra os túneis e o supervisor (e, com ele, o `llama-server`).
+    pub fn shutdown(&self) {
+        for task in self
+            .tasks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain(..)
+        {
+            task.abort();
+        }
+    }
+
     pub fn state(&self) -> State {
         self.state
             .lock()
@@ -348,8 +379,8 @@ impl Stream for Tap {
 }
 
 /// Sobe os túneis, o `llama-server` e o supervisiona. Devolve já, com o estado `Loading`; o
-/// carregamento e o benchmark seguem em segundo plano.
-pub fn start(config: LlamaConfig) -> Result<Arc<Llama>, String> {
+/// carregamento e o benchmark seguem em segundo plano. `shutdown` encerra tudo.
+pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String> {
     let llama = Arc::new(Llama {
         id: config.id.clone(),
         context: config.context,
@@ -357,42 +388,36 @@ pub fn start(config: LlamaConfig) -> Result<Arc<Llama>, String> {
         state: Mutex::new(State::Loading),
         tokens_per_second: Mutex::new(0.0),
         client: Client::builder(TokioExecutor::new()).build_http(),
+        tasks: Mutex::new(Vec::new()),
+        generation,
     });
-    let tls = if config.endpoints.is_empty() {
-        None
-    } else {
-        Some(ai_cluster_tunnel::client_config(
-            &config.ca,
-            &config.cert,
-            &config.key,
-        )?)
-    };
-    let background = llama.clone();
-    tokio::spawn(async move {
-        if let Some(tls) = tls {
-            for (remote, local) in config.endpoints.iter().zip(config.local_endpoints()) {
-                match tokio::net::TcpListener::bind(&local).await {
-                    Ok(listener) => {
-                        let (remote, name, tls) =
-                            (remote.clone(), config.server_name.clone(), tls.clone());
-                        tokio::spawn(async move {
-                            if let Err(error) =
-                                ai_cluster_tunnel::forward(listener, remote.clone(), name, tls)
-                                    .await
-                            {
-                                eprintln!("túnel para {remote} encerrou: {error}");
-                            }
-                        });
-                    }
-                    Err(error) => {
-                        background.set(State::Failed(format!("túnel em {local}: {error}")));
-                        return;
-                    }
+    let mut tasks = Vec::new();
+    if !config.endpoints.is_empty() {
+        let tls = ai_cluster_tunnel::client_config(&config.ca, &config.cert, &config.key)?;
+        for (remote, local) in config.endpoints.iter().zip(config.local_endpoints()) {
+            // Escuta já, de forma síncrona: o llama-server só sobe depois que as portas existem.
+            let listener = std::net::TcpListener::bind(&local)
+                .and_then(|l| l.set_nonblocking(true).map(|()| l))
+                .and_then(tokio::net::TcpListener::from_std)
+                .map_err(|e| format!("túnel em {local}: {e}"))?;
+            let (remote, name, tls) = (remote.clone(), config.server_name.clone(), tls.clone());
+            tasks.push(tokio::spawn(async move {
+                if let Err(error) =
+                    ai_cluster_tunnel::forward(listener, remote.clone(), name, tls).await
+                {
+                    eprintln!("túnel para {remote} encerrou: {error}");
                 }
-            }
+            }));
         }
+    }
+    let background = llama.clone();
+    tasks.push(tokio::spawn(async move {
         supervise(&config, &background).await;
-    });
+    }));
+    *llama
+        .tasks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = tasks;
     Ok(llama)
 }
 
@@ -491,6 +516,214 @@ async fn benchmark(llama: &Llama) -> Option<f64> {
     value["timings"]["predicted_per_second"]
         .as_f64()
         .filter(|rate| rate.is_finite() && *rate > 0.0)
+}
+
+/// O modelo em execução e o que o controller pediu (ADR-022): o gateway aplica o `DesiredModel` que
+/// recebe a cada apresentação. Uma configuração do ambiente (`AI_CLUSTER_LLAMA_MODEL`) vale mais que
+/// o controller e fica fixa.
+pub struct Manager {
+    current: Mutex<Option<Arc<Llama>>>,
+    base: Base,
+    /// Com modelo fixo pelo ambiente, o plano do controller é ignorado.
+    fixed: bool,
+}
+
+/// O que não muda com o modelo: binário, pasta de modelos, TLS e portas locais.
+#[derive(Debug, Clone, Default)]
+pub struct Base {
+    pub server_bin: String,
+    pub models_dir: String,
+    pub ca: String,
+    pub cert: String,
+    pub key: String,
+    pub server_name: String,
+    pub port: u16,
+    pub tunnel_base: u16,
+    pub default_context: u32,
+}
+
+impl Base {
+    pub fn from_env() -> Result<Self, String> {
+        let var = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let number = |name: &str, default: u32| -> Result<u32, String> {
+            match var(name) {
+                Some(text) => text.parse().map_err(|_| format!("{name} inválido: {text}")),
+                None => Ok(default),
+            }
+        };
+        let port = u16::try_from(number("AI_CLUSTER_LLAMA_PORT", u32::from(DEFAULT_PORT))?)
+            .map_err(|_| "AI_CLUSTER_LLAMA_PORT fora de 0..65535".to_string())?;
+        let tunnel_base = u16::try_from(number(
+            "AI_CLUSTER_LLAMA_TUNNEL_BASE",
+            u32::from(DEFAULT_TUNNEL_BASE),
+        )?)
+        .map_err(|_| "AI_CLUSTER_LLAMA_TUNNEL_BASE fora de 0..65535".to_string())?;
+        Ok(Self {
+            server_bin: var("AI_CLUSTER_LLAMA_SERVER_BIN").unwrap_or_else(|| "llama-server".into()),
+            models_dir: var("AI_CLUSTER_MODELS_DIR").unwrap_or_default(),
+            ca: var("AI_CLUSTER_LLAMA_TLS_CA").unwrap_or_default(),
+            cert: var("AI_CLUSTER_LLAMA_TLS_CERT").unwrap_or_default(),
+            key: var("AI_CLUSTER_LLAMA_TLS_KEY").unwrap_or_default(),
+            server_name: var("AI_CLUSTER_LLAMA_RPC_SERVER_NAME")
+                .unwrap_or_else(|| "aic-worker".into()),
+            port,
+            tunnel_base,
+            default_context: number("AI_CLUSTER_LLAMA_CTX", 4096)?,
+        })
+    }
+
+    /// A configuração de um pedido do controller. Recusa caminho que sai da pasta de modelos.
+    pub fn config_for(&self, wanted: &DesiredModel) -> Result<LlamaConfig, String> {
+        if self.models_dir.is_empty() {
+            return Err("o gateway não tem AI_CLUSTER_MODELS_DIR".into());
+        }
+        let path = std::path::Path::new(&wanted.model_path);
+        if wanted.model_path.is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!("caminho de modelo inválido: {}", wanted.model_path));
+        }
+        let id = &wanted.model_id;
+        if id.is_empty()
+            || id.len() > 64
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        {
+            return Err(format!("id de modelo inválido: {id}"));
+        }
+        if !wanted.endpoints.is_empty()
+            && (self.ca.is_empty() || self.cert.is_empty() || self.key.is_empty())
+        {
+            return Err("sem AI_CLUSTER_LLAMA_TLS_*: o RPC não vai em texto puro".into());
+        }
+        if wanted.endpoints.len() > 64 {
+            return Err("workers demais no plano".into());
+        }
+        let context = if wanted.context == 0 {
+            self.default_context
+        } else {
+            u32::try_from(wanted.context).unwrap_or(u32::MAX)
+        };
+        Ok(LlamaConfig {
+            id: id.clone(),
+            model: std::path::Path::new(&self.models_dir)
+                .join(path)
+                .to_string_lossy()
+                .into_owned(),
+            server_bin: self.server_bin.clone(),
+            endpoints: wanted.endpoints.iter().map(|e| e.address.clone()).collect(),
+            ca: self.ca.clone(),
+            cert: self.cert.clone(),
+            key: self.key.clone(),
+            server_name: self.server_name.clone(),
+            context,
+            gpu_layers: wanted.gpu_layers,
+            port: self.port,
+            tunnel_base: self.tunnel_base,
+        })
+    }
+}
+
+impl Manager {
+    pub fn new(base: Base) -> Self {
+        Self {
+            current: Mutex::new(None),
+            base,
+            fixed: false,
+        }
+    }
+
+    /// Modelo fixo pelo ambiente (`AI_CLUSTER_LLAMA_MODEL`).
+    pub fn fixed(base: Base, config: LlamaConfig) -> Result<Self, String> {
+        let llama = start(config, 0)?;
+        Ok(Self {
+            current: Mutex::new(Some(llama)),
+            base,
+            fixed: true,
+        })
+    }
+
+    pub fn current(&self) -> Option<Arc<Llama>> {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Estado para o controller: a geração aplicada e como o modelo está.
+    pub fn status(&self) -> Option<ModelStatus> {
+        let llama = self.current()?;
+        let (state, reason) = match llama.state() {
+            State::Loading => (ModelState::ModelLoading, String::new()),
+            State::Ready => (ModelState::ModelReady, String::new()),
+            State::Failed(reason) => (ModelState::ModelFailed, reason),
+        };
+        Some(ModelStatus {
+            model_id: llama.id.clone(),
+            state: state as i32,
+            reason,
+            generation: llama.generation,
+            tokens_per_second: llama.tokens_per_second(),
+        })
+    }
+
+    /// Aplica o plano do controller: `None` para o modelo, uma geração nova o troca, a mesma não faz
+    /// nada. Um plano inválido deixa o modelo atual como está e é registrado.
+    pub async fn apply(&self, desired: Option<&DesiredModel>) {
+        if self.fixed {
+            return;
+        }
+        let same = match (self.current(), desired) {
+            (Some(now), Some(wanted)) => now.generation == wanted.generation,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        let config = match desired.map(|wanted| self.base.config_for(wanted)) {
+            Some(Err(error)) => {
+                eprintln!("plano do controller recusado: {error}");
+                return;
+            }
+            Some(Ok(config)) => Some(config),
+            None => None,
+        };
+        // O processo antigo sai antes: as portas locais são as mesmas.
+        if let Some(old) = self.take() {
+            old.shutdown();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if let (Some(config), Some(wanted)) = (config, desired) {
+            match start(config, wanted.generation) {
+                Ok(llama) => self.put(Some(llama)),
+                Err(error) => eprintln!("modelo não iniciou: {error}"),
+            }
+        }
+    }
+
+    fn take(&self) -> Option<Arc<Llama>> {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+
+    fn put(&self, llama: Option<Arc<Llama>>) {
+        *self
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = llama;
+    }
 }
 
 #[cfg(test)]
@@ -600,5 +833,53 @@ data: [DONE]
         }
         assert!(from_env().is_err());
         clear();
+    }
+    fn desired(path: &str, id: &str, endpoints: &[&str]) -> DesiredModel {
+        DesiredModel {
+            generation: 3,
+            model_id: id.into(),
+            model_path: path.into(),
+            context: 0,
+            gpu_layers: 99,
+            endpoints: endpoints
+                .iter()
+                .map(|a| ai_cluster_protocol::cluster::RpcEndpoint {
+                    node_id: "n".into(),
+                    address: a.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_controller_plan_cannot_leave_the_models_directory() {
+        let base = Base {
+            server_bin: "llama-server".into(),
+            models_dir: "/models".into(),
+            ca: "ca".into(),
+            cert: "c".into(),
+            key: "k".into(),
+            server_name: "aic-worker".into(),
+            port: 18080,
+            tunnel_base: 18100,
+            default_context: 4096,
+        };
+        let ok = base
+            .config_for(&desired("pasta/m.gguf", "pasta-m", &["10.0.0.5:50061"]))
+            .unwrap();
+        assert_eq!(ok.context, 4096);
+        assert!(ok.model.ends_with("m.gguf") && ok.model.starts_with("/models"));
+        for bad in ["../fora.gguf", "/etc/passwd", "a/../../b.gguf", ""] {
+            assert!(base.config_for(&desired(bad, "m", &[])).is_err(), "{bad}");
+        }
+        assert!(base.config_for(&desired("m.gguf", "id ruim", &[])).is_err());
+        // Workers sem TLS configurado: recusa em vez de falar em texto puro.
+        let mut open = base.clone();
+        open.ca.clear();
+        assert!(
+            open.config_for(&desired("m.gguf", "m", &["10.0.0.5:50061"]))
+                .is_err()
+        );
+        assert!(open.config_for(&desired("m.gguf", "m", &[])).is_ok());
     }
 }

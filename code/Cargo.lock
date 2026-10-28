@@ -48,6 +48,7 @@ dependencies = [
  "axum",
  "getrandom 0.4.3",
  "prost",
+ "sha2",
  "tokio",
  "tonic",
 ]
@@ -78,6 +79,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-rustls",
  "tonic",

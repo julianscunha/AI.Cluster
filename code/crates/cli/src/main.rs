@@ -4,9 +4,9 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, CancelRequestRequest, CheckModelRequest, EnqueueGraphRequest,
     EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListModelsRequest,
-    ListNodesRequest, ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest,
-    RevokeNodeRequest, SetReleaseRequest, WatchEventsRequest, WorkReportRequest,
-    WorkReportResponse,
+    ListNodesRequest, ListReservationsRequest, ModelState, ModelStatusRequest, Release,
+    ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest, SetReleaseRequest,
+    StartModelRequest, StopModelRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
 use clap::{Parser, Subcommand};
@@ -181,6 +181,19 @@ enum ModelAction {
         #[arg(long, default_value_t = 0)]
         ctx: u64,
     },
+    /// Sobe o modelo no cluster: o controller confere a RAM dos workers, escolhe os que dividem o
+    /// modelo e o gateway o carrega pelo llama.cpp. Mostra a chave de API (uma vez). ADR-022, E6.
+    Start {
+        /// Id do modelo, como `model list` o mostra (um GGUF).
+        id: String,
+        /// Contexto em tokens (padrão 4096, limitado ao do modelo).
+        #[arg(long, default_value_t = 0)]
+        ctx: u64,
+    },
+    /// Para o modelo no gateway. As chaves continuam valendo para o próximo `start`.
+    Stop,
+    /// O modelo pedido, os workers do plano, o estado que o gateway reportou e o benchmark.
+    Status,
     /// Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, tamanho e
     /// se o motor atual os roda (ADR-022, E1).
     List,
@@ -236,6 +249,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             ModelAction::List => print_models(&cli.controller).await?,
+            ModelAction::Start { id, ctx } => start_model(&cli.controller, &id, ctx).await?,
+            ModelAction::Stop => stop_model(&cli.controller).await?,
+            ModelAction::Status => model_status(&cli.controller).await?,
             ModelAction::Check { id, ctx } => check_model(&cli.controller, &id, ctx).await?,
             ModelAction::Verify { dir } => {
                 match ai_cluster_engine::manifest::Manifest::load(&dir)? {
@@ -583,6 +599,115 @@ fn sanitize_gateway(
             .for_each(|node| *node = clean(node));
     }
     gateway
+}
+
+async fn start_model(
+    endpoint: &str,
+    id: &str,
+    context: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .start_model(StartModelRequest {
+            model_id: id.to_string(),
+            context,
+        })
+        .await?
+        .into_inner();
+    println!(
+        "{} {}",
+        if reply.ok { "OK " } else { "NOK" },
+        clean(&reply.message)
+    );
+    if let Some(check) = &reply.check {
+        let gb = |bytes: u64| bytes as f64 / 1_073_741_824.0;
+        println!(
+            "pesos {:.2} GB + contexto {:.2} GB + margem {:.2} GB = {:.2} GB; disponível {:.2} GB em {} workers",
+            gb(check.weights_bytes),
+            gb(check.kv_bytes),
+            gb(check.margin_bytes),
+            gb(check.required_bytes),
+            gb(check.available_bytes),
+            check.nodes
+        );
+    }
+    if !reply.ok {
+        std::process::exit(1);
+    }
+    println!(
+        "geração {}; o gateway carrega o modelo (acompanhe com `model status`)",
+        reply.generation
+    );
+    for key in reply.keys {
+        println!(
+            "CHAVE DE API tenant={} {}  (guarde agora: o controller guarda só o hash)",
+            clean(&key.tenant),
+            clean(&key.key)
+        );
+    }
+    Ok(())
+}
+
+async fn stop_model(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client.stop_model(StopModelRequest {}).await?.into_inner();
+    println!("modelo parado (geração {})", reply.generation);
+    Ok(())
+}
+
+async fn model_status(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .model_status(ModelStatusRequest {})
+        .await?
+        .into_inner();
+    let Some(desired) = reply.desired else {
+        println!("nenhum modelo pedido (use `model start <id>`)");
+        return Ok(());
+    };
+    println!(
+        "MODELO {} (geração {}, contexto {})",
+        clean(&desired.model_id),
+        desired.generation,
+        if desired.context == 0 {
+            "padrão".to_string()
+        } else {
+            desired.context.to_string()
+        }
+    );
+    if desired.endpoints.is_empty() {
+        println!("workers: nenhum (o modelo roda só no gateway)");
+    } else {
+        for worker in &desired.endpoints {
+            println!(
+                "worker {} em {}",
+                clean(&worker.node_id),
+                clean(&worker.address)
+            );
+        }
+    }
+    if let Some(running) = reply.running {
+        let state = match ModelState::try_from(running.state) {
+            Ok(ModelState::ModelReady) => "PRONTO",
+            Ok(ModelState::ModelLoading) => "CARREGANDO",
+            Ok(ModelState::ModelFailed) => "FALHOU",
+            Ok(ModelState::ModelStopped) => "PARADO",
+            _ => "?",
+        };
+        println!(
+            "estado {state}  {:.2} tokens/s no benchmark{}",
+            running.tokens_per_second,
+            if running.reason.is_empty() {
+                String::new()
+            } else {
+                format!("  ({})", clean(&running.reason))
+            }
+        );
+    }
+    for prefix in reply.key_prefixes {
+        println!("chave {}...", clean(&prefix));
+    }
+    Ok(())
 }
 
 async fn check_model(

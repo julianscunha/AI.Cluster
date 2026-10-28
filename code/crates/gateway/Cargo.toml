@@ -23,6 +23,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio", "
 # O stream que repassa a resposta do llama-server (llama.rs).
 futures-core = "0.3"
 ai-cluster-tunnel = { path = "../tunnel" }
+sha2 = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pki-types = "1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }

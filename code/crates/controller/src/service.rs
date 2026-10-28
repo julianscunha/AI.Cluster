@@ -11,13 +11,15 @@ use ai_cluster_protocol::cluster::{
     HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
     ListEventsRequest, ListEventsResponse, ListModelsRequest, ListModelsResponse, ListNodesRequest,
     ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    ModelEntry, NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest,
-    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
-    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
-    RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest, SetReleaseResponse,
-    ShardCapacityRequest, ShardCapacityResponse, ShardCompute, ShardMatmulRequest,
-    ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
-    SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
+    ModelEntry, ModelStatusRequest, ModelStatusResponse, NodeShardCapacity, ProbeLinkRequest,
+    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
+    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
+    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, RpcEndpoint,
+    SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse,
+    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
+    StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
+    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
+    WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::cluster::{
     Event, GatewayInfo, ListGatewaysRequest, ListGatewaysResponse, NodeIdentity, Release,
@@ -73,6 +75,28 @@ pub struct ClusterControlService {
     rollout: Rollout,
     /// Pasta de modelos (`AI_CLUSTER_MODELS_DIR`) que `ListModels` varre.
     models_dir: Option<std::path::PathBuf>,
+    /// O modelo pedido, as chaves (hash) e o plano de workers do llama.cpp (ADR-022).
+    orchestrator: crate::models::Orchestrator,
+    /// De que endereço (só o IP) cada nó se registrou: o gateway chega ao túnel RPC por ele.
+    node_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+}
+
+/// Quantos endereços de nó o controller guarda (um por nó registrado).
+const MAX_NODE_HOSTS: usize = 4096;
+
+/// O id do modelo na API a partir do id do catálogo (`pasta/arquivo.gguf`): sem a extensão e com `-` no
+/// lugar das barras. `None` se sobrar algo fora de `[A-Za-z0-9._-]` ou passar de 64 caracteres.
+fn api_model_id(catalog_id: &str) -> Option<String> {
+    let id = catalog_id
+        .strip_suffix(".gguf")
+        .unwrap_or(catalog_id)
+        .replace('/', "-");
+    (!id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)))
+    .then_some(id)
 }
 
 /// Whether the node runs the desired release and its measured slot matches the signed image.
@@ -208,6 +232,15 @@ impl ClusterControlService {
             models_dir: std::env::var_os("AI_CLUSTER_MODELS_DIR")
                 .filter(|dir| !dir.is_empty())
                 .map(Into::into),
+            orchestrator: crate::models::Orchestrator::new(
+                std::env::var_os("AI_CLUSTER_MODELS_STATE")
+                    .or_else(|| {
+                        std::env::var_os("AI_CLUSTER_DATA_DIR")
+                            .map(|dir| std::path::Path::new(&dir).join("models.state").into())
+                    })
+                    .map(Into::into),
+            ),
+            node_hosts: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -221,6 +254,58 @@ impl ClusterControlService {
 
     pub fn work(&self) -> &Arc<WorkStore> {
         &self.work
+    }
+
+    /// Os workers aptos a servir o `rpc-server`: aprovados, vivos, com túnel anunciado e endereço
+    /// conhecido. É o que o gateway recebe como plano.
+    fn rpc_endpoints(&self) -> Vec<RpcEndpoint> {
+        let hosts = self
+            .node_hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.registry
+            .list()
+            .into_iter()
+            .filter_map(|node| {
+                let id = node.identity?.node_id;
+                let capability = node.capability?;
+                if capability.rpc_port == 0 || !self.registry.is_available(&id) {
+                    return None;
+                }
+                let host = if capability.rpc_host.is_empty() {
+                    hosts.get(&id)?.clone()
+                } else {
+                    capability.rpc_host
+                };
+                Some(RpcEndpoint {
+                    address: format!("{host}:{}", capability.rpc_port),
+                    node_id: id,
+                })
+            })
+            .collect()
+    }
+
+    /// A RAM dos mesmos workers, para o veredito do `models start`.
+    fn rpc_node_memory(&self) -> Vec<ai_cluster_catalog::check::NodeMemory> {
+        let wanted: std::collections::HashSet<String> = self
+            .rpc_endpoints()
+            .into_iter()
+            .map(|e| e.node_id)
+            .collect();
+        self.registry
+            .list()
+            .into_iter()
+            .filter_map(|node| {
+                let id = node.identity?.node_id;
+                if !wanted.contains(&id) {
+                    return None;
+                }
+                Some(ai_cluster_catalog::check::NodeMemory {
+                    total_bytes: node.capability?.memory_bytes,
+                    used_fraction: node.health.map_or(0.0, |h| h.memory_utilization),
+                })
+            })
+            .collect()
     }
 }
 
@@ -362,6 +447,7 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<RegisterNodeResponse>, Status> {
         let presented = node_credential(&request).to_vec();
         let recovery = is_recovery(&request);
+        let peer_host = request.remote_addr().map(|addr| addr.ip().to_string());
         if let Some(identity) = &request.get_ref().identity {
             require_recovery_scope(&request, &identity.node_id)?;
         }
@@ -393,6 +479,15 @@ impl ClusterControl for ClusterControlService {
         // O token de recuperação nunca injeta estado, nem que o registro saia confiável (auto-approve).
         if let Some(replica) = request.replica.filter(|_| record.trusted && !recovery) {
             self.work.restore(&replica);
+        }
+        if let Some(host) = peer_host {
+            let mut hosts = self
+                .node_hosts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if hosts.len() < MAX_NODE_HOSTS || hosts.contains_key(&node_id) {
+                hosts.insert(node_id.clone(), host);
+            }
         }
         self.events.record(now, "node_registered", node_id.clone());
         println!(
@@ -563,6 +658,121 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(HealthStreamResponse { accepted }))
     }
 
+    /// Pede o modelo ao gateway (ADR-022, E5 e E6): confere a RAM dos workers com RPC, fixa o plano e
+    /// cria a chave de API do tenant `default` na primeira vez. Só o operador.
+    async fn start_model(
+        &self,
+        request: Request<StartModelRequest>,
+    ) -> Result<Response<StartModelResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let request = request.into_inner();
+        let Some(dir) = self.models_dir.clone() else {
+            return Err(Status::failed_precondition(
+                "o controller não tem pasta de modelos (AI_CLUSTER_MODELS_DIR)",
+            ));
+        };
+        let wanted = request.model_id.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime { gguf: true })
+        })
+        .await
+        .map_err(|_| Status::internal("varredura interrompida"))?
+        .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
+        let Some(model) = found.into_iter().find(|m| m.id == wanted) else {
+            return Err(Status::not_found(format!(
+                "modelo {wanted} não está na pasta"
+            )));
+        };
+        let refuse = |message: String, check: Option<CheckModelResponse>| {
+            Ok(Response::new(StartModelResponse {
+                ok: false,
+                message,
+                generation: 0,
+                check,
+                keys: Vec::new(),
+            }))
+        };
+        if model.format != "gguf" {
+            return refuse(
+                format!(
+                    "o llama.cpp roda GGUF; {wanted} é {}: converta para GGUF",
+                    model.format
+                ),
+                None,
+            );
+        }
+        if !model.supported {
+            return refuse(model.reason.clone(), None);
+        }
+        let Some(api_id) = api_model_id(&model.id) else {
+            return refuse(
+                format!("o nome {wanted} não vira um id de modelo válido"),
+                None,
+            );
+        };
+        let endpoints = self.rpc_endpoints();
+        let nodes = self.rpc_node_memory();
+        let verdict = ai_cluster_catalog::check::check(&model, request.context, &nodes);
+        let check = CheckModelResponse {
+            ok: verdict.ok,
+            weights_bytes: verdict.weights_bytes,
+            kv_bytes: verdict.kv_bytes,
+            margin_bytes: verdict.margin_bytes,
+            required_bytes: verdict.required_bytes,
+            available_bytes: verdict.available_bytes,
+            nodes: verdict.nodes,
+            message: verdict.message,
+        };
+        // Sem workers com RPC o modelo roda só na CPU do gateway, cuja RAM o controller não conhece.
+        if !endpoints.is_empty() && !verdict.ok {
+            return refuse(check.message.clone(), Some(check));
+        }
+        self.audit(&peer, "start_model", &wanted);
+        let (generation, keys) =
+            self.orchestrator
+                .start(&api_id, &model.id, request.context, endpoints);
+        self.events.record(unix_ms(), "model_started", wanted);
+        Ok(Response::new(StartModelResponse {
+            ok: true,
+            message: if check.nodes == 0 {
+                "sem workers com RPC: o modelo roda só no gateway (a RAM dele não foi verificada)"
+                    .into()
+            } else {
+                check.message.clone()
+            },
+            generation,
+            check: Some(check),
+            keys,
+        }))
+    }
+
+    /// Para o modelo no gateway. As chaves continuam para o próximo `start`. Só o operador.
+    async fn stop_model(
+        &self,
+        request: Request<StopModelRequest>,
+    ) -> Result<Response<StopModelResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        self.audit(&peer, "stop_model", "-");
+        let generation = self.orchestrator.stop();
+        self.events
+            .record(unix_ms(), "model_stopped", "-".to_string());
+        Ok(Response::new(StopModelResponse { generation }))
+    }
+
+    /// O que foi pedido, o último estado que o gateway reportou e os prefixos das chaves. Só o operador.
+    async fn model_status(
+        &self,
+        request: Request<ModelStatusRequest>,
+    ) -> Result<Response<ModelStatusResponse>, Status> {
+        require_operator(&request)?;
+        let (desired, running, key_prefixes) = self.orchestrator.status(unix_ms());
+        Ok(Response::new(ModelStatusResponse {
+            desired,
+            running,
+            key_prefixes,
+        }))
+    }
+
     /// OK ou NOK de um modelo da pasta contra a RAM dos nós aprovados e vivos (ADR-022, E2). Só o operador.
     async fn check_model(
         &self,
@@ -577,7 +787,7 @@ impl ClusterControl for ClusterControlService {
         };
         let wanted = request.model_id.clone();
         let found = tokio::task::spawn_blocking(move || {
-            ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime::default())
+            ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime { gguf: true })
         })
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
@@ -635,7 +845,7 @@ impl ClusterControl for ClusterControlService {
         // A varredura lê arquivos: fora do executor assíncrono.
         let scanned = tokio::task::spawn_blocking({
             let dir = dir.clone();
-            move || ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime::default())
+            move || ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime { gguf: true })
         })
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
@@ -1123,6 +1333,7 @@ impl ClusterControl for ClusterControlService {
         if !valid_gateway(&request) {
             return Err(Status::invalid_argument("apresentação de gateway inválida"));
         }
+        let running = request.running.clone();
         let now = unix_ms();
         let is_new = {
             let mut gateways = self
@@ -1180,7 +1391,13 @@ impl ClusterControl for ClusterControlService {
             self.events
                 .record(now, "gateway_registered", request.gateway_id);
         }
-        Ok(Response::new(ReportGatewayResponse {}))
+        if let Some(running) = running {
+            self.orchestrator.note_running(running);
+        }
+        Ok(Response::new(ReportGatewayResponse {
+            desired: self.orchestrator.plan(self.rpc_endpoints(), now),
+            tenants: self.orchestrator.grants(),
+        }))
     }
 
     async fn list_gateways(
@@ -2899,6 +3116,7 @@ mod tests {
         use ai_cluster_protocol::cluster::GatewayModel;
         let service = service();
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
+            running: None,
             stats: None,
             gateway_id: id.into(),
             url: "http://gw:8080".into(),
@@ -3010,6 +3228,7 @@ mod tests {
         let service = service();
         let report = |id: String| {
             inference(ReportGatewayRequest {
+                running: None,
                 stats: None,
                 gateway_id: id,
                 url: String::new(),

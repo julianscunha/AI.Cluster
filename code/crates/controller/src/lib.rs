@@ -1,6 +1,7 @@
 pub mod events;
 pub mod exporter;
 pub mod metrics;
+pub mod models;
 pub mod placement;
 pub mod registry;
 pub mod reservations;
