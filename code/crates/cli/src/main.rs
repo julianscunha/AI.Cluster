@@ -2,10 +2,11 @@ use std::time::{Duration, Instant};
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
-    ApproveNodeRequest, CancelRequestRequest, EnqueueGraphRequest, EnqueueWorkRequest,
-    GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListModelsRequest, ListNodesRequest,
-    ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
-    SetReleaseRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
+    ApproveNodeRequest, CancelRequestRequest, CheckModelRequest, EnqueueGraphRequest,
+    EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListModelsRequest,
+    ListNodesRequest, ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest,
+    RevokeNodeRequest, SetReleaseRequest, WatchEventsRequest, WorkReportRequest,
+    WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
 use clap::{Parser, Subcommand};
@@ -172,6 +173,14 @@ enum ModelAction {
     },
     /// Checks the files of a model directory against its `manifest.json`.
     Verify { dir: std::path::PathBuf },
+    /// Diz se o cluster comporta um modelo da pasta: OK, ou NOK com o motivo e quanto falta (ADR-022, E2).
+    Check {
+        /// Id do modelo, como `model list` o mostra.
+        id: String,
+        /// Contexto em tokens para estimar o cache (padrão 4096).
+        #[arg(long, default_value_t = 0)]
+        ctx: u64,
+    },
     /// Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, tamanho e
     /// se o motor atual os roda (ADR-022, E1).
     List,
@@ -227,6 +236,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             ModelAction::List => print_models(&cli.controller).await?,
+            ModelAction::Check { id, ctx } => check_model(&cli.controller, &id, ctx).await?,
             ModelAction::Verify { dir } => {
                 match ai_cluster_engine::manifest::Manifest::load(&dir)? {
                     Some(manifest) => {
@@ -573,6 +583,40 @@ fn sanitize_gateway(
             .for_each(|node| *node = clean(node));
     }
     gateway
+}
+
+async fn check_model(
+    endpoint: &str,
+    id: &str,
+    context: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .check_model(CheckModelRequest {
+            model_id: id.to_string(),
+            context,
+        })
+        .await?
+        .into_inner();
+    let gb = |bytes: u64| bytes as f64 / 1_073_741_824.0;
+    println!(
+        "{} {}",
+        if reply.ok { "OK " } else { "NOK" },
+        clean(&reply.message)
+    );
+    println!(
+        "pesos {:.2} GB + contexto {:.2} GB + margem {:.2} GB = {:.2} GB; disponível {:.2} GB em {} nós",
+        gb(reply.weights_bytes),
+        gb(reply.kv_bytes),
+        gb(reply.margin_bytes),
+        gb(reply.required_bytes),
+        gb(reply.available_bytes),
+        reply.nodes
+    );
+    if !reply.ok {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 async fn print_models(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {

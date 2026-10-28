@@ -305,6 +305,26 @@ message ModelEntry {
   string reason = 10;
 }
 
+/// Pergunta se o cluster comporta um modelo da pasta (ADR-022, E2).
+message CheckModelRequest {
+  string model_id = 1;
+  // Contexto, em tokens, para estimar o cache; 0 = o padrão (4096, limitado ao do modelo).
+  uint64 context = 2;
+}
+
+message CheckModelResponse {
+  // Verdadeiro só se o motor roda o modelo e a RAM somada dos nós aprovados e vivos comporta.
+  bool ok = 1;
+  uint64 weights_bytes = 2;
+  uint64 kv_bytes = 3;
+  uint64 margin_bytes = 4;
+  uint64 required_bytes = 5;
+  uint64 available_bytes = 6;
+  uint32 nodes = 7;
+  // O motivo, em português: o que falta, ou por que o motor não roda o modelo.
+  string message = 8;
+}
+
 message ListModelsRequest {}
 
 message ListModelsResponse {
@@ -855,6 +875,7 @@ service ClusterControl {
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  rpc CheckModel(CheckModelRequest) returns (CheckModelResponse);
   rpc LeaveNode(LeaveNodeRequest) returns (LeaveNodeResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);

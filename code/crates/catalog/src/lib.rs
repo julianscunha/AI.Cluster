@@ -1,6 +1,8 @@
 //! Catálogo de modelos (ADR-022, E1): lê os cabeçalhos de GGUF e safetensors de uma pasta e diz, sem
 //! carregar pesos, o que cada modelo é e se o motor atual o roda. Não depende do motor.
 
+pub mod check;
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
@@ -11,8 +13,14 @@ use std::path::{Path, PathBuf};
 const MAX_STRING: u64 = 1 << 20;
 const MAX_KV: u64 = 1 << 20;
 const MAX_TENSORS: u64 = 1 << 22;
-const MAX_JSON_HEADER: u64 = 128 << 20;
+const MAX_JSON_HEADER: u64 = 16 << 20;
 const MAX_ENTRIES: usize = 4096;
+const MAX_DIR_FILES: usize = 1024;
+/// Teto de bytes lidos de um cabeçalho GGUF e de um config.json.
+const MAX_GGUF_HEADER: u64 = 256 << 20;
+const MAX_CONFIG: u64 = 1 << 20;
+/// Partes de um GGUF dividido que o catálogo aceita somar.
+const MAX_PARTS: u32 = 1024;
 
 /// Um modelo encontrado na pasta.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -30,6 +38,11 @@ pub struct ModelEntry {
     /// Contexto máximo em tokens; 0 = o cabeçalho não diz.
     pub context: u64,
     pub layers: u32,
+    /// Largura do modelo (embedding), cabeças de atenção e cabeças de chave/valor; 0 = não consta.
+    /// Servem à estimativa do cache de contexto (KV).
+    pub hidden: u32,
+    pub heads: u32,
+    pub kv_heads: u32,
     /// O motor atual roda este modelo.
     pub supported: bool,
     /// Quando `supported` é falso, por quê.
@@ -47,14 +60,16 @@ pub struct Runtime {
 /// malformadas entram com `supported = false` e o motivo, em vez de sumirem.
 pub fn scan(dir: &Path, runtime: Runtime) -> std::io::Result<Vec<ModelEntry>> {
     let mut found = Vec::new();
+    // Atalhos (symlinks) são ignorados: o catálogo só lê o que está dentro da pasta.
     let mut names: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(Result::ok)
+        .take(MAX_ENTRIES)
         .map(|entry| entry.path())
         .collect();
     names.sort();
-    for path in names.into_iter().take(MAX_ENTRIES) {
+    for path in names {
         let name = file_name(&path);
-        if path.is_dir() {
+        if is_directory(&path) {
             found.extend(scan_dir(&path, &name, runtime));
         } else if is_first_gguf(&path) {
             found.push(gguf_entry(&path, name, runtime));
@@ -70,6 +85,18 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+fn file_kind(path: &Path) -> Option<std::fs::FileType> {
+    std::fs::symlink_metadata(path).ok().map(|m| m.file_type())
+}
+
+fn is_regular(path: &Path) -> bool {
+    file_kind(path).is_some_and(|t| t.is_file())
+}
+
+fn is_directory(path: &Path) -> bool {
+    file_kind(path).is_some_and(|t| t.is_dir())
+}
+
 fn is_safetensors(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "safetensors")
 }
@@ -78,7 +105,12 @@ fn scan_dir(dir: &Path, name: &str, runtime: Runtime) -> Vec<ModelEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut files: Vec<PathBuf> = read.filter_map(Result::ok).map(|e| e.path()).collect();
+    let mut files: Vec<PathBuf> = read
+        .filter_map(Result::ok)
+        .take(MAX_DIR_FILES)
+        .map(|e| e.path())
+        .filter(|p| is_regular(p))
+        .collect();
     files.sort();
     let ggufs: Vec<&PathBuf> = files.iter().filter(|p| is_first_gguf(p)).collect();
     if !ggufs.is_empty() {
@@ -96,7 +128,7 @@ fn scan_dir(dir: &Path, name: &str, runtime: Runtime) -> Vec<ModelEntry> {
 /// `modelo.gguf` ou a parte 1 de `modelo-00001-of-0000N.gguf`; as outras partes não viram entrada.
 fn is_first_gguf(path: &Path) -> bool {
     let name = file_name(path);
-    if !path.is_file() || !name.ends_with(".gguf") {
+    if !is_regular(path) || !name.ends_with(".gguf") {
         return false;
     }
     match split_part(&name) {
@@ -127,7 +159,10 @@ fn failed(id: String, format: &str, bytes: u64, reason: String) -> ModelEntry {
 // ---------------------------------------------------------------- GGUF
 
 fn gguf_entry(path: &Path, id: String, runtime: Runtime) -> ModelEntry {
-    let bytes = gguf_total_bytes(path);
+    let bytes = match gguf_total_bytes(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return failed(id, "gguf", 0, error),
+    };
     match read_gguf(path) {
         Ok(info) => {
             let (supported, reason) = if runtime.gguf {
@@ -147,6 +182,9 @@ fn gguf_entry(path: &Path, id: String, runtime: Runtime) -> ModelEntry {
                 bytes,
                 context: info.context,
                 layers: info.layers,
+                hidden: info.hidden,
+                heads: info.heads,
+                kv_heads: info.kv_heads,
                 supported,
                 reason,
             }
@@ -160,22 +198,36 @@ fn gguf_entry(path: &Path, id: String, runtime: Runtime) -> ModelEntry {
     }
 }
 
-/// Soma as partes de um GGUF dividido; um arquivo único devolve o próprio tamanho.
-fn gguf_total_bytes(path: &Path) -> u64 {
-    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+/// Soma as partes de um GGUF dividido; um arquivo único devolve o próprio tamanho. Parte ausente ou
+/// total absurdo é erro: somar menos bytes faria o veredito dizer "cabe" quando não cabe.
+fn gguf_total_bytes(path: &Path) -> Result<u64, String> {
+    let size = |p: &Path| {
+        std::fs::metadata(p)
+            .map(|m| m.len())
+            .map_err(|e| e.to_string())
+    };
     let name = file_name(path);
     let (Some((_, total)), Some(parent)) = (split_part(&name), path.parent()) else {
         return size(path);
     };
+    if total == 0 || total > MAX_PARTS {
+        return Err(format!("GGUF dividido em {total} partes: fora do limite"));
+    }
     let Some((stem, _)) = name
         .rsplit_once("-of-")
         .and_then(|(head, _)| head.rsplit_once('-'))
     else {
         return size(path);
     };
-    (1..=total)
-        .map(|part| size(&parent.join(format!("{stem}-{part:05}-of-{total:05}.gguf"))))
-        .sum()
+    let mut sum: u64 = 0;
+    for part in 1..=total {
+        let file = parent.join(format!("{stem}-{part:05}-of-{total:05}.gguf"));
+        if !is_regular(&file) {
+            return Err(format!("falta a parte {part} de {total} do GGUF"));
+        }
+        sum = sum.saturating_add(size(&file)?);
+    }
+    Ok(sum)
 }
 
 struct GgufInfo {
@@ -184,6 +236,9 @@ struct GgufInfo {
     precision: String,
     context: u64,
     layers: u32,
+    hidden: u32,
+    heads: u32,
+    kv_heads: u32,
 }
 
 fn read_gguf(path: &Path) -> Result<GgufInfo, String> {
@@ -205,6 +260,7 @@ fn read_gguf(path: &Path) -> Result<GgufInfo, String> {
     let mut numbers: HashMap<String, u64> = HashMap::new();
     let mut texts: HashMap<String, String> = HashMap::new();
     for _ in 0..kvs {
+        within_budget(&mut r)?;
         let key = gguf_string(&mut r)?;
         let kind = u32le(&mut r)?;
         match kind {
@@ -217,12 +273,15 @@ fn read_gguf(path: &Path) -> Result<GgufInfo, String> {
             9 => skip_array(&mut r)?,
             _ => {
                 let value = scalar(&mut r, kind)?;
-                numbers.insert(key, value);
+                if wanted_number(&key) {
+                    numbers.insert(key, value);
+                }
             }
         }
     }
     let mut parameters: u64 = 0;
     for _ in 0..tensors {
+        within_budget(&mut r)?;
         let _name = gguf_string(&mut r)?;
         let dims = u32le(&mut r)?;
         if dims > 8 {
@@ -245,8 +304,12 @@ fn read_gguf(path: &Path) -> Result<GgufInfo, String> {
         .get("general.file_type")
         .map(|&t| file_type(t))
         .unwrap_or_else(|| "?".into());
+    let small = |suffix: &str| per_arch(suffix).unwrap_or(0).min(u64::from(u32::MAX)) as u32;
     Ok(GgufInfo {
         context: per_arch("context_length").unwrap_or(0),
+        hidden: small("embedding_length"),
+        heads: small("attention.head_count"),
+        kv_heads: small("attention.head_count_kv"),
         layers: per_arch("block_count")
             .unwrap_or(0)
             .min(u64::from(u32::MAX)) as u32,
@@ -254,6 +317,29 @@ fn read_gguf(path: &Path) -> Result<GgufInfo, String> {
         parameters,
         precision,
     })
+}
+
+/// Só estas chaves numéricas importam; guardar todas deixaria a memória crescer com o arquivo.
+fn wanted_number(key: &str) -> bool {
+    key == "general.file_type"
+        || [
+            ".context_length",
+            ".block_count",
+            ".embedding_length",
+            ".attention.head_count",
+            ".attention.head_count_kv",
+        ]
+        .iter()
+        .any(|suffix| key.ends_with(suffix))
+}
+
+/// Falha se o cabeçalho já consumiu mais bytes do que o teto.
+fn within_budget<R: Seek>(r: &mut R) -> Result<(), String> {
+    match r.stream_position() {
+        Ok(position) if position <= MAX_GGUF_HEADER => Ok(()),
+        Ok(_) => Err("cabeçalho maior que o teto".into()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn file_type(code: u64) -> String {
@@ -364,7 +450,8 @@ fn safetensors_entry(dir: &Path, files: &[PathBuf], id: String) -> ModelEntry {
             Ok(header) => {
                 for (dtype, count) in header {
                     parameters = parameters.saturating_add(count);
-                    *by_dtype.entry(dtype).or_default() += count;
+                    let slot = by_dtype.entry(dtype).or_default();
+                    *slot = slot.saturating_add(count);
                 }
             }
             Err(error) => {
@@ -382,15 +469,15 @@ fn safetensors_entry(dir: &Path, files: &[PathBuf], id: String) -> ModelEntry {
     }
     let precision = by_dtype
         .into_iter()
-        .max_by_key(|(_, count)| *count)
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         .map(|(dtype, _)| dtype)
         .unwrap_or_else(|| "?".into());
-    let config: Value = std::fs::read_to_string(dir.join("config.json"))
-        .ok()
+    let config: Value = read_small(&dir.join("config.json"))
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or(Value::Null);
     let model_type = config["model_type"].as_str().unwrap_or("").to_string();
     let number = |keys: &[&str]| keys.iter().find_map(|k| config[*k].as_u64()).unwrap_or(0);
+    let small = |value: u64| value.min(u64::from(u32::MAX)) as u32;
     let (supported, reason) = match model_type.as_str() {
         "gpt2" | "llama" => (true, String::new()),
         "" => (false, "falta config.json com model_type".into()),
@@ -408,16 +495,38 @@ fn safetensors_entry(dir: &Path, files: &[PathBuf], id: String) -> ModelEntry {
         bytes,
         context: number(&["max_position_embeddings", "n_positions"]),
         layers: number(&["num_hidden_layers", "n_layer"]).min(u64::from(u32::MAX)) as u32,
+        hidden: small(number(&["hidden_size", "n_embd"])),
+        heads: small(number(&["num_attention_heads", "n_head"])),
+        kv_heads: small(number(&[
+            "num_key_value_heads",
+            "num_attention_heads",
+            "n_head",
+        ])),
         supported,
         reason,
     }
 }
 
+/// Texto de um arquivo regular de até `MAX_CONFIG` bytes; maior, ilegível ou atalho vira `None`.
+fn read_small(path: &Path) -> Option<String> {
+    if !is_regular(path) {
+        return None;
+    }
+    let mut text = String::new();
+    File::open(path)
+        .ok()?
+        .take(MAX_CONFIG + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    (text.len() as u64 <= MAX_CONFIG).then_some(text)
+}
+
 /// Parâmetros por tipo de dado de um arquivo safetensors, lidos só do cabeçalho.
 fn safetensors_header(path: &Path) -> Result<Vec<(String, u64)>, String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let file_len = file.metadata().map_err(|e| e.to_string())?.len();
     let len = u64le(&mut file)?;
-    if len == 0 || len > MAX_JSON_HEADER {
+    if len == 0 || len > MAX_JSON_HEADER || len > file_len.saturating_sub(8) {
         return Err("tamanho de cabeçalho fora do limite".into());
     }
     let mut raw = vec![0u8; len as usize];
@@ -435,7 +544,8 @@ fn safetensors_header(path: &Path) -> Result<Vec<(String, u64)>, String> {
             .iter()
             .map(|d| d.as_u64().ok_or("dimensão inválida"))
             .try_fold(1u64, |acc, d| d.map(|d| acc.saturating_mul(d)))?;
-        *counts.entry(dtype.to_string()).or_default() += elements;
+        let slot = counts.entry(dtype.to_string()).or_default();
+        *slot = slot.saturating_add(elements);
     }
     Ok(counts.into_iter().collect())
 }
@@ -592,6 +702,76 @@ mod tests {
         std::fs::write(model.join("model.safetensors"), u64::MAX.to_le_bytes()).unwrap();
         let found = scan(&dir, Runtime::default()).unwrap();
         assert!(!found[0].supported);
+    }
+
+    #[test]
+    fn a_split_gguf_with_a_missing_part_or_a_huge_total_is_refused() {
+        let dir = temp("parts");
+        std::fs::write(dir.join("a-00001-of-00003.gguf"), tiny_gguf()).unwrap();
+        std::fs::write(dir.join("a-00002-of-00003.gguf"), b"x").unwrap();
+        let found = scan(&dir, Runtime { gguf: true }).unwrap();
+        assert!(
+            !found[0].supported && found[0].reason.contains("falta a parte 3"),
+            "{}",
+            found[0].reason
+        );
+        std::fs::write(dir.join("b-00001-of-4294967295.gguf"), tiny_gguf()).unwrap();
+        let found = scan(&dir, Runtime { gguf: true }).unwrap();
+        let huge = found.iter().find(|m| m.id.starts_with("b-")).unwrap();
+        assert!(!huge.supported && huge.reason.contains("fora do limite"));
+    }
+
+    #[test]
+    fn a_safetensors_header_longer_than_the_file_is_refused() {
+        let dir = temp("short");
+        let model = dir.join("m");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("model.safetensors"), 1_000_000u64.to_le_bytes()).unwrap();
+        let found = scan(&dir, Runtime::default()).unwrap();
+        assert!(!found[0].supported);
+    }
+
+    #[test]
+    fn two_enormous_tensors_do_not_overflow_the_parameter_count() {
+        let dir = temp("overflow");
+        let model = dir.join("m");
+        std::fs::create_dir_all(&model).unwrap();
+        write_safetensors(
+            &model,
+            r#"{"a":{"dtype":"F32","shape":[4294967296,4294967296],"data_offsets":[0,0]},"b":{"dtype":"F32","shape":[4294967296,4294967296],"data_offsets":[0,0]}}"#,
+        );
+        let found = scan(&dir, Runtime::default()).unwrap();
+        assert_eq!(found[0].parameters, u64::MAX);
+    }
+
+    #[test]
+    fn an_oversized_config_json_is_ignored() {
+        let dir = temp("bigcfg");
+        let model = dir.join("m");
+        std::fs::create_dir_all(&model).unwrap();
+        write_safetensors(
+            &model,
+            r#"{"w":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#,
+        );
+        let padding = " ".repeat(2 << 20);
+        std::fs::write(
+            model.join("config.json"),
+            format!(r#"{{"model_type":"gpt2"{padding}}}"#),
+        )
+        .unwrap();
+        let found = scan(&dir, Runtime::default()).unwrap();
+        assert!(!found[0].supported && found[0].reason.contains("model_type"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_not_followed() {
+        let dir = temp("links");
+        let outside = temp("outside");
+        std::fs::write(outside.join("x.gguf"), tiny_gguf()).unwrap();
+        std::os::unix::fs::symlink(outside.join("x.gguf"), dir.join("link.gguf")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("pasta")).unwrap();
+        assert!(scan(&dir, Runtime::default()).unwrap().is_empty());
     }
 
     #[test]

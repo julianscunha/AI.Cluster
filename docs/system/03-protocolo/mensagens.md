@@ -27,6 +27,7 @@ Autorização: **join** = token de join (todo nó e cliente); **op** = token de 
 | `ReportHealth` | `ClusterControl` | `HealthStreamRequest` → `HealthStreamResponse` | worker | join + nó | saúde e, opcionalmente, o perfil remedido. O nome é histórico: a RPC é unária |
 | `ListNodes` | `ClusterControl` | `ListNodesRequest` → `ListNodesResponse` | operador ou CLI | join | snapshot dos nós, sem credencial |
 | `ListModels` | `ClusterControl` | `ListModelsRequest` → `ListModelsResponse` | operador | modelos da pasta `AI_CLUSTER_MODELS_DIR`, lidos pelo cabeçalho (ADR-022, E1) |
+| `CheckModel` | `ClusterControl` | `CheckModelRequest` → `CheckModelResponse` | operador | OK ou NOK de um modelo da pasta contra a RAM dos nós aprovados e vivos (ADR-022, E2) |
 | `LeaveNode` | `ClusterControl` | `LeaveNodeRequest` → `LeaveNodeResponse` | worker | join + nó | o nó sai: fica `DRAINING`, devolve o que tinha em voo e é removido |
 | `RequestWork` | `ClusterControl` | `RequestWorkRequest` → `RequestWorkResponse` | worker | join + nó | puxa uma unidade, respeitando reservas e `min_cpu_threads` |
 | `SubmitWorkResult` | `ClusterControl` | `SubmitWorkResultRequest` → `SubmitWorkResultResponse` | worker | join + nó | entrega o resultado de uma unidade |
@@ -63,6 +64,7 @@ Total: 2 serviços e 24 RPCs.
 | `StateReplica` | `epoch_unix_ms` (1), `snapshot` (2) | `WorkSnapshot` codificado, com os mesmos bytes do arquivo de estado do controller |
 | `ListNodesRequest` / `ListNodesResponse` | — / `nodes` (1) | |
 | `ListModelsRequest` / `ListModelsResponse` | — / `models` (1: `ModelEntry` com id, format, architecture, parameters, precision, bytes, context, layers, supported, reason), `directory` (2) | vazio sem a pasta |
+| `CheckModelRequest` / `CheckModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `weights_bytes` (2), `kv_bytes` (3), `margin_bytes` (4), `required_bytes` (5), `available_bytes` (6), `nodes` (7), `message` (8) | `ok` falso também quando o motor não roda o modelo |
 | `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
 | `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |

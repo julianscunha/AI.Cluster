@@ -5,17 +5,18 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, ApproveNodeResponse, CancelRequestRequest, CancelRequestResponse,
-    EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
-    GetMetricsRequest, GetOutputRequest, GetOutputResponse, GetTraceRequest, GetTraceResponse,
-    HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListModelsRequest,
-    ListModelsResponse, ListNodesRequest, ListNodesResponse, ListReservationsRequest,
-    ListReservationsResponse, MetricsResponse, ModelEntry, NodeShardCapacity, ProbeLinkRequest,
-    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
-    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest,
-    SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse, ShardCompute,
-    ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
+    CheckModelRequest, CheckModelResponse, EnqueueGraphRequest, EnqueueGraphResponse,
+    EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetOutputRequest,
+    GetOutputResponse, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
+    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
+    ListEventsRequest, ListEventsResponse, ListModelsRequest, ListModelsResponse, ListNodesRequest,
+    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
+    ModelEntry, NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest,
+    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
+    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
+    RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest, SetReleaseResponse,
+    ShardCapacityRequest, ShardCapacityResponse, ShardCompute, ShardMatmulRequest,
+    ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::cluster::{
@@ -560,6 +561,66 @@ impl ClusterControl for ClusterControlService {
             request.capability,
         );
         Ok(Response::new(HealthStreamResponse { accepted }))
+    }
+
+    /// OK ou NOK de um modelo da pasta contra a RAM dos nós aprovados e vivos (ADR-022, E2). Só o operador.
+    async fn check_model(
+        &self,
+        request: Request<CheckModelRequest>,
+    ) -> Result<Response<CheckModelResponse>, Status> {
+        require_operator(&request)?;
+        let request = request.into_inner();
+        let Some(dir) = self.models_dir.clone() else {
+            return Err(Status::failed_precondition(
+                "o controller não tem pasta de modelos (AI_CLUSTER_MODELS_DIR)",
+            ));
+        };
+        let wanted = request.model_id.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime::default())
+        })
+        .await
+        .map_err(|_| Status::internal("varredura interrompida"))?
+        .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
+        let Some(model) = found.into_iter().find(|m| m.id == wanted) else {
+            return Err(Status::not_found(format!(
+                "modelo {wanted} não está na pasta"
+            )));
+        };
+        let nodes: Vec<ai_cluster_catalog::check::NodeMemory> = self
+            .registry
+            .list()
+            .into_iter()
+            .filter_map(|node| {
+                let id = node.identity?.node_id;
+                if !self.registry.is_available(&id) {
+                    return None;
+                }
+                Some(ai_cluster_catalog::check::NodeMemory {
+                    total_bytes: node.capability?.memory_bytes,
+                    used_fraction: node.health.map_or(0.0, |h| h.memory_utilization),
+                })
+            })
+            .collect();
+        let verdict = ai_cluster_catalog::check::check(&model, request.context, &nodes);
+        let (ok, message) = if model.supported {
+            (verdict.ok, verdict.message)
+        } else {
+            (
+                false,
+                format!("o motor atual não roda este modelo: {}", model.reason),
+            )
+        };
+        Ok(Response::new(CheckModelResponse {
+            ok,
+            weights_bytes: verdict.weights_bytes,
+            kv_bytes: verdict.kv_bytes,
+            margin_bytes: verdict.margin_bytes,
+            required_bytes: verdict.required_bytes,
+            available_bytes: verdict.available_bytes,
+            nodes: verdict.nodes,
+            message,
+        }))
     }
 
     /// Os modelos da pasta do controller, lidos pelo cabeçalho (ADR-022, E1). Só o operador.
@@ -1876,6 +1937,38 @@ mod tests {
             .unwrap()
             .into_inner();
         assert!(none.directory.is_empty() && none.models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_model_compares_the_model_with_the_ram_of_approved_live_nodes() {
+        let dir = std::env::temp_dir().join(format!("aic-check-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("m")).unwrap();
+        // 2 GiB de F32 declarados no cabeçalho (só o cabeçalho é lido).
+        let header = r#"{"w":{"dtype":"F32","shape":[536870912],"data_offsets":[0,2147483648]}}"#;
+        let mut file = (header.len() as u64).to_le_bytes().to_vec();
+        file.extend(header.as_bytes());
+        std::fs::write(dir.join("m/model.safetensors"), file).unwrap();
+        std::fs::write(dir.join("m/config.json"), r#"{"model_type":"gpt2"}"#).unwrap();
+        let (mut service, _) = service_with_work();
+        service.models_dir = Some(dir);
+        let ask = || CheckModelRequest {
+            model_id: "m".into(),
+            context: 0,
+        };
+
+        let denied = service.check_model(Request::new(ask())).await;
+        assert_eq!(denied.unwrap_err().code(), tonic::Code::PermissionDenied);
+        let missing = service
+            .check_model(op(CheckModelRequest {
+                model_id: "x".into(),
+                context: 0,
+            }))
+            .await;
+        assert_eq!(missing.unwrap_err().code(), tonic::Code::NotFound);
+        // Sem nós: NOK.
+        let none = service.check_model(op(ask())).await.unwrap().into_inner();
+        assert!(!none.ok && none.nodes == 0);
     }
 
     #[tokio::test]

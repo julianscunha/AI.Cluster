@@ -76,6 +76,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | Script | O que prova |
 |---|---|
 | `phase-s1-join-token.sh` | Controller não sobe sem token; nó sem token ou com token errado não aparece; CLI sem token é recusada. |
+| `phase-m-catalog.sh` | Catálogo de modelos e OK/NOK: `model list` lê os cabeçalhos, `model check` cabe ou não cabe com o que falta. Precisa dos pesos em `code/models`. |
 | `phase-s2-approval.sh` | Nó novo fica pendente sem trabalho até `approve`; a aprovação sobrevive a re-registro. |
 | `phase-s3-roles.sh` | Token de join e de inferência não administram; operador administra; ações de operador entram na auditoria. |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; `http://` e CA errada são recusados; sem certificado, só com `INSECURE`. |
