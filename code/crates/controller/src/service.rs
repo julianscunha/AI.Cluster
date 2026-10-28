@@ -385,7 +385,7 @@ impl ClusterControlService {
             .filter_map(|node| {
                 let id = node.identity?.node_id;
                 let capability = node.capability?;
-                if capability.rpc_port == 0 || !self.registry.is_available(&id) {
+                if capability.rpc_port == 0 || !self.registry.serves_inference(&id) {
                     return None;
                 }
                 let host = if capability.rpc_host.is_empty() {
@@ -1734,7 +1734,7 @@ impl ClusterControl for ClusterControlService {
         if let Some(op) = request
             .ops
             .iter()
-            .find(|op| !self.registry.is_available(&op.node_id))
+            .find(|op| !self.registry.serves_inference(&op.node_id))
         {
             return Err(blame(
                 Status::failed_precondition(format!("nó {} indisponível", op.node_id)),

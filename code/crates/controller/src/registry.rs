@@ -547,6 +547,20 @@ impl Registry {
         }
     }
 
+    /// Whether the node may keep serving inference slices. A draining node takes no new work but
+    /// stays in the plan, so draining it does not restart the model and drop the sessions; a
+    /// quarantined, failed or offline node is cut at once.
+    pub fn serves_inference(&self, node_id: &str) -> bool {
+        self.lock().get(node_id).is_some_and(|record| {
+            record.trusted
+                && !record.quarantined
+                && !matches!(
+                    record.state,
+                    NodeState::Quarantined | NodeState::Failed | NodeState::Offline
+                )
+        })
+    }
+
     /// Whether the node is registered but not yet approved (S2). Such a node is alive and polls
     /// for work; it is told there is none, not that it is unavailable, so its worker keeps
     /// running until someone approves it.
@@ -942,6 +956,10 @@ mod tests {
 
         assert!(registry.begin_drain("node-a"));
         assert!(!registry.is_available("node-a"));
+        assert!(
+            registry.serves_inference("node-a"),
+            "drain não derruba a inferência"
+        );
         assert_eq!(registry.list()[0].state, "DRAINING");
 
         // Draining must survive a heartbeat; the node is leaving, not recovering.

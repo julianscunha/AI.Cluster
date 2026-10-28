@@ -57,7 +57,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Latência do canal de fatias | Cada camada espera a anterior (cerca de 120 idas e voltas por token). Medir em máquinas separadas antes de otimizar. | código, hardware |
 | Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; mais de 64 operações em voo por nó dão 503. | código |
-| Quarentena e drain | Não derrubam a sessão de inferência. | código |
+| Quarentena | Derruba a sessão de inferência (contenção de segurança, por desenho). O drain não derruba mais: o nó fica no plano até sair. | código |
 | Engine fora do scheduler | O canal de fatias ainda passa pelo controller. | código |
 
 ## F09 e F10 — Transporte e storage
