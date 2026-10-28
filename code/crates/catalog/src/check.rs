@@ -32,6 +32,8 @@ pub struct Verdict {
     pub required_bytes: u64,
     pub available_bytes: u64,
     pub nodes: u32,
+    /// Ainda cabe sem o maior nó; só informa, não muda `ok` (com 2 nós em casa quase nada passaria).
+    pub survives_one_loss: bool,
     pub message: String,
 }
 
@@ -113,6 +115,8 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
     let available_bytes: u64 = nodes.iter().map(usable_bytes).fold(0, u64::saturating_add);
     let count = nodes.len() as u32;
     let ok = count > 0 && available_bytes >= required_bytes;
+    let largest = nodes.iter().map(usable_bytes).max().unwrap_or(0);
+    let survives_one_loss = count > 1 && available_bytes - largest >= required_bytes;
     let kv_note = if kv == 0 && (model.layers == 0 || model.hidden == 0 || model.heads == 0) {
         " (cache de contexto não estimado: o cabeçalho não traz as dimensões)"
     } else {
@@ -120,10 +124,15 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
     };
     let message = if ok {
         format!(
-            "cabe: precisa de {:.2} GB e {} {:.2} GB",
+            "cabe: precisa de {:.2} GB e {} {:.2} GB{}",
             gb(required_bytes),
             plural(count),
-            gb(available_bytes)
+            gb(available_bytes),
+            if survives_one_loss {
+                ""
+            } else {
+                " (sem folga se um nó cair)"
+            }
         )
     } else if count == 0 {
         "nenhum nó aprovado e vivo para receber o modelo".to_string()
@@ -156,6 +165,7 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
         required_bytes,
         available_bytes,
         nodes: count,
+        survives_one_loss,
         message,
     }
 }
@@ -201,6 +211,17 @@ mod tests {
         assert_eq!(verdict.nodes, 3);
         assert!(verdict.required_bytes > 8 * GIB);
         assert!(verdict.message.starts_with("cabe"));
+    }
+
+    #[test]
+    fn the_failover_margin_is_reported_but_does_not_decide() {
+        let three = check(&model(8), 0, 1, &[node(4), node(4), node(4)]);
+        assert!(three.ok && !three.survives_one_loss);
+        assert!(three.message.contains("sem folga"), "{}", three.message);
+        let four: Vec<_> = (0..4).map(|_| node(4)).collect();
+        let four = check(&model(8), 0, 1, &four);
+        assert!(four.ok && four.survives_one_loss);
+        assert!(!check(&model(1), 0, 1, &[node(8)]).survives_one_loss);
     }
 
     #[test]

@@ -853,6 +853,7 @@ impl ClusterControl for ClusterControlService {
             required_bytes: verdict.required_bytes,
             available_bytes: verdict.available_bytes,
             nodes: verdict.nodes,
+            survives_one_loss: verdict.survives_one_loss,
             message: verdict.message,
         };
         // Sem workers com RPC o modelo roda só na CPU do gateway, cuja RAM o controller não conhece.
@@ -1048,6 +1049,7 @@ impl ClusterControl for ClusterControlService {
             required_bytes: verdict.required_bytes,
             available_bytes: verdict.available_bytes,
             nodes: verdict.nodes,
+            survives_one_loss: verdict.survives_one_loss,
             message,
         }))
     }

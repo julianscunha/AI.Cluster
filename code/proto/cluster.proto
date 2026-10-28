@@ -330,6 +330,8 @@ message CheckModelResponse {
   uint32 nodes = 7;
   // O motivo, em português: o que falta, ou por que o motor não roda o modelo.
   string message = 8;
+  // Verdadeiro se o modelo ainda caberia depois de perder o maior nó (folga para failover).
+  bool survives_one_loss = 9;
 }
 
 /// Estado do modelo do llama.cpp no gateway (ADR-022).
