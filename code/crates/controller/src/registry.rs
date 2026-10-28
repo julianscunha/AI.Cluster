@@ -243,6 +243,8 @@ impl Registry {
             .map(|record| {
                 record.trusted = false;
                 record.credential = fresh.clone();
+                // frees the id: the next registration (rotation) is not read as a takeover
+                record.state = NodeState::Offline;
             })
             .is_some();
         if live {
@@ -343,13 +345,22 @@ impl Registry {
         if !self.auto_approve {
             let prior = nodes
                 .get(&identity.node_id)
-                .map(|record| (record.trusted, record.credential.clone()))
+                .map(|record| {
+                    (
+                        record.trusted,
+                        record.state != NodeState::Offline,
+                        record.credential.clone(),
+                    )
+                })
                 .or_else(|| {
                     self.lock_known()
                         .get(&identity.node_id)
-                        .map(|known| (known.trusted, known.credential.clone()))
+                        .map(|known| (known.trusted, false, known.credential.clone()))
                 });
-            if let Some((true, credential)) = prior
+            // An approved node, or a pending one that is still alive, is not replaced by someone who
+            // does not hold its credential: the join token alone cannot take over an id.
+            if let Some((trusted, live, credential)) = prior
+                && (trusted || live)
                 && !same_token(credential.as_bytes(), presented)
             {
                 return None;
@@ -670,6 +681,40 @@ mod tests {
         assert!(registry.is_available("node-a"));
     }
 
+    #[test]
+    fn um_no_pendente_vivo_nao_perde_o_id_para_quem_so_tem_o_token_de_join() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+
+        // Vivo e ainda não aprovado: um intruso com outra credencial não o toma.
+        let intruder = registry.register_as(
+            identity("node-a"),
+            CapabilityReport::default(),
+            1_500,
+            b"intruso",
+        );
+        assert!(intruder.is_none());
+        assert!(registry.authorizes("node-a", first.credential.as_bytes()));
+
+        // O dono volta com a própria credencial.
+        assert!(
+            registry
+                .register_as(
+                    identity("node-a"),
+                    CapabilityReport::default(),
+                    1_600,
+                    first.credential.as_bytes(),
+                )
+                .is_some()
+        );
+
+        // Sem sinal, o id fica livre: um worker que perdeu a credencial volta com uma nova.
+        registry.mark_stale_offline(60_000, 15_000);
+        let again = registry
+            .register_as(identity("node-a"), CapabilityReport::default(), 60_000, b"")
+            .unwrap();
+        assert_ne!(again.credential, first.credential);
+    }
     #[test]
     fn the_same_node_id_without_the_credential_does_not_inherit_trust() {
         let registry = Registry::requiring_approval();

@@ -356,7 +356,7 @@ impl ClusterControl for ClusterControlService {
             &presented,
         ) else {
             return Err(Status::failed_precondition(
-                "nó aprovado com outra credencial; o operador precisa rodar `ai-cluster revoke` antes",
+                "nó já registrado com outra credencial; se aprovado, o operador precisa rodar `ai-cluster revoke` antes (um nó pendente fica livre quando para de responder)",
             ));
         };
         // S2: an unapproved node must not be able to write controller state, so its copy is
