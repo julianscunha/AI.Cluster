@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use rustls::ServerConfig;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -15,6 +15,9 @@ use tower_service::Service;
 
 /// Quanto o handshake pode levar: um cliente que abre a conexão e cala não segura recurso.
 const HANDSHAKE: Duration = Duration::from_secs(10);
+
+/// Conexões TLS abertas ao mesmo tempo.
+const MAX_CONNECTIONS: usize = 256;
 
 /// A configuração do servidor a partir do certificado (cadeia) e da chave, em PEM.
 pub fn load_config(cert: &str, key: &str) -> Result<Arc<ServerConfig>, String> {
@@ -45,6 +48,8 @@ pub async fn serve(
     config: Arc<ServerConfig>,
 ) -> std::io::Result<()> {
     let acceptor = TlsAcceptor::from(config);
+    // Teto de conexões abertas: acima dele o accept espera, em vez de gastar um descritor por cliente.
+    let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
         let (tcp, _) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -55,8 +60,12 @@ pub async fn serve(
                 continue;
             }
         };
+        let Ok(permit) = open.clone().acquire_owned().await else {
+            return Ok(());
+        };
         let (acceptor, app) = (acceptor.clone(), app.clone());
         tokio::spawn(async move {
+            let _permit = permit;
             let Ok(Ok(stream)) = tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await else {
                 return;
             };
@@ -64,7 +73,10 @@ pub async fn serve(
                 let mut app = app.clone();
                 async move { app.call(request).await }
             });
+            // Sem cabeçalho completo em 30 s a conexão cai: quem completa o handshake e cala não a segura.
             let _ = hyper::server::conn::http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(30))
                 .serve_connection(TokioIo::new(stream), service)
                 .await;
         });

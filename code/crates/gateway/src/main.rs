@@ -1312,7 +1312,13 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
         let _slot = prepared.slot.take();
         bind_cancel(&worker, &flag);
         // `n` respostas, uma geração cada, no mesmo slot; a semente anda um passo por resposta.
-        (0..prepared.choices)
+        // Guloso dá sempre a mesma resposta: gera uma vez e repete.
+        let runs = if prepared.sampling.is_greedy() {
+            1
+        } else {
+            prepared.choices
+        };
+        let mut all = (0..runs)
             .map(|index| {
                 let sampling = Sampling {
                     seed: prepared.sampling.seed.wrapping_add(index as u64),
@@ -1320,7 +1326,11 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
                 };
                 generate_or_replay(&prepared, &worker, &flag, &sampling, &mut |_| {})
             })
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(first) = all.first().cloned() {
+            all.resize(prepared.choices, first);
+        }
+        Ok::<_, String>(all)
     });
     let all = match tokio::time::timeout(DEADLINE, task).await {
         Ok(Ok(Ok(all))) => all,

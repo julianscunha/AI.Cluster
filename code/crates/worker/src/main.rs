@@ -94,11 +94,16 @@ fn running_flag(work_id: &str) -> Arc<AtomicBool> {
     flag
 }
 
-fn forget_running(work_id: &str) {
+/// Tira a bandeira da tabela, mas só se ainda for a desta execução: o mesmo `work_id` pode ter
+/// voltado a este nó e ganho uma bandeira nova enquanto a conta antiga terminava.
+fn forget_running(work_id: &str, flag: &Arc<AtomicBool>) {
     if let Some(running) = RUNNING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .as_mut()
+        && running
+            .get(work_id)
+            .is_some_and(|held| Arc::ptr_eq(held, flag))
     {
         running.remove(work_id);
     }
@@ -636,6 +641,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::spawn(async move {
                     let _slot = permit;
                     let work_id = unit.work_id.clone();
+                    // Registrada já ao receber: um aviso de cancelamento durante a espera abaixo
+                    // também a alcança.
+                    let cancel = running_flag(&work_id);
                     // Test hook: hold the unit before computing it so a fault-injection run
                     // can kill this worker while the unit is in flight. Unset means no delay.
                     let delay = work_delay();
@@ -643,13 +651,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         time::sleep(delay).await;
                     }
                     let shape = (unit.rows, unit.shared, unit.cols);
-                    let cancel = running_flag(&work_id);
                     let flag = cancel.clone();
                     let computed = tokio::task::spawn_blocking(move || {
                         execute_work(&unit, &node_id, cores, &flag)
                     })
                     .await;
-                    forget_running(&work_id);
+                    forget_running(&work_id, &cancel);
                     if cancel.load(Ordering::Relaxed) {
                         println!("trabalho {work_id} cancelado pelo controller; sem resultado");
                         return;

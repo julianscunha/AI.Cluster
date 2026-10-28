@@ -113,7 +113,7 @@ struct Inner {
     passed: HashMap<String, u32>,
     /// O nó que acabou de perder a unidade (resultado recusado ou saída do nó). Enquanto houver
     /// outro nó que a comporte, ela não volta a ele. Não persiste: o reinício só esquece a preferência.
-    lost_by: HashMap<String, String>,
+    lost_by: HashMap<String, (String, u64)>,
     /// Por nó, as unidades em voo canceladas que ele ainda não soube (entregues na próxima batida).
     /// Não persiste: sem a notícia o nó termina a conta e o resultado é recusado.
     cancels: HashMap<String, Vec<String>>,
@@ -126,18 +126,27 @@ struct Inner {
 /// Se a unidade deve ser poupada a este nó: foi ele quem acabou de perdê-la e outro candidato a
 /// comporta. Sem outro nó, volta a ele (melhor que ficar parada).
 fn avoids(
-    lost_by: &HashMap<String, String>,
+    lost_by: &HashMap<String, (String, u64)>,
+    attested: &HashSet<String>,
     unit: &WorkUnit,
     node_id: &str,
+    now_unix_ms: u64,
     candidates: &[(String, CapabilityReport, HealthReport)],
 ) -> bool {
+    // A preferência vale por pouco tempo: um outro nó que nunca pega a unidade (ocupado, retido
+    // para outra requisição) não pode deixá-la parada.
     lost_by
         .get(&unit.work_id)
-        .is_some_and(|lost| lost == node_id)
-        && candidates
-            .iter()
-            .any(|(id, capability, _)| id != node_id && fits(unit, capability))
+        .is_some_and(|(lost, at)| lost == node_id && now_unix_ms.saturating_sub(*at) < AVOID_MS)
+        && candidates.iter().any(|(id, capability, _)| {
+            id != node_id
+                && fits(unit, capability)
+                && (!unit.require_attested || attested.contains(id))
+        })
 }
+
+/// Quanto tempo a unidade evita o nó que acabou de perdê-la.
+const AVOID_MS: u64 = 10_000;
 
 /// Quantos cancelamentos ficam à espera da batida de um nó; um nó mudo não faz a lista crescer.
 const MAX_PENDING_CANCELS: usize = 1024;
@@ -594,6 +603,17 @@ impl WorkStore {
     /// doubles the write cost to buy redundancy. Fine at benchmark scale; a delta journal or a
     /// periodic snapshot when the live set gets large or mutations get frequent.
     fn save_locked(&self, inner: &mut Inner) {
+        self.write_state(inner, true);
+    }
+
+    /// Grava a posse de uma unidade recém-despachada. Não sobe a época da réplica: a posse é
+    /// detalhe do reinício deste controller, e subir a época faria cada nó baixar o estado inteiro
+    /// a cada despacho.
+    fn save_lease_locked(&self, inner: &mut Inner) {
+        self.write_state(inner, false);
+    }
+
+    fn write_state(&self, inner: &mut Inner, bump_epoch: bool) {
         // The checkpoint is what a restart comes back to, so it carries no matrix nobody can
         // read. Done before the early return: a memory-only store has the same ceiling, and
         // this is what keeps the map from growing with all work ever completed.
@@ -601,7 +621,11 @@ impl WorkStore {
         let Some(path) = &self.path else {
             return;
         };
-        let epoch = self.next_epoch();
+        let epoch = match self.replica_epoch() {
+            0 => self.next_epoch(),
+            current if !bump_epoch => current,
+            _ => self.next_epoch(),
+        };
         let snapshot = WorkSnapshot {
             pending: inner.queue.iter().cloned().collect(),
             outputs: inner
@@ -880,7 +904,7 @@ impl WorkStore {
         let raw = predicted_compute_us(&inner.queue[index], capability);
         let unit = take_locked(&mut inner, index, node_id, now_unix_ms, raw);
         // A posse vai ao disco antes de a unidade sair: uma queda logo após despachar não a roda duas vezes.
-        self.save_locked(&mut inner);
+        self.save_lease_locked(&mut inner);
         Some(unit)
     }
 
@@ -929,7 +953,14 @@ impl WorkStore {
             ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
-                    && !avoids(&inner.lost_by, unit, node_id, candidates)
+                    && !avoids(
+                        &inner.lost_by,
+                        attested,
+                        unit,
+                        node_id,
+                        now_unix_ms,
+                        candidates,
+                    )
                     && (!unit.require_attested || attested.contains(node_id))
                     && held.as_ref().is_none_or(|hold| {
                         hold.admits(&unit.request_id, asking_in_flight, capability.work_slots)
@@ -964,7 +995,7 @@ impl WorkStore {
             );
             if takes {
                 let unit = take_locked(&mut inner, index, node_id, now_unix_ms, raw);
-                self.save_locked(&mut inner);
+                self.save_lease_locked(&mut inner);
                 return Some(unit);
             }
         }
@@ -1001,9 +1032,10 @@ impl WorkStore {
             return false;
         }
         let record = inner.dispatched.remove(work_id).expect("checked above");
-        inner
-            .lost_by
-            .insert(work_id.to_string(), node_id.to_string());
+        inner.lost_by.insert(
+            work_id.to_string(),
+            (node_id.to_string(), crate::registry::unix_ms()),
+        );
         if let Some(attempts) = inner.attempts.get_mut(work_id) {
             *attempts = attempts.saturating_sub(1);
         }
@@ -1211,6 +1243,8 @@ impl WorkStore {
             .map(|(work_id, _)| work_id.clone())
             .collect();
         let mut outcome = RequeueOutcome::default();
+        // O nó que saiu não vai ler os avisos que ficaram para ele.
+        inner.cancels.remove(node_id);
         for work_id in stranded {
             let Some(record) = inner.dispatched.remove(&work_id) else {
                 continue;
@@ -1218,7 +1252,10 @@ impl WorkStore {
             if inner.attempts.get(&work_id).copied().unwrap_or(0) >= MAX_ATTEMPTS {
                 outcome.failed += fail_cascade(&mut inner, &work_id, &record.unit.request_id);
             } else {
-                inner.lost_by.insert(work_id.clone(), node_id.to_string());
+                inner.lost_by.insert(
+                    work_id.clone(),
+                    (node_id.to_string(), crate::registry::unix_ms()),
+                );
                 inner.queue.push_back(record.unit);
                 outcome.requeued += 1;
             }
@@ -2143,6 +2180,32 @@ mod tests {
                 .work_id,
             "w1"
         );
+    }
+
+    #[test]
+    fn a_preferencia_de_evitar_o_no_so_vale_com_outro_apto_e_por_pouco_tempo() {
+        let mut lost = HashMap::new();
+        lost.insert("w1".to_string(), ("node-a".to_string(), 1_000));
+        let mut attested = HashSet::new();
+        let both = [
+            ("node-a".to_string(), capability(8, 0.0), healthy()),
+            ("node-b".to_string(), capability(8, 0.0), healthy()),
+        ];
+        let mut plain = unit("w1");
+        assert!(avoids(&lost, &attested, &plain, "node-a", 2_000, &both));
+        assert!(
+            !avoids(&lost, &attested, &plain, "node-b", 2_000, &both),
+            "só quem perdeu evita"
+        );
+        assert!(
+            !avoids(&lost, &attested, &plain, "node-a", 1_000 + AVOID_MS, &both),
+            "a preferência expira"
+        );
+        // Unidade que exige atestado: o outro nó não atestado não conta como alternativa.
+        plain.require_attested = true;
+        assert!(!avoids(&lost, &attested, &plain, "node-a", 2_000, &both));
+        attested.insert("node-b".to_string());
+        assert!(avoids(&lost, &attested, &plain, "node-a", 2_000, &both));
     }
 
     #[test]

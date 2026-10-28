@@ -86,6 +86,11 @@ Sem pendências: o código da fase está feito.
 |---|---|---|
 | Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial (as chamadas só respondem "desconhecido"; a cópia do estado não sai para ele). | código |
 | Escopo do operador | O operador age sobre qualquer nó, sem escopo. | decisão, código |
+| Id liberado pelo revoke | Depois do `revoke`, ou com um nó pendente sem sinal, quem tem o token de join registra o id primeiro e o `approve` (por id) aprovaria o intruso. Falta um segredo de rotação de uso único ou aprovar conferindo a credencial. | código, decisão |
+| Gateway atrás de NAT | O id do gateway é amarrado ao IP de origem; atrás de NAT ou proxy todos parecem o mesmo IP, e um gateway que troca de IP espera até 45 s. Falta limite de ids por IP e um segredo por gateway. | código, decisão |
+| Segredo lido uma vez | `secret()` relê o arquivo a cada chamada e, se um `_FILE` configurado falhar, só avisa (a checagem de chave de API contra os tokens do cluster é pulada). Ler no início e falhar. | código |
+| Relatório de trabalho aberto | `WorkReport` e `ListEvents` aceitam o token de join (qualquer worker) e `limit` 0 devolve o histórico inteiro sob o lock. Exigir operador ou teto efetivo. | código |
+| Conexões do gateway | O gateway sem TLS (`axum::serve`) não tem teto de conexões nem tempo de cabeçalho; o TLS tem os dois. | código |
 
 ## F08 — Inferência `[~]`
 
