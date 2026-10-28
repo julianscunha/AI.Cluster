@@ -27,6 +27,8 @@ E0 pesos menores na memória · E1 catálogo (`models list`) · E2 OK/NOK (`mode
 
 ## Consequências
 
+- **Alvo: hardware comum e fraco** (SBCs ARM, celulares, PCs antigos, pouca RAM e pouco disco, rede Wi-Fi ou 100 Mbps). O desenho e os testes partem do Pi de 1 GB, não de servidores; a quantização (GGUF) deixa de ser otimização e vira requisito, e o catálogo deve favorecer modelos pequenos.
+
 - Mais workers escalam a **vazão** quase linearmente; a latência de um pedido só melhora até 3 a 5 vezes e depende da rede. Os números são estimativas de banda e de RTT, a medir no cluster.
 - Passa a existir dependência de um motor externo (C++ via subprocesso ou FFI) e uma porta de entrada nos workers.
 - Em armv7 com 1 GB, o Pi serve a modelos pequenos e a vazão, não a modelos grandes.
