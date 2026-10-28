@@ -619,7 +619,10 @@ message ReleaseReservationResponse {
   bool released = 1;
 }
 
-message WorkReportRequest {}
+message WorkReportRequest {
+  // Só as últimas N concluídas; 0 devolve todas (o comportamento de antes).
+  uint32 limit = 1;
+}
 
 message WorkReportEntry {
   string work_id = 1;

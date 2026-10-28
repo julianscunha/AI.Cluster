@@ -337,7 +337,10 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     let report = loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let report = client.work_report(WorkReportRequest {}).await?.into_inner();
+        let report = client
+            .work_report(WorkReportRequest { limit: 0 })
+            .await?
+            .into_inner();
         if report.pending == 0 || tokio::time::Instant::now() >= deadline {
             break report;
         }
@@ -1556,7 +1559,10 @@ async fn run_benchmark(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     let report = loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let report = client.work_report(WorkReportRequest {}).await?.into_inner();
+        let report = client
+            .work_report(WorkReportRequest { limit: 0 })
+            .await?
+            .into_inner();
         if report.pending == 0 || tokio::time::Instant::now() >= deadline {
             break report;
         }

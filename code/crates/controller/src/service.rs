@@ -121,6 +121,15 @@ const MAX_GATEWAYS: usize = 64;
 /// Um gateway sem se apresentar há mais que isto deixa de contar como vivo (ele repete a cada 15 s).
 const GATEWAY_ALIVE_MS: u64 = 45_000;
 
+/// As últimas `limit` entradas; 0 é tudo.
+fn tail<T>(items: &[T], limit: usize) -> &[T] {
+    if limit == 0 {
+        items
+    } else {
+        &items[items.len().saturating_sub(limit)..]
+    }
+}
+
 /// Um gateway vivo, apresentado de um endereço, não é tomado por outro endereço. Sem endereço
 /// conhecido (teste, transporte sem IP) a regra não se aplica.
 fn gateway_taken(
@@ -1221,21 +1230,24 @@ impl ClusterControl for ClusterControlService {
 
     async fn work_report(
         &self,
-        _request: Request<WorkReportRequest>,
+        request: Request<WorkReportRequest>,
     ) -> Result<Response<WorkReportResponse>, Status> {
-        let completed = self
-            .work
-            .completed()
-            .into_iter()
-            .map(|record| WorkReportEntry {
-                work_id: record.work_id,
-                node_id: record.node_id,
-                compute_time_us: record.compute_time_us,
-                transfer_time_us: record.transfer_time_us,
-                total_latency_us: record.total_latency_us,
-                checksum: record.checksum,
-            })
-            .collect();
+        let limit = request.into_inner().limit as usize;
+        // Lido sob o lock e convertido direto: sem a cópia intermediária do histórico inteiro, e só
+        // a janela pedida (as mais recentes) quando há limite.
+        let completed = self.work.with_completed(|records| {
+            tail(records, limit)
+                .iter()
+                .map(|record| WorkReportEntry {
+                    work_id: record.work_id.clone(),
+                    node_id: record.node_id.clone(),
+                    compute_time_us: record.compute_time_us,
+                    transfer_time_us: record.transfer_time_us,
+                    total_latency_us: record.total_latency_us,
+                    checksum: record.checksum,
+                })
+                .collect()
+        });
         Ok(Response::new(WorkReportResponse {
             completed,
             pending: self.work.pending() as u32,
@@ -2772,6 +2784,14 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_janela_do_relatorio_traz_as_mais_recentes() {
+        let all = [1, 2, 3, 4];
+        assert_eq!(tail(&all, 0), &[1, 2, 3, 4]);
+        assert_eq!(tail(&all, 2), &[3, 4]);
+        assert_eq!(tail(&all, 9), &[1, 2, 3, 4]);
     }
 
     #[test]

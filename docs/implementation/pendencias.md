@@ -47,7 +47,6 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Relatório de trabalho | `completed()` ainda copia o histórico (até 110 mil registros) a cada `WorkReport`; devolver uma janela ou um iterador. As métricas já leem sem copiar. | código |
 | Jitter ambíguo | `network_jitter` 0 vale "estável" e "não medido" (menos de duas repetições); precisa de um sinal separado. | código |
 | Aceleradores | Reportar e medir kernels de GPU e NPU. | hardware: GPU/NPU |
 | Saúde de storage | SMART, erros e latência de escrita por dispositivo. | hardware: disco real com SMART |

@@ -1136,6 +1136,7 @@ impl WorkStore {
             .map(|kept| (kept.rows, kept.cols, kept.data.clone()))
     }
 
+    #[cfg(test)]
     pub fn completed(&self) -> Vec<CompletedWork> {
         self.lock().completed.clone()
     }
