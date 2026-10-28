@@ -88,7 +88,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Item | O que falta | Dependência |
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes e manifesto assinado. O checksum só vale para a primeira parte de um GGUF dividido. O motor próprio segue só em fp32. | código, decisão |
-| Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
+| Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen; hoje o motor próprio recusa o modelo em vez de errar), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
 | Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). Falta estimar o tempo por token. O veredito já informa se o modelo ainda caberia sem o maior nó (`survives_one_loss`), sem barrar. | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
 | N4 a N9 | Pré-carga e cache de modelo em disco dos workers, pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |

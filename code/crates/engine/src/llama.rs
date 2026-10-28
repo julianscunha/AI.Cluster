@@ -191,6 +191,13 @@ impl Llama {
         let tied = config["tie_word_embeddings"].as_bool().unwrap_or(false);
 
         let tensors = Tensors::open(&dir.join("model.safetensors"))?;
+        // O Qwen2 não declara `attention_bias` no config: o viés de q/k/v é implícito e seria ignorado.
+        if tensors
+            .shape("model.layers.0.self_attn.q_proj.bias")
+            .is_some()
+        {
+            return Err("viés de atenção (Qwen) não é suportado pelo motor próprio".into());
+        }
         let (executor, nodes) = match remote {
             Some((executor, nodes)) => (Some(executor), nodes),
             None => (None, Vec::new()),
@@ -527,6 +534,9 @@ mod tests {
             ("model.layers.0.mlp.down_proj.weight", vec![4, 4]),
             ("model.norm.weight", vec![4]),
         ];
+        if config_extra.contains("qwen2") {
+            tensors.push(("model.layers.0.self_attn.q_proj.bias", vec![4]));
+        }
         if head.is_some() {
             tensors.push(("lm_head.weight", vec![4, 4]));
         }
@@ -586,6 +596,18 @@ mod tests {
         for dir in [tied, missing, untied] {
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    #[test]
+    fn o_vies_de_atencao_implicito_do_qwen_e_recusado() {
+        let dir = tiny_model(
+            "qwen",
+            r#","model_type":"qwen2","tie_word_embeddings":true"#,
+            None,
+        );
+        let error = Llama::load(&dir).err().expect("viés recusado");
+        assert!(error.contains("viés de atenção"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
