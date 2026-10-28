@@ -9,9 +9,11 @@ pub mod llama;
 pub mod manifest;
 pub mod model;
 pub mod safetensors;
+pub mod sampling;
 pub mod shard;
 pub mod tokenizer;
 
 pub use cache::KvCache;
 pub use model::LanguageModel;
+pub use sampling::Sampling;
 pub use shard::{Executor, LocalExecutor, ShardStore, Slice, is_projection};

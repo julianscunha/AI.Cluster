@@ -110,6 +110,25 @@ texts() { grep -o '"content":"[^"]*"' | sed 's/"content":"//; s/"$//' | tr -d '\
 [ "$(echo "$SSE" | texts)" = "$(echo "$ONE" | texts)" ] || fail "o texto em streaming deveria ser igual ao da resposta inteira"
 echo "OK: SSE com papel, trechos, finish_reason e [DONE]; texto igual ao sem streaming"
 
+echo "=== D2) amostragem: temperatura, top_p, semente, n e usage no stream ==="
+withp() { echo "${BODY%\}*},$1}"; } # BODY com parâmetros extras
+for bad in '"temperature":3' '"temperature":-1' '"top_p":0' '"top_p":1.5' '"n":0' '"n":5'; do
+  [ "$(status "$(withp "$bad")")" = 400 ] || fail "$bad deveria dar 400"
+done
+[ "$(status "$(withp '"n":2,"stream":true')")" = 400 ] || fail "n>1 com stream deveria dar 400"
+S1=$(chat "$(withp '"temperature":1.5,"top_p":0.95,"seed":7')")
+S2=$(chat "$(withp '"temperature":1.5,"top_p":0.95,"seed":7')")
+[ "$(strip "$S1")" = "$(strip "$S2")" ] || fail "a mesma semente deveria repetir a resposta"
+S3=$(chat "$(withp '"temperature":2,"seed":99')")
+echo "$S3" | grep -q '"object":"chat.completion"' || fail "amostrada deveria responder: $S3"
+TWOCH=$(chat "$(withp '"n":2,"temperature":1.2,"seed":5')")
+echo "$TWOCH" | grep -q '"index":1' || fail "n=2 deveria trazer duas respostas: $TWOCH"
+echo "$TWOCH" | grep -q '"completion_tokens":10' || fail "n=2 de 5 tokens deveria somar 10: $TWOCH"
+USAGE=$(http -N -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" --max-time 60 \
+  -d "$(withp '"stream":true,"stream_options":{"include_usage":true}')" $GATEWAY/v1/chat/completions)
+echo "$USAGE" | grep -q '"usage":{"completion_tokens":5' || fail "faltou o usage no stream: $USAGE"
+echo "OK: parâmetros validados, semente repete, n=2, usage no stream"
+
 if [ "$ID" = smollm2-135m-instruct ]; then
   echo "=== E) modelo instruct: responde em vez de continuar, e para no fim do turno ==="
   ASK='{"model":"smollm2-135m-instruct","max_tokens":30,"messages":[{"role":"user","content":"What is the capital of France?"}]}'

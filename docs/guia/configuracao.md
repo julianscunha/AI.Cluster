@@ -80,7 +80,8 @@ Convenções:
 | `AI_CLUSTER_GATEWAY_STATE` | `AI_CLUSTER_DATA_DIR/gateway-<id>.state` | Arquivo onde o gateway grava os contadores de inferência para sobreviverem ao reinício. Sem ele e sem o diretório de dados, os contadores partem de zero. |
 | `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `ai-cluster topology`. |
 | `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia. |
-| `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige `AI_CLUSTER_INSECURE`, porque a perna HTTP não tem TLS. |
+| `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige TLS (as duas variáveis abaixo) ou `AI_CLUSTER_INSECURE`. |
+| `AI_CLUSTER_GATEWAY_TLS_CERT` / `AI_CLUSTER_GATEWAY_TLS_KEY` | — | Certificado (cadeia) e chave privada em PEM: a perna HTTP passa a ser HTTPS (HTTP/1.1) e o texto puro deixa de ser atendido. Vêm juntas. |
 | `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. Obrigatória se `AI_CLUSTER_TENANTS` estiver vazio. |
 | `AI_CLUSTER_TENANTS` | — | Tenants no formato `nome=chave[,models=a\|b][,tokens=N][,class=c];...`. `models` limita os modelos, `tokens` dá cota por janela, `class` é a classe máxima. |
 | `AI_CLUSTER_QUOTA_WINDOW_SECS` | `3600` | Janela da cota de tokens. |

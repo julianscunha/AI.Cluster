@@ -12,6 +12,7 @@
 mod cache;
 mod metrics;
 mod request_manager;
+mod tls;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -21,7 +22,7 @@ use std::time::Duration;
 
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_engine::{
-    Executor, LanguageModel, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama,
+    Executor, LanguageModel, Sampling, Slice, chat::ChatMl, gpt2::Gpt2, llama::Llama,
     manifest::verified_version, tokenizer::Tokenizer,
 };
 use ai_cluster_protocol::cluster::{
@@ -952,6 +953,38 @@ struct ChatRequest {
     max_tokens: Option<u32>,
     #[serde(default)]
     stream: bool,
+    /// 0 (o padrão) é guloso e determinístico; até 2. Acima de 0 a resposta é sorteada.
+    temperature: Option<f64>,
+    /// Massa de probabilidade mantida no sorteio, em (0, 1].
+    top_p: Option<f64>,
+    /// Semente do sorteio; a mesma semente repete a resposta. Sem ela, cada pedido sorteia a sua.
+    seed: Option<u64>,
+    /// Quantas respostas alternativas, de 1 a [`MAX_CHOICES`]; só sem `stream`.
+    n: Option<u32>,
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Deserialize)]
+struct StreamOptions {
+    /// Manda um último pedaço com o `usage` antes do `[DONE]`.
+    #[serde(default)]
+    include_usage: bool,
+}
+
+/// Teto de `n`: cada resposta é uma geração inteira no único slot.
+const MAX_CHOICES: u32 = 4;
+
+/// Semente para o pedido que não trouxe uma: o relógio com um contador, para dois pedidos no mesmo
+/// instante divergirem.
+fn fresh_seed() -> u64 {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    nanos
+        ^ COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
 fn invalid(message: &str) -> Response {
@@ -964,6 +997,10 @@ struct Prepared {
     prompt: Vec<u32>,
     new_tokens: usize,
     stream: bool,
+    sampling: Sampling,
+    /// Quantas respostas (`n`); 1 quando em `stream`.
+    choices: usize,
+    include_usage: bool,
     /// `None` when the answer comes from the cache and no generation runs.
     slot: Option<Permit>,
     tenant: Arc<Tenant>,
@@ -979,6 +1016,7 @@ fn generate_or_replay(
     prepared: &Prepared,
     worker: &Llm,
     flag: &AtomicBool,
+    sampling: &Sampling,
     on_token: &mut dyn FnMut(u32),
 ) -> Result<Vec<u32>, String> {
     let stop = worker.end_of_text;
@@ -992,11 +1030,12 @@ fn generate_or_replay(
         return Ok(tokens.clone());
     }
     let mut sampler = metrics::Sampler::start();
-    let generated = worker.model.generate_with(
+    let generated = worker.model.generate_sampled(
         prompt,
         prepared.new_tokens,
         Some(stop),
         flag,
+        sampling,
         &mut |token| {
             if token != stop {
                 sampler.token();
@@ -1016,7 +1055,10 @@ fn generate_or_replay(
         stopped,
         worker.model.kv_bytes_per_position(),
     );
-    if let Ok(tokens) = &generated {
+    // Só a geração gulosa é reproduzível; uma sorteada não vai ao cache.
+    if sampling.is_greedy()
+        && let Ok(tokens) = &generated
+    {
         prepared.cache.put(
             &prepared.tenant.name,
             worker.id,
@@ -1122,6 +1164,25 @@ async fn prepare(
         .max_tokens
         .unwrap_or(DEFAULT_NEW_TOKENS)
         .clamp(1, MAX_NEW_TOKENS) as usize;
+    let temperature = request.temperature.unwrap_or(0.0);
+    let top_p = request.top_p.unwrap_or(1.0);
+    let choices = request.n.unwrap_or(1);
+    if !temperature.is_finite()
+        || !(0.0..=2.0).contains(&temperature)
+        || !top_p.is_finite()
+        || !(top_p > 0.0 && top_p <= 1.0)
+        || !(1..=MAX_CHOICES).contains(&choices)
+        || (request.stream && choices != 1)
+    {
+        return Err(invalid(
+            "`temperature` deve estar em [0, 2], `top_p` em (0, 1] e `n` de 1 a 4 (só 1 com `stream`)",
+        ));
+    }
+    let sampling = Sampling {
+        temperature,
+        top_p,
+        seed: request.seed.unwrap_or_else(fresh_seed),
+    };
     if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
         return Err(quota_exceeded(retry));
     }
@@ -1150,9 +1211,15 @@ async fn prepare(
     };
     // A request this tenant already had answered is served from memory and never queues for the
     // generation slot. The input is capped at MAX_INPUT_BYTES above, so tokenizing it first is cheap.
-    let cached = gateway
-        .cache
-        .get(&tenant.name, llm.id, &llm.version, &prompt, new_tokens);
+    // Só o guloso é repetível: uma resposta sorteada nem lê nem grava o cache. Com `n` > 1 as
+    // respostas são independentes, então também não.
+    let cached = if sampling.is_greedy() && choices == 1 {
+        gateway
+            .cache
+            .get(&tenant.name, llm.id, &llm.version, &prompt, new_tokens)
+    } else {
+        None
+    };
     let slot = if cached.is_some() {
         None
     } else {
@@ -1182,6 +1249,11 @@ async fn prepare(
         prompt,
         new_tokens,
         stream: request.stream,
+        sampling,
+        choices: choices as usize,
+        include_usage: request
+            .stream_options
+            .is_some_and(|options| options.include_usage),
         slot,
         tenant,
         cache: gateway.cache.clone(),
@@ -1239,10 +1311,19 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
     let task = tokio::task::spawn_blocking(move || {
         let _slot = prepared.slot.take();
         bind_cancel(&worker, &flag);
-        generate_or_replay(&prepared, &worker, &flag, &mut |_| {})
+        // `n` respostas, uma geração cada, no mesmo slot; a semente anda um passo por resposta.
+        (0..prepared.choices)
+            .map(|index| {
+                let sampling = Sampling {
+                    seed: prepared.sampling.seed.wrapping_add(index as u64),
+                    ..prepared.sampling
+                };
+                generate_or_replay(&prepared, &worker, &flag, &sampling, &mut |_| {})
+            })
+            .collect::<Result<Vec<_>, _>>()
     });
-    let generated = match tokio::time::timeout(DEADLINE, task).await {
-        Ok(Ok(Ok(tokens))) => tokens,
+    let all = match tokio::time::timeout(DEADLINE, task).await {
+        Ok(Ok(Ok(all))) => all,
         Err(_) => {
             cancel.store(true, Ordering::Relaxed);
             log_remote(&llm, 0);
@@ -1262,17 +1343,28 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
             );
         }
     };
-    log_remote(&llm, generated.len());
-    let stopped = generated.last() == Some(&llm.end_of_text);
-    let visible = &generated[..generated.len() - usize::from(stopped)];
-    let Ok(content) = llm.tokenizer.decode(visible) else {
-        eprintln!("decodificação falhou para {visible:?}");
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "MODEL_UNAVAILABLE",
-            "a geração falhou",
-        );
-    };
+    let mut choices = Vec::with_capacity(all.len());
+    let mut completion_tokens = 0;
+    for (index, generated) in all.iter().enumerate() {
+        log_remote(&llm, generated.len());
+        let stopped = generated.last() == Some(&llm.end_of_text);
+        let visible = &generated[..generated.len() - usize::from(stopped)];
+        let Ok(content) = llm.tokenizer.decode(visible) else {
+            eprintln!("decodificação falhou para {visible:?}");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MODEL_UNAVAILABLE",
+                "a geração falhou",
+            );
+        };
+        // O token de fim também foi gerado: conta no uso, como na API de referência.
+        completion_tokens += generated.len();
+        choices.push(json!({
+            "index": index,
+            "message": { "role": "assistant", "content": content },
+            "finish_reason": if stopped { "stop" } else { "length" },
+        }));
+    }
     let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
     (
         [
@@ -1285,15 +1377,11 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
             "object": "chat.completion",
             "created": unix_seconds(),
             "model": llm.id,
-            "choices": [{
-                "index": 0,
-                "message": { "role": "assistant", "content": content },
-                "finish_reason": if stopped { "stop" } else { "length" },
-            }],
+            "choices": choices,
             "usage": {
                 "prompt_tokens": prompt_tokens,
-                "completion_tokens": visible.len(),
-                "total_tokens": prompt_tokens + visible.len(),
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
             },
         })),
     )
@@ -1347,6 +1435,7 @@ async fn put(tx: &EventTx, item: Result<Bytes, Infallible>) {
 /// `error` event instead of a status code.
 fn stream_chat(mut prepared: Prepared) -> Response {
     let llm = prepared.llm.clone();
+    let (prompt_tokens, include_usage) = (prepared.prompt.len(), prepared.include_usage);
     let id = format!("chatcmpl-{}", NEXT_CHAT_ID.fetch_add(1, Ordering::Relaxed));
     let created = unix_seconds();
     let model_id = llm.id;
@@ -1383,7 +1472,8 @@ fn stream_chat(mut prepared: Prepared) -> Response {
                 flag.store(true, Ordering::Relaxed);
             }
         };
-        let generated = generate_or_replay(&prepared, &worker, &flag, &mut |token| {
+        let sampling = prepared.sampling;
+        let generated = generate_or_replay(&prepared, &worker, &flag, &sampling, &mut |token| {
             if token == stop {
                 return;
             }
@@ -1398,6 +1488,7 @@ fn stream_chat(mut prepared: Prepared) -> Response {
         }
         generated
     });
+    let usage_id = id.clone();
     tokio::spawn(async move {
         put(&tx, event(json!({ "role": "assistant" }), json!(null))).await;
         let failure = match tokio::time::timeout(DEADLINE, task).await {
@@ -1409,6 +1500,31 @@ fn stream_chat(mut prepared: Prepared) -> Response {
                     event(json!({}), json!(if stopped { "stop" } else { "length" })),
                 )
                 .await;
+                if include_usage {
+                    // Último pedaço, sem `choices`, só com o uso (como `stream_options.include_usage`).
+                    let usage = json!({
+                        "id": usage_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": llm.id,
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": generated.len(),
+                            "total_tokens": prompt_tokens + generated.len(),
+                        },
+                    });
+                    put(
+                        &tx,
+                        Ok(format!(
+                            "data: {usage}
+
+"
+                        )
+                        .into()),
+                    )
+                    .await;
+                }
                 None
             }
             Err(_) => {
@@ -1511,11 +1627,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = std::env::var("AI_CLUSTER_GATEWAY_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8080".to_string())
         .parse()?;
-    // The HTTP leg has no TLS yet, so the key would cross the network in clear: loopback only,
-    // unless the operator accepts that explicitly.
-    if !addr.ip().is_loopback() && !insecure_allowed() {
+    // Com certificado e chave (PEM) a perna HTTP é HTTPS. Sem eles a chave de API cruzaria a rede
+    // em claro: só em loopback, a menos que o operador aceite isso explicitamente.
+    let tls = match (
+        std::env::var("AI_CLUSTER_GATEWAY_TLS_CERT"),
+        std::env::var("AI_CLUSTER_GATEWAY_TLS_KEY"),
+    ) {
+        (Ok(cert), Ok(key)) => Some(tls::load_config(&cert, &key)?),
+        (Err(_), Err(_)) => None,
+        _ => {
+            return Err(
+                "AI_CLUSTER_GATEWAY_TLS_CERT e AI_CLUSTER_GATEWAY_TLS_KEY vêm juntos".into(),
+            );
+        }
+    };
+    if tls.is_none() && !addr.ip().is_loopback() && !insecure_allowed() {
         return Err(format!(
-            "{addr} não é loopback e a perna HTTP não tem TLS; use {INSECURE_ENV}=1 numa rede fechada"
+            "{addr} não é loopback e a perna HTTP não tem TLS; configure AI_CLUSTER_GATEWAY_TLS_CERT/KEY ou use {INSECURE_ENV}=1 numa rede fechada"
         )
         .into());
     }
@@ -1609,9 +1737,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &format!("HTTP em {addr}")
         )
     );
-    println!("gateway em http://{addr} (modelo {MODEL_ID}, controller {controller})");
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    println!("gateway em {scheme}://{addr} (modelo {MODEL_ID}, controller {controller})");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    match tls {
+        Some(config) => tls::serve(listener, app, config).await?,
+        None => axum::serve(listener, app).await?,
+    }
     Ok(())
 }
 

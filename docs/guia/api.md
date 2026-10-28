@@ -52,10 +52,14 @@ Corpo:
 - `model`: obrigatório. Um dos ids de `/v1/models`.
 - `messages`: de 1 a 32 mensagens. `role` é `system`, `user` ou `assistant`. O texto total fica entre 1 e 8192 bytes.
 - `max_tokens`: padrão 16, limitado a 1..64.
-- `stream`: padrão `false`.
+- `stream`: padrão `false`. Com `stream_options: {"include_usage": true}`, um último evento (sem `choices`) traz o `usage`.
+- `temperature`: de 0 a 2, padrão 0. Zero é guloso: o mesmo prompt dá sempre a mesma resposta. Acima de 0 a resposta é sorteada.
+- `top_p`: de 0 (exclusive) a 1, padrão 1. Mantém só os tokens mais prováveis que somam essa massa. Só importa com `temperature` > 0.
+- `seed`: inteiro sem sinal. A mesma semente, com os mesmos parâmetros, repete a resposta sorteada. Sem ela, cada pedido sorteia a sua.
+- `n`: de 1 a 4 respostas alternativas (`choices`), geradas em sequência no mesmo slot; só sem `stream`.
 - O prompt tem de caber em 1 a 512 tokens.
 
-Campos não listados são ignorados. Não há temperatura, top-p nem `n`: a geração é gulosa, então o mesmo prompt dá sempre a mesma resposta.
+Campos não listados são ignorados. Valor fora da faixa de `temperature`, `top_p` ou `n` dá `400`. Só a resposta gulosa (`temperature` 0 e `n` 1) vai ao cache.
 
 Modelos de linguagem base (`gpt2`, `smollm2-135m`) não têm template de chat: as mensagens são unidas por quebra de linha e o modelo continua o texto. Modelos `instruct` usam o template ChatML.
 
@@ -72,7 +76,7 @@ Resposta sem streaming (`stream: false`):
 }
 ```
 
-`finish_reason` é `stop` (o modelo terminou) ou `length` (atingiu `max_tokens`). `completion_tokens` não conta o token de fim de texto.
+`finish_reason` é `stop` (o modelo terminou) ou `length` (atingiu `max_tokens`). `completion_tokens` conta o token de fim de texto, que também foi gerado (o texto devolvido não o traz).
 
 Com `stream: true`, a resposta é `text/event-stream`. Cada evento é `data: {...}` com `object: "chat.completion.chunk"` e `choices[0].delta`:
 

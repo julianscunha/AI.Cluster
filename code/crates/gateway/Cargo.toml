@@ -17,6 +17,13 @@ tonic = "0.14"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# TLS da perna HTTP (tls.rs): o handshake é do rustls com o provedor ring que o gRPC já usa.
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+tower-service = "0.3"
 
 [[bin]]
 name = "ai-cluster-gateway"

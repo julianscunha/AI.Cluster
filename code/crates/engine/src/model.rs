@@ -1,6 +1,7 @@
 //! What the gateway needs from a language model, whatever its architecture.
 
 use crate::cache::KvCache;
+use crate::sampling::{Rng, Sampling, pick};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -54,19 +55,29 @@ pub trait LanguageModel {
         cancel: &AtomicBool,
         on_token: &mut dyn FnMut(u32),
     ) -> Result<Vec<u32>, String> {
+        self.generate_sampled(prompt, max_new, stop, cancel, &Sampling::GREEDY, on_token)
+    }
+
+    /// [`generate_with`](Self::generate_with) com a escolha do token dada por `sampling`: guloso
+    /// (o padrão) ou amostrado por temperatura e núcleo, reproduzível pela semente.
+    fn generate_sampled(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        stop: Option<u32>,
+        cancel: &AtomicBool,
+        sampling: &Sampling,
+        on_token: &mut dyn FnMut(u32),
+    ) -> Result<Vec<u32>, String> {
         if cancel.load(Ordering::Relaxed) {
             return Err("geração cancelada".into());
         }
+        let mut rng = Rng::new(sampling.seed);
         let mut cache = self.new_cache();
         let mut produced = Vec::new();
         let mut logits = self.forward(prompt, &mut cache)?;
         while produced.len() < max_new {
-            let next = logits
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.total_cmp(b.1))
-                .map(|(id, _)| id as u32)
-                .ok_or("vocabulário vazio")?;
+            let next = pick(&logits, sampling, &mut rng).ok_or("vocabulário vazio")?;
             produced.push(next);
             on_token(next);
             // No forward for a token that will not be followed by another.

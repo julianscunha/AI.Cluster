@@ -97,6 +97,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-i4-recovery.sh`, `phase-i4-replica.sh` | Unidade em voo atravessa reinício do controller; fila volta da cópia de um nó quando os arquivos locais somem. |
 | `phase-t-soak.sh` | Rodízio de kill e pause sob carga: todo lote fecha e o cluster volta a todos os nós. |
 | `phase-j-inference.sh`, `phase-j-chat.sh` | Autenticação por chave, modelos, embeddings sobre matmul, chat com continuação determinística, erros estáveis. |
+| `phase-s-gateway-tls.sh` | Gateway com certificado serve HTTPS e recusa texto puro; certificado sem chave, ou escuta fora de loopback sem TLS, não sobe. |
 | `phase-j-shards.sh` | Projeções da SmolLM2 em dois workers dão a mesma continuação; sem worker, 503. |
 | `phase-m-request-manager.sh` | ACL e 401 por tenant; cota com 429; `interactive` passa na frente de `batch`; grafo abandonado é cancelado. |
 | `phase-o-cache.sh` | Pedido repetido vem do cache, com ganho de latência, também no streaming, e as métricas contam os acertos. |

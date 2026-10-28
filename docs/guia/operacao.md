@@ -38,7 +38,7 @@ Os tokens entram por variável de ambiente, que aparece para quem inspeciona o p
 - O certificado de cliente prova que o cliente pertence à CA. Ele não prova qual nó é: o certificado não é ligado ao `node_id`. A identidade de cada nó continua sendo a credencial de registro.
 - Não há rotação automática, lista de revogação nem emissão. Troca-se o PEM e reinicia-se.
 - O exportador de métricas (`AI_CLUSTER_METRICS_ADDR`) não usa TLS. Ele escuta em loopback por padrão. Se você expô-lo, o token de operador viaja em claro.
-- A perna HTTP do gateway não tem TLS. Ele só escuta fora de loopback com `AI_CLUSTER_INSECURE=1`.
+- A perna HTTP do gateway é HTTPS quando `AI_CLUSTER_GATEWAY_TLS_CERT` e `_KEY` estão definidos. Sem eles, só escuta fora de loopback com `AI_CLUSTER_INSECURE=1`.
 
 ## Aprovação de nós
 

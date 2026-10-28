@@ -92,8 +92,6 @@ Sem pendências: o código da fase está feito.
 | Item | O que falta | Dependência |
 |---|---|---|
 | Latência do canal de fatias | Cada camada espera a anterior (cerca de 120 idas e voltas por token) e workers no mesmo host disputam núcleos. Medir em máquinas separadas antes de otimizar. | código, hardware: duas máquinas físicas |
-| Amostragem | Temperatura, top-p e `n` não existem. | código |
-| Stream | Não há `usage` no stream, e `completion_tokens` não conta o token de fim. | código |
 | Modelo no gateway | Sem o model runtime distribuído, o gateway concentra o modelo na RAM. | código (depende de F12) |
 | Escolha de nó pelo token | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição. Sem réplica de fatias pré-carregada, o nó que herda uma faixa lê do disco na primeira vez. Sem rebalanceamento quando um nó entra. | código |
@@ -133,7 +131,6 @@ Sem pendências: o código da fase está feito.
 | Deadlines por requisição | Hoje são fixos: 30 s no gateway e 8 s no `ShardMatmul`. | código |
 | Orçamento de recursos | Não existe. | código |
 | Entrada arbitrária no grafo | Hoje só o grafo sintético e os modelos fixos. | código |
-| TLS na perna HTTP | Gateway sem TLS. Fora de loopback só com `AI_CLUSTER_INSECURE`. | código |
 | Request Manager separado do scheduler | Ainda no gateway. | código, decisão |
 
 ## F12 — Model runtime distribuído `[~]`
@@ -245,7 +242,6 @@ Sem pendências: o código da fase está feito.
 | Rotação periódica de tokens | Não há. | código |
 | Injeção de falha | Falta partição de rede e controller reiniciado no meio da carga. | código |
 | Soak longo | Rodada de horas com medição de recurso. O soak atual mede correção, não memória. | código |
-| TLS na perna HTTP do gateway | Pendente. Também listado em F11. | código |
 | Exportador de métricas | Escuta em HTTP puro, com o token de operador como bearer. Falta TLS ou mTLS. | código |
 | Tempo de boot da medida | A medida lê 512 MiB no boot, de 25 a 40 s num cartão SD, antes de o worker subir. | código |
 | Saúde do upgrade | O gate do upgrade local considera saudável só o nó que se registra; um binário que registra e quebra depois passa. Não há rollback sem systemd. | código |

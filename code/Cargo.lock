@@ -61,11 +61,17 @@ dependencies = [
  "ai-cluster-engine",
  "ai-cluster-protocol",
  "axum",
+ "hyper",
+ "hyper-util",
  "prost",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tonic",
+ "tower-service",
 ]
 
 [[package]]

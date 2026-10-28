@@ -33,7 +33,7 @@ Hoje a API é o binário `ai-cluster-gateway`, um servidor HTTP.
 
 | Variável | Padrão | Função |
 |---|---|---|
-| `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço de escuta. Fora de loopback exige `AI_CLUSTER_INSECURE=1`, porque a perna HTTP não tem TLS. |
+| `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço de escuta. Fora de loopback exige TLS (`AI_CLUSTER_GATEWAY_TLS_CERT`/`_KEY`, PEM) ou `AI_CLUSTER_INSECURE=1`, porque a perna HTTP não tem TLS. |
 | `AI_CLUSTER_CONTROLLER` | `http://127.0.0.1:50051` | Endpoint gRPC do controller. |
 | `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. |
 | `AI_CLUSTER_TENANTS` | — | Tenants adicionais, no formato `nome=chave[,models=a\|b][,tokens=N][,class=c];...`. |
@@ -72,7 +72,7 @@ Cada modelo carregado aparece com a versão do manifesto (`version`). Sem manife
 
 ## Chat completions
 
-Campos aceitos: `model`, `messages` (papéis `system`, `user` e `assistant`), `max_tokens` e `stream`.
+Campos aceitos: `model`, `messages` (papéis `system`, `user` e `assistant`), `max_tokens`, `stream`, `stream_options.include_usage`, `temperature` (0 a 2, padrão 0 = guloso), `top_p`, `seed` e `n` (1 a 4, sem `stream`). Amostrar é do `engine` (`sampling.rs`: softmax com temperatura, núcleo, semente splitmix64); só a resposta gulosa entra no cache.
 
 - `max_tokens` tem padrão 16 e vai de 1 a 64. Valor fora da faixa é ajustado, não rejeitado.
 - Resposta sem stream: `choices[0].message`, `finish_reason` (`stop` ou `length`) e `usage`.
