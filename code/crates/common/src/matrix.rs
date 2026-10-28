@@ -75,6 +75,18 @@ impl Matrix {
     /// one and the cross-node checksum is unaffected — only the time to produce it
     /// changes. Threads beyond the row count get nothing to do; 0 means 1.
     pub fn multiply_with_threads(&self, rhs: &Matrix, threads: usize) -> Option<Matrix> {
+        static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        self.multiply_cancellable(rhs, threads, &NEVER)
+    }
+
+    /// [`multiply_with_threads`](Self::multiply_with_threads) que olha `cancel` a cada linha de
+    /// saída: ligada, a conta para e devolve `None` (o chamador distingue pela própria bandeira).
+    pub fn multiply_cancellable(
+        &self,
+        rhs: &Matrix,
+        threads: usize,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Option<Matrix> {
         if self.cols != rhs.rows {
             return None;
         }
@@ -84,30 +96,39 @@ impl Matrix {
         let threads = threads.max(1).min(rows.max(1));
         // `m == 0` leaves nothing to chunk; the serial path already handles it.
         if threads <= 1 || m == 0 {
-            self.multiply_rows(rhs, 0, &mut out.data);
-            return Some(out);
+            self.multiply_rows(rhs, 0, &mut out.data, cancel);
+            return cancelled_or(cancel, out);
         }
         // Chunks are whole rows, so a chunk's first row is its index times the size.
         let chunk = rows.div_ceil(threads);
         std::thread::scope(|scope| {
             for (index, chunk_out) in out.data.chunks_mut(chunk * m).enumerate() {
                 let row_start = index * chunk;
-                scope.spawn(move || self.multiply_rows(rhs, row_start, chunk_out));
+                scope.spawn(move || self.multiply_rows(rhs, row_start, chunk_out, cancel));
             }
         });
-        Some(out)
+        cancelled_or(cancel, out)
     }
 
     /// Accumulates the `self * rhs` rows starting at `row_start` into `out`, one row per
     /// `rhs.cols` elements. The kernel the serial and threaded paths share, so the two
     /// cannot drift apart.
-    fn multiply_rows(&self, rhs: &Matrix, row_start: usize, out: &mut [f64]) {
+    fn multiply_rows(
+        &self,
+        rhs: &Matrix,
+        row_start: usize,
+        out: &mut [f64],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) {
         let m = rhs.cols as usize;
         if m == 0 {
             return;
         }
         let k = self.cols as usize;
         for (local_row, row_out) in out.chunks_mut(m).enumerate() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             let i = row_start + local_row;
             for p in 0..k {
                 let a = self.data[i * k + p];
@@ -136,6 +157,15 @@ impl Matrix {
     }
 }
 
+/// O produto, ou `None` se a conta foi cancelada no meio (a matriz estaria incompleta).
+fn cancelled_or(cancel: &std::sync::atomic::AtomicBool, out: Matrix) -> Option<Matrix> {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 /// Multiply-add count for `rows x shared x cols`, matching BLAS convention.
 pub fn flops(rows: u32, shared: u32, cols: u32) -> f64 {
     2.0 * f64::from(rows) * f64::from(shared) * f64::from(cols)
@@ -152,6 +182,23 @@ pub const REFERENCE_CORE_GFLOPS: f64 = 6.0;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancelled_multiply_stops_and_returns_nothing() {
+        use std::sync::atomic::AtomicBool;
+        let n = 64;
+        let a = Matrix {
+            rows: n,
+            cols: n,
+            data: vec![1.0; (n * n) as usize],
+        };
+        let off = AtomicBool::new(false);
+        let product = a.multiply_cancellable(&a, 2, &off).expect("sem cancelar");
+        assert_eq!(product.data[0], f64::from(n));
+        let on = AtomicBool::new(true);
+        assert!(a.multiply_cancellable(&a, 2, &on).is_none());
+        assert!(a.multiply_cancellable(&a, 1, &on).is_none());
+    }
 
     fn from_rows(rows: &[&[f64]]) -> Matrix {
         let rows_u32 = rows.len() as u32;

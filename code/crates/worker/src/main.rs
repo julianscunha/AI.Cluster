@@ -1,5 +1,6 @@
 mod shards;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,15 @@ use tokio::time;
 
 const DEFAULT_CONTROLLER: &str = "http://127.0.0.1:50051";
 const HEARTBEAT_INTERVAL_SECS: u64 = 5;
+
+/// Intervalo entre batidas; `AI_CLUSTER_HEARTBEAT_SECS` (1 a 10) o muda. Menos que o padrão acelera
+/// o aviso de cancelamento; o controller dá o nó por morto só depois da graça de heartbeat.
+fn heartbeat_secs() -> u64 {
+    std::env::var("AI_CLUSTER_HEARTBEAT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map_or(HEARTBEAT_INTERVAL_SECS, |secs| secs.clamp(1, 10))
+}
 /// How long a worker waits before asking for work again when it found none. Kept
 /// short: a unit enqueued just after a poll should be picked up almost at once.
 /// A worker that just finished a unit asks again immediately, without waiting.
@@ -69,6 +79,46 @@ const REFERENCE_MEMORY_MBPS: f64 = 10_000.0;
 ///
 /// A static because one worker process is one node — the same reason `CURRENT_COMPUTE` is.
 static STATE_REPLICA: Mutex<Option<StateReplica>> = Mutex::new(None);
+
+/// As unidades que este nó está calculando, cada uma com a bandeira que a para (o controller
+/// cancelou a requisição). Entra antes da conta e sai depois dela.
+static RUNNING: Mutex<Option<HashMap<String, Arc<AtomicBool>>>> = Mutex::new(None);
+
+fn running_flag(work_id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    RUNNING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(work_id.to_string(), flag.clone());
+    flag
+}
+
+fn forget_running(work_id: &str) {
+    if let Some(running) = RUNNING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_mut()
+    {
+        running.remove(work_id);
+    }
+}
+
+/// Liga a bandeira das unidades que o controller mandou cancelar; ids desconhecidos (já
+/// terminaram) são ignorados.
+fn cancel_running(work_ids: &[String]) {
+    if let Some(running) = RUNNING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+    {
+        for work_id in work_ids {
+            if let Some(flag) = running.get(work_id) {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+}
 
 /// Where this node keeps its copy, from `AI_CLUSTER_STATE_REPLICA`. Unset means it keeps
 /// none: a plain compute node, with the controller's own files as the only copy of the state.
@@ -426,7 +476,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let credential = credential.clone();
         let (broken, update, update_cmd) = (broken.clone(), update.clone(), update_cmd.clone());
         async move {
-            let mut ticker = time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+            let mut ticker = time::interval(Duration::from_secs(heartbeat_secs()));
             let mut rejected = String::new(); // versão/assinatura recusada: não reconfere a cada heartbeat
             loop {
                 tokio::select! {
@@ -450,6 +500,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(replica) = beat.replica {
                             store_state_replica(&replica);
                         }
+                        cancel_running(&beat.cancel_work_ids);
                         if let Some(release) = beat.release
                             && let Some(command) = update_cmd.as_deref()
                         {
@@ -592,9 +643,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         time::sleep(delay).await;
                     }
                     let shape = (unit.rows, unit.shared, unit.cols);
-                    let computed =
-                        tokio::task::spawn_blocking(move || execute_work(&unit, &node_id, cores))
-                            .await;
+                    let cancel = running_flag(&work_id);
+                    let flag = cancel.clone();
+                    let computed = tokio::task::spawn_blocking(move || {
+                        execute_work(&unit, &node_id, cores, &flag)
+                    })
+                    .await;
+                    forget_running(&work_id);
+                    if cancel.load(Ordering::Relaxed) {
+                        println!("trabalho {work_id} cancelado pelo controller; sem resultado");
+                        return;
+                    }
                     match computed {
                         Err(err) => {
                             println!("trabalho {work_id}: cálculo falhou: {err}");
@@ -742,7 +801,12 @@ fn verify_model_dirs(root: &Path) -> Result<(), String> {
 /// the checksum.
 ///
 /// Returns `None` when the payload lengths disagree with the declared shape.
-fn execute_work(unit: &WorkUnit, node_id: &str, cores: usize) -> Option<WorkResult> {
+fn execute_work(
+    unit: &WorkUnit,
+    node_id: &str,
+    cores: usize,
+    cancel: &AtomicBool,
+) -> Option<WorkResult> {
     let expected_a = (unit.rows as usize).checked_mul(unit.shared as usize)?;
     let expected_b = (unit.shared as usize).checked_mul(unit.cols as usize)?;
     if unit.matrix_a.len() != expected_a || unit.matrix_b.len() != expected_b {
@@ -759,7 +823,7 @@ fn execute_work(unit: &WorkUnit, node_id: &str, cores: usize) -> Option<WorkResu
         data: unit.matrix_b.clone(),
     };
     let started = Instant::now();
-    let product = a.multiply_with_threads(&b, cores)?;
+    let product = a.multiply_cancellable(&b, cores, cancel)?;
     let compute_time_us = started.elapsed().as_micros() as u64;
     // Compute the checksum before `data` is moved out of the product.
     let checksum = product.checksum();
@@ -2211,7 +2275,8 @@ mod tests {
             priority: 0,
             require_attested: false,
         };
-        let result = execute_work(&unit, "node-a", 4).expect("shapes match");
+        let result =
+            execute_work(&unit, "node-a", 4, &AtomicBool::new(false)).expect("shapes match");
         assert_eq!(result.work_id, "w1");
         assert_eq!(result.node_id, "node-a");
         assert_eq!(result.rows, 2);
@@ -2237,7 +2302,7 @@ mod tests {
             priority: 0,
             require_attested: false,
         };
-        assert!(execute_work(&unit, "node-a", 1).is_none());
+        assert!(execute_work(&unit, "node-a", 1, &AtomicBool::new(false)).is_none());
     }
 
     #[test]

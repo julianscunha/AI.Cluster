@@ -52,7 +52,7 @@ Uma reserva segura um nó inteiro para uma requisição futura.
 | `benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha unidades de multiplicação de matrizes N×N e compara compute com transferência. `--local` roda o mesmo trabalho no processo, sem despachar. `--min-threads` recusa nós com menos threads. `--request-id` enfileira sob um id existente (por exemplo, o de uma reserva). `--priority` define a classe: maior sai primeiro. Padrões: `--size 256`, `--repetitions 1`, `--min-threads 0`, `--priority 0`. |
 | `graph [--size N]` | Enfileira o grafo diamante (A, depois B e C, depois D) e acompanha até drenar. Padrão `--size 128`. |
 | `request trace <request_id>` | Unidades de uma requisição, em que estado estão, em que nó rodaram e quanto custaram. |
-| `request cancel <request_id>` | Remove da fila as unidades da requisição. As que já estão em um worker terminam. |
+| `request cancel <request_id>` | Remove da fila as unidades da requisição e manda parar as que já estão em um worker (o aviso vai na próxima batida; a conta é interrompida e o resultado, se vier, é recusado). |
 
 ## Modelos (local)
 

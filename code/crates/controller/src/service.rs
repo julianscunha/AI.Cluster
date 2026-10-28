@@ -519,6 +519,7 @@ impl ClusterControl for ClusterControlService {
             replica,
             // o nó de recuperação não recebe a release nem a cópia do estado
             release: release.filter(|_| !recovery),
+            cancel_work_ids: self.work.take_cancels(&request.node_id),
         }))
     }
 
@@ -1358,7 +1359,7 @@ impl ClusterControl for ClusterControlService {
         }
         self.audit(&peer, "cancel_request", &request_id);
         let (removed, in_flight) = self.work.cancel_request(&request_id);
-        if removed > 0 {
+        if removed > 0 || in_flight > 0 {
             self.events.record(
                 unix_ms(),
                 "request_cancelled",

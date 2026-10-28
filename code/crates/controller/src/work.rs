@@ -114,6 +114,9 @@ struct Inner {
     /// O nó que acabou de perder a unidade (resultado recusado ou saída do nó). Enquanto houver
     /// outro nó que a comporte, ela não volta a ele. Não persiste: o reinício só esquece a preferência.
     lost_by: HashMap<String, String>,
+    /// Por nó, as unidades em voo canceladas que ele ainda não soube (entregues na próxima batida).
+    /// Não persiste: sem a notícia o nó termina a conta e o resultado é recusado.
+    cancels: HashMap<String, Vec<String>>,
     /// Per node, how many times slower (or faster) than the cost model it really computes: the
     /// moving average of actual over predicted compute time (P1). Not persisted; a restart
     /// relearns it from the first few units.
@@ -135,6 +138,9 @@ fn avoids(
             .iter()
             .any(|(id, capability, _)| id != node_id && fits(unit, capability))
 }
+
+/// Quantos cancelamentos ficam à espera da batida de um nó; um nó mudo não faz a lista crescer.
+const MAX_PENDING_CANCELS: usize = 1024;
 
 /// Weight of the newest observation in the learned ratio.
 const LEARNING_RATE: f64 = 0.3;
@@ -1107,13 +1113,27 @@ impl WorkStore {
             inner.attempts.remove(work_id);
             inner.keep.remove(work_id);
         }
-        let in_flight = inner
+        // As unidades já em voo saem da tabela de posse (o resultado que vier será recusado) e o
+        // nó é avisado na próxima batida para parar a conta.
+        let flying: Vec<(String, String)> = inner
             .dispatched
-            .values()
-            .filter(|record| record.unit.request_id == request_id)
-            .count();
+            .iter()
+            .filter(|(_, record)| record.unit.request_id == request_id)
+            .map(|(work_id, record)| (work_id.clone(), record.node_id.clone()))
+            .collect();
+        for (work_id, node_id) in &flying {
+            inner.dispatched.remove(work_id);
+            inner.attempts.remove(work_id);
+            inner.lost_by.remove(work_id);
+            inner.keep.remove(work_id);
+            let pending = inner.cancels.entry(node_id.clone()).or_default();
+            if pending.len() < MAX_PENDING_CANCELS {
+                pending.push(work_id.clone());
+            }
+        }
+        let in_flight = flying.len();
         let removed = before - inner.queue.len();
-        if removed > 0 {
+        if removed > 0 || in_flight > 0 {
             // A kept intermediate output nothing can read any more is dead weight.
             drop_unreferenced_outputs(&mut inner);
             self.save_locked(&mut inner);
@@ -1205,6 +1225,11 @@ impl WorkStore {
         }
         self.save_locked(&mut inner);
         outcome
+    }
+
+    /// As unidades canceladas que o nó ainda não soube; esvazia a lista.
+    pub fn take_cancels(&self, node_id: &str) -> Vec<String> {
+        self.lock().cancels.remove(node_id).unwrap_or_default()
     }
 
     /// Owners of in-flight units whose node is not in `known`, in stable order.
@@ -1398,7 +1423,14 @@ mod tests {
 
         let (removed, in_flight) = store.cancel_request("req-a");
         assert_eq!((removed, in_flight), (1, 1));
-        assert_eq!(store.cancel_request("req-a"), (0, 1));
+        // A unidade em voo saiu da tabela e o nó será avisado, uma vez só.
+        assert_eq!(store.take_cancels("n"), vec!["a1".to_string()]);
+        assert!(store.take_cancels("n").is_empty());
+        assert!(
+            store.complete(result("a1", 10), 5).is_none(),
+            "o resultado de uma unidade cancelada é recusado"
+        );
+        assert_eq!(store.cancel_request("req-a"), (0, 0));
         assert_eq!(store.cancel_request("ghost"), (0, 0));
         // Only req-b's unit is left to claim.
         let next = store.claim("n", &CapabilityReport::default(), 2).unwrap();

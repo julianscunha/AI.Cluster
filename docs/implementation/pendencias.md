@@ -127,7 +127,7 @@ Sem pendências: o código da fase está feito.
 | Estados da requisição | Não existem. | código |
 | Idempotência | Não existe. | código |
 | Equidade e backpressure | Equidade entre tenants e backpressure do spec. Hoje há tetos fixos de admissão. | código |
-| Cancelamento no worker | Unidades em execução não podem ser canceladas, e `ShardMatmul` em voo não recebe sinal. | código |
+| Cancelamento do ShardMatmul | `ShardMatmul` em voo não recebe sinal de cancelamento (as unidades de trabalho já recebem, pela batida). | código |
 | Deadlines por requisição | Hoje são fixos: 30 s no gateway e 8 s no `ShardMatmul`. | código |
 | Orçamento de recursos | Não existe. | código |
 | Entrada arbitrária no grafo | Hoje só o grafo sintético e os modelos fixos. | código |

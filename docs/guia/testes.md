@@ -87,6 +87,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-g-placement.sh` | O custo escolhe o nó capaz, não o fraco. |
 | `phase-g-quarantine.sh` | Worker que mente no checksum vai para `QUARANTINED` e o trabalho termina no honesto. |
 | `phase-g-reservations.sh` | Nó reservado recusa trabalho de outras requisições e roda o da dona. |
+| `phase-f11-cancel.sh` | `request cancel` para a multiplicação que já roda no worker: o aviso chega pela batida, a conta é interrompida e nenhum resultado é enviado. |
 | `phase-g-slots.sh`, `phase-g-cores.sh`, `phase-g-priority.sh` | Slots de concorrência, cores concedidos e prioridade de unidade. |
 | `phase-c-benchmark.sh`, `phase-c-current.sh` | Perfil com compute medido e capacidade corrente com confiança. |
 | `phase-c4-health.sh`, `phase-c-storage-health.sh`, `phase-c-battery.sh` | Nó quente, com disco degradado ou com bateria descarregando tem saúde pior, e a unidade vai para o nó saudável. |

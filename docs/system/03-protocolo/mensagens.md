@@ -54,7 +54,7 @@ Total: 2 serviços e 24 RPCs.
 | `RegisterNodeRequest` | `identity` (1), `capability` (2), `replica` (3) | `replica` é a cópia de estado que o nó guarda |
 | `RegisterNodeResponse` | `accepted` (1), `cluster_id` (2), `message` (3), `node_credential` (4) | a credencial é emitida a cada registro de quem não prova a anterior |
 | `HeartbeatRequest` | `node_id` (1), `unix_ms` (2), `replica_epoch_unix_ms` (3) | época zero quando o nó não guarda cópia. O `unix_ms` do nó é informativo: a vivacidade usa o relógio do controller |
-| `HeartbeatResponse` | `acknowledged` (1), `replica` (2), `release` (3) | `replica` só vem quando a época do controller avançou; `release` só vem quando difere da versão do nó e o rollout o liberou |
+| `HeartbeatResponse` | `acknowledged` (1), `replica` (2), `release` (3), `cancel_work_ids` (4) | `cancel_work_ids`: unidades em voo canceladas por `CancelRequest`, o nó para a conta (até uma batida de atraso). `replica` só vem quando a época do controller avançou; `release` só vem quando difere da versão do nó e o rollout o liberou |
 | `Release` | `version` (1), `url` (2), `sha256` (3), `image_sha256` (4), `signature` (5) | release do sistema. `sha256` é do artefato; `image_sha256` é o do conteúdo do slot depois de gravado; `signature` é Ed25519 em base64 (88 caracteres), conferida pelo nó |
 | `SetReleaseRequest` / `SetReleaseResponse` | `release` (1) / — | ver [[versionamento]] para a validação e o rollout |
 | `HealthStreamRequest` | `node_id` (1), `health` (2), `capability` (3) | `capability` é opcional; quando vem, substitui o perfil guardado e `current_compute_score` carrega a medida mais recente |

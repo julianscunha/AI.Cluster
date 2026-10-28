@@ -226,6 +226,10 @@ message HeartbeatResponse {
   /// Release que este nó deve passar a rodar (F19). Presente só quando difere da versão que o
   /// nó registrou e o rollout o liberou; ausente na maioria das batidas.
   Release release = 3;
+  /// Unidades que o nó está rodando e o controller cancelou (`CancelRequest`): o nó para a conta e
+  /// não envia resultado. Vazio na maioria das batidas. Se a resposta se perder, a conta termina
+  /// e o resultado é recusado (a posse já saiu da tabela).
+  repeated string cancel_work_ids = 4;
 }
 
 /// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato e a assinatura Ed25519

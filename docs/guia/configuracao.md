@@ -61,6 +61,7 @@ Convenções:
 | `AI_CLUSTER_RELEASE_FILE` | `/etc/aic-release` | Arquivo com a versão que o nó roda. Sem ele, vale a versão do binário. |
 | `AI_CLUSTER_MEASURE_FILE` | `/run/aic-measure` | Arquivo com a medida (SHA-256) do slot ativo, reportada ao controller. |
 | `AI_CLUSTER_CPU_THREADS` | threads disponíveis | Número de threads reportado no lugar do real. |
+| `AI_CLUSTER_HEARTBEAT_SECS` | `5` | Intervalo entre batidas, de 1 a 10 s. Menos que o padrão encurta o tempo até o aviso de cancelamento chegar ao nó. |
 | `AI_CLUSTER_MEMORY_BYTES` | `MemTotal` | Memória reportada no lugar da real. |
 | `AI_CLUSTER_COMPUTE_SCORE` | medido | Fixa o score de compute (maior que zero). O nó deixa de remedir. |
 | `AI_CLUSTER_NETWORK_SCORE` | medido na interface | Fixa o score de rede (maior que zero). Zero ou inválido não fixa: o nó mede. |
