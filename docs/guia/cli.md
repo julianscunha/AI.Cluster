@@ -64,6 +64,9 @@ Estes comandos leem e gravam arquivos de um diretório de modelo. Não usam o co
 | `model verify <dir>` | Confere os arquivos do diretório com o `manifest.json`. Sai com erro se não houver manifest ou se algum arquivo diverge. |
 | `model list` | Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, parâmetros, precisão, tamanho, contexto, se o motor atual o roda e o motivo quando não. Exige o token de operador. |
 | `model check <id> [--ctx N]` | Diz se o cluster comporta o modelo: `OK` ou `NOK` com o motivo (o que falta em GB e quantos nós acrescentar). Soma a RAM dos nós aprovados e vivos (no máximo 80% de cada um, menos 128 MiB) contra pesos, cache de contexto e 10% de margem. Sai com código 1 no NOK. |
+| `model start <id> [--ctx N]` | Sobe o modelo (GGUF) no cluster: confere a RAM, fixa o plano de workers com RPC e cria a chave de API do tenant `default` (mostrada uma vez; o controller guarda o hash). Sai com código 1 no NOK. |
+| `model stop` | Tira o modelo do gateway. As chaves continuam valendo. |
+| `model status` | O modelo pedido, a geração, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e os prefixos das chaves. |
 
 ## Atualização pelo controller
 

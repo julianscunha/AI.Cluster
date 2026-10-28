@@ -19,6 +19,32 @@ Referência dos modelos de pesos abertos que o AI Cluster tem como alvo, do mais
 > **Notas (0–100):** **Rac** raciocínio (MMLU-Pro; `*` = MMLU) · **Cód** código (HumanEval) · **Mat** matemática (GSM8K; `†` = MATH, `‡` = MATH-500) · **Ins** instruções (IFEval) · **Fer** chamada de ferramentas (BFCL). `—` = a ficha oficial não publica.
 > **Idi:** `pt` = português listado na ficha · **Esp:** 🧮 matemática · 👁️ visão
 
+## Como rodar um modelo (3 comandos)
+
+Com o controller, o gateway e pelo menos um worker no ar (cada worker com o `rpc-server`, veja [[configuracao]]):
+
+```bash
+ai-cluster model list                    # o que há na pasta de modelos do controller (GGUF)
+ai-cluster model check <id>              # cabe na RAM dos workers? OK, ou NOK com o que falta
+ai-cluster model start <id>              # sobe o modelo; mostra a chave de API uma vez
+ai-cluster model status                  # estado (CARREGANDO, PRONTO), workers do plano e tokens/s
+```
+
+1. Baixe um modelo em **GGUF** e ponha na pasta `AI_CLUSTER_MODELS_DIR` do controller (a mesma pasta
+   precisa estar visível ao gateway).
+2. `model start` confere a soma da RAM dos workers aprovados e vivos. Se não couber, diz o que falta e
+   quantos workers acrescentar. Se couber, o controller guarda o pedido, cria a chave de API (só o
+   **hash** fica com ele) e o gateway carrega o modelo pelo llama.cpp, dividido com os workers por RPC
+   sobre mTLS.
+3. Use a chave como `Authorization: Bearer <chave>` em `POST /v1/chat/completions`, com o `model` que
+   `GET /v1/models` mostra (o nome do arquivo sem `.gguf`).
+4. **Worker novo:** depois de 30 s com a mesma lista de workers, o controller refaz o plano, o gateway
+   recarrega o modelo e o `model status` mostra o benchmark novo. `model stop` tira o modelo da API; a
+   chave continua valendo no próximo `start`.
+
+Limites de hoje: uma geração por vez, o certificado do túnel não é por nó e os binários do llama.cpp
+ainda não vão nas imagens do SO (veja [[pendencias]]).
+
 ## Texto e visão
 
 | Nv | Modelo | Par. | RAM | Ctx | Mod | AA | Rac | Cód | Mat | Ins | Fer | Idi | Esp | ✅ |

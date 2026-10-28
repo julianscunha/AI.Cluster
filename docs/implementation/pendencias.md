@@ -142,6 +142,9 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 |---|---|---|
 | Relógio dos nós sem RTC | O Pi iniciou em 2024-04: o certificado mTLS (válido a partir de hoje) foi recusado como "ainda não válido". A imagem não roda NTP. Falta `ntpd`/`chrony` no boot e esperar a hora antes de abrir o túnel. | código |
 | Certificado por nó | O túnel exige certificado da CA, mas não amarra ao `node_id` (o mesmo certificado serve a todos os workers) e um worker poderia abrir o rpc-server de outro. Falta o controller emitir certificados por nó e um papel "gateway" separado. | código |
-| Controller orquestra | `models start/stop/status` no controller, geração das chaves (hash), plano de camadas (`-ngl`, `--tensor-split`) pela RAM dos workers e reação a worker novo. Hoje o gateway lê os endpoints do ambiente. | código |
 | Binários na imagem | `ggml-rpc-server` (armv7 e x86) e `llama-server` ainda não vão nas imagens do SO nem nos contêineres. | código |
 | Queda de worker | Se um worker cai no meio de um pedido o `llama-server` aborta e o gateway o reinicia (o modelo fica `loading` e recarrega). | código |
+| Plano de camadas | O controller manda `-ngl 99` e o llama.cpp reparte as camadas pela memória que cada `rpc-server` informa. Falta o plano por camadas inteiras e `--tensor-split` calculado pela RAM dos workers, e o `--device` fixando a ordem. | código |
+| Versão do `rpc-server` | O worker anuncia `rpc_version`, mas o controller não a confere com a do `llama-server` do gateway. | código |
+| Várias chaves | Só nasce o tenant `default` (todos os modelos, sem cota). Faltam `model key add/rotate`, cota e modelos por tenant. | código |
+| Recarga ao entrar worker | Cada mudança no plano reinicia o `llama-server` (relê o GGUF e reenvia os tensores). | código |

@@ -39,6 +39,8 @@ Convenções:
 | `AI_CLUSTER_INSECURE` | desligado | `1` permite subir sem TLS (tokens em claro). Com certificado presente, o certificado prevalece. |
 | `AI_CLUSTER_RELEASE_STATE` | memória | Arquivo de uma linha com a release desejada do rollout. Sobrevive a reinício. |
 | `AI_CLUSTER_MODELS_DIR` | — | Pasta de modelos do controller (GGUF ou pastas com safetensors). `ai-cluster model list` lê os cabeçalhos e diz o que é cada modelo e se o motor atual o roda. Sem ela, a lista vem vazia. |
+| `AI_CLUSTER_MODELS_STATE` | `$AI_CLUSTER_DATA_DIR/models.state` | Arquivo com o modelo pedido, a geração e o hash das chaves de API. Sem ele (e sem `AI_CLUSTER_DATA_DIR`) o pedido não sobrevive a um reinício. |
+| `AI_CLUSTER_PLAN_STABLE_MS` | `30000` | Quanto a lista de workers com RPC precisa ficar igual antes de o plano do modelo mudar (e a geração subir). |
 | `AI_CLUSTER_ROLLOUT_WAVE` | `0` (todos) | Quantos nós atualizam ao mesmo tempo depois do canário. |
 | `AI_CLUSTER_PLACEMENT` | ligado | `off`, `0` ou `false` desliga o placement por custo e despacha na ordem de chegada. Serve para comparação. |
 | `AI_CLUSTER_PLACEMENT_TOLERANCE` | `0.10` | Faixa de histerese do custo, como fração do custo do nó mais barato. Negativo vira `0`. |
@@ -109,6 +111,7 @@ Convenções:
 | `AI_CLUSTER_SMOLLM2_SUBDIR` | `smollm2` | Pasta dos pesos dentro de `AI_CLUSTER_MODEL_DIR` nos workers (só para fatias). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` | — | Liga o modelo `smollm2-135m-instruct` (com template ChatML). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Nós que guardam as projeções do `smollm2-135m-instruct`. |
+| `AI_CLUSTER_MODELS_DIR` (gateway) | — | A mesma pasta de modelos do controller, vista pelo gateway. Com ela, o gateway aplica o modelo que o controller pede (`model start`). `AI_CLUSTER_LLAMA_MODEL` fixo vale mais que o controller. |
 | `AI_CLUSTER_LLAMA_MODEL` | — | Caminho de um GGUF. Liga o modelo servido pelo `llama-server` do llama.cpp (ADR-022): o gateway é o nó principal. |
 | `AI_CLUSTER_LLAMA_MODEL_ID` | nome do arquivo | Id do modelo na API (`GET /v1/models`). |
 | `AI_CLUSTER_LLAMA_SERVER_BIN` | `llama-server` | Caminho do `llama-server`. |
