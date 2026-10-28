@@ -88,15 +88,24 @@ fn gb(bytes: u64) -> f64 {
     bytes as f64 / 1_073_741_824.0
 }
 
-/// Compara `model` com a RAM de `nodes` para um contexto de `context` tokens (0 = o padrão).
-pub fn check(model: &ModelEntry, context: u64, nodes: &[NodeMemory]) -> Verdict {
+/// `AI_CLUSTER_LLAMA_SLOTS` (1 a 16, padrão 1): o `llama-server` aloca o cache de cada vaga, então o
+/// controller lê a mesma variável do gateway para estimar o cache total.
+pub fn slots_from_env() -> u64 {
+    std::env::var("AI_CLUSTER_LLAMA_SLOTS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map_or(1, |n| n.clamp(1, 16))
+}
+
+/// Compara `model` com a RAM de `nodes` para `slots` vagas de `context` tokens cada (0 = o padrão).
+pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory]) -> Verdict {
     let context = if context == 0 {
         DEFAULT_CONTEXT
     } else {
         context
     };
     let weights_bytes = model.bytes;
-    let kv = kv_bytes(model, context);
+    let kv = kv_bytes(model, context).saturating_mul(slots.max(1));
     let margin_bytes = (weights_bytes as f64 * WEIGHT_MARGIN) as u64;
     let required_bytes = weights_bytes
         .saturating_add(kv)
@@ -187,7 +196,7 @@ mod tests {
 
     #[test]
     fn it_fits_when_the_sum_of_the_nodes_covers_weights_and_margin() {
-        let verdict = check(&model(8), 0, &[node(4), node(4), node(4)]);
+        let verdict = check(&model(8), 0, 1, &[node(4), node(4), node(4)]);
         assert!(verdict.ok, "{}", verdict.message);
         assert_eq!(verdict.nodes, 3);
         assert!(verdict.required_bytes > 8 * GIB);
@@ -196,13 +205,13 @@ mod tests {
 
     #[test]
     fn it_says_how_much_is_missing_and_how_many_nodes_to_add() {
-        let verdict = check(&model(16), 0, &[node(4), node(4)]);
+        let verdict = check(&model(16), 0, 1, &[node(4), node(4)]);
         assert!(!verdict.ok);
         assert!(verdict.message.contains("faltam"), "{}", verdict.message);
         assert!(verdict.message.contains("acrescente cerca de"));
         // Mais nós do mesmo tamanho resolvem: o veredito deixa de ser NOK.
         let more: Vec<_> = (0..8).map(|_| node(4)).collect();
-        assert!(check(&model(16), 0, &more).ok);
+        assert!(check(&model(16), 0, 1, &more).ok);
     }
 
     #[test]
@@ -211,7 +220,7 @@ mod tests {
             total_bytes: 100 << 20,
             used_fraction: 0.0,
         };
-        let verdict = check(&model(1), 0, &[starved]);
+        let verdict = check(&model(1), 0, 1, &[starved]);
         assert!(!verdict.ok);
         assert!(
             verdict.message.contains("quase não têm RAM"),
@@ -234,7 +243,7 @@ mod tests {
             total_bytes: u64::MAX,
             used_fraction: 0.0,
         };
-        assert!(check(&model(1), 0, &[huge.clone(), huge]).ok);
+        assert!(check(&model(1), 0, 1, &[huge.clone(), huge]).ok);
         // Medida inválida: o nó conta como cheio.
         let nan = NodeMemory {
             total_bytes: 8 * GIB,
@@ -245,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_missing_kv_estimate_is_said_out_loud() {
-        let verdict = check(&model(1), 0, &[node(8)]);
+        let verdict = check(&model(1), 0, 1, &[node(8)]);
         assert!(verdict.ok);
         assert!(
             verdict.message.contains("não estimado"),
@@ -256,7 +265,7 @@ mod tests {
 
     #[test]
     fn no_node_is_a_nok_with_its_own_reason() {
-        let verdict = check(&model(1), 0, &[]);
+        let verdict = check(&model(1), 0, 1, &[]);
         assert!(!verdict.ok);
         assert!(verdict.message.contains("nenhum nó"));
     }
@@ -278,6 +287,19 @@ mod tests {
     }
 
     #[test]
+    fn each_slot_adds_its_own_kv_cache() {
+        let mut m = model(1);
+        m.layers = 32;
+        m.hidden = 4096;
+        m.heads = 32;
+        m.kv_heads = 32;
+        m.context = 4096;
+        let one = check(&m, 4096, 1, &[node(8)]).kv_bytes;
+        assert_eq!(check(&m, 4096, 4, &[node(8)]).kv_bytes, 4 * one);
+        assert_eq!(check(&m, 4096, 0, &[node(8)]).kv_bytes, one);
+    }
+
+    #[test]
     fn a_bigger_context_can_turn_an_ok_into_a_nok() {
         let mut m = model(4);
         m.layers = 32;
@@ -286,7 +308,7 @@ mod tests {
         m.kv_heads = 32;
         m.context = 131_072;
         let nodes = [node(4), node(4)];
-        assert!(check(&m, 2048, &nodes).ok);
-        assert!(!check(&m, 131_072, &nodes).ok);
+        assert!(check(&m, 2048, 1, &nodes).ok);
+        assert!(!check(&m, 131_072, 1, &nodes).ok);
     }
 }

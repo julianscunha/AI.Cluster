@@ -827,7 +827,12 @@ impl ClusterControl for ClusterControlService {
         };
         let candidates = self.rpc_candidates();
         let nodes = self.rpc_node_memory();
-        let verdict = ai_cluster_catalog::check::check(&model, request.context, &nodes);
+        let verdict = ai_cluster_catalog::check::check(
+            &model,
+            request.context,
+            ai_cluster_catalog::check::slots_from_env(),
+            &nodes,
+        );
         let check = CheckModelResponse {
             ok: verdict.ok,
             weights_bytes: verdict.weights_bytes,
@@ -1009,7 +1014,12 @@ impl ClusterControl for ClusterControlService {
                 })
             })
             .collect();
-        let verdict = ai_cluster_catalog::check::check(&model, request.context, &nodes);
+        let verdict = ai_cluster_catalog::check::check(
+            &model,
+            request.context,
+            ai_cluster_catalog::check::slots_from_env(),
+            &nodes,
+        );
         let (ok, message) = if model.supported {
             (verdict.ok, verdict.message)
         } else {

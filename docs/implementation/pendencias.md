@@ -89,7 +89,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes, manifesto assinado e conferência de checksum dos GGUF. O motor próprio segue só em fp32. | código, decisão |
 | Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
-| Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). Falta estimar o tempo por token, reservar espaço para o failover e contar o cache KV de várias vagas (`AI_CLUSTER_LLAMA_SLOTS`). | código |
+| Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). Falta estimar o tempo por token e reservar espaço para o failover. | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
 | N4 a N9 | Pré-carga e cache de modelo em disco dos workers, pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
