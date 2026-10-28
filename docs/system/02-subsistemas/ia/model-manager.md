@@ -24,7 +24,7 @@ O controller lê `AI_CLUSTER_MODELS_DIR` (um nível: `*.gguf` ou pastas com `con
 
 Comandos (veja [[cli]] no guia): `model list`, `model check <id> [--ctx N]`, `model start <id> [--ctx N]`, `model stop`, `model status`.
 
-- **OK/NOK por RAM** (`catalog::check`): `precisa = pesos + cache KV (2·2·camadas·contexto·largura·kv/cabeças bytes, f16) + 10% de margem`; `tem` = soma da RAM dos workers com RPC, aprovados e vivos (no máximo 80% de cada um, menos 128 MiB). O NOK diz quanto falta e quantos workers do tamanho médio acrescentar.
+- **OK/NOK por RAM** (`catalog::check`): `precisa = pesos + cache KV (2·2·camadas·contexto·largura·kv/cabeças bytes, f16) + 10% de margem`; `tem` = soma da RAM dos workers com RPC, aprovados e vivos (no máximo 80% de cada um, menos 128 MiB). O NOK diz quanto falta e quantos workers do tamanho médio acrescentar. O cache KV conta todas as vagas (`AI_CLUSTER_LLAMA_SLOTS`, lida também pelo controller: use o mesmo valor do gateway). O veredito informa `survives_one_loss` (o modelo ainda caberia sem o maior nó), sem mudar o OK/NOK. Havendo um modelo rodando com velocidade medida, estima os tokens/s do novo, proporcional ao tamanho e supondo os mesmos workers (`estimated_tokens_per_second`; 0 = sem estimativa).
 - **Plano de workers** (`controller/src/models.rs`): `select` ordena os workers pela velocidade da CPU e usa os mais rápidos **só até a RAM somada comportar o modelo** (cada worker é um salto de rede por token; um lento só entra quando falta memória). A divisão de camadas (`--tensor-split`) é proporcional à velocidade, limitada pelo que cada worker comporta.
 - **Geração:** sobe a cada `start`, `stop` ou mudança estável do plano. Uma lista nova de workers só vira plano depois de `AI_CLUSTER_PLAN_STABLE_MS` (30 s) igual, para um worker que oscila não recarregar o modelo.
 - **Sem RAM:** se os workers de agora não comportam o pedido, o modelo para com o motivo (`FALHOU`) e volta sozinho quando a RAM volta.
@@ -72,7 +72,7 @@ A chave de uma faixa de peso no worker é (subdiretório, tensor, linhas). Ela n
 - **Manifesto não é assinado.** Quem escreve no diretório escreve no manifesto. Ele detecta corrupção e divergência, não adulteração por quem tem acesso ao disco.
 - **Sem registry central de versões.** O gateway e os workers não comparam versões entre si. O controller não confere a `rpc_version` do `rpc-server` com a do `llama-server`.
 - **Motor próprio:** uma só variante por modelo (float32 ou BF16, sem quantização). A quantização vem do GGUF, pelo llama.cpp.
-- **Catálogo:** varre um nível da pasta e recalcula a cada chamada; não há cache nem verificação de checksum dos GGUF.
+- **Catálogo:** varre um nível da pasta e recalcula a cada chamada; não há cache de catálogo. Se existir `<arquivo>.gguf.sha256` (formato do `sha256sum`) ao lado do GGUF, o `model start` confere o SHA-256 da primeira parte e recusa o modelo com hash diferente; o último hash conferido fica em memória e vale enquanto tamanho e data não mudarem. Sem o arquivo, não confere.
 - **Pesos no gateway:** o GGUF precisa estar na mesma pasta (`AI_CLUSTER_MODELS_DIR`) no gateway; o llama.cpp envia os tensores aos workers pelo RPC, então os workers não guardam o modelo.
 
 > Planejado: registry com as entidades Model, Version, Variant, Manifest, Artifact e Shard.

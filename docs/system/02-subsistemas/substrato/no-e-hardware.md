@@ -64,7 +64,7 @@ Hoje o worker roda em CPU x86_64 e ARM64. Não há detecção de GPU, NPU, SBC o
 
 ## Garantias
 
-- Um nó só recebe trabalho depois de aprovado e fora dos estados `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`.
+- Um nó só recebe trabalho depois de aprovado e fora dos estados `DRAINING`, `QUARANTINED`, `FAILED` e `OFFLINE`. Exceção: um nó em `DRAINING` continua no plano de inferência (RPC do llama.cpp e `ShardMatmul`) até sair, para o drain não reiniciar o modelo e derrubar as sessões; `QUARANTINED`, `FAILED` e `OFFLINE` saem do plano na hora.
 - O controller não depende de desligamento limpo para tirar um nó de circulação.
 
 ## Limites conhecidos

@@ -78,7 +78,7 @@ ai-cluster reservations
 
 ## Exigência de atestado
 
-Uma unidade pode exigir um nó atestado (`require_attested`, `--require-attested` no `benchmark`): o nó roda a release desejada e a medida do slot confere com a assinada. O controller só a entrega a esses nós e a ordena só entre eles. Sem release publicada ninguém é atestado, então o controller recusa a chamada (`FailedPrecondition`) em vez de deixar a unidade esperar sem aviso. O conjunto de atestados é refeito a cada pedido de trabalho enquanto houver uma unidade assim na fila e esvaziado quando não houver. Veja [[adr-020-niveis-de-confianca-do-no]].
+Uma unidade pode exigir um nó atestado (`require_attested`, `--require-attested` no `benchmark`): o nó roda a release desejada e a medida do slot confere com a assinada. O controller só a entrega a esses nós e a ordena só entre eles. A fila aceita até 256 unidades atestadas (teto aproximado; `ResourceExhausted` acima disso). Sem release publicada ninguém é atestado, então o controller recusa a chamada (`FailedPrecondition`) em vez de deixar a unidade esperar sem aviso. O conjunto de atestados é refeito a cada pedido de trabalho enquanto houver uma unidade assim na fila e esvaziado quando não houver. Veja [[adr-020-niveis-de-confianca-do-no]].
 
 ## Concorrência local
 

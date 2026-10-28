@@ -64,7 +64,7 @@ Total: 2 serviços e 24 RPCs.
 | `StateReplica` | `epoch_unix_ms` (1), `snapshot` (2) | `WorkSnapshot` codificado, com os mesmos bytes do arquivo de estado do controller |
 | `ListNodesRequest` / `ListNodesResponse` | — / `nodes` (1) | |
 | `ListModelsRequest` / `ListModelsResponse` | — / `models` (1: `ModelEntry` com id, format, architecture, parameters, precision, bytes, context, layers, supported, reason), `directory` (2) | vazio sem a pasta |
-| `CheckModelRequest` / `CheckModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `weights_bytes` (2), `kv_bytes` (3), `margin_bytes` (4), `required_bytes` (5), `available_bytes` (6), `nodes` (7), `message` (8) | `ok` falso também quando o motor não roda o modelo |
+| `CheckModelRequest` / `CheckModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `weights_bytes` (2), `kv_bytes` (3), `margin_bytes` (4), `required_bytes` (5), `available_bytes` (6), `nodes` (7), `message` (8), `survives_one_loss` (9), `estimated_tokens_per_second` (10) | `ok` falso também quando o motor não roda o modelo |
 | `StartModelRequest` / `StartModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `message` (2), `generation` (3), `check` (4: `CheckModelResponse`), `keys` (5: `ApiKey` com `tenant` e `key`, só na criação) | `ok` falso quando não cabe ou o motor não roda; a chave em claro só vem aqui |
 | `StopModelRequest` / `StopModelResponse` | — / `generation` (1) | as chaves continuam valendo |
 | `ModelStatusRequest` / `ModelStatusResponse` | — / `desired` (1: `DesiredModel`), `running` (2: `ModelStatus`), `key_prefixes` (3), `warnings` (4, workers deixados de fora) | nunca a chave inteira |

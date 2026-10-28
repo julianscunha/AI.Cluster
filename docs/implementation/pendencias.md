@@ -24,7 +24,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock; a fila atestada tem teto de 256 unidades. `reserve`/`release` gravam o snapshot sob o lock. | código |
+| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock; `reserve`/`release` gravam o snapshot sob o lock. | código |
 | Níveis de confiança | Enrollment (token de uso único, aprovação por regra) sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler por GPU/NPU | Filas por recurso; hoje só CPU. | hardware |
 | Localidade | Entra no custo só quando as saídas ficarem residentes no worker (F12). | código |
@@ -35,7 +35,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Estado por chave | KV cache, estado de execução e de modelo não existem no cluster (depende de F12). | código |
 | Replicação da fila | A cópia fica num nó só: faltam fator de replicação, portador designado e identidade de cluster. | código |
-| Journal | O snapshot reescreve o estado inteiro (no máximo a cada 250 ms, `AI_CLUSTER_STATE_WRITE_MS`); falta journal de deltas e flush no desligamento limpo. O `claim` sob o lock global também grava o estado todo (sem fsync). | código |
+| Journal | O snapshot reescreve o estado inteiro a cada gravação; falta journal de deltas e flush no desligamento limpo. O `claim` sob o lock global também grava o estado todo (sem fsync). | código |
 | Checkpoint de unidade e `state://` | Retomar no meio do cálculo; referências lógicas de estado. | código, decisão |
 
 ## F07 — Segurança base
@@ -57,7 +57,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Latência do canal de fatias | Cada camada espera a anterior (cerca de 120 idas e voltas por token). Medir em máquinas separadas antes de otimizar. | código, hardware |
 | Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; mais de 64 operações em voo por nó dão 503. | código |
-| Quarentena | Derruba a sessão de inferência (contenção de segurança, por desenho). O drain não derruba mais: o nó fica no plano até sair. | código |
+| Quarentena | Derruba a sessão de inferência (contenção de segurança, por desenho); falta devolver ao cliente um erro limpo (503 com motivo). | código |
 | Engine fora do scheduler | O canal de fatias ainda passa pelo controller. | código |
 
 ## F09 e F10 — Transporte e storage
@@ -87,11 +87,11 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes e manifesto assinado. O checksum só vale para a primeira parte de um GGUF dividido. O motor próprio segue só em fp32. | código, decisão |
-| Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen; hoje o motor próprio recusa o modelo em vez de errar), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
-| Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). O `model check` estima os tokens por segundo só quando há um modelo rodando (proporcional ao tamanho, mesmos workers); sem referência, não estima. O veredito já informa se o modelo ainda caberia sem o maior nó (`survives_one_loss`), sem barrar. | código |
+| N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes e manifesto assinado. O checksum só cobre a primeira parte de um GGUF dividido. O motor próprio segue só em fp32. | código, decisão |
+| Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
+| Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando e conferir que controller e gateway usam o mesmo `AI_CLUSTER_LLAMA_SLOTS` (hoje cada um lê o seu). | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
-| N4 a N9 | Pré-carga e cache de modelo em disco dos workers, pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
+| N4 a N9 | Pré-carga de modelo nos workers e cache de fatias ligado por padrão (hoje opcional, `AI_CLUSTER_RPC_CACHE`; falta limpar fatias de modelos antigos e medir o disco livre), pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
