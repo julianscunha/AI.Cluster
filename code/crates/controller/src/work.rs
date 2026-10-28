@@ -111,10 +111,29 @@ struct Inner {
     /// Dispatches that went to another unit while a queued unit waited (G4 aging). Not
     /// persisted: a restart resets the age, which only delays an overtake by one span.
     passed: HashMap<String, u32>,
+    /// O nó que acabou de perder a unidade (resultado recusado ou saída do nó). Enquanto houver
+    /// outro nó que a comporte, ela não volta a ele. Não persiste: o reinício só esquece a preferência.
+    lost_by: HashMap<String, String>,
     /// Per node, how many times slower (or faster) than the cost model it really computes: the
     /// moving average of actual over predicted compute time (P1). Not persisted; a restart
     /// relearns it from the first few units.
     learned: HashMap<String, f64>,
+}
+
+/// Se a unidade deve ser poupada a este nó: foi ele quem acabou de perdê-la e outro candidato a
+/// comporta. Sem outro nó, volta a ele (melhor que ficar parada).
+fn avoids(
+    lost_by: &HashMap<String, String>,
+    unit: &WorkUnit,
+    node_id: &str,
+    candidates: &[(String, CapabilityReport, HealthReport)],
+) -> bool {
+    lost_by
+        .get(&unit.work_id)
+        .is_some_and(|lost| lost == node_id)
+        && candidates
+            .iter()
+            .any(|(id, capability, _)| id != node_id && fits(unit, capability))
 }
 
 /// Weight of the newest observation in the learned ratio.
@@ -313,6 +332,7 @@ fn fail_cascade(inner: &mut Inner, work_id: &str, request_id: &str) -> usize {
         }
         inner.attempts.remove(&id);
         inner.passed.remove(&id);
+        inner.lost_by.remove(&id);
         // A failed unit will never complete, so a kept result for it would wait forever (J1).
         inner.keep.remove(&id);
         failed += 1;
@@ -385,6 +405,7 @@ fn take_locked(
         }
     }
     inner.passed.remove(&unit.work_id);
+    inner.lost_by.remove(&unit.work_id);
     // Substitute dependency outputs for bound inputs before dispatch.
     if let Some(data) = inner.outputs.get(&unit.matrix_a_from) {
         unit.matrix_a = data.clone();
@@ -902,6 +923,7 @@ impl WorkStore {
             ranked_positions(&inner.queue, &inner.passed, |unit| {
                 ready(unit, outputs)
                     && fits(unit, capability)
+                    && !avoids(&inner.lost_by, unit, node_id, candidates)
                     && (!unit.require_attested || attested.contains(node_id))
                     && held.as_ref().is_none_or(|hold| {
                         hold.admits(&unit.request_id, asking_in_flight, capability.work_slots)
@@ -973,6 +995,9 @@ impl WorkStore {
             return false;
         }
         let record = inner.dispatched.remove(work_id).expect("checked above");
+        inner
+            .lost_by
+            .insert(work_id.to_string(), node_id.to_string());
         if let Some(attempts) = inner.attempts.get_mut(work_id) {
             *attempts = attempts.saturating_sub(1);
         }
@@ -1050,6 +1075,7 @@ impl WorkStore {
             .insert(result.work_id.clone(), result.matrix_c);
         // The unit is settled, so its retry budget no longer matters.
         inner.attempts.remove(&result.work_id);
+        inner.lost_by.remove(&result.work_id);
         self.save_locked(&mut inner);
         // A gravação do trace é I/O de disco: fica fora do lock da fila, para um disco lento não
         // travar `claim`, heartbeat e registro. A ordem entre unidades de threads diferentes pode
@@ -1077,6 +1103,7 @@ impl WorkStore {
         });
         for work_id in &dropped {
             inner.passed.remove(work_id);
+            inner.lost_by.remove(work_id);
             inner.attempts.remove(work_id);
             inner.keep.remove(work_id);
         }
@@ -1170,6 +1197,7 @@ impl WorkStore {
             if inner.attempts.get(&work_id).copied().unwrap_or(0) >= MAX_ATTEMPTS {
                 outcome.failed += fail_cascade(&mut inner, &work_id, &record.unit.request_id);
             } else {
+                inner.lost_by.insert(work_id.clone(), node_id.to_string());
                 inner.queue.push_back(record.unit);
                 outcome.requeued += 1;
             }
@@ -2081,6 +2109,46 @@ mod tests {
                 .expect("strong node fits w1")
                 .work_id,
             "w1"
+        );
+    }
+
+    #[test]
+    fn a_unit_a_node_just_lost_goes_to_another_node_when_one_fits() {
+        let store = WorkStore::new();
+        store.enqueue([unit("w1")]);
+        let both = [
+            ("node-a".to_string(), capability(8, 0.0), healthy()),
+            ("node-b".to_string(), capability(8, 0.0), healthy()),
+        ];
+        store
+            .claim_placed("node-a", &capability(8, 0.0), 1_000, &both, 1.0)
+            .expect("node-a takes w1 first");
+        // node-a devolveu um resultado ruim
+        assert!(store.reject("w1", "node-a"));
+        assert!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 2_000, &both, 1.0)
+                .is_none(),
+            "node-b está disponível: a unidade não volta a quem a perdeu"
+        );
+        assert!(
+            store
+                .claim_placed("node-b", &capability(8, 0.0), 2_000, &both, 1.0)
+                .is_some()
+        );
+
+        // Sem outro nó, volta ao mesmo (melhor que parada).
+        let store = WorkStore::new();
+        store.enqueue([unit("w2")]);
+        let alone = [("node-a".to_string(), capability(8, 0.0), healthy())];
+        store
+            .claim_placed("node-a", &capability(8, 0.0), 1_000, &alone, 1.0)
+            .unwrap();
+        assert!(store.reject("w2", "node-a"));
+        assert!(
+            store
+                .claim_placed("node-a", &capability(8, 0.0), 2_000, &alone, 1.0)
+                .is_some()
         );
     }
 

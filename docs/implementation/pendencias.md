@@ -78,11 +78,9 @@ Sem pendências: o código da fase está feito.
 |---|---|---|
 | Estado por chave | KV cache, estado de execução e estado de modelo não existem no cluster. Sem isso, não há o que promover além da fila. | código (depende de F12) |
 | Replicação da fila | A cópia fica só num nó e o controller a oferece inteira a cada gravação. Falta fator de replicação, portador designado e identidade de cluster na cópia. | código |
-| Posse persistida | A posse de uma unidade só vai ao disco quando outra mutação acontece depois do despacho. Uma queda logo após despachar pode rodar a unidade duas vezes. Persistir só a tabela de leases seria o próximo passo. | código |
 | Journal | O snapshot reescreve o estado vivo inteiro a cada mutação. Falta um journal de deltas ou snapshot periódico. | código |
 | Checkpoint de unidade | Retomar uma unidade no meio do cálculo. Hoje recalcula do zero. | código |
 | Diretório de estado | Referências lógicas de estado (`state://`). | código, decisão |
-| Reatribuição | Uma unidade reoferecida pode voltar ao nó que falhou, se não houver outro nó. | código |
 
 ## F07 — Segurança base `[x]`
 
