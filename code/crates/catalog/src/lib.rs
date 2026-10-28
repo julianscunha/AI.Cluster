@@ -96,10 +96,28 @@ pub fn verify_checksum(dir: &Path, id: &str) -> Result<(), String> {
         return Err(format!("{id}.sha256 não traz um hash SHA-256 válido"));
     }
     let mut file = File::open(&path).map_err(|e| format!("{id}: {e}"))?;
+    // Já conferido com este hash, mesmo tamanho e mesma data: não relê o arquivo inteiro.
+    let stamp = file
+        .metadata()
+        .ok()
+        .and_then(|m| Some((m.len(), m.modified().ok()?, expected.clone())));
+    type Stamp = (u64, std::time::SystemTime, String);
+    static VERIFIED: std::sync::Mutex<Vec<(PathBuf, Stamp)>> = std::sync::Mutex::new(Vec::new());
+    let cache = || VERIFIED.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(stamp) = &stamp
+        && cache().iter().any(|(p, s)| *p == path && s == stamp)
+    {
+        return Ok(());
+    }
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher).map_err(|e| format!("{id}: {e}"))?;
     let actual = format!("{:x}", hasher.finalize());
     if actual == expected {
+        if let Some(stamp) = stamp {
+            let mut cache = cache();
+            cache.retain(|(p, _)| *p != path);
+            cache.push((path, stamp));
+        }
         Ok(())
     } else {
         Err(format!(
@@ -817,6 +835,8 @@ mod tests {
         )
         .unwrap();
         assert!(verify_checksum(&dir, "m.gguf").is_ok());
+        std::fs::write(dir.join("m.gguf"), b"abd").unwrap(); // mesmo tamanho: a data muda
+        std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(dir.join("m.gguf"), b"abd").unwrap();
         assert!(
             verify_checksum(&dir, "m.gguf")
