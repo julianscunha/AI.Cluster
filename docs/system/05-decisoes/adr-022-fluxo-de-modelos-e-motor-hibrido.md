@@ -23,7 +23,11 @@ Hoje um modelo exige variáveis por modelo (`*_DIR`, `*_SHARDS`, `*_SUBDIR`), pe
 
 ## Etapas
 
+**E-1 (primeiro, decide o resto): teste de viabilidade do llama.cpp** no Pi armv7 (1 GB) e no x86: compilar, rodar um GGUF Q4 pequeno, medir RAM e tokens por segundo, e testar o `rpc-server` entre o PC e o Pi. Se falhar no armv7, o motor próprio fica para esse alvo. Até o resultado, **E0 e E3 ficam em espera** (melhoram o motor próprio, que pode virar só referência).
+
 E0 pesos menores na memória · E1 catálogo (`models list`) · E2 OK/NOK (`models check`) · E3 receitas encaixáveis com paridade por receita · E4 pesos por gRPC, sem `scp` · E5 placement automático, sem `*_SHARDS` · E6 `models start` com chaves e benchmark · E7 nó novo recebe o modelo e refaz o benchmark · E8 pipeline entre workers · E9 vários pedidos e micro-batching · E10 tensor-split opcional · E11 quantização própria, se ainda couber. O progresso fica em [[pendencias]].
+
+**Marco de lançamento (demo de aceite da E7):** um modelo maior que a RAM de qualquer máquina do laboratório (14B ou 32B quantizado) rodando em 3 ou 4 máquinas velhas pelo fluxo `models start`, com os tokens por segundo medidos e publicados, inclusive os ruins.
 
 ## Consequências
 

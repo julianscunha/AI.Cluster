@@ -83,7 +83,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 ## F12 — Model runtime distribuído
 
-O fluxo desejado (pasta de modelos no controller, OK/NOK, envio dos pesos, chaves e benchmark, nó novo) e as etapas E0 a E11 estão no [[adr-022-fluxo-de-modelos-e-motor-hibrido]]. Nada disso foi codado ainda; as linhas abaixo continuam valendo.
+O fluxo desejado (pasta de modelos no controller, OK/NOK, envio dos pesos, chaves e benchmark, nó novo) e as etapas E0 a E11 estão no [[adr-022-fluxo-de-modelos-e-motor-hibrido]]. Nada disso foi codado ainda; as linhas abaixo continuam valendo. Marco de lançamento: a demo de aceite da E7 (modelo maior que qualquer máquina, em 3 a 4 máquinas velhas, com tokens por segundo publicados). Antes de tudo vem a E-1, o teste do llama.cpp no Pi e no x86: se ele virar o data plane, as linhas de motor próprio desta fase (N3, N8, compatibilidade de arquiteturas, memória do gateway, execução fora do gateway) e as de latência do canal de fatias e engine separado da F08 podem ser descartadas ou reescritas.
 
 | Item | O que falta | Dependência |
 |---|---|---|
