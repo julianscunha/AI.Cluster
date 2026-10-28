@@ -79,6 +79,35 @@ pub fn scan(dir: &Path, runtime: Runtime) -> std::io::Result<Vec<ModelEntry>> {
     Ok(found)
 }
 
+/// Confere o GGUF `id` contra o `<arquivo>.sha256` ao lado dele (formato do `sha256sum`: o hash
+/// vem primeiro). Sem esse arquivo não há o que conferir e o modelo passa. Um download truncado
+/// ou corrompido falha aqui, com o motivo, em vez de quebrar a carga nos workers.
+/// shortcut: só a primeira parte de um GGUF dividido é conferida, estenda se as partes ganharem hash.
+pub fn verify_checksum(dir: &Path, id: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let path = dir.join(id);
+    let mut sidecar = path.clone().into_os_string();
+    sidecar.push(".sha256");
+    let Ok(text) = std::fs::read_to_string(&sidecar) else {
+        return Ok(());
+    };
+    let expected = text.split_whitespace().next().unwrap_or("").to_lowercase();
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("{id}.sha256 não traz um hash SHA-256 válido"));
+    }
+    let mut file = File::open(&path).map_err(|e| format!("{id}: {e}"))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("{id}: {e}"))?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{id}: o SHA-256 do arquivo ({actual}) difere do esperado ({expected}); baixe o modelo de novo"
+        ))
+    }
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -771,6 +800,38 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn a_sha256_sidecar_catches_a_corrupted_file() {
+        let dir = std::env::temp_dir().join(format!("aic-sha-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("m.gguf"), b"abc").unwrap();
+        // Sem arquivo .sha256 não há o que conferir.
+        assert!(verify_checksum(&dir, "m.gguf").is_ok());
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        std::fs::write(
+            dir.join("m.gguf.sha256"),
+            format!(
+                "{abc}  m.gguf
+"
+            ),
+        )
+        .unwrap();
+        assert!(verify_checksum(&dir, "m.gguf").is_ok());
+        std::fs::write(dir.join("m.gguf"), b"abd").unwrap();
+        assert!(
+            verify_checksum(&dir, "m.gguf")
+                .unwrap_err()
+                .contains("difere")
+        );
+        std::fs::write(dir.join("m.gguf.sha256"), "xyz").unwrap();
+        assert!(
+            verify_checksum(&dir, "m.gguf")
+                .unwrap_err()
+                .contains("válido")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn symlinks_are_not_followed() {
         let dir = temp("links");

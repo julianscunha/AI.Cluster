@@ -819,6 +819,18 @@ impl ClusterControl for ClusterControlService {
         if !model.supported {
             return refuse(model.reason.clone(), None);
         }
+        let (check_dir, check_id) = (self.models_dir.clone(), model.id.clone());
+        let hashed = match check_dir {
+            Some(dir) if model.supported => tokio::task::spawn_blocking(move || {
+                ai_cluster_catalog::verify_checksum(&dir, &check_id)
+            })
+            .await
+            .map_err(|_| Status::internal("conferência interrompida"))?,
+            _ => Ok(()),
+        };
+        if let Err(message) = hashed {
+            return refuse(message, None);
+        }
         let Some(api_id) = api_model_id(&model.id) else {
             return refuse(
                 format!("o nome {wanted} não vira um id de modelo válido"),

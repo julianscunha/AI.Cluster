@@ -87,7 +87,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes, manifesto assinado e conferência de checksum dos GGUF. O motor próprio segue só em fp32. | código, decisão |
+| N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes e manifesto assinado. O checksum só vale para a primeira parte de um GGUF dividido. O motor próprio segue só em fp32. | código, decisão |
 | Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
 | Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). Falta estimar o tempo por token e reservar espaço para o failover. | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
