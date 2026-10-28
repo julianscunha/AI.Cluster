@@ -1,0 +1,53 @@
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index d62a631..b4f05a9 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -233,7 +233,7 @@
+ #define GGML_DEFAULT_GRAPH_SIZE 2048
+ 
+ #if UINTPTR_MAX == 0xFFFFFFFF
+-    #define GGML_MEM_ALIGN 4
++    #define GGML_MEM_ALIGN 8
+ #elif defined(__EMSCRIPTEN__)
+ // emscripten uses max_align_t == 8, so we need GGML_MEM_ALIGN == 8 for 64-bit wasm.
+ // (for 32-bit wasm, the first conditional is true and GGML_MEM_ALIGN stays 4.)
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index 8cedee7..be6e8d5 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -321,7 +321,9 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len, uint64_t hash = 0xcbf
+ }
+ 
+ static bool send_msg(socket_ptr sock, const void * msg, size_t msg_size) {
+-    if (!sock->send_data(&msg_size, sizeof(msg_size))) {
++    // 8 bytes no fio, como no cliente (size_t tem 4 em 32 bits)
++    const uint64_t wire_size = msg_size;
++    if (!sock->send_data(&wire_size, sizeof(wire_size))) {
+         return false;
+     }
+     if (!sock->send_data(msg, msg_size)) {
+@@ -379,7 +381,9 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input,
+     if (!sock->send_data(&cmd_byte, sizeof(cmd_byte))) {
+         return false;
+     }
+-    if (!sock->send_data(&input_size, sizeof(input_size))) {
++    // O protocolo diz 8 bytes; size_t tem 4 em 32 bits e quebraria o enquadramento.
++    const uint64_t wire_size = input_size;
++    if (!sock->send_data(&wire_size, sizeof(wire_size))) {
+         return false;
+     }
+     if (!sock->send_data(input, input_size)) {
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 5d8449a..3f70f64 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -971,7 +971,8 @@ struct ggml_object {
+ 
+     enum ggml_object_type type;
+ 
+-    char padding[4];
++    // 32 bits: 20 bytes sem folga; 8 de enchimento fecham 24, múltiplo de GGML_MEM_ALIGN (8)
++    char padding[UINTPTR_MAX == 0xFFFFFFFF ? 8 : 4];
+ };
+ 
+ static const size_t GGML_OBJECT_SIZE = sizeof(struct ggml_object);
