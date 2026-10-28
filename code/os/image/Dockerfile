@@ -18,7 +18,7 @@ RUN echo "$AIC_RELEASE" > /etc/aic-release
 
 # O rootfs sai de um contêiner, mas roda em hardware: sem isto o OpenRC se acha num contêiner e pula
 # localmount, networking e outros (keyword -docker).
-RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=/dev/watchdog' >> /etc/conf.d/watchdog && echo 'WATCHDOG_OPTS="-t 5 -T 15"' >> /etc/conf.d/watchdog && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic /usr/sbin/aic-console /usr/sbin/aic-role /usr/sbin/aic-passwd /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
+RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=/dev/watchdog' >> /etc/conf.d/watchdog && echo 'WATCHDOG_OPTS="-t 5 -T 15"' >> /etc/conf.d/watchdog && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock && chmod 755 /usr/bin/ai-cluster-worker /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic /usr/sbin/aic-console /usr/sbin/aic-role /usr/sbin/aic-welcome /usr/sbin/aic-passwd /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  # raiz somente leitura: o que muda vive em /data (disco) ou em tmpfs
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Boas-vindas do login por SSH: logotipo, nome do produto e o resumo do no (o mesmo de `aic status`).
+. /usr/lib/aic/ui.sh
+if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then C_RESET= C_LOGO= C_NODE= C_VALUE= C_HINT= C_TEXT=; fi
+n="${C_NODE}${G_NODE}${C_LOGO}" h="${G_H}${G_H}${G_H}" bs='\'
+printf '\n'
+printf '%s     %s%s%s%s      %sReal.AI.Cluster%s\n' "$C_LOGO" "$n" "$h" "$n" "$C_RESET" "$C_VALUE" "$C_RESET"
+printf '%s    / %s / %s     %sAI Cluster OS %s%s\n' "$C_LOGO" "$bs" "$bs" "$C_HINT" "$(cat /etc/aic-release 2>/dev/null || echo dev)" "$C_RESET"
+printf '%s   %s%s%s%s%s%s    %sIA distribuida em hardware comum%s\n' "$C_LOGO" "$n" "$h" "$n" "$h" "$n" "$C_RESET" "$C_HINT" "$C_RESET"
+printf '%s    %s / %s /%s\n' "$C_LOGO" "$bs" "$bs" "$C_RESET"
+printf '%s     %s%s%s%s\n\n' "$C_LOGO" "$n" "$h" "$n" "$C_RESET"
+/usr/sbin/aic-role
+printf '\n  %sComandos: aic status | aic logs | aic passwd | aic help%s\n\n' "$C_HINT" "$C_RESET"

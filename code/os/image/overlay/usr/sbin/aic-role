@@ -43,10 +43,18 @@ fi
 if pidof ai-cluster-worker >/dev/null 2>&1; then state="worker em execucao"; else state="worker parado"; fi
 if [ -n "$credential" ] && [ -s "$credential" ]; then joined="sim (credencial salva)"; else joined="ainda nao (sem credencial salva)"; fi
 
-printf 'No:          %s\n' "${node:-$(hostname)}"
-printf 'Papel:       %s\n' "$role"
-printf 'Estado:      %s\n' "$state"
-printf 'Controller:  %s\n' "${controller:-nao configurado}"
-printf 'Registrado:  %s\n' "$joined"
-printf 'Versao:      %s   slot %s\n' "$(cat /etc/aic-release 2>/dev/null || echo dev)" "$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' "$CMDLINE")"
-printf '\nA estrutura do cluster e a aprovacao dos nos sao do controller:\n  ai-cluster --controller %s topology   (arvore por papel)\n  ai-cluster --controller %s nodes      (detalhe e confianca)\n' "${controller:-URL}" "${controller:-URL}"
+# Cores só num terminal (NO_COLOR desliga); o mesmo desenho do console e do painel do cluster.
+. /usr/lib/aic/ui.sh
+if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then C_RESET= C_LOGO= C_TEXT= C_VALUE= C_OK= C_WARN= C_BAD= C_HINT= C_NODE=; fi
+case "$state" in *execucao) sc=$C_OK ;; *) sc=$C_BAD ;; esac
+case "$joined" in sim*) jc=$C_OK ;; *) jc=$C_WARN ;; esac
+row() { printf '  %s%-12s%s %s%s%s\n' "$C_LOGO" "$1" "$C_RESET" "$3" "$2" "$C_RESET"; } # rótulo valor cor
+
+row 'No' "${node:-$(hostname)}" "$C_VALUE"
+row 'Papel' "$role" "$C_VALUE"
+row 'Estado' "$G_NODE $state" "$sc"
+row 'Controller' "${controller:-nao configurado}" "$C_VALUE"
+row 'Registrado' "$joined" "$jc"
+row 'Versao' "$(cat /etc/aic-release 2>/dev/null || echo dev)   slot $(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' "$CMDLINE")" "$C_VALUE"
+printf '\n  %sA estrutura do cluster e a aprovacao dos nos sao do controller:%s\n' "$C_HINT" "$C_RESET"
+printf '  %sai-cluster --controller %s topology%s\n' "$C_HINT" "${controller:-URL}" "$C_RESET"
