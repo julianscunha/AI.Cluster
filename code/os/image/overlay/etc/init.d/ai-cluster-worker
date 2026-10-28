@@ -23,6 +23,16 @@ start_pre() {
 	set -a
 	. /data/worker.env
 	set +a
+	# rpc-server do llama.cpp (ADR-022): liga sozinho quando o instalador deixou o certificado do túnel
+	# em /data/rpc-tls (worker.crt, worker.key e ca.crt, a CA que assina só o gateway). Sem eles o nó
+	# não expõe o rpc-server.
+	if [ -r /data/rpc-tls/worker.key ] && [ -r /data/rpc-tls/worker.crt ] && [ -r /data/rpc-tls/ca.crt ] && [ -x /usr/bin/ggml-rpc-server ]; then
+		export AI_CLUSTER_RPC_SERVER_BIN=/usr/bin/ggml-rpc-server
+		export AI_CLUSTER_RPC_TLS_CERT=/data/rpc-tls/worker.crt
+		export AI_CLUSTER_RPC_TLS_KEY=/data/rpc-tls/worker.key
+		export AI_CLUSTER_RPC_TLS_CLIENT_CA=/data/rpc-tls/ca.crt
+		export AI_CLUSTER_RPC_VERSION="${AI_CLUSTER_RPC_VERSION:-llama.cpp-8ca4060+armv7}"
+	fi
 	[ -n "$AI_CLUSTER_NODE_ID" ] && hostname "$AI_CLUSTER_NODE_ID"
 	checkpath -d -o ai-cluster:ai-cluster -m 0700 /data/state
 }

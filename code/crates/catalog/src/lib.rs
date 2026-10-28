@@ -424,13 +424,20 @@ fn skip_array<R: Read + Seek>(r: &mut R) -> Result<(), String> {
     if kind != 8 {
         return Err(format!("matriz de tipo {kind} não suportada"));
     }
+    // Lê em sequência, sem `seek`: um `seek` num BufReader descarta o buffer, e uma matriz de 150 mil
+    // textos (o vocabulário) virava 150 mil leituras de disco, minutos num volume compartilhado.
+    let mut budget = MAX_GGUF_HEADER;
     for _ in 0..len {
         let n = u64le(r)?;
-        if n > MAX_STRING {
-            return Err("texto longo demais".into());
+        if n > MAX_STRING || n > budget {
+            return Err("matriz de textos longa demais".into());
         }
-        r.seek(SeekFrom::Current(n as i64))
+        budget -= n;
+        let copied = std::io::copy(&mut r.by_ref().take(n), &mut std::io::sink())
             .map_err(|e| e.to_string())?;
+        if copied != n {
+            return Err("matriz de textos cortada".into());
+        }
     }
     Ok(())
 }

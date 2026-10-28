@@ -1748,7 +1748,14 @@ fn capability() -> CapabilityReport {
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
         rpc_port: rpc::config(cpu_threads as usize).map_or(0, |c| c.port()),
-        rpc_host: std::env::var("AI_CLUSTER_RPC_ADVERTISE_HOST").unwrap_or_default(),
+        rpc_host: if rpc::config(cpu_threads as usize).is_some() {
+            rpc::advertise_host(
+                &std::env::var("AI_CLUSTER_CONTROLLER")
+                    .unwrap_or_else(|_| "http://127.0.0.1:50051".into()),
+            )
+        } else {
+            String::new()
+        },
         rpc_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
         shard_cache_bytes: if std::env::var_os("AI_CLUSTER_MODEL_DIR").is_some() {
             shard_cache_bytes()

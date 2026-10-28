@@ -101,6 +101,37 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     }))
 }
 
+/// O endereço por onde o gateway chega a este nó: `AI_CLUSTER_RPC_ADVERTISE_HOST`, ou o IP local que
+/// a rota até o controller usa (um socket UDP "conectado" não envia nada; só escolhe a interface).
+/// Vazio se não der para saber: o controller então usa o endereço de onde o nó se registrou, que atrás
+/// de um NAT (Docker, por exemplo) é o do NAT.
+pub fn advertise_host(controller: &str) -> String {
+    if let Ok(host) = std::env::var("AI_CLUSTER_RPC_ADVERTISE_HOST") {
+        let host = host.trim().to_string();
+        if !host.is_empty() {
+            return host;
+        }
+    }
+    local_ip_toward(controller).unwrap_or_default()
+}
+
+/// O IP local da interface que leva ao `endpoint` (`http://host:porta`), se não for loopback.
+fn local_ip_toward(endpoint: &str) -> Option<String> {
+    use std::net::ToSocketAddrs;
+    let rest = endpoint.split("://").nth(1).unwrap_or(endpoint);
+    let authority = rest.split('/').next()?;
+    let target = authority.to_socket_addrs().ok()?.next()?;
+    let bind = if target.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
+    let socket = std::net::UdpSocket::bind(bind).ok()?;
+    socket.connect(target).ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}
+
 static CONFIG: OnceLock<Option<RpcConfig>> = OnceLock::new();
 
 /// A configuração válida deste nó, ou `None` (sem RPC). Registra o motivo de uma recusa uma vez.
@@ -224,5 +255,15 @@ mod tests {
         }
         assert!(from_env(4).unwrap().is_err());
         clear();
+    }
+    #[test]
+    fn the_local_ip_is_the_one_on_the_route_to_the_controller() {
+        // Sem rede externa: para um alvo local, o IP é o da interface (ou nenhum, se só há loopback).
+        let ip = local_ip_toward("http://127.0.0.1:50051");
+        assert!(
+            ip.is_none(),
+            "o loopback não é um endereço que o gateway alcance: {ip:?}"
+        );
+        assert!(local_ip_toward("http://").is_none());
     }
 }

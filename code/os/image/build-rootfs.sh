@@ -13,6 +13,11 @@ mkdir -p build
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-armv7:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/armv7-unknown-linux-musleabihf/release/ai-cluster-worker /out/ai-cluster-worker
 cp build/ai-cluster-worker ai-cluster-worker
+# rpc-server do llama.cpp (ADR-022), com o patch de 32 bits de code/third_party/llama.cpp: compilado
+# por build.sh no volume aic-llama; sem símbolos (de 17 MB passa de 3 MB).
+MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/w -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
+  sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq binutils-arm-linux-gnueabihf >/dev/null && arm-linux-gnueabihf-strip -o /out/ggml-rpc-server /w/llama.cpp/build-armv7m/bin/ggml-rpc-server'
+cp build/ggml-rpc-server ggml-rpc-server
 # chave pública das releases (release-keys.sh): a imagem só instala o que o operador assinou
 # rotação: AIC_PUBS lista várias públicas (a antiga e a nova); basta uma conferir a assinatura
 rm -rf aic-release.d; mkdir aic-release.d
@@ -21,7 +26,7 @@ for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   cp "$PUB" "aic-release.d/$(basename "$PUB")"
 done
 docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs:dev .
-rm -rf ai-cluster-worker aic-release.d
+rm -rf ai-cluster-worker ggml-rpc-server aic-release.d
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar
 docker rm "$CID" >/dev/null
