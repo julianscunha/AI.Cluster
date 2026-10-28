@@ -2518,6 +2518,26 @@ mod tests {
         assert_eq!(missing.code(), tonic::Code::InvalidArgument);
     }
 
+    #[test]
+    fn a_draining_node_stays_in_the_inference_plan_until_it_is_removed() {
+        let (service, registry, _) = service_with_registry_and_work();
+        let capability = CapabilityReport {
+            rpc_port: 50061,
+            rpc_host: "10.0.0.5".into(),
+            ..Default::default()
+        };
+        registry.register(identity("node-a"), capability, 1_000);
+        assert_eq!(service.rpc_endpoints().len(), 1);
+        assert!(registry.begin_drain("node-a"));
+        assert_eq!(
+            service.rpc_endpoints().len(),
+            1,
+            "drain não reinicia o modelo"
+        );
+        registry.remove("node-a");
+        assert!(service.rpc_endpoints().is_empty());
+    }
+
     #[tokio::test]
     async fn enqueue_work_caps_the_attested_queue() {
         let (service, work_store) = service_with_work();
