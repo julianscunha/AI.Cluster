@@ -1,0 +1,604 @@
+//! Modelo servido pelo `llama-server` do llama.cpp (ADR-022): o gateway é o nó principal, carrega o
+//! GGUF e divide as camadas com os workers pelo RPC do llama.cpp. Cada worker é alcançado por um túnel
+//! mTLS local (`ai-cluster-tunnel`): o `llama-server` só enxerga portas em 127.0.0.1.
+//!
+//! Ligado por `AI_CLUSTER_LLAMA_MODEL` (caminho do .gguf). Os endpoints dos workers vêm de
+//! `AI_CLUSTER_LLAMA_RPC_ENDPOINTS` (lista `host:porta` dos túneis dos workers); sem eles o modelo
+//! roda só na CPU do gateway.
+
+use std::pin::Pin;
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+
+use axum::body::{Body, Bytes};
+use axum::http::{Request, StatusCode, header};
+use axum::response::Response;
+use futures_core::Stream;
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
+
+use crate::request_manager::{Permit, Tenant};
+
+type HttpClient = Client<HttpConnector, Body>;
+
+/// Quanto esperar o modelo ficar pronto: carregar o GGUF e empurrar os tensores a um Pi leva minutos.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(1800);
+/// Primeira porta local dos túneis, uma por worker.
+const DEFAULT_TUNNEL_BASE: u16 = 18100;
+const DEFAULT_PORT: u16 = 18080;
+/// Prompt fixo do benchmark e quantos tokens ele gera.
+const BENCH_PROMPT: &str = "Explique em poucas frases o que é um cluster de computadores.";
+const BENCH_TOKENS: u32 = 64;
+
+/// A configuração lida do ambiente.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlamaConfig {
+    pub id: String,
+    pub model: String,
+    pub server_bin: String,
+    pub endpoints: Vec<String>,
+    pub ca: String,
+    pub cert: String,
+    pub key: String,
+    pub server_name: String,
+    pub context: u32,
+    pub gpu_layers: u32,
+    pub port: u16,
+    pub tunnel_base: u16,
+}
+
+impl LlamaConfig {
+    /// Argumentos do `llama-server`: loopback apenas, uma vaga, e os túneis locais como `--rpc`.
+    pub fn server_args(&self) -> Vec<String> {
+        let mut args: Vec<String> = [
+            "-m",
+            &self.model,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &self.port.to_string(),
+            "-c",
+            &self.context.to_string(),
+            "-np",
+            "1",
+            "-a",
+            &self.id,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        if !self.endpoints.is_empty() {
+            args.push("-ngl".into());
+            args.push(self.gpu_layers.to_string());
+            args.push("--rpc".into());
+            args.push(self.local_endpoints().join(","));
+        }
+        args
+    }
+
+    /// Os túneis locais, na ordem dos endpoints dos workers.
+    pub fn local_endpoints(&self) -> Vec<String> {
+        (0..self.endpoints.len())
+            .map(|i| format!("127.0.0.1:{}", self.tunnel_base + i as u16))
+            .collect()
+    }
+}
+
+/// Lê o ambiente. `None` quando o gateway não serve modelo do llama.cpp; `Err` quando pediu e a
+/// configuração é insegura ou inválida.
+pub fn from_env() -> Result<Option<LlamaConfig>, String> {
+    let var = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let Some(model) = var("AI_CLUSTER_LLAMA_MODEL") else {
+        return Ok(None);
+    };
+    let id = var("AI_CLUSTER_LLAMA_MODEL_ID").unwrap_or_else(|| {
+        std::path::Path::new(&model)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "llama".into())
+    });
+    if id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+    {
+        return Err(format!("AI_CLUSTER_LLAMA_MODEL_ID inválido: {id}"));
+    }
+    let endpoints: Vec<String> = var("AI_CLUSTER_LLAMA_RPC_ENDPOINTS")
+        .map(|list| {
+            list.split(',')
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if endpoints.iter().any(|e| {
+        e.rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .is_none()
+    }) {
+        return Err("AI_CLUSTER_LLAMA_RPC_ENDPOINTS: use host:porta separados por vírgula".into());
+    }
+    let tls = (
+        var("AI_CLUSTER_LLAMA_TLS_CA"),
+        var("AI_CLUSTER_LLAMA_TLS_CERT"),
+        var("AI_CLUSTER_LLAMA_TLS_KEY"),
+    );
+    let (ca, cert, key) = match tls {
+        (Some(ca), Some(cert), Some(key)) => (ca, cert, key),
+        _ if endpoints.is_empty() => Default::default(),
+        _ => {
+            return Err(
+                "AI_CLUSTER_LLAMA_RPC_ENDPOINTS pede também AI_CLUSTER_LLAMA_TLS_CA, _CERT e _KEY: o RPC não vai em texto puro"
+                    .into(),
+            );
+        }
+    };
+    let number = |name: &str, default: u32| -> Result<u32, String> {
+        match var(name) {
+            Some(text) => text.parse().map_err(|_| format!("{name} inválido: {text}")),
+            None => Ok(default),
+        }
+    };
+    let port = u16::try_from(number("AI_CLUSTER_LLAMA_PORT", u32::from(DEFAULT_PORT))?)
+        .map_err(|_| "AI_CLUSTER_LLAMA_PORT fora de 0..65535".to_string())?;
+    let tunnel_base = u16::try_from(number(
+        "AI_CLUSTER_LLAMA_TUNNEL_BASE",
+        u32::from(DEFAULT_TUNNEL_BASE),
+    )?)
+    .map_err(|_| "AI_CLUSTER_LLAMA_TUNNEL_BASE fora de 0..65535".to_string())?;
+    if u32::from(tunnel_base) + endpoints.len() as u32 > u32::from(u16::MAX) {
+        return Err("AI_CLUSTER_LLAMA_TUNNEL_BASE deixa poucas portas".into());
+    }
+    Ok(Some(LlamaConfig {
+        id,
+        model,
+        server_bin: var("AI_CLUSTER_LLAMA_SERVER_BIN").unwrap_or_else(|| "llama-server".into()),
+        endpoints,
+        ca,
+        cert,
+        key,
+        server_name: var("AI_CLUSTER_LLAMA_RPC_SERVER_NAME").unwrap_or_else(|| "aic-worker".into()),
+        context: number("AI_CLUSTER_LLAMA_CTX", 4096)?,
+        gpu_layers: number("AI_CLUSTER_LLAMA_NGL", 99)?,
+        port,
+        tunnel_base,
+    }))
+}
+
+/// Em que ponto está o modelo.
+#[derive(Debug, Clone, PartialEq)]
+pub enum State {
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+/// O modelo servido pelo `llama-server`.
+pub struct Llama {
+    pub id: String,
+    pub context: u32,
+    port: u16,
+    state: Mutex<State>,
+    tokens_per_second: Mutex<f64>,
+    client: HttpClient,
+}
+
+impl Llama {
+    pub fn state(&self) -> State {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set(&self, state: State) {
+        *self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+    }
+
+    /// Tokens por segundo medidos no último benchmark; zero = ainda não medido.
+    pub fn tokens_per_second(&self) -> f64 {
+        *self
+            .tokens_per_second
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    async fn healthy(&self) -> bool {
+        let request = Request::builder()
+            .uri(format!("http://127.0.0.1:{}/health", self.port))
+            .body(Body::empty())
+            .expect("requisição válida");
+        matches!(
+            tokio::time::timeout(Duration::from_secs(3), self.client.request(request)).await,
+            Ok(Ok(response)) if response.status() == StatusCode::OK
+        )
+    }
+
+    /// Manda o corpo ao `llama-server` e devolve a resposta sem esperar o fim. A cota do tenant é
+    /// cobrada pelo `usage` que o próprio servidor devolve; o `permit` (a vaga única) só volta quando
+    /// a resposta termina ou o cliente desiste.
+    pub async fn forward(&self, body: Bytes, tenant: Arc<Tenant>, permit: Permit) -> Response {
+        let streaming = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .is_some_and(|v| v["stream"].as_bool().unwrap_or(false));
+        let body = if streaming { with_usage(&body) } else { body };
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                self.port
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("requisição válida");
+        let response = match self.client.request(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("llama-server: {error}");
+                return crate::error(
+                    StatusCode::BAD_GATEWAY,
+                    "MODEL_UNAVAILABLE",
+                    "o servidor do modelo não respondeu",
+                );
+            }
+        };
+        let (parts, incoming) = response.into_parts();
+        let stream = Tap {
+            inner: Box::pin(Body::new(incoming).into_data_stream()),
+            tail: Vec::new(),
+            all: Vec::new(),
+            keep_all: !streaming,
+            tenant,
+            charged: false,
+            _permit: permit,
+        };
+        let mut response = Response::from_parts(parts, Body::from_stream(stream));
+        // O tamanho muda quando o corpo passa pelo gateway.
+        response.headers_mut().remove(header::CONTENT_LENGTH);
+        response
+    }
+}
+
+/// Garante `stream_options.include_usage` no corpo de uma requisição em stream, para a cota.
+fn with_usage(body: &Bytes) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.clone();
+    };
+    if let Some(object) = value.as_object_mut() {
+        let options = object
+            .entry("stream_options")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(options) = options.as_object_mut() {
+            options.insert("include_usage".into(), true.into());
+        }
+    }
+    serde_json::to_vec(&value).map_or_else(|_| body.clone(), Bytes::from)
+}
+
+/// `total_tokens` do último `usage` num texto (o fim de um stream, ou uma resposta inteira).
+pub fn total_tokens(text: &[u8]) -> Option<u64> {
+    let text = std::str::from_utf8(text).ok()?;
+    let at = text.rfind("\"total_tokens\"")?;
+    let rest = text[at + "\"total_tokens\"".len()..]
+        .trim_start_matches([' ', ':'])
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    rest.parse().ok()
+}
+
+/// Repassa a resposta e, no fim, cobra os tokens do tenant. Segura a vaga até lá.
+struct Tap {
+    inner: Pin<Box<dyn Stream<Item = Result<Bytes, axum::Error>> + Send>>,
+    /// Últimos bytes vistos: o `usage` de um stream vem no fim.
+    tail: Vec<u8>,
+    all: Vec<u8>,
+    /// Resposta sem stream: guarda o corpo (limitado) para ler o `usage`.
+    keep_all: bool,
+    tenant: Arc<Tenant>,
+    charged: bool,
+    _permit: Permit,
+}
+
+const TAIL: usize = 4096;
+const WHOLE: usize = 1 << 20;
+
+impl Stream for Tap {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        match this.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                this.tail.extend_from_slice(&chunk);
+                if this.tail.len() > TAIL * 2 {
+                    let cut = this.tail.len() - TAIL;
+                    this.tail.drain(..cut);
+                }
+                if this.keep_all && this.all.len() < WHOLE {
+                    this.all.extend_from_slice(&chunk);
+                }
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            Poll::Ready(None) => {
+                if !this.charged {
+                    this.charged = true;
+                    let source = if this.keep_all { &this.all } else { &this.tail };
+                    if let Some(tokens) = total_tokens(source) {
+                        this.tenant.charge(tokens);
+                    }
+                }
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+/// Sobe os túneis, o `llama-server` e o supervisiona. Devolve já, com o estado `Loading`; o
+/// carregamento e o benchmark seguem em segundo plano.
+pub fn start(config: LlamaConfig) -> Result<Arc<Llama>, String> {
+    let llama = Arc::new(Llama {
+        id: config.id.clone(),
+        context: config.context,
+        port: config.port,
+        state: Mutex::new(State::Loading),
+        tokens_per_second: Mutex::new(0.0),
+        client: Client::builder(TokioExecutor::new()).build_http(),
+    });
+    let tls = if config.endpoints.is_empty() {
+        None
+    } else {
+        Some(ai_cluster_tunnel::client_config(
+            &config.ca,
+            &config.cert,
+            &config.key,
+        )?)
+    };
+    let background = llama.clone();
+    tokio::spawn(async move {
+        if let Some(tls) = tls {
+            for (remote, local) in config.endpoints.iter().zip(config.local_endpoints()) {
+                match tokio::net::TcpListener::bind(&local).await {
+                    Ok(listener) => {
+                        let (remote, name, tls) =
+                            (remote.clone(), config.server_name.clone(), tls.clone());
+                        tokio::spawn(async move {
+                            if let Err(error) =
+                                ai_cluster_tunnel::forward(listener, remote.clone(), name, tls)
+                                    .await
+                            {
+                                eprintln!("túnel para {remote} encerrou: {error}");
+                            }
+                        });
+                    }
+                    Err(error) => {
+                        background.set(State::Failed(format!("túnel em {local}: {error}")));
+                        return;
+                    }
+                }
+            }
+        }
+        supervise(&config, &background).await;
+    });
+    Ok(llama)
+}
+
+/// Roda o `llama-server`; se sair, marca falha e o sobe de novo (com espera crescente).
+async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
+    let mut wait = Duration::from_secs(2);
+    loop {
+        llama.set(State::Loading);
+        let started = Instant::now();
+        let child = tokio::process::Command::new(&config.server_bin)
+            .args(config.server_args())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn();
+        match child {
+            Ok(mut child) => {
+                let watcher = llama.clone();
+                let ready = tokio::spawn(async move { become_ready(&watcher).await });
+                let status = child.wait().await;
+                ready.abort();
+                let reason = match status {
+                    Ok(status) => format!("llama-server saiu ({status})"),
+                    Err(error) => format!("llama-server: {error}"),
+                };
+                eprintln!("{reason}; reiniciando");
+                llama.set(State::Failed(reason));
+            }
+            Err(error) => {
+                let reason = format!("llama-server não iniciou ({}): {error}", config.server_bin);
+                eprintln!("{reason}");
+                llama.set(State::Failed(reason));
+            }
+        }
+        wait = if started.elapsed() > Duration::from_secs(120) {
+            Duration::from_secs(2)
+        } else {
+            (wait * 2).min(Duration::from_secs(60))
+        };
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// Espera o `/health` do `llama-server`, marca `Ready` e mede o benchmark.
+async fn become_ready(llama: &Arc<Llama>) {
+    let deadline = Instant::now() + LOAD_TIMEOUT;
+    while Instant::now() < deadline {
+        if llama.healthy().await {
+            llama.set(State::Ready);
+            match benchmark(llama).await {
+                Some(rate) => {
+                    *llama
+                        .tokens_per_second
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = rate;
+                    println!(
+                        "modelo {} pronto: {rate:.2} tokens/s no benchmark",
+                        llama.id
+                    );
+                }
+                None => println!("modelo {} pronto (benchmark sem medida)", llama.id),
+            }
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    llama.set(State::Failed("o modelo não ficou pronto a tempo".into()));
+}
+
+/// Um pedido fixo; lê `timings.predicted_per_second` da resposta do `llama-server`.
+async fn benchmark(llama: &Llama) -> Option<f64> {
+    let body = serde_json::json!({
+        "model": llama.id,
+        "messages": [{"role": "user", "content": BENCH_PROMPT}],
+        "max_tokens": BENCH_TOKENS,
+        "temperature": 0,
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "http://127.0.0.1:{}/v1/chat/completions",
+            llama.port
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .ok()?;
+    let response = tokio::time::timeout(Duration::from_secs(900), llama.client.request(request))
+        .await
+        .ok()?
+        .ok()?;
+    let bytes = axum::body::to_bytes(Body::new(response.into_body()), 1 << 20)
+        .await
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value["timings"]["predicted_per_second"]
+        .as_f64()
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_usage_of_a_stream_is_read_from_its_last_chunk() {
+        let tail = br#"data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":30,"total_tokens":42}}
+
+data: [DONE]
+"#;
+        assert_eq!(total_tokens(tail), Some(42));
+        assert_eq!(total_tokens(b"sem usage"), None);
+        assert_eq!(total_tokens(br#"{"total_tokens": 7}"#), Some(7));
+    }
+
+    #[test]
+    fn a_stream_request_always_asks_for_usage() {
+        let body = Bytes::from(r#"{"model":"m","stream":true,"messages":[]}"#);
+        let patched: serde_json::Value = serde_json::from_slice(&with_usage(&body)).unwrap();
+        assert_eq!(patched["stream_options"]["include_usage"], true);
+        assert_eq!(patched["model"], "m");
+    }
+
+    fn config() -> LlamaConfig {
+        LlamaConfig {
+            id: "m".into(),
+            model: "/models/m.gguf".into(),
+            server_bin: "llama-server".into(),
+            endpoints: vec!["10.0.0.5:50061".into(), "10.0.0.6:50061".into()],
+            ca: "ca".into(),
+            cert: "c".into(),
+            key: "k".into(),
+            server_name: "aic-worker".into(),
+            context: 2048,
+            gpu_layers: 99,
+            port: 18080,
+            tunnel_base: 18100,
+        }
+    }
+
+    #[test]
+    fn the_server_only_sees_loopback_tunnels() {
+        let args = config().server_args().join(" ");
+        assert!(args.contains("--host 127.0.0.1"), "{args}");
+        assert!(
+            args.contains("--rpc 127.0.0.1:18100,127.0.0.1:18101"),
+            "{args}"
+        );
+        assert!(
+            !args.contains("10.0.0."),
+            "o worker nunca aparece direto: {args}"
+        );
+        assert!(args.contains("-np 1"));
+        let mut local = config();
+        local.endpoints.clear();
+        assert!(!local.server_args().join(" ").contains("--rpc"));
+    }
+
+    // O ambiente é do processo: um teste só, em série, mexe nele.
+    #[test]
+    fn the_environment_builds_the_config_and_refuses_clear_text_rpc() {
+        let names = [
+            "AI_CLUSTER_LLAMA_MODEL",
+            "AI_CLUSTER_LLAMA_MODEL_ID",
+            "AI_CLUSTER_LLAMA_RPC_ENDPOINTS",
+            "AI_CLUSTER_LLAMA_TLS_CA",
+            "AI_CLUSTER_LLAMA_TLS_CERT",
+            "AI_CLUSTER_LLAMA_TLS_KEY",
+            "AI_CLUSTER_LLAMA_CTX",
+        ];
+        let clear = || {
+            names
+                .iter()
+                .for_each(|n| unsafe { std::env::remove_var(n) })
+        };
+        clear();
+        assert_eq!(from_env().unwrap(), None);
+
+        unsafe { std::env::set_var("AI_CLUSTER_LLAMA_MODEL", "/m/SmolLM2-360M-Q4.gguf") };
+        let local = from_env().unwrap().unwrap();
+        assert_eq!(
+            (local.id.as_str(), local.context),
+            ("SmolLM2-360M-Q4", 4096)
+        );
+        assert!(local.endpoints.is_empty());
+
+        unsafe {
+            std::env::set_var("AI_CLUSTER_LLAMA_RPC_ENDPOINTS", "pi:50061, pc:50061");
+        }
+        let refused = from_env().unwrap_err();
+        assert!(refused.contains("texto puro"), "{refused}");
+
+        unsafe {
+            std::env::set_var("AI_CLUSTER_LLAMA_TLS_CA", "ca");
+            std::env::set_var("AI_CLUSTER_LLAMA_TLS_CERT", "c");
+            std::env::set_var("AI_CLUSTER_LLAMA_TLS_KEY", "k");
+        }
+        assert_eq!(from_env().unwrap().unwrap().endpoints.len(), 2);
+
+        unsafe { std::env::set_var("AI_CLUSTER_LLAMA_MODEL_ID", "id com espaço") };
+        assert!(from_env().is_err());
+        unsafe {
+            std::env::set_var("AI_CLUSTER_LLAMA_MODEL_ID", "ok");
+            std::env::set_var("AI_CLUSTER_LLAMA_RPC_ENDPOINTS", "sem-porta");
+        }
+        assert!(from_env().is_err());
+        clear();
+    }
+}

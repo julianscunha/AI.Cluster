@@ -1,3 +1,4 @@
+mod rpc;
 mod shards;
 
 use std::collections::HashMap;
@@ -453,6 +454,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(root) = std::env::var_os("AI_CLUSTER_MODEL_DIR") {
         let root = PathBuf::from(root);
         tokio::task::spawn_blocking(move || verify_model_dirs(&root)).await??;
+    }
+
+    // rpc-server do llama.cpp (ADR-022): filho supervisionado atrás do túnel mTLS.
+    if let Some(rpc) = rpc::config(cores) {
+        tokio::spawn(async move {
+            if let Err(error) = rpc::run(rpc).await {
+                eprintln!("rpc-server desligado: {error}");
+            }
+        });
     }
 
     // Resident weight slices (J5): only a node that was told where the models live opens the
@@ -1737,6 +1747,9 @@ fn capability() -> CapabilityReport {
         memory_bandwidth_loaded_score: memory_bandwidth_loaded_score(),
         network_score: network_score(),
         precisions: vec!["fp32".to_string()],
+        rpc_port: rpc::config(cpu_threads as usize).map_or(0, |c| c.port()),
+        rpc_host: std::env::var("AI_CLUSTER_RPC_ADVERTISE_HOST").unwrap_or_default(),
+        rpc_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
         shard_cache_bytes: if std::env::var_os("AI_CLUSTER_MODEL_DIR").is_some() {
             shard_cache_bytes()
         } else {

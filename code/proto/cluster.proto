@@ -114,6 +114,13 @@ message CapabilityReport {
   /// Verdadeiro quando a sonda de rede completou ao menos duas repetições, o mínimo para um desvio.
   /// Com falso, `network_jitter` zero é "não medido"; com verdadeiro, zero é "estável".
   bool network_jitter_measured = 26;
+  /// Porta do túnel mTLS do `rpc-server` do llama.cpp neste nó (ADR-022). Zero = o nó não roda RPC.
+  uint32 rpc_port = 27;
+  /// Endereço que o gateway usa para chegar ao túnel; vazio = o endereço que o controller vê do nó.
+  string rpc_host = 28;
+  /// Commit do llama.cpp e versão do patch do `rpc-server`. O protocolo muda entre commits: o gateway só
+  /// usa o nó cuja versão é a do seu `llama-server`.
+  string rpc_version = 29;
 }
 
 message StorageDevice {

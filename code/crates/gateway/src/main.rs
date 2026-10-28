@@ -10,6 +10,7 @@
 //! the controller for; the HTTP contract, auth and limits stay.
 
 mod cache;
+mod llama;
 mod metrics;
 mod request_manager;
 mod tls;
@@ -629,6 +630,8 @@ struct Gateway {
     cache: Arc<cache::ResponseCache>,
     slots: Arc<Semaphore>,
     llms: Arc<Vec<Arc<Llm>>>,
+    /// Modelo servido pelo llama-server (ADR-022); `None` sem `AI_CLUSTER_LLAMA_MODEL`.
+    llama: Option<Arc<llama::Llama>>,
     /// One generation at a time across all models, handed out by priority class: it is CPU-bound
     /// and every thread is already used by the matmul.
     admission: Arc<Admission>,
@@ -690,6 +693,22 @@ async fn models(State(gateway): State<Gateway>, headers: HeaderMap) -> Response 
             "kind": "synthetic-matmul",
             "description": "Forward pass sintético (grafo de multiplicação de matrizes) executado no \
                 cluster. Não é um modelo de linguagem e o vetor não tem semântica.",
+        }));
+    }
+    if let Some(llama) = gateway.llama.as_ref().filter(|l| tenant.allows(&l.id)) {
+        data.push(json!({
+            "id": llama.id,
+            "object": "model",
+            "owned_by": "ai-cluster",
+            "kind": "language-model",
+            "engine": "llama.cpp",
+            "context": llama.context,
+            "state": match llama.state() {
+                llama::State::Loading => "loading",
+                llama::State::Ready => "ready",
+                llama::State::Failed(_) => "failed",
+            },
+            "tokens_per_second": llama.tokens_per_second(),
         }));
     }
     for llm in gateway.llms.iter().filter(|llm| tenant.allows(llm.id)) {
@@ -1289,6 +1308,93 @@ async fn chat_completions(
     }
 }
 
+/// Antes do caminho do motor próprio: um pedido para o modelo do llama-server segue por aqui, com a
+/// mesma autenticação, cota e fila, e o corpo vai inteiro ao servidor (chamada de ferramentas incluída).
+async fn llama_route(
+    State(gateway): State<Gateway>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some(llama) = gateway.llama.clone() else {
+        return next.run(request).await;
+    };
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, BODY_LIMIT).await else {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "INVALID_REQUEST",
+            "corpo grande demais",
+        );
+    };
+    let model = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v["model"].as_str().map(str::to_owned));
+    if model.as_deref() != Some(llama.id.as_str()) {
+        return next
+            .run(axum::extract::Request::from_parts(
+                parts,
+                axum::body::Body::from(bytes),
+            ))
+            .await;
+    }
+    llama_chat(&gateway, llama, parts.headers, bytes).await
+}
+
+async fn llama_chat(
+    gateway: &Gateway,
+    llama: Arc<llama::Llama>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Some(tenant) = gateway.tenants.authenticate(&headers) else {
+        return unauthorized();
+    };
+    if !tenant.allows(&llama.id) {
+        return model_forbidden();
+    }
+    match llama.state() {
+        llama::State::Ready => {}
+        llama::State::Loading => {
+            let mut response = error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MODEL_LOADING",
+                "o modelo está carregando; tente de novo em instantes",
+            );
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, "10".parse().expect("ascii"));
+            return response;
+        }
+        llama::State::Failed(_) => {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MODEL_UNAVAILABLE",
+                "o modelo não está disponível",
+            );
+        }
+    }
+    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+        return quota_exceeded(retry);
+    }
+    let class = tenant.class_for(requested_class(&headers));
+    let Ok(permit) = gateway.admission.acquire(class).await else {
+        tenant.note_rejected();
+        let mut response = error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "CAPACITY_UNAVAILABLE",
+            "capacidade esgotada; tente de novo em instantes",
+        );
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, "5".parse().expect("ascii"));
+        return response;
+    };
+    if let Err(retry) = tenant.check_quota(gateway.tenants.window) {
+        return quota_exceeded(retry);
+    }
+    llama.forward(body, tenant, permit).await
+}
+
 /// Sets the flag when dropped, whether the request finished or its future was dropped.
 struct CancelOnDrop(Arc<AtomicBool>);
 
@@ -1722,6 +1828,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "AI_CLUSTER_CACHE_ENTRIES",
         256,
     ) as usize));
+    let llama = llama::from_env()?.map(llama::start).transpose()?;
     announce_gateway(&client, &llms, addr, response_cache.clone());
     let gateway = Gateway {
         client: operator_client,
@@ -1729,6 +1836,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cache: response_cache,
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),
+        llama,
         admission,
     };
     let app = Router::new()
@@ -1736,7 +1844,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/metrics", get(inference_metrics))
         .route("/v1/models", get(models))
         .route("/v1/embeddings", post(embeddings))
-        .route("/v1/chat/completions", post(chat_completions))
+        .route(
+            "/v1/chat/completions",
+            post(chat_completions).layer(axum::middleware::from_fn_with_state(
+                gateway.clone(),
+                llama_route,
+            )),
+        )
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(gateway);
     println!(

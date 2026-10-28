@@ -7,6 +7,7 @@ edition = "2024"
 ai-cluster-common = { path = "../common" }
 ai-cluster-engine = { path = "../engine" }
 ai-cluster-protocol = { path = "../protocol" }
+ai-cluster-tunnel = { path = "../tunnel" }
 tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tonic = "0.14"
 # Encodes and decodes the copy of the controller state this node keeps on disk (I4).
