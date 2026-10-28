@@ -47,7 +47,6 @@ Todo o código da fase está feito; o que resta depende de hardware que o labora
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Jitter ambíguo | `network_jitter` 0 vale "estável" e "não medido" (menos de duas repetições); precisa de um sinal separado. | código |
 | Aceleradores | Reportar e medir kernels de GPU e NPU. | hardware: GPU/NPU |
 | Saúde de storage | SMART, erros e latência de escrita por dispositivo. | hardware: disco real com SMART |
 | Hardware heterogêneo | Validar capacidades distintas com mais tipos de máquina. | hardware: x86 e ARM64 |

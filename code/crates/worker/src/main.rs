@@ -346,6 +346,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capability.network_achieved_score = quality.score;
         capability.network_retransmit_ratio = quality.retransmit_ratio;
         capability.network_jitter = quality.jitter;
+        capability.network_jitter_measured = quality.jitter_measured;
     }
     // A copy left by a previous run of this node is still worth offering: the controller may
     // have lost its own files while this node was down (I4).
@@ -1214,6 +1215,8 @@ struct LinkQuality {
     score: f64,
     retransmit_ratio: f64,
     jitter: f64,
+    /// Repetições bastantes para haver desvio (duas ou mais).
+    jitter_measured: bool,
 }
 
 /// shortcut: the retransmit counters are the whole host's, so the ratio is only the probe's when
@@ -1244,6 +1247,7 @@ async fn probe_link_quality(client: &mut ProbeClient) -> LinkQuality {
         score: normalize_network_score(best),
         retransmit_ratio: retransmit_ratio(before, tcp_counters()),
         jitter: relative_deviation(&rates),
+        jitter_measured: rates.len() >= 2,
     }
 }
 

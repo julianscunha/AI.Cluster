@@ -329,12 +329,23 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_network_jitter",
-        "Desvio relativo da taxa entre as repetições da sonda de rede. Zero é estável ou não medido.",
+        "Desvio relativo da taxa entre as repetições da sonda de rede. Zero é estável só quando ai_cluster_node_network_jitter_measured é 1.",
         nodes,
         |node| {
             node.capability
                 .as_ref()
                 .map_or(0.0, |capability| capability.network_jitter)
+        },
+    );
+    node_metric(
+        &mut out,
+        "ai_cluster_node_network_jitter_measured",
+        "1 quando a sonda de rede teve repetições bastantes para medir o desvio; 0 é não medido.",
+        nodes,
+        |node| {
+            node.capability.as_ref().map_or(0.0, |capability| {
+                f64::from(capability.network_jitter_measured)
+            })
         },
     );
     node_metric(
@@ -513,6 +524,18 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn o_jitter_zero_so_vale_estavel_quando_foi_medido() {
+        let mut medido = node("node-a", 0.0);
+        medido
+            .capability
+            .get_or_insert_with(Default::default)
+            .network_jitter_measured = true;
+        let out = render(&summary(), &[medido, node("node-b", 0.0)]);
+        assert!(out.contains("ai_cluster_node_network_jitter_measured{node=\"node-a\"} 1\n"));
+        assert!(out.contains("ai_cluster_node_network_jitter_measured{node=\"node-b\"} 0\n"));
     }
 
     #[test]

@@ -852,11 +852,16 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
             disk.name, disk.write_score, disk.read_score
         );
     }
-    // Packet loss the TCP stack hid (retransmits) and run-to-run jitter of the link probe; zero
-    // jitter is "stable or not measured", the same convention as the deviation above.
+    // Packet loss the TCP stack hid (retransmits) and run-to-run jitter of the link probe; "n/d" is
+    // a probe with fewer than two runs, which cannot tell stable from unmeasured.
+    let jitter = if capability.network_jitter_measured {
+        format!("{:.3}", capability.network_jitter)
+    } else {
+        "n/d".to_string()
+    };
     println!(
-        "  network_retransmit_ratio={:.4} network_jitter={:.3}",
-        capability.network_retransmit_ratio, capability.network_jitter
+        "  network_retransmit_ratio={:.4} network_jitter={jitter}",
+        capability.network_retransmit_ratio
     );
     // Baseline confidence: 1 = the registration runs agreed, low = the node was disturbed then.
     let baseline = if capability.baseline_confidence > 0.0 {

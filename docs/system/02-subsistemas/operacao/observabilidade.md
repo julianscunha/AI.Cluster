@@ -52,7 +52,7 @@ O worker lê `/proc` e `/sys` a cada heartbeat e envia:
 - **IOPS:** leituras e escritas concluídas por segundo, de `/proc/diskstats`.
 - **Score de rede:** velocidade negociada do link sobre a referência de 1 GbE. É um teto nominal, não a vazão sob carga.
 
-Da medição do registro (capability) saem também, no `nodes` da CLI e no exporter: `baseline_confidence` (baseline limpo ou perturbado), `network_retransmit_ratio` e `network_jitter` (perda e oscilação da sonda de rede), `storage_read_score` (leitura com `O_DIRECT`) e `memory_bandwidth_loaded_score` (memória com os núcleos juntos).
+Da medição do registro (capability) saem também, no `nodes` da CLI e no exporter: `baseline_confidence` (baseline limpo ou perturbado), `network_retransmit_ratio` e `network_jitter` e `ai_cluster_node_network_jitter_measured` (perda e oscilação da sonda de rede; sem pelo menos duas repetições o jitter 0 é "não medido", `n/d` na CLI), `storage_read_score` (leitura com `O_DIRECT`) e `memory_bandwidth_loaded_score` (memória com os núcleos juntos).
 
 O roll-up do controller (`GetMetrics` e o exporter) traz também as médias de rede e storage dos nós prontos que mediram e as unidades concluídas por segundo em 1 e 5 minutos (zero sem história que cubra a janela). O controller lembra as últimas 100 mil unidades concluídas; as contagens de concluídas passam a valer essa janela quando ela enche.
 

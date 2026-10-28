@@ -111,6 +111,9 @@ message CapabilityReport {
   /// Cada disco que o worker consegue medir (até quatro), não só o do diretório da sonda. Vazio é
   /// "não medido": contêiner, ou nenhum ponto de montagem de disco aceita um arquivo novo.
   repeated StorageDevice storage_devices = 25;
+  /// Verdadeiro quando a sonda de rede completou ao menos duas repetições, o mínimo para um desvio.
+  /// Com falso, `network_jitter` zero é "não medido"; com verdadeiro, zero é "estável".
+  bool network_jitter_measured = 26;
 }
 
 message StorageDevice {
