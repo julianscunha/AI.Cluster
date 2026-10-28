@@ -263,6 +263,8 @@ const MAX_EVENT_WATCHERS: usize = 16;
 /// Highest priority class an enqueue may ask for. Aging is 64 passes per class, so an
 /// unbounded `u32` would make a low class wait effectively forever.
 const MAX_PRIORITY: u32 = 9;
+/// Teto de unidades enfileiradas que exigem atestado: cada rodada refaz os atestados (O(nós)).
+const MAX_ATTESTED_QUEUED: usize = 256;
 
 /// Invalid results in a row that quarantine a node (G1).
 const QUARANTINE_STRIKES: u32 = 3;
@@ -1299,6 +1301,17 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument(
                 "todas as dimensões da matriz devem ser maiores que zero",
             ));
+        }
+        if request.require_attested
+            && self
+                .work
+                .attested_queued()
+                .saturating_add(request.repetitions.max(1) as usize)
+                > MAX_ATTESTED_QUEUED
+        {
+            return Err(Status::resource_exhausted(format!(
+                "mais de {MAX_ATTESTED_QUEUED} unidades atestadas na fila; espere esvaziar"
+            )));
         }
         // Sem release publicada ninguém é atestado: a unidade esperaria para sempre sem aviso.
         if request.require_attested && self.rollout.desired().is_none() {
@@ -2502,6 +2515,24 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn enqueue_work_caps_the_attested_queue() {
+        let (service, work_store) = service_with_work();
+        let status = service
+            .enqueue_work(op(EnqueueWorkRequest {
+                rows: 2,
+                shared: 2,
+                cols: 2,
+                repetitions: 257,
+                require_attested: true,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+        assert_eq!(work_store.attested_queued(), 0);
     }
 
     #[tokio::test]

@@ -24,7 +24,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock; falta teto de unidades que exigem atestado. `reserve`/`release` gravam o snapshot sob o lock. | código |
+| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock; a fila atestada tem teto de 256 unidades. `reserve`/`release` gravam o snapshot sob o lock. | código |
 | Níveis de confiança | Enrollment (token de uso único, aprovação por regra) sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler por GPU/NPU | Filas por recurso; hoje só CPU. | hardware |
 | Localidade | Entra no custo só quando as saídas ficarem residentes no worker (F12). | código |

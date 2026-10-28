@@ -838,6 +838,15 @@ impl WorkStore {
         self.lock().queue.iter().any(|unit| unit.require_attested)
     }
 
+    /// How many queued units demand an attested node.
+    pub fn attested_queued(&self) -> usize {
+        self.lock()
+            .queue
+            .iter()
+            .filter(|unit| unit.require_attested)
+            .count()
+    }
+
     /// Empties the attested set once no queued unit needs it, so a stale answer cannot outlive the
     /// last unit that asked for it.
     pub fn clear_attested(&self) {
