@@ -662,6 +662,8 @@ struct Gateway {
     llms: Arc<Vec<Arc<Llm>>>,
     /// Modelo servido pelo llama-server (ADR-022); `None` sem `AI_CLUSTER_LLAMA_MODEL`.
     llama: Arc<llama::Manager>,
+    /// A fila do llama-server: tantas gerações ao mesmo tempo quantas as vagas (`-np`).
+    llama_admission: Arc<Admission>,
     /// One generation at a time across all models, handed out by priority class: it is CPU-bound
     /// and every thread is already used by the matmul.
     admission: Arc<Admission>,
@@ -1407,7 +1409,7 @@ async fn llama_chat(
         return quota_exceeded(retry);
     }
     let class = tenant.class_for(requested_class(&headers));
-    let Ok(permit) = gateway.admission.acquire(class).await else {
+    let Ok(permit) = gateway.llama_admission.acquire(class).await else {
         tenant.note_rejected();
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -1871,6 +1873,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tenants.clone(),
         llama.clone(),
     );
+    let llama_admission = Admission::with_capacity(
+        llama.slots() as usize,
+        env_number("AI_CLUSTER_QUEUE_MAX", 8) as usize,
+        Duration::from_secs(env_number("AI_CLUSTER_QUEUE_WAIT_SECS", 10)),
+    );
     let gateway = Gateway {
         client: operator_client,
         tenants,
@@ -1878,6 +1885,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         llms: Arc::new(llms),
         llama,
+        llama_admission,
         admission,
     };
     let app = Router::new()

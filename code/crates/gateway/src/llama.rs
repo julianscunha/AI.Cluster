@@ -51,6 +51,8 @@ pub struct LlamaConfig {
     pub gpu_layers: u32,
     pub port: u16,
     pub tunnel_base: u16,
+    /// Gerações ao mesmo tempo no llama-server (`-np`); o contexto de cada uma é `context`.
+    pub slots: u32,
 }
 
 impl LlamaConfig {
@@ -64,9 +66,10 @@ impl LlamaConfig {
             "--port",
             &self.port.to_string(),
             "-c",
-            &self.context.to_string(),
+            // O `-c` do llama-server é o total, dividido entre as vagas.
+            &self.context.saturating_mul(self.slots.max(1)).to_string(),
             "-np",
-            "1",
+            &self.slots.max(1).to_string(),
             "-a",
             &self.id,
         ]
@@ -184,7 +187,21 @@ pub fn from_env() -> Result<Option<LlamaConfig>, String> {
         gpu_layers: number("AI_CLUSTER_LLAMA_NGL", 99)?,
         port,
         tunnel_base,
+        slots: slots_from_env()?,
     }))
+}
+
+/// `AI_CLUSTER_LLAMA_SLOTS`: quantas gerações o llama-server atende ao mesmo tempo (1 a 16).
+pub fn slots_from_env() -> Result<u32, String> {
+    match std::env::var("AI_CLUSTER_LLAMA_SLOTS") {
+        Ok(text) if !text.trim().is_empty() => text
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=16).contains(n))
+            .ok_or_else(|| format!("AI_CLUSTER_LLAMA_SLOTS deve ir de 1 a 16, veio {text}")),
+        _ => Ok(1),
+    }
 }
 
 /// Em que ponto está o modelo.
@@ -587,6 +604,7 @@ pub struct Base {
     pub port: u16,
     pub tunnel_base: u16,
     pub default_context: u32,
+    pub slots: u32,
 }
 
 impl Base {
@@ -621,6 +639,7 @@ impl Base {
             port,
             tunnel_base,
             default_context: number("AI_CLUSTER_LLAMA_CTX", 4096)?,
+            slots: slots_from_env()?,
         })
     }
 
@@ -679,6 +698,7 @@ impl Base {
             gpu_layers: wanted.gpu_layers,
             port: self.port,
             tunnel_base: self.tunnel_base,
+            slots: self.slots.max(1),
         })
     }
 }
@@ -702,6 +722,11 @@ impl Manager {
             fixed: true,
             last_error: Mutex::new(String::new()),
         })
+    }
+
+    /// Quantas gerações ao mesmo tempo o llama-server aceita; o gateway abre essa fila.
+    pub fn slots(&self) -> u32 {
+        self.base.slots.max(1)
     }
 
     pub fn current(&self) -> Option<Arc<Llama>> {
@@ -824,6 +849,7 @@ data: [DONE]
             gpu_layers: 99,
             port: 18080,
             tunnel_base: 18100,
+            slots: 1,
         }
     }
 
@@ -924,6 +950,7 @@ data: [DONE]
             port: 18080,
             tunnel_base: 18100,
             default_context: 4096,
+            slots: 1,
         };
         let ok = base
             .config_for(&desired("pasta/m.gguf", "pasta-m", &["10.0.0.5:50061"]))
@@ -998,5 +1025,15 @@ data: [DONE]
             }
         }
         Ready(items.into_iter())
+    }
+    #[test]
+    fn the_slots_set_np_and_scale_the_total_context() {
+        let mut c = config();
+        c.slots = 4;
+        c.context = 2048;
+        let args = c.server_args().join(" ");
+        assert!(args.contains("-np 4"), "{args}");
+        assert!(args.contains("-c 8192"), "cada vaga tem 2048: {args}");
+        assert!(config().server_args().join(" ").contains("-np 1"));
     }
 }

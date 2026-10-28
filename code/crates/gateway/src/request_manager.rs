@@ -320,7 +320,8 @@ struct Waiter {
 
 #[derive(Default)]
 struct State {
-    busy: bool,
+    /// Vagas em uso. Passar a vaga a quem espera não muda a conta.
+    active: usize,
     next_seq: u64,
     waiters: Vec<Waiter>,
 }
@@ -330,6 +331,8 @@ struct State {
 /// `Background` is not starved by a stream of `Interactive`.
 pub struct Admission {
     state: Mutex<State>,
+    /// Gerações ao mesmo tempo (1 para o motor próprio; as vagas do llama-server para o llama.cpp).
+    capacity: usize,
     max_waiting: usize,
     max_wait: Duration,
 }
@@ -342,8 +345,14 @@ pub struct Permit(Arc<Admission>);
 
 impl Admission {
     pub fn new(max_waiting: usize, max_wait: Duration) -> Arc<Self> {
+        Self::with_capacity(1, max_waiting, max_wait)
+    }
+
+    /// Como `new`, com `capacity` gerações ao mesmo tempo (no mínimo 1).
+    pub fn with_capacity(capacity: usize, max_waiting: usize, max_wait: Duration) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(State::default()),
+            capacity: capacity.max(1),
             max_waiting,
             max_wait,
         })
@@ -363,8 +372,8 @@ impl Admission {
     pub async fn acquire(self: &Arc<Self>, class: Class) -> Result<Permit, Refused> {
         let (seq, receiver) = {
             let mut state = self.lock();
-            if !state.busy {
-                state.busy = true;
+            if state.active < self.capacity {
+                state.active += 1;
                 return Ok(Permit(self.clone()));
             }
             if state.waiters.len() >= self.max_waiting {
@@ -413,7 +422,7 @@ impl Admission {
                 })
                 .map(|(index, _)| index);
             let Some(index) = best else {
-                state.busy = false;
+                state.active = state.active.saturating_sub(1);
                 return;
             };
             let waiter = state.waiters.remove(index);
@@ -623,5 +632,47 @@ mod tests {
         // Sem a chave na lista, ela deixa de valer.
         tenants.set_grants(Vec::new());
         assert!(tenants.authenticate(&headers("aic_segredo")).is_none());
+    }
+    #[tokio::test]
+    async fn an_admission_with_several_slots_runs_that_many_at_once() {
+        let admission = Admission::with_capacity(2, 4, Duration::from_millis(200));
+        let first = admission.acquire(Class::Normal).await.unwrap();
+        let second = admission.acquire(Class::Normal).await.unwrap();
+        // A terceira espera e, sem vaga, desiste.
+        assert_eq!(
+            admission.acquire(Class::Normal).await.err(),
+            Some(Refused::TimedOut)
+        );
+        // Soltar uma vaga abre espaço para a próxima, e o total em uso continua certo.
+        drop(first);
+        let third = admission.acquire(Class::Normal).await.unwrap();
+        assert!(admission.acquire(Class::Normal).await.is_err());
+        drop(second);
+        drop(third);
+        assert!(admission.acquire(Class::Normal).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_released_slot_goes_to_a_waiter_without_losing_count() {
+        let admission = Admission::with_capacity(2, 4, Duration::from_secs(2));
+        let a = admission.acquire(Class::Normal).await.unwrap();
+        let b = admission.acquire(Class::Normal).await.unwrap();
+        let waiting = {
+            let admission = admission.clone();
+            tokio::spawn(async move { admission.acquire(Class::Interactive).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(a);
+        let c = waiting.await.unwrap().unwrap();
+        // Duas em uso (b e c): uma terceira de fora ainda não cabe.
+        assert_eq!(admission.waiting(), 0);
+        let blocked = admission.acquire(Class::Normal);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), blocked)
+                .await
+                .is_err()
+        );
+        drop(b);
+        drop(c);
     }
 }

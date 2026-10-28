@@ -74,3 +74,22 @@ O dono escolheu corrigir o RPC no armv7 (plano 2). Foram três defeitos do llama
 1. **Segurança do `rpc-server`:** ele não tem autenticação nem criptografia. Proposta: o worker o escuta só em 127.0.0.1 e o nosso worker o expõe por um proxy com mTLS amarrado ao `node_id` (ADR-022, rede entre workers).
 2. **Quem é o nó principal** (carrega o GGUF e roda o `llama-server`): o gateway atual (contêiner no servidor), ou o worker de 64 bits mais forte escolhido pelo controller.
 3. **Como o worker executa o `rpc-server`:** processo filho do worker (o controller manda iniciar e parar), com o binário na imagem do SO.
+
+### Fluxo validado no laboratório real (2026-10-28)
+
+PC (x86, contêiner, 4 threads) e Orange Pi PC (armv7, 1 GB, imagem 11.7), mTLS entre o gateway e os dois `rpc-server`, Qwen2.5 1.5B Q4_K_M (986 MB, mais do que a RAM livre do Pi):
+
+| Configuração | Resultado |
+|---|---|
+| `model start` (OK por RAM: 1,06 GB contra 2,5 GB) até PRONTO | alguns minutos (carga do GGUF e dos tensores ao Pi) |
+| 1 vaga, 1 pedido de 32 tokens | 16,7 s (1,9 tokens/s) |
+| 2 vagas (`AI_CLUSTER_LLAMA_SLOTS=2`), 2 pedidos juntos de 32 tokens | 24,8 s cada: 2,6 tokens/s no total (+34%), cada resposta 49% mais longa |
+| Benchmark do `model status` | 2,5 a 2,9 tokens/s |
+
+Mais workers aumentam a RAM somada; mais vagas aumentam a vazão total à custa da latência de cada pedido. Um worker lento (o Pi) limita todos os pedidos: o ganho do cluster aparece quando o modelo não cabe em uma máquina só.
+
+### Estado das etapas (E0 a E11)
+
+- **Feitas:** E1 (catálogo), E2 (OK/NOK), E5 (plano de workers, sem `--tensor-split` calculado), E6 (`models start/stop/status`, chaves em hash, benchmark), E7 (worker novo entra no plano e o modelo para se faltar RAM), E9 parcial (várias vagas), E11 (quantização pelo GGUF).
+- **Descartadas pela decisão do llama.cpp:** E0, E3, E4 (o head empurra os tensores pelo próprio RPC).
+- **Pendentes:** E8 (pipeline entre workers com porta de entrada própria só vale se o RPC do llama.cpp não bastar), E10 (tensor-split), certificado por nó, plano de camadas por RAM, imagens x86 com os binários.
