@@ -23,7 +23,7 @@ Hoje um modelo exige variáveis por modelo (`*_DIR`, `*_SHARDS`, `*_SUBDIR`), pe
 
 ## Etapas
 
-**E-1 (primeiro, decide o resto): teste de viabilidade do llama.cpp** no Pi armv7 (1 GB) e no x86: compilar, rodar um GGUF Q4 pequeno, medir RAM e tokens por segundo, e testar o `rpc-server` entre o PC e o Pi. Se falhar no armv7, o motor próprio fica para esse alvo. Até o resultado, **E0 e E3 ficam em espera** (melhoram o motor próprio, que pode virar só referência).
+**E-1 (primeiro, decide o resto) — feita em 2026-10-28, resultado abaixo: teste de viabilidade do llama.cpp** no Pi armv7 (1 GB) e no x86: compilar, rodar um GGUF Q4 pequeno, medir RAM e tokens por segundo, e testar o `rpc-server` entre o PC e o Pi. Se falhar no armv7, o motor próprio fica para esse alvo. Até o resultado, **E0 e E3 ficam em espera** (melhoram o motor próprio, que pode virar só referência).
 
 E0 pesos menores na memória · E1 catálogo (`models list`) · E2 OK/NOK (`models check`) · E3 receitas encaixáveis com paridade por receita · E4 pesos por gRPC, sem `scp` · E5 placement automático, sem `*_SHARDS` · E6 `models start` com chaves e benchmark · E7 nó novo recebe o modelo e refaz o benchmark · E8 pipeline entre workers · E9 vários pedidos e micro-batching · E10 tensor-split opcional · E11 quantização própria, se ainda couber. O progresso fica em [[pendencias]].
 
@@ -40,3 +40,29 @@ E0 pesos menores na memória · E1 catálogo (`models list`) · E2 OK/NOK (`mode
 ## Alternativas
 
 Só o motor próprio: controle total, mas cada receita e a quantização ficam por nossa conta. candle: cobre cerca de 30 modelos escritos à mão, sem kernel NEON para armv7 e sem distribuição.
+
+## Resultado da E-1 (2026-10-28)
+
+Medido com o llama.cpp (commit `8ca4060`), GGUF Q4_K_M, compilado para x86 genérico (sem `-march=native`) e para armv7 (Cortex-A7, NEON, estático), ambos com `GGML_RPC`:
+
+| Máquina | Modelo | Geração | Leitura do prompt |
+|---|---|---|---|
+| PC x86, 4 threads (contêiner) | SmolLM2 360M | 37 tokens/s | 189 tokens/s |
+| PC x86, 4 threads (contêiner) | Qwen2.5 0,5B | 27,6 tokens/s | 182 tokens/s |
+| Orange Pi PC armv7, 1 GB, 4 threads | SmolLM2 360M | 2,6 tokens/s | 4,2 tokens/s |
+| PC x86 → outro nó x86 por RPC | Qwen2.5 0,5B | 28 tokens/s | 102 tokens/s |
+
+- **O llama.cpp roda em armv7 com 1 GB**, sem alteração: o Pi gera 2,6 tokens/s com o SmolLM2 360M. É cerca de dez vezes o que o motor próprio entrega hoje no cluster com o mesmo modelo.
+- **O RPC entre nós x86 funciona** e custa pouco (28 contra 27,6 tokens/s do modelo local).
+- **O RPC com o armv7 não funcionou:** PC x86 → Pi falha logo na conexão (`Remote RPC server crashed or returned malformed response`, o servidor só registra o fechamento) e Pi → Pi no próprio Pi não terminou o teste em mais de 15 minutos (processo parado). A causa não foi isolada: a estrutura das mensagens não usa `size_t` e não achei diferença de largura de palavra. O servidor RPC do llama.cpp é experimental e declara `Never expose the RPC server to an open network`.
+- **Os pesos não passam pelo nosso canal:** no RPC do llama.cpp quem carrega o arquivo (o nó principal) envia os tensores aos servidores RPC na carga. Portanto a etapa E4 (envio de pesos por gRPC) só vale se o motor próprio continuar no caminho.
+
+### Decisão pendente do dono
+
+O RPC do llama.cpp serve a nós de 64 bits. Para os nós armv7 há três caminhos, e a escolha define o resto do roadmap:
+
+1. **Dois planos de dados:** x86 e ARM64 usam o RPC do llama.cpp; o armv7 continua no motor próprio (fatias por linhas) ou roda modelos pequenos sozinho com o llama.cpp.
+2. **Corrigir o RPC no armv7:** investigar e enviar a correção ao llama.cpp (ou manter um patch). Custo e prazo incertos.
+3. **Camada de distribuição própria sobre a biblioteca do llama.cpp:** usar o llama.cpp só para calcular e distribuir pelo nosso canal. É o caminho mais longo.
+
+Recomendação: **1 agora** (entrega a demo em nós de 64 bits e dá ao Pi o papel de nó pequeno com o llama.cpp local) e **2 em paralelo**, medindo o custo de corrigir.
