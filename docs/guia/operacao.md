@@ -66,6 +66,26 @@ Um nó que devolve três resultados inválidos seguidos (checksum errado) vai pa
 
 **Reservas.** `ai-cluster reserve <nó> <request_id>` retém o nó inteiro para uma requisição (`--slots N` guarda só N slots de trabalho e deixa o resto do nó para outras). Até o vencimento (60 s por padrão, `--ttl-ms` muda), só as unidades dessa requisição vão para o nó. `ai-cluster release <nó>` libera antes. As reservas sobrevivem a reinício do controller.
 
+## Modelos (llama.cpp)
+
+O fluxo, de ponta a ponta (veja [[modelos]] e [[cli]]):
+
+1. Ponha o GGUF em `AI_CLUSTER_MODELS_DIR` (a mesma pasta no controller e no gateway) e confira com `model list` (coluna `ROD`) e `model check <id>`.
+2. `model start <id>`: o controller confere a RAM, escolhe os workers e o gateway carrega. Guarde a chave de API que ele mostra (só o hash fica com o controller).
+3. `model status` mostra o plano, o estado (`CARREGANDO`, `PRONTO`, `FALHOU`) e os tokens/s do benchmark. O Pi leva minutos para receber os tensores; no começo as chamadas dão 503 `MODEL_LOADING`.
+4. `model stop` tira o modelo; a chave continua valendo no próximo `start`.
+
+Como o controller escolhe: os workers mais rápidos primeiro, **só até a RAM somada comportar o modelo**. Um worker lento entra apenas quando faltaria memória (cada um soma um salto de rede por token). Um worker novo muda o plano só se mudar esse conjunto, e só depois de `AI_CLUSTER_PLAN_STABLE_MS` com a mesma lista.
+
+| Sintoma | Causa provável | O que fazer |
+|---|---|---|
+| `model start` diz NOK | A RAM somada dos workers com RPC não comporta o modelo, ou não há worker com RPC | Acrescente workers (o NOK diz quantos) ou reduza o contexto (`--ctx`) |
+| Status `FALHOU` com "os workers de agora oferecem X GB" | Um worker saiu e a RAM não basta | Traga o worker de volta: o plano volta sozinho |
+| Status `FALHOU` com "llama-server saiu (signal: 6)" | O `rpc-server` de um worker caiu (sem memória) ou recusou a conexão | Veja o log do worker; confira a hora do nó e o certificado |
+| Worker fica fora do plano | Sem `rpc_port` (RPC desligado), reprovado ou sem endereço válido | `ai-cluster node show <id>`; confira as variáveis `AI_CLUSTER_RPC_*` |
+| Muito lento com um Pi no plano | O Pi só entra se a RAM exigir; cada camada nele soma latência | Use um worker maior; um modelo que cabe no PC não precisa do Pi |
+| `certificate expired` no túnel | Relógio do nó errado (placa sem RTC) | Corrija a hora (a imagem 11.8 acerta sozinha com DNS e chrony) |
+
 ## Eventos e trilha de auditoria
 
 `ai-cluster events --limit N` mostra a linha do tempo recente; com `--follow` continua mostrando os eventos novos à medida que acontecem (no máximo 16 assinantes; um evento pode aparecer duas vezes na junção entre a lista e o fluxo). Tipos de evento que o controller grava:
@@ -158,6 +178,7 @@ Não há lista de revogação. Uma chave vazada vale até a imagem que a retira 
 | Cliente com `Unauthenticated`. | Token de join, de operador ou credencial errado ou ausente. | Confira o valor no cliente e no controller. |
 | Cliente com `PermissionDenied` ("exige o token de operador"). | Comando administrativo com o token de join. | Use o token de operador. |
 | Registro recusado com `FailedPrecondition`. | Id de nó já aprovado, sem a credencial dele. | `ai-cluster revoke <nó>`, depois suba o worker de novo. |
+| `approve` recusa com "impressão digital não confere". | O id foi tomado por outro registro depois de um `revoke`, ou a impressão digitada está errada. | Compare com a que o worker imprimiu ao registrar-se e com a coluna `IMPRESSÃO` de `nodes`. |
 | Nó fica `pendente`. | Aprovação manual. | `ai-cluster approve <nó> --fingerprint <fp>`. |
 | Nó fica `QUARANTINED`. | Três resultados inválidos seguidos. | Investigue o nó (checksum, memória, disco); depois `ai-cluster approve`. |
 | Unidade fica `pendente` sem erro. | Nenhum nó vivo e aprovado cumpre o requisito (memória, threads, classe). | `ai-cluster node show <nó>` para ver o que o nó reporta. Não há erro porque o cluster só não consegue rodar a unidade. |

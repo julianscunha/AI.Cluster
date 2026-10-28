@@ -129,6 +129,29 @@ Limites da revogação:
 - A revogação não envia nada ao worker. Fatias e modelos que ele já guardou continuam no disco dele.
 - Não há revogação de certificado, porque não há emissão de certificado por nó.
 
+## Túnel do `rpc-server` (llama.cpp)
+
+O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o que o cliente manda (alocação de memória, cálculo de grafo). Por isso ele nunca fica exposto:
+
+- **No worker:** o `rpc-server` escuta só em `127.0.0.1` (`-H 127.0.0.1`, fixo e testado). A única porta aberta é o túnel mTLS (`ai-cluster-tunnel`, `AI_CLUSTER_RPC_LISTEN`), que exige certificado de cliente assinado pela CA de `AI_CLUSTER_RPC_TLS_CLIENT_CA`. Sem certificado, chave e CA o worker **não** liga o RPC (falha fechada, nunca em texto puro).
+- **No gateway:** o `llama-server` só enxerga portas em `127.0.0.1`, que são túneis TLS locais para cada worker (`AI_CLUSTER_LLAMA_TLS_*`). Endpoints de worker sem TLS configurado são recusados.
+- **Cifras e limites:** TLS 1.3 com ChaCha20-Poly1305 preferido (o Cortex-A7 não tem AES), `TCP_NODELAY`, keepalive de 30 s, 32 handshakes em andamento, 64 conexões abertas, 10 s para o handshake. O handshake vem antes do limite de conexões, então quem abre TCP e cala não esgota as vagas.
+- **Endereço do worker:** o `rpc_host` que o nó anuncia vira destino de conexão do gateway; o controller só aceita IP (não loopback, não link-local, não multicast) ou nome DNS simples.
+- **Plano do controller:** o `model_path` é relativo à pasta de modelos do gateway (sem `..`, sem caminho absoluto); o contexto tem teto; a faixa de portas locais é validada.
+
+**Limite:** o túnel confere a CA, não o `node_id`. Com uma CA só, um worker comprometido poderia abrir o `rpc-server` de outro. Use uma CA que **só assine o gateway** em `AI_CLUSTER_RPC_TLS_CLIENT_CA`. Certificado por nó e o papel "gateway" separado estão nas pendências.
+
+## Chaves de API do controller
+
+- O controller gera a chave (`aic_` + 32 bytes aleatórios em base64url) e a mostra **uma vez**. Guarda só `sha256(chave)`, em arquivo escrito de forma atômica (`fsync`, modo 0600).
+- O `ReportGateway` devolve ao gateway os **hashes** de todos os tenants, nunca uma chave em claro. Uma chave de 256 bits não é invertível por força bruta. O gateway confere o hash do que o cliente manda em tempo constante.
+- O estado que o gateway reporta (id do modelo, motivo) é texto de terceiros: o controller descarta ids fora do padrão e limpa caracteres de controle antes de mostrá-lo ao operador.
+- `model start`, `model stop`, `model status`, `model list` e `model check` exigem o token de operador e são auditados.
+
+## Aprovação conferida pela impressão digital
+
+O `approve` exige `--fingerprint` (os 16 primeiros hexadecimais do SHA-256 da credencial do nó, impressos pelo worker ao registrar-se e mostrados por `nodes`). Quem tomou o id de um nó depois de um `revoke` tem outra credencial e não é aprovado no lugar dele. `--trust-listed` aceita a impressão que o controller mostra no momento e anula essa proteção.
+
 ## Auditoria
 
 Cada ação administrativa gera um evento `audit` com a ação, o alvo e o endereço de quem chamou ([[observabilidade]]). Tentativas negadas não entram na trilha.

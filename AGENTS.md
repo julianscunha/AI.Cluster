@@ -33,6 +33,10 @@ Os testes E2E ficam em `code/tests/*.sh` (mapa em `docs/guia/testes.md`). Os que
 - `code/crates/cli` — CLI do operador; não coloque execução de worker nela.
 - `code/crates/engine` — motor de inferência em CPU (GPT-2, Llama/SmolLM2, tokenizador, KV cache, fatias).
 - `code/crates/gateway` — Inference API HTTP (`/v1/chat/completions`, SSE).
+- `code/crates/catalog` — catálogo de modelos: lê cabeçalhos GGUF e safetensors (sem carregar pesos) e o veredito OK/NOK por RAM (`check`).
+- `code/crates/tunnel` — túnel TCP sobre mTLS (rustls, ChaCha20 preferido) que protege o `rpc-server` do llama.cpp; só o worker e o gateway o usam.
+- `code/third_party/llama.cpp` — patch (`armv7.patch`) e script de build do llama.cpp, que executa os modelos GGUF (ADR-022). O código dele não está no repositório.
+- `deploy/` — Dockerfile único, `docker-compose.yml` e `init.sh` (tokens por papel e certificados) para subir um cluster em um computador.
 - `code/proto/cluster.proto` — contrato de wire, pacote `ai.cluster.v1`.
 
 ## Convenções

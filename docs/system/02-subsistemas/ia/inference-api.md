@@ -70,6 +70,17 @@ A chave de API é obrigatória, e o gateway não sobe sem ela (nem sem um tenant
 
 Cada modelo carregado aparece com a versão do manifesto (`version`). Sem manifesto, o campo vem vazio.
 
+### Modelo do llama.cpp (`model start`)
+
+Além dos acima, o gateway serve **um** modelo GGUF pelo `llama-server` (ADR-022), com o id que `model start` define (o nome do arquivo sem `.gguf`). Ele aparece em `GET /v1/models` com `engine: llama.cpp`, `context`, `state` (`loading`, `ready`, `failed`) e `tokens_per_second` (benchmark). Diferenças em relação aos modelos do motor próprio:
+
+- **Corpo repassado inteiro** ao `llama-server` (o gateway só confere autenticação, modelo, cota e fila): vale tudo o que o llama.cpp aceita no `/v1/chat/completions`, incluindo `tools`. Em stream, o gateway força `stream_options.include_usage` para cobrar a cota.
+- **Chaves:** as do controller (`model start`) valem para este modelo, e as do ambiente (`AI_CLUSTER_API_KEY`, `AI_CLUSTER_TENANTS`) continuam valendo para os demais.
+- **Vagas:** `AI_CLUSTER_LLAMA_SLOTS` gerações ao mesmo tempo (fila própria, com a mesma regra de classe e espera). Mais vagas aumentam a vazão total e alongam cada resposta.
+- **Estados:** carregando devolve 503 `MODEL_LOADING` com `Retry-After: 10`; falhou, 503 `MODEL_UNAVAILABLE`; parado, o modelo some da lista (404).
+- **Cota:** cobrada pelo `usage` do servidor ao fim da resposta; se o cliente desiste antes, cobra uma estimativa (um token a cada quatro bytes enviados).
+- **Sem limite de 64 tokens nem de 512 no prompt:** valem os do llama.cpp e o contexto escolhido.
+
 ## Chat completions
 
 Campos aceitos: `model`, `messages` (papéis `system`, `user` e `assistant`), `max_tokens`, `stream`, `stream_options.include_usage`, `temperature` (0 a 2, padrão 0 = guloso), `top_p`, `seed` e `n` (1 a 4, sem `stream`). Amostrar é do `engine` (`sampling.rs`: softmax com temperatura, núcleo, semente splitmix64); só a resposta gulosa entra no cache.

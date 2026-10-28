@@ -83,16 +83,16 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 ## F12 — Model runtime distribuído
 
-O fluxo desejado (pasta de modelos no controller, OK/NOK, envio dos pesos, chaves e benchmark, nó novo) e as etapas E0 a E11 estão no [[adr-022-fluxo-de-modelos-e-motor-hibrido]]. Nada disso foi codado ainda; as linhas abaixo continuam valendo. Marco de lançamento: a demo de aceite da E7 (modelo maior que qualquer máquina, em 3 a 4 máquinas velhas, com tokens por segundo publicados). Antes de tudo vem a E-1, o teste do llama.cpp no Pi e no x86: se ele virar o data plane, as linhas de motor próprio desta fase (N3, N8, compatibilidade de arquiteturas, memória do gateway, execução fora do gateway) e as de latência do canal de fatias e engine separado da F08 podem ser descartadas ou reescritas.
+O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chaves e benchmark, nó novo) está feito para modelos GGUF no llama.cpp (veja [[model-manager]] e o [[adr-022-fluxo-de-modelos-e-motor-hibrido]]). As linhas abaixo são o que falta ou o que só vale para o motor próprio.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| N1 a N3 | Registro central de modelos, manifest (tensores e assinatura), variantes e quantização (hoje só fp32). | código, decisão |
+| N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta registro central com versão e variantes, manifesto assinado e conferência de checksum dos GGUF. O motor próprio segue só em fp32. | código, decisão |
 | Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
-| Admissão por capacidade | Estimar tempo por token, reservar espaço para failover, reavaliar quando um worker volta com cache menor. | código |
-| Memória do gateway | Embeddings, normalizações e KV cache ficam no gateway (cerca de 1,6 GB). Medir com um 7B e decidir se fatia os embeddings. | código, dados |
-| N4 a N9 | Fatias pré-carregadas, cache e prefetch de modelo, pipeline, tensor com all-reduce, planejador híbrido. | código |
-| Execução fora do gateway | Placement pelo controller, KV distribuído e persistente, robustez com réplica e rebalanceamento. | código |
+| Admissão por capacidade | A conferência de RAM é feita (`model check` e o guarda do plano). Falta estimar o tempo por token, reservar espaço para o failover e contar o cache KV de várias vagas (`AI_CLUSTER_LLAMA_SLOTS`). | código |
+| Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
+| N4 a N9 | Pré-carga e cache de modelo em disco dos workers, pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
+| Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
 
@@ -140,9 +140,9 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Relógio dos nós sem RTC | O Pi iniciou em 2024-04: o certificado mTLS (válido a partir de hoje) foi recusado como "ainda não válido". A imagem não roda NTP. Falta `ntpd`/`chrony` no boot e esperar a hora antes de abrir o túnel. | código |
+| Relógio dos nós sem RTC | A imagem 11.8 acerta a hora (DNS de reserva no gateway da rota e em 1.1.1.1, chrony com salto de hora). Sem DNS nem NTP alcançável o certificado do túnel segue recusado; falta o worker esperar a hora válida antes de abrir o túnel e dizer isso no log. | código |
 | Certificado por nó | O túnel exige certificado da CA, mas não amarra ao `node_id` (o mesmo certificado serve a todos os workers) e um worker poderia abrir o rpc-server de outro. Falta o controller emitir certificados por nó e um papel "gateway" separado. | código |
-| Binários na imagem | `ggml-rpc-server` (armv7 e x86) e `llama-server` ainda não vão nas imagens do SO nem nos contêineres. | código |
+| Binários nas imagens | O `ggml-rpc-server` está na imagem armv7 e na imagem única do Compose (que também leva o `llama-server`). Faltam a imagem x86 do SO (UEFI) e o pacote do worker para systemd. | código |
 | Queda de worker | Se um worker cai no meio de um pedido o `llama-server` aborta e o gateway o reinicia (o modelo fica `loading` e recarrega). | código |
 | Plano de camadas | O controller escolhe os workers (os mais rápidos primeiro, os lentos só se a RAM exigir) e manda `--tensor-split` proporcional à velocidade, limitado pela RAM de cada um. A velocidade é a pontuação de CPU do registro (um kernel de f64), que não mede o llama.cpp quantizado: o Pi aparece 57 vezes mais lento nela, e nas medidas foi cerca de 14. Falta calibrar com a medida do próprio llama.cpp e fixar a ordem dos dispositivos com `--device`. | código |
 | Versão do `rpc-server` | O worker anuncia `rpc_version`, mas o controller não a confere com a do `llama-server` do gateway. | código |
@@ -151,4 +151,3 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 | Identidade do par no túnel | O túnel servidor aceita qualquer certificado de cliente da CA e o cliente aceita qualquer servidor com o nome `aic-worker`. Com uma CA só, um worker comprometido abre o `rpc-server` de outro (que executa o que o cliente manda) ou se passa por worker. Mitigação hoje: CA exclusiva do gateway em `AI_CLUSTER_RPC_TLS_CLIENT_CA`. Falta certificado por nó, papel "gateway" e conferir o SAN do par. | código |
 | `rpc-server` órfão | Se o gateway ou o worker morre por SIGKILL ou OOM, o `llama-server` ou o `rpc-server` fica vivo segurando a porta e a RAM (`kill_on_drop` não cobre). Falta `PR_SET_PDEATHSIG` ou checar a porta antes de subir. | código |
 | Saúde depois de pronto | Depois de `Ready` ninguém sonda o `llama-server`; se ele trava sem sair, o gateway segue anunciando pronto. | código |
-| Imagem com DNS e hora | A imagem 11.8 (a fazer) traz o `aic-dns`: DHCP sem servidor de nomes cai no gateway da rota e em 1.1.1.1, e o chrony aceita o salto de hora. A 11.7 no Pi ainda precisa de `/run/resolv.conf` e do relógio acertados à mão. | código |

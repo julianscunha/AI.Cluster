@@ -15,6 +15,12 @@ Volte ao [[guia]] para o índice. Valores de configuração estão em [[configur
 - Docker, para o cluster de desenvolvimento, os testes E2E e o build cruzado para armv7.
 - `openssl`, para gerar certificados e chaves de release.
 
+## Em um computador só, com Docker
+
+O caminho mais curto (`deploy/`): `bash deploy/init.sh` gera um token por papel (controller, gateway e worker recebem só o que precisam) e a PKI do túnel RPC (uma CA, o certificado do gateway e o dos workers, 30 dias); `docker compose -f deploy/docker-compose.yml up -d --build --scale worker=2` constrói uma imagem única (controller, gateway, worker, CLI, `llama-server` e `rpc-server` do llama.cpp com o patch) e sobe tudo. Os modelos GGUF ficam em `deploy/models`. O passo a passo está no [README](../../README.md#início-rápido-em-um-computador-docker) e o fluxo dos modelos em [[modelos]]. As portas do host mudam com `AI_CLUSTER_GRPC_PORT` e `AI_CLUSTER_HTTP_PORT`.
+
+O compose usa `AI_CLUSTER_INSECURE=1` na rede privada dele; fora dela configure o TLS do gRPC (seção abaixo). O túnel RPC é sempre mTLS.
+
 ## Compilar
 
 A partir de `code/` (o workspace Cargo fica nessa pasta):
@@ -106,6 +112,12 @@ docker build -f os/Dockerfile.worker -t ai-cluster-worker:dev .
 ```
 
 A imagem tem o binário e um usuário sem privilégios (UID 10001), sobre `debian:bookworm-slim`. Nenhuma configuração entra na imagem: controller, token de join e id do nó vêm por variável. A credencial do nó fica em `AI_CLUSTER_NODE_CREDENTIAL_FILE` (`/var/lib/ai-cluster/credential` na imagem); monte um volume ali para o nó manter a aprovação depois de reiniciar.
+
+## RPC do llama.cpp no worker (modelos GGUF)
+
+Para o worker dividir um modelo GGUF com o gateway, ele roda o `ggml-rpc-server` do llama.cpp atrás de um túnel mTLS (veja [[seguranca]]). Gere o certificado do worker (SAN `aic-worker`, ou o nome combinado com o gateway) e a CA que assina **só o gateway**, e configure `AI_CLUSTER_RPC_SERVER_BIN`, `AI_CLUSTER_RPC_TLS_CERT`, `AI_CLUSTER_RPC_TLS_KEY` e `AI_CLUSTER_RPC_TLS_CLIENT_CA` ([[configuracao]]). Sem os três do TLS o nó segue sem RPC.
+
+Na **imagem armv7** o `ggml-rpc-server` já vem em `/usr/bin` e liga sozinho quando existem `/data/rpc-tls/worker.crt`, `worker.key` e `ca.crt`. O binário é o do patch de 32 bits de `code/third_party/llama.cpp` (compilado por `build.sh`, no volume `aic-llama`, e copiado por `build-rootfs.sh`). A hora do nó precisa estar certa para o certificado valer: a imagem traz o DNS de reserva (`aic-dns`, o gateway da rota e 1.1.1.1 quando o DHCP não entrega nomes) e o chrony com salto de hora; uma placa sem RTC nasce em 2024 e acerta o relógio depois da rede. Se o nó não entra no plano com `certificate expired`, confira `date` nele.
 
 ## Imagem do AI Cluster OS (armv7)
 
