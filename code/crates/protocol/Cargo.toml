@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+sha2 = "0.10"
 # tls-ring: TLS on the gRPC channel (S4). Features unify across the workspace, so the
 # controller and the clients get it from here.
 tonic = { version = "0.14", features = ["tls-ring"] }

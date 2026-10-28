@@ -61,7 +61,7 @@ Total: 2 serviços e 24 RPCs.
 | `HealthStreamResponse` | `accepted` (1) | |
 | `StateReplica` | `epoch_unix_ms` (1), `snapshot` (2) | `WorkSnapshot` codificado, com os mesmos bytes do arquivo de estado do controller |
 | `ListNodesRequest` / `ListNodesResponse` | — / `nodes` (1) | |
-| `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
+| `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
 | `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |
 | `ProbeLinkRequest` / `ProbeLinkResponse` | `payload` (1) / `received_bytes` (1) | payload de até 4 MiB |

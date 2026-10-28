@@ -510,6 +510,16 @@ pub fn node_credential<T>(request: &Request<T>) -> &[u8] {
         .map_or(&b""[..], |value| value.as_bytes())
 }
 
+/// Impressão digital de uma credencial: 8 bytes do SHA-256 em hexadecimal. O nó a mostra e o operador a
+/// confere no `approve`; não permite recuperar a credencial.
+pub fn credential_fingerprint(credential: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(credential.as_bytes())[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Equal-length byte comparison without an early exit, so timing does not reveal how much of
 /// a guess matched. The length itself is not secret.
 pub fn same_token(expected: &[u8], given: &[u8]) -> bool {

@@ -96,8 +96,18 @@ impl NodeRecord {
             last_heartbeat_unix_ms: self.last_heartbeat_unix_ms,
             trusted: self.trusted,
             attested: false,
+            fingerprint: ai_cluster_protocol::metadata::credential_fingerprint(&self.credential),
         }
     }
+}
+
+/// Resultado de [`Registry::approve_checked`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Approval {
+    Approved,
+    Unknown,
+    /// A impressão digital não é a da credencial atual do nó.
+    Mismatch,
 }
 
 /// What the controller remembers about a node beyond its live record (S5): the credential it
@@ -296,7 +306,13 @@ impl Registry {
 
     /// Trusts a registered node. False when the node is unknown. Approving twice is fine.
     pub fn approve(&self, node_id: &str) -> bool {
+        self.approve_if(node_id, |_| true) == Approval::Approved
+    }
+
+    /// Aprova sob um só lock se `allowed` aceitar o registro; a checagem e a aprovação não se separam.
+    fn approve_if(&self, node_id: &str, allowed: impl Fn(&NodeRecord) -> bool) -> Approval {
         match self.lock().get_mut(node_id) {
+            Some(record) if !allowed(record) => Approval::Mismatch,
             Some(record) => {
                 record.trusted = true;
                 // Approving is also how an operator releases a quarantined node.
@@ -304,10 +320,19 @@ impl Registry {
                 record.strikes = 0;
                 self.remember(node_id, &record.credential, true);
                 self.remember_quarantine(node_id, false);
-                true
+                Approval::Approved
             }
-            None => false,
+            None => Approval::Unknown,
         }
+    }
+
+    /// [`approve`](Self::approve) que só vale se a impressão digital da credencial atual do nó for
+    /// `fingerprint`: quem tomou o id depois de um `revoke` tem outra credencial e não é aprovado.
+    pub fn approve_checked(&self, node_id: &str, fingerprint: &str) -> Approval {
+        self.approve_if(node_id, |record| {
+            let current = ai_cluster_protocol::metadata::credential_fingerprint(&record.credential);
+            same_token(current.as_bytes(), fingerprint.as_bytes())
+        })
     }
 
     /// Upserts a node. Re-registration refreshes capability and liveness but
@@ -625,6 +650,27 @@ mod tests {
             can_update: false,
             runtime_version: "0.1.0".to_string(),
         }
+    }
+
+    #[test]
+    fn approve_checked_refuses_a_node_whose_id_was_taken_after_a_revoke() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        let seen = ai_cluster_protocol::metadata::credential_fingerprint(&first.credential);
+        registry.revoke("n1");
+        // O intruso, só com o token de join, registra o mesmo id antes da aprovação.
+        let taken = registry
+            .register_as(identity("n1"), CapabilityReport::default(), 2, b"")
+            .unwrap();
+        assert_ne!(first.credential, taken.credential);
+        assert_eq!(registry.approve_checked("n1", &seen), Approval::Mismatch);
+        assert!(!registry.is_trusted("n1"));
+        let theirs = ai_cluster_protocol::metadata::credential_fingerprint(&taken.credential);
+        assert_eq!(registry.approve_checked("n1", &theirs), Approval::Approved);
+        assert_eq!(
+            registry.approve_checked("ghost", &theirs),
+            Approval::Unknown
+        );
     }
 
     #[test]

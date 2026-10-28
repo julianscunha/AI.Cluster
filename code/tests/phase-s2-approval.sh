@@ -82,8 +82,14 @@ else
   fail "node-new não deveria ter sido aprovado pelo token de join"
 fi
 
-echo "=== B) approve libera o nó e a unidade que esperava ==="
-OUT=$(cli approve node-new)
+echo "=== B) approve confere a impressão digital da credencial ==="
+BAD=$(cli approve node-new --fingerprint 0000000000000000 2>&1 || true)
+echo "$BAD"
+echo "$BAD" | grep -qi "não confere" || fail "impressão errada deveria ser recusada"
+cli nodes | grep -E "^node-new " | grep -q pendente || fail "impressão errada não deveria aprovar"
+echo "OK: impressão errada recusada, o nó segue pendente"
+FP=$(cli nodes | grep -E "^node-new " | awk '{print $NF}')
+OUT=$(cli approve node-new --fingerprint "$FP")
 echo "$OUT"
 echo "$OUT" | grep -q "aprovado" || fail "approve deveria confirmar a aprovação"
 sleep 8

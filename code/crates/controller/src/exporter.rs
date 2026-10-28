@@ -470,6 +470,7 @@ mod tests {
             last_heartbeat_unix_ms: 0,
             trusted: true,
             attested: false,
+            ..Default::default()
         }
     }
 

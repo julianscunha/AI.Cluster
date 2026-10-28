@@ -43,7 +43,7 @@ Os tokens entram por variável de ambiente, que aparece para quem inspeciona o p
 ## Aprovação de nós
 
 - Por padrão, um nó novo entra **pendente**: aparece em `ai-cluster nodes` com `CONFIANÇA` = `pendente` e não recebe trabalho nem escreve estado.
-- `ai-cluster approve <nó>` aprova. O nó passa a `aprovado` e começa a receber unidades.
+- `ai-cluster approve <nó> --fingerprint <fp>` aprova, conferindo a impressão digital da credencial que o worker imprimiu ao registrar-se (e `nodes` mostra em `IMPRESSÃO`). Se o id foi tomado por outro registro depois de um `revoke`, a impressão muda e a aprovação é recusada. O nó passa a `aprovado` e começa a receber unidades.
 - `AI_CLUSTER_AUTO_APPROVE=1` aprova todo nó que se registra. Use só em rede fechada e de teste.
 - `ai-cluster revoke <nó>` retira a aprovação, troca a credencial do nó, devolve as unidades em voo à fila e registra o evento. O worker revogado encerra com `Unauthenticated`. Se ele for reiniciado, volta pendente. Com `AUTO_APPROVE`, a revogação não dura: o nó volta aprovado.
 - Um nó aprovado que tenta se registrar de novo sem a credencial dele é recusado até um `revoke`. É o caminho quando o worker perdeu o arquivo de credencial.
@@ -158,7 +158,7 @@ Não há lista de revogação. Uma chave vazada vale até a imagem que a retira 
 | Cliente com `Unauthenticated`. | Token de join, de operador ou credencial errado ou ausente. | Confira o valor no cliente e no controller. |
 | Cliente com `PermissionDenied` ("exige o token de operador"). | Comando administrativo com o token de join. | Use o token de operador. |
 | Registro recusado com `FailedPrecondition`. | Id de nó já aprovado, sem a credencial dele. | `ai-cluster revoke <nó>`, depois suba o worker de novo. |
-| Nó fica `pendente`. | Aprovação manual. | `ai-cluster approve <nó>`. |
+| Nó fica `pendente`. | Aprovação manual. | `ai-cluster approve <nó> --fingerprint <fp>`. |
 | Nó fica `QUARANTINED`. | Três resultados inválidos seguidos. | Investigue o nó (checksum, memória, disco); depois `ai-cluster approve`. |
 | Unidade fica `pendente` sem erro. | Nenhum nó vivo e aprovado cumpre o requisito (memória, threads, classe). | `ai-cluster node show <nó>` para ver o que o nó reporta. Não há erro porque o cluster só não consegue rodar a unidade. |
 | Worker encerra depois de algum tempo. | Revogado, ou 30 pedidos de trabalho seguidos recusados (nó offline, drenando ou em quarentena). | Confira `ai-cluster nodes`. Reinicie o worker se ele não voltar sozinho. |

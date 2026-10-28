@@ -32,7 +32,7 @@ ai-cluster [--controller <endpoint>] <comando>
 
 | Comando | O que faz |
 |---|---|
-| `approve <nó>` | Aprova um nó pendente, para ele receber trabalho. Aprovar de novo não faz mal. Também libera um nó em quarentena. |
+| `approve <nó> [--fingerprint <fp>]` | Aprova um nó pendente, para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. Sem `--fingerprint`, usa a que o controller mostra agora e avisa. Aprovar de novo não faz mal. Também libera um nó em quarentena. |
 | `revoke <nó>` | Retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
 
 ## Reservas

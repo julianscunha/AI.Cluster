@@ -430,6 +430,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id
     );
+    println!(
+        "impressão da credencial: {} (confira no `ai-cluster approve --fingerprint`)",
+        ai_cluster_protocol::metadata::credential_fingerprint(&registered.node_credential)
+    );
 
     // Planned departure: stop taking work, then tell the controller so it can hand
     // this node's in-flight units to someone else before the process exits.

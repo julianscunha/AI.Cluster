@@ -44,7 +44,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Nó desconhecido | Um `node_id` fora do registro passa pela checagem de credencial. | código |
 | Escopo do operador | O operador age sobre qualquer nó. | decisão, código |
-| Id liberado pelo revoke | Depois do `revoke`, ou com nó pendente sem sinal, o token de join toma o id e o `approve` (por id) aprovaria o intruso. Falta segredo de rotação de uso único ou conferir a credencial. | código, decisão |
+| Aprovar sem conferir o nó | Sem `--fingerprint`, o CLI usa a impressão que o controller mostra no momento: só vale se o operador comparar com a do nó. Falta exigir a flag ou confirmar interativamente. | decisão |
 | Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. Falta limite de ids por IP e segredo por gateway. | código, decisão |
 | Segredo lido uma vez | `secret()` relê o arquivo a cada chamada e, se o `_FILE` falhar, só avisa. Ler no início e falhar. | código |
 | Relatório aberto | `WorkReport` e `ListEvents` aceitam o token de join; `limit` 0 devolve tudo sob o lock. Exigir operador ou teto. | código |

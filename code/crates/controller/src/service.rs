@@ -49,7 +49,7 @@ const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 use crate::events::EventLog;
 use crate::metrics;
-use crate::registry::{Registry, unix_ms};
+use crate::registry::{Approval, Registry, unix_ms};
 use crate::rollout::{self, Rollout};
 use crate::shards::ShardHub;
 use crate::work::WorkStore;
@@ -415,12 +415,29 @@ impl ClusterControl for ClusterControlService {
         request: Request<ApproveNodeRequest>,
     ) -> Result<Response<ApproveNodeResponse>, Status> {
         let peer = operator_peer(&request)?;
-        let node_id = request.into_inner().node_id;
+        let request = request.into_inner();
+        let node_id = request.node_id;
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
+        if request.fingerprint.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "fingerprint é obrigatória: use a que `ai-cluster nodes` mostra e o nó imprime ao registrar-se",
+            ));
+        }
         self.audit(&peer, "approve", &node_id);
-        let approved = self.registry.approve(&node_id);
+        let approved = match self
+            .registry
+            .approve_checked(&node_id, request.fingerprint.trim())
+        {
+            Approval::Approved => true,
+            Approval::Unknown => false,
+            Approval::Mismatch => {
+                return Err(Status::failed_precondition(
+                    "a impressão digital não confere com a credencial atual do nó; o id pode ter sido tomado por outro registro",
+                ));
+            }
+        };
         if approved {
             self.events.record(unix_ms(), "node_approved", node_id);
         }

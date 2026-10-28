@@ -110,6 +110,10 @@ enum Command {
     Approve {
         /// Nó a aprovar.
         node: String,
+        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Sem ela, usa a que o
+        /// controller mostra agora, o que não prova que o nó é o que você espera.
+        #[arg(long)]
+        fingerprint: Option<String>,
     },
     /// Retira a confiança e a credencial de um nó e devolve o trabalho dele à fila (S5).
     Revoke {
@@ -278,7 +282,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             slots,
         } => run_reserve(&cli.controller, &node, &request_id, ttl_ms, slots).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
-        Command::Approve { node } => approve_node(&cli.controller, &node).await?,
+        Command::Approve { node, fingerprint } => {
+            approve_node(&cli.controller, &node, fingerprint).await?
+        }
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
         Command::Rollout {
             version,
@@ -415,11 +421,37 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
 }
 
 /// Libera a reserva de um nó antes do vencimento. Um nó sem reserva não é erro.
-async fn approve_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn approve_node(
+    endpoint: &str,
+    node: &str,
+    fingerprint: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
+    let fingerprint = match fingerprint {
+        Some(given) => given,
+        None => {
+            eprintln!(
+                "AVISO: sem --fingerprint; aprovando a credencial que o controller mostra agora. Confira com a impressão que o nó imprimiu ao registrar-se."
+            );
+            client
+                .list_nodes(ListNodesRequest {})
+                .await?
+                .into_inner()
+                .nodes
+                .into_iter()
+                .find(|known| known.identity.as_ref().is_some_and(|id| id.node_id == node))
+                .map(|known| known.fingerprint)
+                .unwrap_or_default()
+        }
+    };
+    if fingerprint.is_empty() {
+        println!("NÓ não encontrado no={node}");
+        return Ok(());
+    }
     let approved = client
         .approve_node(ApproveNodeRequest {
             node_id: node.to_string(),
+            fingerprint,
         })
         .await?
         .into_inner()
@@ -538,7 +570,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Vec<_>>();
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8}",
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16}",
         "NÓ",
         "ESTADO",
         "ARQ",
@@ -553,7 +585,8 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "ARMAZ",
         "ARMAZ_SCORE",
         "VERSÃO",
-        "MEDIDA"
+        "MEDIDA",
+        "IMPRESSÃO"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -567,7 +600,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8}",
+            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16}",
             identity.node_id,
             // a largura vem antes da cor: os códigos de escape não contam como coluna
             ai_cluster_common::brand::paint(
@@ -596,6 +629,11 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
                 &identity.runtime_version
             },
             if node.attested { "confere" } else { "-" },
+            if node.fingerprint.is_empty() {
+                "-"
+            } else {
+                &node.fingerprint
+            },
         );
     }
     Ok(())

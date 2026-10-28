@@ -67,7 +67,7 @@ O papel de inferência existe para o gateway rodar modelos nos workers sem poder
 
 1. O nó chama `RegisterNode` com o token de join e recebe uma credencial de 128 bits.
 2. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente. Um nó pendente não recebe unidades, não entra no placement, não tem a réplica de estado aceita, e `RequestWork` responde sem trabalho (sem erro, para o worker não sair).
-3. O operador aprova com `ai-cluster approve <nó>`. Aprovar de novo não tem efeito colateral.
+3. O operador aprova com `ai-cluster approve <nó> --fingerprint <fp>`; a impressão digital (SHA-256 da credencial, 16 hex) que o nó imprime ao registrar-se tem de bater com a credencial atual, então quem tomou o id depois de um `revoke` não é aprovado no lugar do nó. Aprovar de novo não tem efeito colateral.
 4. Um novo registro com o mesmo `node_id` só mantém a aprovação se provar a credencial atual. Sem prova, o nó volta a pendente.
 5. Um nó aprovado sem a credencial é recusado até um `revoke`. Assim, o token de join não expulsa um nó aprovado.
 

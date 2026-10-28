@@ -168,10 +168,16 @@ message NodeSnapshot {
   // Verdadeiro quando o nó roda a release desejada e a medida do slot (`image_sha256`) confere com a
   // assinada. Calculado na leitura; não é persistido. Software apenas: um nó comprometido mente.
   bool attested = 8;
+  /// Impressão digital da credencial do nó (SHA-256, 16 hex). O nó a mostra no log ao registrar-se; o
+  /// operador a confere no `approve` para não aprovar quem tomou o id. Não revela a credencial.
+  string fingerprint = 9;
 }
 
 message ApproveNodeRequest {
   string node_id = 1;
+  /// Impressão digital da credencial do nó que o operador viu (`NodeSnapshot.fingerprint`). Obrigatória:
+  /// se o id foi tomado por outro registro, a impressão muda e a aprovação é recusada.
+  string fingerprint = 2;
 }
 
 message RevokeNodeRequest {
