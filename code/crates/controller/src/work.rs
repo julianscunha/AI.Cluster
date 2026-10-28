@@ -851,7 +851,10 @@ impl WorkStore {
             .first()?
         };
         let raw = predicted_compute_us(&inner.queue[index], capability);
-        Some(take_locked(&mut inner, index, node_id, now_unix_ms, raw))
+        let unit = take_locked(&mut inner, index, node_id, now_unix_ms, raw);
+        // A posse vai ao disco antes de a unidade sair: uma queda logo após despachar não a roda duas vezes.
+        self.save_locked(&mut inner);
+        Some(unit)
     }
 
     /// Hands the asking node the first unit it could take, but only when that node is
@@ -932,7 +935,9 @@ impl WorkStore {
                 tolerance,
             );
             if takes {
-                return Some(take_locked(&mut inner, index, node_id, now_unix_ms, raw));
+                let unit = take_locked(&mut inner, index, node_id, now_unix_ms, raw);
+                self.save_locked(&mut inner);
+                return Some(unit);
             }
         }
         None
@@ -2291,8 +2296,6 @@ mod tests {
         store
             .claim("node-b", &capability(8, 0.0), 1_000)
             .expect("w2 is ready");
-        // Completing w2 writes the snapshot, and that is where w1's lease gets persisted:
-        // `claim` deliberately does not save, so only a later mutation carries it to disk.
         let mut w2_result = result("w2", 250);
         w2_result.node_id = "node-b".to_string();
         store.complete(w2_result, 2_000).expect("w2 was dispatched");
@@ -2313,6 +2316,35 @@ mod tests {
             .complete(result("w1", 250), 3_000)
             .expect("w1's owner survived the restart, so its result is accepted");
         assert_eq!(reloaded.pending(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A queda logo depois de despachar não pode rodar a unidade duas vezes: o `claim` grava a
+    /// posse na hora, sem esperar outra mutação.
+    #[test]
+    fn a_claim_persists_the_lease_at_once() {
+        let dir = std::env::temp_dir().join(format!("aic-work-claimsave-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.enqueue([unit("w1")]);
+        store
+            .claim("node-a", &capability(8, 0.0), 1_000)
+            .expect("w1 is ready");
+        // sem nenhuma mutação depois: é o que um reinício logo após o despacho encontra
+        let reloaded = WorkStore::with_state(&path);
+        assert_eq!(
+            reloaded.unknown_owners(&["node-b".to_string()]),
+            vec!["node-a".to_string()],
+            "a posse da unidade sobreviveu"
+        );
+        assert_eq!(
+            reloaded.unknown_owners(&["node-a".to_string()]),
+            Vec::<String>::new()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
