@@ -15,6 +15,7 @@ Notas práticas para instalar, configurar, operar e testar o AI Cluster. Cada no
 | [[configuracao]] | Todas as variáveis `AI_CLUSTER_*` por componente, com padrão e efeito |
 | [[cli]] | Subcomandos e flags do `ai-cluster` |
 | [[api]] | API HTTP do gateway: rotas, autenticação, cabeçalhos, cotas e erros |
+| [[modelos]] | Modelos suportados e homologados, do mais simples ao mais avançado, com notas e links de download |
 | [[operacao]] | Tokens e papéis, mTLS, aprovação de nós, saída de nós, eventos, métricas, estado, atualização assinada, rotação de chave e solução de problemas |
 | [[testes]] | Testes unitários, de paridade e a suíte E2E |
 

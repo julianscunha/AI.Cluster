@@ -54,6 +54,7 @@ Fluxo de uso:
 | **Máquina de build** (uma vez) | Linux com Rust estável ≥ 1.85 (`rustup`). Compila os binários; servidores e dispositivos não precisam de Rust. Para gerar binário ARMv7 a partir de x86, Docker nessa máquina. |
 | **Seu computador** | O binário `ai-cluster` e acesso de rede ao controller. |
 | **Modelos** | Pesos GPT-2 ou SmolLM2 no servidor do gateway ([onde baixar](docs/guia/instalacao.md#pesos-dos-modelos)). Opcional: sem eles o cluster funciona, só não responde chat. |
+| **Catálogo de modelos** | Lista de modelos de pesos abertos, do mais simples ao mais avançado, com notas e quais já foram homologados: [`docs/guia/modelos.md`](docs/guia/modelos.md). |
 
 Docker **não** é requisito para usar o AI Cluster. Ele só aparece para quem desenvolve o projeto (veja o fim deste README).
 
