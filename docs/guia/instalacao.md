@@ -73,7 +73,7 @@ O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUS
    ```
 
    Se o endpoint for um IP, defina `AI_CLUSTER_TLS_DOMAIN` com o nome do certificado.
-4. Aprove cada nó novo: `ai-cluster approve no-1`. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente e não recebe trabalho.
+4. Aprove cada nó novo: `ai-cluster approve no-1 --fingerprint <fp>`. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente e não recebe trabalho.
 5. Suba a CLI com `AI_CLUSTER_CONTROLLER`, `AI_CLUSTER_OPERATOR_TOKEN` e `AI_CLUSTER_TLS_CA`.
 6. Suba o gateway (ver [[api]]) com `AI_CLUSTER_API_KEY` ou `AI_CLUSTER_TENANTS`, pelo menos um dos tokens de operador ou de inferência, e o controller em `https://`.
 

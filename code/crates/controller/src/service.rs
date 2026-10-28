@@ -428,7 +428,7 @@ impl ClusterControl for ClusterControlService {
         self.audit(&peer, "approve", &node_id);
         let approved = match self
             .registry
-            .approve_checked(&node_id, request.fingerprint.trim())
+            .approve_checked(&node_id, &request.fingerprint.trim().to_ascii_lowercase())
         {
             Approval::Approved => true,
             Approval::Unknown => false,

@@ -110,10 +110,14 @@ enum Command {
     Approve {
         /// Nó a aprovar.
         node: String,
-        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Sem ela, usa a que o
-        /// controller mostra agora, o que não prova que o nó é o que você espera.
+        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Obrigatória, salvo
+        /// `--trust-listed`.
         #[arg(long)]
         fingerprint: Option<String>,
+        /// Aceita a impressão que o controller mostra agora, sem conferi-la com a do nó. Anula a proteção
+        /// contra um id tomado por outro registro.
+        #[arg(long, conflicts_with = "fingerprint")]
+        trust_listed: bool,
     },
     /// Retira a confiança e a credencial de um nó e devolve o trabalho dele à fila (S5).
     Revoke {
@@ -282,9 +286,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             slots,
         } => run_reserve(&cli.controller, &node, &request_id, ttl_ms, slots).await?,
         Command::Reservations => print_reservations(&cli.controller).await?,
-        Command::Approve { node, fingerprint } => {
-            approve_node(&cli.controller, &node, fingerprint).await?
-        }
+        Command::Approve {
+            node,
+            fingerprint,
+            trust_listed,
+        } => approve_node(&cli.controller, &node, fingerprint, trust_listed).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
         Command::Rollout {
             version,
@@ -425,13 +431,20 @@ async fn approve_node(
     endpoint: &str,
     node: &str,
     fingerprint: Option<String>,
+    trust_listed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let fingerprint = match fingerprint {
-        Some(given) => given,
+        Some(given) => given.trim().to_ascii_lowercase(),
+        None if !trust_listed => {
+            return Err(
+                "informe --fingerprint (a que o nó imprimiu ao registrar-se) ou --trust-listed"
+                    .into(),
+            );
+        }
         None => {
             eprintln!(
-                "AVISO: sem --fingerprint; aprovando a credencial que o controller mostra agora. Confira com a impressão que o nó imprimiu ao registrar-se."
+                "AVISO: --trust-listed; aprovando a credencial que o controller mostra agora. Confira com a impressão que o nó imprimiu ao registrar-se."
             );
             client
                 .list_nodes(ListNodesRequest {})
@@ -446,7 +459,7 @@ async fn approve_node(
     };
     if fingerprint.is_empty() {
         println!("NÓ não encontrado no={node}");
-        return Ok(());
+        return Err("nó não encontrado".into());
     }
     let approved = client
         .approve_node(ApproveNodeRequest {

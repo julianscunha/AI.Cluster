@@ -69,7 +69,7 @@ fi
 echo "OK: a unidade esperou, o nó pendente não recebeu trabalho"
 
 echo "=== A2) o token de join não aprova nó (S3a) ==="
-DENIED=$(CLI_TOKEN=$TOKEN cli approve node-new)
+DENIED=$(CLI_TOKEN=$TOKEN cli approve node-new --trust-listed)
 echo "$DENIED"
 if echo "$DENIED" | grep -qi "operador"; then
   echo "OK: approve com o token de join foi recusado"
@@ -106,7 +106,8 @@ else
 fi
 
 echo "=== C) nó desconhecido ==="
-if cli approve ghost | grep -q "não encontrado"; then
+GHOST=$(cli approve ghost --trust-listed || true)
+if echo "$GHOST" | grep -q "não encontrado"; then
   echo "OK: approve de um nó desconhecido responde 'não encontrado'"
 else
   fail "approve ghost deveria responder 'não encontrado'"

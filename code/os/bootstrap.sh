@@ -224,4 +224,4 @@ else
     echo $! > "$state/worker.pid"' sh "$PREFIX/state" "$PREFIX/bin/ai-cluster-worker" "$@"
   echo "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $PREFIX/state/worker.log"
 fi
-echo "falta, se o controller exige aprovação: ai-cluster approve $NODE_ID"
+echo "falta, se o controller exige aprovação: ai-cluster approve $NODE_ID --fingerprint <impressão que o worker imprime>"

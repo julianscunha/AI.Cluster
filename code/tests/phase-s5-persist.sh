@@ -63,7 +63,7 @@ sleep 8
 
 echo "=== A) nó novo pendente; approve o aprova ==="
 [ "$(trust node-p)" = pendente ] || fail "node-p deveria nascer pendente"
-cli approve node-p | grep -q aprovado || fail "approve deveria confirmar"
+cli approve node-p --trust-listed | grep -q aprovado || fail "approve deveria confirmar"
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria estar aprovado"
 echo "OK: node-p aprovado"
 

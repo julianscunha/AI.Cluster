@@ -44,7 +44,7 @@ sleep 6
 
 echo "=== A) o token de operador administra ==="
 cli $OPERATOR nodes | grep -q node-s3 || fail "o operador deveria listar o nó"
-cli $OPERATOR approve node-s3 | grep -qi "aprovad" || fail "o operador deveria aprovar o nó"
+cli $OPERATOR approve node-s3 --trust-listed | grep -qi "aprovad" || fail "o operador deveria aprovar o nó"
 echo "OK"
 
 # F19: a ação do operador deixa rastro, com quem chamou e o alvo.
@@ -53,7 +53,7 @@ echo "OK: trilha de auditoria registrou a aprovação"
 
 echo "=== B) o token de join não administra, mas lê ==="
 cli $JOIN nodes | grep -q node-s3 || fail "o token de join deveria poder listar"
-OUT=$(cli $JOIN approve node-s3); echo "$OUT"
+OUT=$(cli $JOIN approve node-s3 --trust-listed); echo "$OUT"
 echo "$OUT" | grep -qi "PermissionDenied\|permission" || fail "approve com token de join deveria ser negado"
 OUT=$(cli $JOIN benchmark --size 8 --repetitions 1); echo "$OUT"
 echo "$OUT" | grep -qi "PermissionDenied\|permission" || fail "enfileirar com token de join deveria ser negado"
@@ -66,7 +66,7 @@ echo "OK: approve, enfileirar e revoke negados ao token de join"
 echo "OK: tentativas negadas não aparecem na trilha"
 
 echo "=== C) o token de inferência só chama ShardMatmul ==="
-for args in "nodes" "approve node-s3" "benchmark --size 8 --repetitions 1"; do
+for args in "nodes" "approve node-s3 --trust-listed" "benchmark --size 8 --repetitions 1"; do
   OUT=$(cli $INFERENCE $args); echo "$args -> $OUT" | head -2
   echo "$OUT" | grep -qi "PermissionDenied\|permission" || fail "'$args' com token de inferência deveria ser negado"
 done
