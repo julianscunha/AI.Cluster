@@ -332,6 +332,8 @@ message CheckModelResponse {
   string message = 8;
   // Verdadeiro se o modelo ainda caberia depois de perder o maior nó (folga para failover).
   bool survives_one_loss = 9;
+  // Estimativa de tokens por segundo a partir do modelo em execução (0 = sem estimativa).
+  double estimated_tokens_per_second = 10;
 }
 
 /// Estado do modelo do llama.cpp no gateway (ADR-022).

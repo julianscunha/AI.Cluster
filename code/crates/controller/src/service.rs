@@ -857,6 +857,7 @@ impl ClusterControl for ClusterControlService {
             available_bytes: verdict.available_bytes,
             nodes: verdict.nodes,
             survives_one_loss: verdict.survives_one_loss,
+            estimated_tokens_per_second: 0.0,
             message: verdict.message,
         };
         // Sem workers com RPC o modelo roda só na CPU do gateway, cuja RAM o controller não conhece.
@@ -1010,11 +1011,28 @@ impl ClusterControl for ClusterControlService {
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
         .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
+        // Bytes do modelo que está rodando e sua velocidade medida, para estimar o novo.
+        let running = self
+            .orchestrator
+            .status(0)
+            .1
+            .filter(|s| s.tokens_per_second > 0.0);
+        let running_bytes = running.as_ref().map_or(0, |s| {
+            found
+                .iter()
+                .find(|m| api_model_id(&m.id).as_deref() == Some(s.model_id.as_str()))
+                .map_or(0, |m| m.bytes)
+        });
         let Some(model) = found.into_iter().find(|m| m.id == wanted) else {
             return Err(Status::not_found(format!(
                 "modelo {wanted} não está na pasta"
             )));
         };
+        let estimated_tokens_per_second = crate::models::estimate_tokens_per_second(
+            running.map_or(0.0, |s| s.tokens_per_second),
+            running_bytes,
+            model.bytes,
+        );
         let nodes: Vec<ai_cluster_catalog::check::NodeMemory> = self
             .registry
             .list()
@@ -1053,6 +1071,7 @@ impl ClusterControl for ClusterControlService {
             available_bytes: verdict.available_bytes,
             nodes: verdict.nodes,
             survives_one_loss: verdict.survives_one_loss,
+            estimated_tokens_per_second,
             message,
         }))
     }

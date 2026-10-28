@@ -855,6 +855,12 @@ async fn check_model(
         if reply.ok { "OK " } else { "NOK" },
         clean(&reply.message)
     );
+    if reply.estimated_tokens_per_second > 0.0 {
+        println!(
+            "velocidade estimada ~{:.1} tokens/s (a partir do modelo em execução, mesmos workers)",
+            reply.estimated_tokens_per_second
+        );
+    }
     println!(
         "pesos {:.2} GB + contexto {:.2} GB + margem {:.2} GB = {:.2} GB; disponível {:.2} GB em {} nós",
         gb(reply.weights_bytes),

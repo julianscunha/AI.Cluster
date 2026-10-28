@@ -22,6 +22,16 @@ pub struct Candidate {
     pub usable_bytes: u64,
 }
 
+/// Tokens por segundo de um modelo novo nos mesmos workers do que está rodando: a geração é limitada
+/// pela leitura dos pesos, então a velocidade cai na proporção do tamanho. 0 = sem estimativa.
+/// shortcut: supõe o mesmo conjunto de workers e ignora quantização e contexto; refine com medidas.
+pub fn estimate_tokens_per_second(measured: f64, running_bytes: u64, new_bytes: u64) -> f64 {
+    if !measured.is_finite() || measured <= 0.0 || running_bytes == 0 || new_bytes == 0 {
+        return 0.0;
+    }
+    measured * running_bytes as f64 / new_bytes as f64
+}
+
 /// Velocidade estimada de um worker para gerar texto com o llama.cpp. A geração de tokens depende da
 /// banda de memória e da CPU ao mesmo tempo, e nenhuma das duas pontuações do registro prevê sozinha:
 /// só a de CPU (um kernel de f64) dá ao Orange Pi 61 vezes menos que ao PC; só a banda, 4 a 9 vezes;
@@ -1033,6 +1043,14 @@ mod tests {
         assert_eq!(grant.models, vec!["a".to_string(), "b".to_string()]);
         assert_eq!((grant.tokens, grant.class.as_str()), (42, "interactive"));
     }
+    #[test]
+    fn the_token_estimate_scales_with_model_size() {
+        assert_eq!(estimate_tokens_per_second(20.0, 1 << 30, 2 << 30), 10.0);
+        assert_eq!(estimate_tokens_per_second(0.0, 1 << 30, 2 << 30), 0.0);
+        assert_eq!(estimate_tokens_per_second(20.0, 0, 2 << 30), 0.0);
+        assert_eq!(estimate_tokens_per_second(f64::NAN, 1, 1), 0.0);
+    }
+
     #[test]
     fn the_estimated_speed_ratio_is_close_to_what_llama_cpp_measured() {
         // Valores reais do registro: Orange Pi PC e PC x86.
