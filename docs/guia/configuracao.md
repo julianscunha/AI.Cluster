@@ -118,6 +118,7 @@ Convenções:
 | `AI_CLUSTER_LLAMA_RPC_ENDPOINTS` | — | `host:porta` dos túneis dos workers, separados por vírgula. O `llama-server` divide as camadas com eles. Sem a lista, o modelo roda só na CPU do gateway. |
 | `AI_CLUSTER_LLAMA_TLS_CA` / `_CERT` / `_KEY` | — | CA que assina os workers e o certificado de cliente do gateway. Obrigatórios com endpoints: o RPC não vai em texto puro. |
 | `AI_CLUSTER_LLAMA_RPC_SERVER_NAME` | `aic-worker` | Nome que o certificado do worker precisa ter (SAN). |
+| `AI_CLUSTER_LLAMA_SPLIT` | automático | Proporção de camadas por worker, na ordem dos endpoints (`1,4` dá um quinto ao primeiro). Vale mais que a divisão do controller. Para experimentos. |
 | `AI_CLUSTER_LLAMA_SLOTS` | `1` (1 a 16) | Gerações ao mesmo tempo no `llama-server` (`-np`) e vagas da fila do gateway. O contexto de cada vaga é `AI_CLUSTER_LLAMA_CTX` (o `-c` do servidor é o total), e o cache KV cresce com as vagas. Mais vagas aumentam a vazão total e alongam cada resposta. |
 | `AI_CLUSTER_LLAMA_CTX` / `AI_CLUSTER_LLAMA_NGL` | `4096` / `99` | Contexto (`-c`) e camadas enviadas aos workers (`-ngl`). Uma vaga só (`-np 1`). |
 | `AI_CLUSTER_LLAMA_PORT` / `AI_CLUSTER_LLAMA_TUNNEL_BASE` | `18080` / `18100` | Portas locais do `llama-server` e do primeiro túnel (um por worker). |

@@ -360,6 +360,9 @@ message DesiredModel {
   uint32 gpu_layers = 5;
   // Na ordem em que o llama-server os recebe (--rpc).
   repeated RpcEndpoint endpoints = 6;
+  // Proporção de camadas de cada worker, na mesma ordem (`--tensor-split`). Vazio = o llama.cpp reparte
+  // pela memória que cada `rpc-server` informa.
+  repeated double split = 7;
 }
 
 /// Uma chave de API que o gateway aceita: só o hash, nunca a chave.

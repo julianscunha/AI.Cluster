@@ -13,6 +13,111 @@ use sha2::{Digest, Sha256};
 /// Quanto tempo a lista de workers precisa ficar igual antes de o plano mudar: um worker que acabou
 /// de entrar ainda está se medindo, e um que oscila não deve reiniciar o modelo a cada batida.
 pub const STABLE_MS: u64 = 30_000;
+/// Um worker que pode servir o `rpc-server`: onde chegar nele, quão rápida é a CPU dele (a pontuação de
+/// computação do registro) e quanta RAM ele oferece.
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    pub endpoint: RpcEndpoint,
+    pub speed: f64,
+    pub usable_bytes: u64,
+}
+
+/// Escolhe quais workers carregam o modelo e quanto de cada um. Cada worker que entra soma um salto de
+/// rede por token, então um lento só entra quando a RAM dos mais rápidos não basta: com o modelo
+/// cabendo no PC, o Pi ao lado o faria perder a maior parte da velocidade (medido: 38 tokens/s no PC
+/// sozinho, 7 com 6% das camadas no Pi). Os mais rápidos entram primeiro, até somar `required` bytes;
+/// a divisão é proporcional à velocidade, limitada pelo que cada um comporta. Devolve os endpoints
+/// por `node_id` e as proporções na mesma ordem. Sem exigência de RAM (modo só-gateway) devolve todos,
+/// sem proporção.
+pub fn select(mut candidates: Vec<Candidate>, required: u64) -> (Vec<RpcEndpoint>, Vec<f64>) {
+    if required == 0 {
+        candidates.sort_by(|a, b| a.endpoint.node_id.cmp(&b.endpoint.node_id));
+        return (
+            candidates.into_iter().map(|c| c.endpoint).collect(),
+            Vec::new(),
+        );
+    }
+    let speed = |c: &Candidate| {
+        if c.speed.is_finite() && c.speed > 1e-6 {
+            c.speed
+        } else {
+            1e-6
+        }
+    };
+    candidates.sort_by(|a, b| {
+        speed(b)
+            .total_cmp(&speed(a))
+            .then_with(|| a.endpoint.node_id.cmp(&b.endpoint.node_id))
+    });
+    let mut chosen = Vec::new();
+    let mut held: u64 = 0;
+    for candidate in candidates {
+        if held >= required {
+            break;
+        }
+        held = held.saturating_add(candidate.usable_bytes);
+        chosen.push(candidate);
+    }
+    // Proporcional à velocidade; quem passa do que comporta fica no teto e o resto vai para os demais.
+    let cap = |c: &Candidate| (c.usable_bytes as f64 / required as f64).min(1.0);
+    let mut share = vec![0.0f64; chosen.len()];
+    let mut fixed = vec![false; chosen.len()];
+    for _ in 0..=chosen.len() {
+        let free: f64 = (0..chosen.len())
+            .filter(|i| !fixed[*i])
+            .map(|i| speed(&chosen[i]))
+            .sum();
+        let left = 1.0
+            - (0..chosen.len())
+                .filter(|i| fixed[*i])
+                .map(|i| share[i])
+                .sum::<f64>();
+        if free <= 0.0 || left <= 0.0 {
+            break;
+        }
+        let mut changed = false;
+        for i in 0..chosen.len() {
+            if fixed[i] {
+                continue;
+            }
+            share[i] = left * speed(&chosen[i]) / free;
+            if share[i] > cap(&chosen[i]) {
+                share[i] = cap(&chosen[i]);
+                fixed[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut pairs: Vec<(RpcEndpoint, f64)> = chosen
+        .into_iter()
+        .zip(share)
+        .map(|(c, s)| (c.endpoint, s))
+        .collect();
+    pairs.sort_by(|a, b| a.0.node_id.cmp(&b.0.node_id));
+    let total: f64 = pairs.iter().map(|(_, s)| *s).sum();
+    let split = if total > 0.0 {
+        pairs
+            .iter()
+            .map(|(_, s)| (s / total * 1000.0).round() / 1000.0)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    (pairs.into_iter().map(|(e, _)| e).collect(), split)
+}
+
+/// A divisão só é enviada completa: uma proporção por worker e alguma maior que zero.
+fn usable_split(endpoints: &[RpcEndpoint], split: &[f64]) -> Vec<f64> {
+    if split.len() == endpoints.len() && split.iter().any(|share| *share > 0.0) {
+        split.to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
 /// O tenant criado com o primeiro `models start`: todos os modelos.
 pub const DEFAULT_TENANT: &str = "default";
 
@@ -38,8 +143,10 @@ struct Inner {
     wanted: Option<Wanted>,
     generation: u64,
     applied: Vec<RpcEndpoint>,
+    /// Proporção de camadas de cada worker de `applied` (vazio = automático).
+    applied_split: Vec<f64>,
     /// A lista nova que está esperando a janela de estabilidade, e desde quando.
-    pending: Option<(Vec<RpcEndpoint>, u64)>,
+    pending: Option<(Vec<RpcEndpoint>, Vec<f64>, u64)>,
     /// Os workers de agora não comportam o modelo: o plano para até voltar RAM. O texto é o motivo.
     insufficient: Option<String>,
     tenants: Vec<StoredTenant>,
@@ -113,10 +220,15 @@ impl Orchestrator {
                             inner.generation = generation;
                         }
                     }
-                    ["worker", node_id, address] => inner.applied.push(RpcEndpoint {
-                        node_id: node_id.to_string(),
-                        address: address.to_string(),
-                    }),
+                    ["worker", node_id, address, rest @ ..] => {
+                        inner.applied.push(RpcEndpoint {
+                            node_id: node_id.to_string(),
+                            address: address.to_string(),
+                        });
+                        if let Some(share) = rest.first().and_then(|v| v.parse::<f64>().ok()) {
+                            inner.applied_split.push(share);
+                        }
+                    }
                     ["generation", generation] => {
                         inner.generation = generation.parse().unwrap_or(inner.generation);
                     }
@@ -160,8 +272,12 @@ impl Orchestrator {
             )),
             None => text.push_str(&format!("generation\t{}\n", inner.generation)),
         }
-        for worker in &inner.applied {
-            text.push_str(&format!("worker\t{}\t{}\n", worker.node_id, worker.address));
+        for (i, worker) in inner.applied.iter().enumerate() {
+            let share = inner.applied_split.get(i).copied().unwrap_or(0.0);
+            text.push_str(&format!(
+                "worker\t{}\t{}\t{share}\n",
+                worker.node_id, worker.address
+            ));
         }
         for t in &inner.tenants {
             text.push_str(&format!(
@@ -202,6 +318,7 @@ impl Orchestrator {
         context: u64,
         required_bytes: u64,
         endpoints: Vec<RpcEndpoint>,
+        split: Vec<f64>,
     ) -> (u64, Vec<ApiKey>) {
         let mut inner = self.lock();
         inner.insufficient = None;
@@ -213,6 +330,7 @@ impl Orchestrator {
         });
         inner.generation += 1;
         inner.applied = endpoints;
+        inner.applied_split = split;
         inner.pending = None;
         inner.running = None;
         let mut keys = Vec::new();
@@ -246,15 +364,14 @@ impl Orchestrator {
 
     /// O modelo que o gateway deve aplicar agora. `endpoints` é a lista atual de workers aptos; ela só
     /// vira plano depois de ficar igual por `STABLE_MS` (e então a geração sobe). `None` = parar.
-    pub fn plan(
-        &self,
-        mut endpoints: Vec<RpcEndpoint>,
-        now_ms: u64,
-        capacity_bytes: u64,
-    ) -> Option<DesiredModel> {
-        endpoints.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    pub fn plan(&self, candidates: Vec<Candidate>, now_ms: u64) -> Option<DesiredModel> {
+        let capacity_bytes = candidates
+            .iter()
+            .map(|c| c.usable_bytes)
+            .fold(0, u64::saturating_add);
         let mut inner = self.lock();
         let wanted = inner.wanted.clone()?;
+        let (endpoints, split) = select(candidates, wanted.required_bytes);
         // Sem RAM para o modelo nos workers de agora (um saiu, ou o pedido cabia só com ele): não
         // adianta carregar e deixar o `rpc-server` morrer por falta de memória. O modelo para e o
         // `status` diz o motivo; quando a RAM volta, o plano entra na hora.
@@ -269,6 +386,7 @@ impl Orchestrator {
         }
         if inner.insufficient.take().is_some() {
             inner.applied = endpoints.clone();
+            inner.applied_split = split.clone();
             inner.pending = None;
             inner.generation += 1;
             inner.running = None;
@@ -278,9 +396,10 @@ impl Orchestrator {
             inner.pending = None;
         } else {
             match inner.pending.clone() {
-                Some((ref list, since)) if *list == endpoints => {
+                Some((ref list, _, since)) if *list == endpoints => {
                     if now_ms.saturating_sub(since) >= self.stable_ms {
                         inner.applied = endpoints;
+                        inner.applied_split = split;
                         inner.pending = None;
                         inner.generation += 1;
                         // O que o gateway reportou era da geração anterior.
@@ -288,7 +407,7 @@ impl Orchestrator {
                         self.save(&inner);
                     }
                 }
-                _ => inner.pending = Some((endpoints, now_ms)),
+                _ => inner.pending = Some((endpoints, split, now_ms)),
             }
         }
         let applied = inner.applied.clone();
@@ -299,6 +418,7 @@ impl Orchestrator {
             context: wanted.context,
             gpu_layers: if applied.is_empty() { 0 } else { 99 },
             endpoints: applied,
+            split: usable_split(&inner.applied, &inner.applied_split),
         })
     }
 
@@ -333,6 +453,7 @@ impl Orchestrator {
             context: w.context,
             gpu_layers: if inner.applied.is_empty() { 0 } else { 99 },
             endpoints: inner.applied.clone(),
+            split: usable_split(&inner.applied, &inner.applied_split),
         });
         if let (Some(reason), Some(d)) = (&inner.insufficient, &desired) {
             return (
@@ -373,6 +494,18 @@ impl Orchestrator {
 mod tests {
     use super::*;
 
+    /// Workers iguais, com RAM de sobra: sem exigência de RAM o plano usa todos.
+    fn cands(names: &[&str]) -> Vec<Candidate> {
+        names
+            .iter()
+            .map(|name| Candidate {
+                endpoint: endpoint(name),
+                speed: 1.0,
+                usable_bytes: 1 << 40,
+            })
+            .collect()
+    }
+
     fn endpoint(node: &str) -> RpcEndpoint {
         RpcEndpoint {
             node_id: node.into(),
@@ -400,7 +533,7 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         let o = orchestrator();
-        let (_, keys) = o.start("m", "m.gguf", 0, 0, vec![]);
+        let (_, keys) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
         assert_eq!(keys.len(), 1);
         let grants = o.grants();
         assert_eq!(grants[0].key_sha256, key_hash(&keys[0].key).to_vec());
@@ -409,14 +542,14 @@ mod tests {
             "a chave em claro não pode vazar"
         );
         // Um segundo start não cria outra chave.
-        assert!(o.start("m", "m.gguf", 0, 0, vec![]).1.is_empty());
+        assert!(o.start("m", "m.gguf", 0, 0, vec![], vec![]).1.is_empty());
     }
 
     #[test]
     fn start_and_stop_move_the_generation_and_the_plan() {
         let o = orchestrator();
         assert!(
-            o.plan(vec![], 0, u64::MAX).is_none(),
+            o.plan(cands(&[]), 0).is_none(),
             "sem pedido, nada a aplicar"
         );
         let (g1, _) = o.start(
@@ -425,10 +558,9 @@ mod tests {
             2048,
             0,
             vec![endpoint("a"), endpoint("b")],
+            vec![],
         );
-        let plan = o
-            .plan(vec![endpoint("b"), endpoint("a")], 10, u64::MAX)
-            .unwrap();
+        let plan = o.plan(cands(&["b", "a"]), 10).unwrap();
         assert_eq!(
             (plan.generation, plan.gpu_layers, plan.endpoints.len()),
             (g1, 99, 2)
@@ -436,40 +568,34 @@ mod tests {
         assert_eq!(plan.model_path, "dir/m.gguf");
         let g2 = o.stop();
         assert!(g2 > g1);
-        assert!(o.plan(vec![endpoint("a")], 20, u64::MAX).is_none());
+        assert!(o.plan(cands(&["a"]), 20).is_none());
     }
 
     #[test]
     fn a_new_worker_changes_the_plan_only_after_the_stability_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
+        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
         // Chega o worker b: ainda vale o plano antigo.
-        let early = o
-            .plan(vec![endpoint("a"), endpoint("b")], 100, u64::MAX)
-            .unwrap();
+        let early = o.plan(cands(&["a", "b"]), 100).unwrap();
         assert_eq!((early.generation, early.endpoints.len()), (g1, 1));
-        let still = o
-            .plan(vec![endpoint("a"), endpoint("b")], 900, u64::MAX)
-            .unwrap();
+        let still = o.plan(cands(&["a", "b"]), 900).unwrap();
         assert_eq!(still.generation, g1);
         // Estável por 1 s: o plano muda e a geração sobe.
-        let late = o
-            .plan(vec![endpoint("a"), endpoint("b")], 1_200, u64::MAX)
-            .unwrap();
+        let late = o.plan(cands(&["a", "b"]), 1_200).unwrap();
         assert_eq!((late.generation, late.endpoints.len()), (g1 + 1, 2));
     }
 
     #[test]
     fn a_flapping_worker_never_reaches_the_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
+        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
         for t in 0..10 {
             let list = if t % 2 == 0 {
-                vec![endpoint("a"), endpoint("b")]
+                cands(&["a", "b"])
             } else {
-                vec![endpoint("a")]
+                cands(&["a"])
             };
-            let plan = o.plan(list, t * 400, u64::MAX).unwrap();
+            let plan = o.plan(list, t * 400).unwrap();
             assert_eq!(plan.generation, g1, "oscilou em t={t}");
         }
     }
@@ -480,7 +606,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("models.state");
         let first = Orchestrator::new(Some(path.clone()));
-        let (generation, keys) = first.start("m", "m.gguf", 4096, 0, vec![endpoint("a")]);
+        let (generation, keys) = first.start("m", "m.gguf", 4096, 0, vec![endpoint("a")], vec![]);
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains(&keys[0].key), "o arquivo guarda só o hash");
 
@@ -501,7 +627,7 @@ mod tests {
     #[test]
     fn only_the_current_generation_updates_the_status() {
         let o = orchestrator();
-        let (generation, _) = o.start("m", "m.gguf", 0, 0, vec![]);
+        let (generation, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
         let status = |g| ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -523,16 +649,21 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("models.state");
         let first = Orchestrator::new(Some(path.clone()));
-        let (generation, _) = first.start("m", "m.gguf", 0, 0, vec![endpoint("a"), endpoint("b")]);
+        let (generation, _) = first.start(
+            "m",
+            "m.gguf",
+            0,
+            0,
+            vec![endpoint("a"), endpoint("b")],
+            vec![],
+        );
         // Depois do reinício o plano em vigor é o mesmo: a geração não sobe à toa.
         let again = Orchestrator::new(Some(path));
-        let plan = again
-            .plan(vec![endpoint("a"), endpoint("b")], 5, u64::MAX)
-            .unwrap();
+        let plan = again.plan(cands(&["a", "b"]), 5).unwrap();
         assert_eq!((plan.generation, plan.endpoints.len()), (generation, 2));
         // O estado reportado da geração antiga some quando o plano muda.
         let o = orchestrator();
-        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
+        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
         o.note_running(ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -540,10 +671,8 @@ mod tests {
             generation: g,
             tokens_per_second: 9.0,
         });
-        o.plan(vec![endpoint("a"), endpoint("b")], 100, u64::MAX);
-        let changed = o
-            .plan(vec![endpoint("a"), endpoint("b")], 1_500, u64::MAX)
-            .unwrap();
+        o.plan(cands(&["a", "b"]), 100);
+        let changed = o.plan(cands(&["a", "b"]), 1_500).unwrap();
         assert_eq!(changed.generation, g + 1);
         assert_eq!(
             o.status(0).1.unwrap().state,
@@ -560,16 +689,13 @@ mod tests {
             0,
             3 * gib,
             vec![endpoint("a"), endpoint("b")],
+            vec![],
         );
-        // Com a RAM de dois workers (4 GB) o plano segue.
-        assert_eq!(
-            o.plan(vec![endpoint("a"), endpoint("b")], 10, 4 * gib)
-                .unwrap()
-                .generation,
-            g1
-        );
+        // Com a RAM de dois workers (2 GB cada) o plano segue.
+        let two = || vec![candidate("a", 1.0, 2.0), candidate("b", 1.0, 2.0)];
+        assert_eq!(o.plan(two(), 10).unwrap().generation, g1);
         // Um worker saiu: 1 GB não comporta 3 GB. O modelo para e o status diz por quê.
-        assert!(o.plan(vec![endpoint("a")], 20, gib).is_none());
+        assert!(o.plan(vec![candidate("a", 1.0, 1.0)], 20).is_none());
         let (_, running, _) = o.status(0);
         let running = running.unwrap();
         assert_eq!(running.state, ModelState::ModelFailed as i32);
@@ -579,12 +705,96 @@ mod tests {
             running.reason
         );
         // O worker voltou: o plano entra na hora, sem esperar a janela, com geração nova.
-        let back = o
-            .plan(vec![endpoint("a"), endpoint("b")], 30, 4 * gib)
-            .unwrap();
+        let back = o.plan(two(), 30).unwrap();
         assert_eq!((back.generation, back.endpoints.len()), (g1 + 1, 2));
         // Sem exigência (modo só-gateway), nunca para por RAM.
-        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![]);
-        assert_eq!(o.plan(vec![], 40, 0).unwrap().generation, g);
+        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
+        assert_eq!(o.plan(vec![], 40).unwrap().generation, g);
+    }
+
+    fn candidate(node: &str, speed: f64, gib: f64) -> Candidate {
+        Candidate {
+            endpoint: endpoint(node),
+            speed,
+            usable_bytes: (gib * (1u64 << 30) as f64) as u64,
+        }
+    }
+
+    #[test]
+    fn a_slow_worker_stays_out_while_the_fast_ones_hold_the_model() {
+        let gib = 1u64 << 30;
+        let (workers, split) = select(
+            vec![candidate("pi", 0.02, 0.8), candidate("pc", 1.1, 3.0)],
+            gib, // 1 GB cabe no PC
+        );
+        assert_eq!(
+            workers
+                .iter()
+                .map(|w| w.node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["pc"]
+        );
+        assert_eq!(split, vec![1.0]);
+    }
+
+    #[test]
+    fn a_slow_worker_joins_when_the_ram_of_the_fast_ones_is_not_enough() {
+        let gib = 1u64 << 30;
+        let (workers, split) = select(
+            vec![candidate("pi", 0.02, 0.8), candidate("pc", 1.1, 3.0)],
+            3 * gib + gib / 2, // 3,5 GB: o PC (3 GB) sozinho não basta
+        );
+        assert_eq!(
+            workers
+                .iter()
+                .map(|w| w.node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["pc", "pi"]
+        );
+        // O PC é limitado pelo que comporta (3/3,5 do modelo); o resto vai para o Pi.
+        assert!((split[0] - 3.0 / 3.5).abs() < 0.01, "{split:?}");
+        assert!((split[1] - 0.5 / 3.5).abs() < 0.01, "{split:?}");
+        assert!((split.iter().sum::<f64>() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn similar_workers_split_by_speed_and_never_past_their_ram() {
+        let gib = 1u64 << 30;
+        // Dois PCs, um duas vezes mais rápido; o modelo (10 GB) pede os dois: 2/3 e 1/3.
+        let (workers, split) = select(
+            vec![candidate("a", 2.0, 8.0), candidate("b", 1.0, 8.0)],
+            10 * gib,
+        );
+        assert_eq!(workers.len(), 2);
+        assert!(
+            (split[0] - 2.0 / 3.0).abs() < 0.01 && (split[1] - 1.0 / 3.0).abs() < 0.01,
+            "{split:?}"
+        );
+        // O mais rápido tem pouca RAM: fica no teto dele e o outro leva o resto.
+        let (_, capped) = select(
+            vec![candidate("a", 2.0, 2.0), candidate("b", 1.0, 8.0)],
+            6 * gib,
+        );
+        assert!((capped[0] - 2.0 / 6.0).abs() < 0.01, "{capped:?}");
+        assert!((capped[1] - 4.0 / 6.0).abs() < 0.01, "{capped:?}");
+    }
+
+    #[test]
+    fn selection_is_stable_and_handles_missing_scores() {
+        let gib = 1u64 << 30;
+        let a = select(
+            vec![candidate("x", 0.0, 4.0), candidate("y", f64::NAN, 4.0)],
+            gib,
+        );
+        let b = select(
+            vec![candidate("y", f64::NAN, 4.0), candidate("x", 0.0, 4.0)],
+            gib,
+        );
+        assert_eq!(a.0, b.0, "a ordem de chegada não muda o plano");
+        // Sem exigência (só-gateway): todos, sem proporção.
+        let (all, none) = select(vec![candidate("b", 1.0, 1.0), candidate("a", 1.0, 1.0)], 0);
+        assert_eq!(all.len(), 2);
+        assert!(none.is_empty());
+        assert!(select(Vec::new(), gib).0.is_empty());
     }
 }

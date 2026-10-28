@@ -37,7 +37,7 @@ const BENCH_TOKENS: u32 = 64;
 const MAX_CONTEXT: u32 = 1 << 20;
 
 /// A configuração lida do ambiente.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LlamaConfig {
     pub id: String,
     pub model: String,
@@ -53,6 +53,9 @@ pub struct LlamaConfig {
     pub tunnel_base: u16,
     /// Gerações ao mesmo tempo no llama-server (`-np`); o contexto de cada uma é `context`.
     pub slots: u32,
+    /// Proporção de camadas por worker, na ordem dos endpoints (`--tensor-split`); vazio = o
+    /// llama.cpp reparte pela memória que cada `rpc-server` informa.
+    pub split: Vec<f64>,
 }
 
 impl LlamaConfig {
@@ -79,6 +82,16 @@ impl LlamaConfig {
         if !self.endpoints.is_empty() {
             args.push("-ngl".into());
             args.push(self.gpu_layers.to_string());
+            if self.split.len() == self.endpoints.len() {
+                args.push("--tensor-split".into());
+                args.push(
+                    self.split
+                        .iter()
+                        .map(|share| format!("{share}"))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+            }
             args.push("--rpc".into());
             // `start` já validou a faixa; sem ela o `--rpc` ficaria vazio e o erro apareceria lá.
             args.push(self.local_endpoints().unwrap_or_default().join(","));
@@ -188,7 +201,37 @@ pub fn from_env() -> Result<Option<LlamaConfig>, String> {
         port,
         tunnel_base,
         slots: slots_from_env()?,
+        split: split_from_env()?,
     }))
+}
+
+/// `AI_CLUSTER_LLAMA_SPLIT`: proporção de camadas por worker, separada por vírgulas (`1,4` dá um quinto
+/// ao primeiro endpoint). Vazio = automático. Cada valor é finito e não negativo, e a soma passa de zero.
+pub fn split_from_env() -> Result<Vec<f64>, String> {
+    let Ok(text) = std::env::var("AI_CLUSTER_LLAMA_SPLIT") else {
+        return Ok(Vec::new());
+    };
+    parse_split(&text)
+}
+
+fn parse_split(text: &str) -> Result<Vec<f64>, String> {
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let values: Vec<f64> = text
+        .split(',')
+        .map(|v| v.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| format!("AI_CLUSTER_LLAMA_SPLIT inválido: {text}"))?;
+    if values.len() > 64
+        || values.iter().any(|v| !v.is_finite() || *v < 0.0)
+        || values.iter().sum::<f64>() <= 0.0
+    {
+        return Err(format!(
+            "AI_CLUSTER_LLAMA_SPLIT inválido (valores finitos, não negativos e soma maior que zero): {text}"
+        ));
+    }
+    Ok(values)
 }
 
 /// `AI_CLUSTER_LLAMA_SLOTS`: quantas gerações o llama-server atende ao mesmo tempo (1 a 16).
@@ -605,6 +648,7 @@ pub struct Base {
     pub tunnel_base: u16,
     pub default_context: u32,
     pub slots: u32,
+    pub split: Vec<f64>,
 }
 
 impl Base {
@@ -640,6 +684,7 @@ impl Base {
             tunnel_base,
             default_context: number("AI_CLUSTER_LLAMA_CTX", 4096)?,
             slots: slots_from_env()?,
+            split: split_from_env()?,
         })
     }
 
@@ -699,6 +744,18 @@ impl Base {
             port: self.port,
             tunnel_base: self.tunnel_base,
             slots: self.slots.max(1),
+            // A divisão do ambiente (operador) vale mais que a do controller; a do controller só se for
+            // completa e sensata (uma proporção por worker, finita, não negativa, soma maior que zero).
+            split: if !self.split.is_empty() {
+                self.split.clone()
+            } else if wanted.split.len() == wanted.endpoints.len()
+                && wanted.split.iter().all(|s| s.is_finite() && *s >= 0.0)
+                && wanted.split.iter().sum::<f64>() > 0.0
+            {
+                wanted.split.clone()
+            } else {
+                Vec::new()
+            },
         })
     }
 }
@@ -850,6 +907,7 @@ data: [DONE]
             port: 18080,
             tunnel_base: 18100,
             slots: 1,
+            split: Vec::new(),
         }
     }
 
@@ -935,6 +993,7 @@ data: [DONE]
                     address: a.to_string(),
                 })
                 .collect(),
+            split: Vec::new(),
         }
     }
 
@@ -951,6 +1010,7 @@ data: [DONE]
             tunnel_base: 18100,
             default_context: 4096,
             slots: 1,
+            split: Vec::new(),
         };
         let ok = base
             .config_for(&desired("pasta/m.gguf", "pasta-m", &["10.0.0.5:50061"]))
@@ -1035,5 +1095,51 @@ data: [DONE]
         assert!(args.contains("-np 4"), "{args}");
         assert!(args.contains("-c 8192"), "cada vaga tem 2048: {args}");
         assert!(config().server_args().join(" ").contains("-np 1"));
+    }
+    #[test]
+    fn the_split_is_validated_and_only_sent_when_it_matches_the_workers() {
+        assert_eq!(parse_split("1, 4").unwrap(), vec![1.0, 4.0]);
+        assert!(parse_split("").unwrap().is_empty());
+        for bad in ["a,b", "-1,2", "0,0", "NaN,1", "inf,1"] {
+            assert!(parse_split(bad).is_err(), "{bad}");
+        }
+        let mut c = config();
+        c.split = vec![1.0, 4.0];
+        let args = c.server_args().join(" ");
+        assert!(args.contains("--tensor-split 1,4"), "{args}");
+        // Quantidade diferente da de workers: ignora, o llama.cpp reparte sozinho.
+        c.split = vec![1.0];
+        assert!(!c.server_args().join(" ").contains("--tensor-split"));
+    }
+    #[test]
+    fn the_controller_split_is_used_unless_the_operator_overrides_it() {
+        let base = Base {
+            server_bin: "llama-server".into(),
+            models_dir: "/models".into(),
+            ca: "ca".into(),
+            cert: "c".into(),
+            key: "k".into(),
+            server_name: "aic-worker".into(),
+            port: 18080,
+            tunnel_base: 18100,
+            default_context: 4096,
+            slots: 1,
+            split: Vec::new(),
+        };
+        let mut wanted = desired("m.gguf", "m", &["10.0.0.5:50061", "10.0.0.6:50061"]);
+        wanted.split = vec![0.2, 0.8];
+        assert_eq!(base.config_for(&wanted).unwrap().split, vec![0.2, 0.8]);
+        // Incompleta ou inválida: ignora e deixa o llama.cpp repartir.
+        wanted.split = vec![1.0];
+        assert!(base.config_for(&wanted).unwrap().split.is_empty());
+        wanted.split = vec![f64::NAN, 1.0];
+        assert!(base.config_for(&wanted).unwrap().split.is_empty());
+        wanted.split = vec![0.0, 0.0];
+        assert!(base.config_for(&wanted).unwrap().split.is_empty());
+        // O ambiente do operador vence.
+        let mut forced = base.clone();
+        forced.split = vec![1.0, 1.0];
+        wanted.split = vec![0.2, 0.8];
+        assert_eq!(forced.config_for(&wanted).unwrap().split, vec![1.0, 1.0]);
     }
 }

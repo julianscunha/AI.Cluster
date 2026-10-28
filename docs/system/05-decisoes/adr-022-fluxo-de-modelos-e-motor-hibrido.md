@@ -93,3 +93,17 @@ Mais workers aumentam a RAM somada; mais vagas aumentam a vazão total à custa 
 - **Feitas:** E1 (catálogo), E2 (OK/NOK), E5 (plano de workers, sem `--tensor-split` calculado), E6 (`models start/stop/status`, chaves em hash, benchmark), E7 (worker novo entra no plano e o modelo para se faltar RAM), E9 parcial (várias vagas), E11 (quantização pelo GGUF).
 - **Descartadas pela decisão do llama.cpp:** E0, E3, E4 (o head empurra os tensores pelo próprio RPC).
 - **Pendentes:** E8 (pipeline entre workers com porta de entrada própria só vale se o RPC do llama.cpp não bastar), E10 (tensor-split), certificado por nó, plano de camadas por RAM, imagens x86 com os binários.
+
+### Quem carrega o modelo: o menor conjunto de workers rápidos (medido em 2026-10-28)
+
+Cada worker que entra soma um salto de rede por token. SmolLM2 360M Q4 (32 camadas) com o gateway no PC e o Pi como segundo worker, velocidade do benchmark:
+
+| Divisão de camadas (Pi : PC) | Tokens/s |
+|---|---|
+| automática (pela memória que cada `rpc-server` informa) | 5,2 |
+| 50 : 50 | 4,3 |
+| 20 : 80 | 7,4 |
+| 6 : 94 | 7,6 |
+| 0 : 100 (só o PC) | 38,1 |
+
+Mesmo 6% das camadas no Pi (2 de 32) derrubam a velocidade em cinco vezes: o custo é a latência do salto, não a vazão. Por isso o controller não reparte entre todos: `models::select` ordena os workers por velocidade e usa os mais rápidos **só até a RAM somada comportar o modelo**; os lentos entram apenas quando faltaria memória. Entre os escolhidos, a divisão é proporcional à velocidade, limitada pelo que cada um comporta. Com isso o 360M passou a 28 tokens/s no laboratório (plano só com o PC), 5,4 vezes mais que a divisão automática. A velocidade vem da pontuação de CPU medida no registro, uma aproximação (veja [[pendencias]]).

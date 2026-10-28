@@ -305,8 +305,37 @@ impl ClusterControlService {
         &self.work
     }
 
+    /// Os workers aptos, com a velocidade da CPU e a RAM que oferecem; o orquestrador escolhe quais
+    /// carregam o modelo (`models::select`).
+    fn rpc_candidates(&self) -> Vec<crate::models::Candidate> {
+        let endpoints: std::collections::HashMap<String, RpcEndpoint> = self
+            .rpc_endpoints()
+            .into_iter()
+            .map(|e| (e.node_id.clone(), e))
+            .collect();
+        self.registry
+            .list()
+            .into_iter()
+            .filter_map(|node| {
+                let id = node.identity?.node_id;
+                let endpoint = endpoints.get(&id)?.clone();
+                let capability = node.capability?;
+                Some(crate::models::Candidate {
+                    endpoint,
+                    speed: capability.compute_score,
+                    usable_bytes: ai_cluster_catalog::check::usable_bytes(
+                        &ai_cluster_catalog::check::NodeMemory {
+                            total_bytes: capability.memory_bytes,
+                            used_fraction: 0.0,
+                        },
+                    ),
+                })
+            })
+            .collect()
+    }
+
     /// Os workers aptos a servir o `rpc-server`: aprovados, vivos, com túnel anunciado e endereço
-    /// conhecido. É o que o gateway recebe como plano.
+    /// conhecido.
     fn rpc_endpoints(&self) -> Vec<RpcEndpoint> {
         let hosts = self
             .node_hosts
@@ -333,19 +362,6 @@ impl ClusterControlService {
                 })
             })
             .collect()
-    }
-
-    /// O que os workers com RPC comportam, pela RAM total (sem a ocupação de agora, que oscila).
-    fn rpc_capacity_bytes(&self) -> u64 {
-        self.rpc_node_memory()
-            .into_iter()
-            .map(|node| {
-                ai_cluster_catalog::check::usable_bytes(&ai_cluster_catalog::check::NodeMemory {
-                    used_fraction: 0.0,
-                    ..node
-                })
-            })
-            .fold(0, u64::saturating_add)
     }
 
     /// A RAM dos mesmos workers, para o veredito do `models start`.
@@ -773,7 +789,7 @@ impl ClusterControl for ClusterControlService {
                 None,
             );
         };
-        let endpoints = self.rpc_endpoints();
+        let candidates = self.rpc_candidates();
         let nodes = self.rpc_node_memory();
         let verdict = ai_cluster_catalog::check::check(&model, request.context, &nodes);
         let check = CheckModelResponse {
@@ -787,21 +803,24 @@ impl ClusterControl for ClusterControlService {
             message: verdict.message,
         };
         // Sem workers com RPC o modelo roda só na CPU do gateway, cuja RAM o controller não conhece.
-        if !endpoints.is_empty() && !verdict.ok {
+        if !candidates.is_empty() && !verdict.ok {
             return refuse(check.message.clone(), Some(check));
         }
         self.audit(&peer, "start_model", &wanted);
+        // Sem workers o modelo roda só no gateway: não há RAM de worker para conferir depois.
+        let required = if candidates.is_empty() {
+            0
+        } else {
+            verdict.required_bytes
+        };
+        let (endpoints, split) = crate::models::select(candidates, required);
         let (generation, keys) = self.orchestrator.start(
             &api_id,
             &model.id,
             request.context,
-            // Sem workers o modelo roda só no gateway: não há RAM de worker para conferir depois.
-            if endpoints.is_empty() {
-                0
-            } else {
-                verdict.required_bytes
-            },
+            required,
             endpoints,
+            split,
         );
         self.events.record(unix_ms(), "model_started", wanted);
         Ok(Response::new(StartModelResponse {
@@ -1467,9 +1486,7 @@ impl ClusterControl for ClusterControlService {
             self.orchestrator.note_running(running);
         }
         Ok(Response::new(ReportGatewayResponse {
-            desired: self
-                .orchestrator
-                .plan(self.rpc_endpoints(), now, self.rpc_capacity_bytes()),
+            desired: self.orchestrator.plan(self.rpc_candidates(), now),
             tenants: self.orchestrator.grants(),
         }))
     }
