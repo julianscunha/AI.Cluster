@@ -39,12 +39,80 @@ pub struct Llama {
     threads: usize,
     /// `theta^(-2i/head_dim)` for the rotated pairs `(i, i + head_dim/2)`.
     inv_freq: Vec<f64>,
-    /// Token embeddings, also the (tied) output projection.
+    /// Token embeddings; also the output projection when the config ties them (`head` is `None`).
     embed: Matrix,
+    /// The separate output projection (`lm_head.weight`, vocab x width) of models that do not tie it.
+    head: Option<Matrix>,
     context: usize,
     blocks: Vec<Block>,
     norm: Vec<f64>,
     executor: Option<Arc<dyn Executor>>,
+}
+
+/// `theta^(-2i/head_dim)` para os pares girados, com o `rope_scaling` da configuração aplicado:
+/// `default` (nenhum), `linear` (divide as frequências pelo fator) e `llama3` (Llama 3.1+: mantém as
+/// altas, divide as baixas e suaviza as do meio). Outro tipo (yarn, dynamic, longrope) é recusado.
+fn rope_frequencies(
+    config: &serde_json::Value,
+    theta: f64,
+    head_dim: usize,
+) -> Result<Vec<f64>, String> {
+    let base: Vec<f64> = (0..head_dim / 2)
+        .map(|i| theta.powf(-2.0 * i as f64 / head_dim as f64))
+        .collect();
+    let scaling = &config["rope_scaling"];
+    if scaling.is_null() {
+        return Ok(base);
+    }
+    let kind = scaling
+        .get("rope_type")
+        .or_else(|| scaling.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("default");
+    let number = |key: &str| {
+        scaling[key]
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .ok_or_else(|| format!("rope_scaling {kind} sem {key} válido"))
+    };
+    match kind {
+        "default" => Ok(base),
+        "linear" => {
+            let factor = number("factor")?;
+            Ok(base.iter().map(|freq| freq / factor).collect())
+        }
+        "llama3" => {
+            let (factor, low, high) = (
+                number("factor")?,
+                number("low_freq_factor")?,
+                number("high_freq_factor")?,
+            );
+            let original = number("original_max_position_embeddings")?;
+            if high <= low {
+                return Err(
+                    "rope_scaling llama3: high_freq_factor deve passar de low_freq_factor".into(),
+                );
+            }
+            let (low_wavelen, high_wavelen) = (original / low, original / high);
+            Ok(base
+                .iter()
+                .map(|&freq| {
+                    let wavelen = std::f64::consts::TAU / freq;
+                    if wavelen < high_wavelen {
+                        freq
+                    } else if wavelen > low_wavelen {
+                        freq / factor
+                    } else {
+                        let smooth = (original / wavelen - low) / (high - low);
+                        (1.0 - smooth) * freq / factor + smooth * freq
+                    }
+                })
+                .collect())
+        }
+        other => Err(format!(
+            "rope_scaling '{other}' não é suportado (só default, linear e llama3)"
+        )),
+    }
 }
 
 impl Llama {
@@ -104,15 +172,10 @@ impl Llama {
         }
         // Variants this slice does not implement fail loudly instead of computing the wrong thing.
         if config["hidden_act"].as_str() != Some("silu")
-            || !config["rope_scaling"].is_null()
             || config["attention_bias"].as_bool().unwrap_or(false)
             || config["mlp_bias"].as_bool().unwrap_or(false)
-            || !config["tie_word_embeddings"].as_bool().unwrap_or(false)
         {
-            return Err(
-                "só silu, sem rope_scaling, sem bias e com embeddings amarrados são suportados"
-                    .into(),
-            );
+            return Err("só silu e sem bias de atenção ou de MLP são suportados".into());
         }
         if heads == 0
             || kv_heads == 0
@@ -123,6 +186,9 @@ impl Llama {
             return Err("cabeças de atenção incoerentes com a largura".into());
         }
         let head_dim = width / heads;
+        let inv_freq = rope_frequencies(&config, theta, head_dim)?;
+        // Sem a chave, o padrão do `transformers` é não amarrar: a saída é o `lm_head.weight`.
+        let tied = config["tie_word_embeddings"].as_bool().unwrap_or(false);
 
         let tensors = Tensors::open(&dir.join("model.safetensors"))?;
         let (executor, nodes) = match remote {
@@ -150,6 +216,17 @@ impl Llama {
         if embed.cols as usize != width || embed.rows == 0 {
             return Err("embeddings incoerentes com hidden_size".into());
         }
+        let head = if tied {
+            None
+        } else {
+            let head = tensors
+                .matrix("lm_head.weight")
+                .map_err(|e| format!("embeddings não amarrados pedem lm_head.weight: {e}"))?;
+            if head.rows != embed.rows || head.cols != embed.cols {
+                return Err("lm_head.weight com forma diferente dos embeddings".into());
+            }
+            Some(head)
+        };
         let kv_width = kv_heads * head_dim;
         let blocks = (0..layers)
             .map(|n| {
@@ -173,10 +250,9 @@ impl Llama {
             head_dim,
             eps,
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
-            inv_freq: (0..head_dim / 2)
-                .map(|i| theta.powf(-2.0 * i as f64 / head_dim as f64))
-                .collect(),
+            inv_freq,
             embed,
+            head,
             context,
             blocks,
             norm: vector("model.norm.weight".into(), width)?,
@@ -347,7 +423,11 @@ impl LanguageModel for Llama {
         let last = tokens.len() - 1;
         let normed = rms_norm(&x, &self.norm, self.eps);
         let last_row = &normed.data[last * width..(last + 1) * width];
-        Ok(project_rows(&self.embed, last_row, self.threads))
+        Ok(project_rows(
+            self.head.as_ref().unwrap_or(&self.embed),
+            last_row,
+            self.threads,
+        ))
     }
 }
 
@@ -366,6 +446,7 @@ mod tests {
                 .map(|i| 10_000f64.powf(-2.0 * i as f64 / head_dim as f64))
                 .collect(),
             embed: Matrix::zeros(0, 0),
+            head: None,
             context: 0,
             blocks: Vec::new(),
             norm: Vec::new(),
@@ -422,6 +503,150 @@ mod tests {
         assert_eq!(&two.data[4..], &later.data[..]);
     }
 
+    /// Um modelo minúsculo em disco (V=4, W=4, 2 cabeças, 1 camada) para exercitar a carga.
+    fn tiny_model(name: &str, config_extra: &str, head: Option<f32>) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("aic-llama-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            format!(
+                r#"{{"hidden_size":4,"num_hidden_layers":1,"num_attention_heads":2,"num_key_value_heads":2,"intermediate_size":4,"max_position_embeddings":16,"hidden_act":"silu"{config_extra}}}"#
+            ),
+        )
+        .unwrap();
+        let mut tensors: Vec<(&str, Vec<usize>)> = vec![
+            ("model.embed_tokens.weight", vec![4, 4]),
+            ("model.layers.0.input_layernorm.weight", vec![4]),
+            ("model.layers.0.self_attn.q_proj.weight", vec![4, 4]),
+            ("model.layers.0.self_attn.k_proj.weight", vec![4, 4]),
+            ("model.layers.0.self_attn.v_proj.weight", vec![4, 4]),
+            ("model.layers.0.self_attn.o_proj.weight", vec![4, 4]),
+            ("model.layers.0.post_attention_layernorm.weight", vec![4]),
+            ("model.layers.0.mlp.gate_proj.weight", vec![4, 4]),
+            ("model.layers.0.mlp.up_proj.weight", vec![4, 4]),
+            ("model.layers.0.mlp.down_proj.weight", vec![4, 4]),
+            ("model.norm.weight", vec![4]),
+        ];
+        if head.is_some() {
+            tensors.push(("lm_head.weight", vec![4, 4]));
+        }
+        let (mut header, mut data, mut offset) = (String::new(), Vec::<u8>::new(), 0usize);
+        for (index, (tensor, shape)) in tensors.iter().enumerate() {
+            let count: usize = shape.iter().product();
+            let values: Vec<f32> = (0..count)
+                .map(|i| {
+                    if *tensor == "lm_head.weight" {
+                        head.unwrap() * (1.0 + i as f32 * 0.1)
+                    } else if shape.len() == 1 {
+                        1.0
+                    } else {
+                        ((i * 7 + index * 3) % 11) as f32 * 0.1 - 0.5
+                    }
+                })
+                .collect();
+            for value in values {
+                data.extend(value.to_le_bytes());
+            }
+            let end = offset + count * 4;
+            header.push_str(&format!(
+                r#"{}"{tensor}":{{"dtype":"F32","shape":{shape:?},"data_offsets":[{offset},{end}]}}"#,
+                if header.is_empty() { "" } else { "," }
+            ));
+            offset = end;
+        }
+        let header = format!("{{{header}}}");
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend(header.as_bytes());
+        bytes.extend(data);
+        std::fs::write(dir.join("model.safetensors"), bytes).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_saida_nao_amarrada_usa_o_lm_head_e_a_amarrada_nao_o_pede() {
+        let tied = tiny_model("tied", r#","tie_word_embeddings":true"#, None);
+        let tied_logits = Llama::load(&tied)
+            .unwrap()
+            .next_token_logits(&[1, 2])
+            .unwrap();
+
+        // Sem a chave o padrão é não amarrar: o lm_head é obrigatório.
+        let missing = tiny_model("nohead", "", None);
+        let error = Llama::load(&missing).err().expect("falta o lm_head");
+        assert!(error.contains("lm_head.weight"), "{error}");
+
+        let untied = tiny_model("untied", r#","tie_word_embeddings":false"#, Some(0.5));
+        let model = Llama::load(&untied).unwrap();
+        let untied_logits = model.next_token_logits(&[1, 2]).unwrap();
+        assert_eq!(untied_logits.len(), 4);
+        assert_ne!(
+            untied_logits, tied_logits,
+            "a saída vem do lm_head, não dos embeddings"
+        );
+        for dir in [tied, missing, untied] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn rope_scaling_default_e_linear_e_llama3() {
+        let config = |scaling: &str| serde_json::from_str::<serde_json::Value>(scaling).unwrap();
+        let base = rope_frequencies(&config(r#"{}"#), 500_000.0, 128).unwrap();
+        assert_eq!(base.len(), 64);
+        assert_eq!(base[0], 1.0);
+
+        let linear = rope_frequencies(
+            &config(r#"{"rope_scaling":{"type":"linear","factor":4.0}}"#),
+            500_000.0,
+            128,
+        )
+        .unwrap();
+        assert!(
+            base.iter()
+                .zip(&linear)
+                .all(|(b, l)| (b / 4.0 - l).abs() < 1e-18)
+        );
+
+        // Llama 3.1 8B: fator 8, low 1, high 4, contexto original 8192.
+        let llama3 = rope_frequencies(
+            &config(
+                r#"{"rope_scaling":{"rope_type":"llama3","factor":8.0,"low_freq_factor":1.0,"high_freq_factor":4.0,"original_max_position_embeddings":8192}}"#,
+            ),
+            500_000.0,
+            128,
+        )
+        .unwrap();
+        assert_eq!(llama3[0], base[0], "a frequência mais alta não muda");
+        assert!(
+            (llama3[63] - base[63] / 8.0).abs() < 1e-18,
+            "a mais baixa é dividida pelo fator"
+        );
+        // Nunca passa do original nem cai abaixo da dividida, e a razão só cresce com a frequência.
+        let mut ratios = Vec::new();
+        for (scaled, original) in llama3.iter().zip(&base) {
+            assert!(*scaled <= original + 1e-18 && *scaled >= original / 8.0 - 1e-18);
+            ratios.push(scaled / original);
+        }
+        assert!(
+            ratios.windows(2).all(|w| w[0] >= w[1] - 1e-12),
+            "{ratios:?}"
+        );
+        assert!(
+            ratios.iter().any(|r| *r > 0.125 + 1e-6 && *r < 1.0 - 1e-6),
+            "faixa do meio suavizada"
+        );
+
+        for bad in [
+            r#"{"rope_scaling":{"type":"yarn","factor":2.0}}"#,
+            r#"{"rope_scaling":{"type":"linear"}}"#,
+            r#"{"rope_scaling":{"rope_type":"llama3","factor":8.0,"low_freq_factor":4.0,"high_freq_factor":1.0,"original_max_position_embeddings":8192}}"#,
+        ] {
+            assert!(
+                rope_frequencies(&config(bad), 10_000.0, 8).is_err(),
+                "{bad}"
+            );
+        }
+    }
     #[test]
     fn transposing_swaps_rows_and_columns() {
         let m = Matrix {

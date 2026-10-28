@@ -16,9 +16,11 @@ Hoje o motor é uma biblioteca em CPU, carregada pelo gateway, e pode enviar as 
 | Família | Modelos | Pesos | Notas |
 |---|---|---|---|
 | GPT-2 | GPT-2 small (124M) | float32 (safetensors) | Atenção multi-head causal, LayerNorm, GELU, saída amarrada ao embedding. |
-| Llama | SmolLM2-135M, SmolLM2-135M-Instruct | BF16 | RoPE, atenção com grupos de consulta (GQA), RMSNorm, SwiGLU. Embeddings amarrados. |
+| Llama | SmolLM2-135M, SmolLM2-135M-Instruct | BF16 | RoPE, atenção com grupos de consulta (GQA), RMSNorm, SwiGLU. Saída amarrada aos embeddings ou separada (`lm_head.weight`). |
 
-Checkpoints Llama com viés ou `rope_scaling` são recusados na carga. Outras arquiteturas também.
+**O que o motor Llama aceita na carga:** `hidden_act` `silu`; `tie_word_embeddings` verdadeiro (saída = embeddings) ou falso/ausente (exige o tensor `lm_head.weight` com a forma dos embeddings); `rope_scaling` ausente, `default`, `linear` (divide as frequências pelo fator) ou `llama3` (Llama 3.1 em diante: fator, `low_freq_factor`, `high_freq_factor` e `original_max_position_embeddings`); grupos de consulta; contexto até 131072.
+
+**O que ele recusa, com a razão no erro:** viés de atenção ou de MLP (`attention_bias`, `mlp_bias`), outras ativações, `rope_scaling` de tipo `yarn`, `dynamic` ou `longrope`, MoE, janela deslizante e qualquer arquitetura que não seja GPT-2 ou Llama. A saída não amarrada e o `rope_scaling` têm testes unitários (carga de um modelo minúsculo, frequências de referência do Llama 3.1 8B); a paridade numérica contra o `transformers` só vale para os modelos com pesos em `code/models` (GPT-2 e SmolLM2) porque não há pesos de um 7B para comparar.
 
 O tokenizador é BPE em nível de byte. No modelo SmolLM2, cada dígito vira uma peça separada antes da regex. Trechos sem separador acima de 512 bytes são recusados, para proteger o tempo de tokenização.
 
