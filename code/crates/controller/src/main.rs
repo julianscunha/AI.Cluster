@@ -129,6 +129,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => work.with_traces(path),
         None => work,
     });
+    // Rajadas de mutações gravam o snapshot no máximo a cada AI_CLUSTER_STATE_WRITE_MS (padrão 250;
+    // 0 grava a cada mutação), poupando SD e disco fraco; um flush por segundo grava o resto.
+    work.set_write_gap_ms(
+        std::env::var("AI_CLUSTER_STATE_WRITE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(250),
+    );
+    let flusher = work.clone();
+    tokio::spawn(async move {
+        let mut ticker = time::interval(Duration::from_secs(1));
+        loop {
+            ticker.tick().await;
+            flusher.flush();
+        }
+    });
     // As taxas por segundo só valem depois de o controller observar por uma janela inteira.
     ai_cluster_controller::metrics::mark_start();
     // AI_CLUSTER_EVENTS names a file where the event timeline survives a restart (F06).

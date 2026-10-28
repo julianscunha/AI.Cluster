@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ai_cluster_protocol::cluster::{
@@ -238,6 +238,11 @@ pub struct WorkStore {
     /// An `Arc` because the heartbeat reads it far more often than it changes: handing the
     /// blob out clones a pointer, and only the node that is actually behind pays for a copy.
     replica: Mutex<Option<Arc<StateReplica>>>,
+    /// Intervalo mínimo entre gravações do snapshot, em ms (0 = grava a cada mutação). Poupa SD e
+    /// disco fraco em rajadas; o que ficou para trás sai no `flush`.
+    write_gap_ms: AtomicU64,
+    last_write_ms: AtomicU64,
+    dirty: AtomicBool,
 }
 
 /// A unit may be dispatched when every dependency has completed and every bound
@@ -618,9 +623,39 @@ impl WorkStore {
         // read. Done before the early return: a memory-only store has the same ceiling, and
         // this is what keeps the map from growing with all work ever completed.
         drop_unreferenced_outputs(inner);
+        if self.path.is_none() {
+            return;
+        }
+        let gap = self.write_gap_ms.load(Ordering::Relaxed);
+        let now = crate::registry::unix_ms();
+        if gap > 0 && now.saturating_sub(self.last_write_ms.load(Ordering::Relaxed)) < gap {
+            self.dirty.store(true, Ordering::Relaxed);
+            return;
+        }
+        self.persist(inner, bump_epoch);
+    }
+
+    /// Define o intervalo mínimo entre gravações (0 desliga). Quem liga deve chamar `flush` de tempos
+    /// em tempos: um crash perde no máximo as mutações desde a última gravação.
+    pub fn set_write_gap_ms(&self, ms: u64) {
+        self.write_gap_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Grava agora o que a pausa entre gravações segurou.
+    pub fn flush(&self) {
+        if self.dirty.load(Ordering::Relaxed) {
+            let mut inner = self.lock();
+            self.persist(&mut inner, true);
+        }
+    }
+
+    fn persist(&self, inner: &mut Inner, bump_epoch: bool) {
         let Some(path) = &self.path else {
             return;
         };
+        self.dirty.store(false, Ordering::Relaxed);
+        self.last_write_ms
+            .store(crate::registry::unix_ms(), Ordering::Relaxed);
         let epoch = match self.replica_epoch() {
             0 => self.next_epoch(),
             current if !bump_epoch => current,
@@ -2412,6 +2447,23 @@ mod tests {
                 .work_id,
             "w1"
         );
+    }
+
+    #[test]
+    fn a_write_gap_holds_back_saves_until_flush() {
+        let dir = std::env::temp_dir().join(format!("aic-work-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+
+        let store = WorkStore::with_state(&path);
+        store.set_write_gap_ms(60_000);
+        store.enqueue([unit("w1")]); // primeira gravação passa
+        store.enqueue([unit("w2")]); // dentro da pausa: só em memória
+        assert_eq!(WorkStore::with_state(&path).pending(), 1);
+        store.flush();
+        assert_eq!(WorkStore::with_state(&path).pending(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -35,7 +35,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Estado por chave | KV cache, estado de execução e de modelo não existem no cluster (depende de F12). | código |
 | Replicação da fila | A cópia fica num nó só: faltam fator de replicação, portador designado e identidade de cluster. | código |
-| Journal | O snapshot reescreve o estado inteiro a cada mutação; falta journal de deltas. O `claim` sob o lock global também grava o estado todo (sem fsync). | código |
+| Journal | O snapshot reescreve o estado inteiro (no máximo a cada 250 ms, `AI_CLUSTER_STATE_WRITE_MS`); falta journal de deltas e flush no desligamento limpo. O `claim` sob o lock global também grava o estado todo (sem fsync). | código |
 | Checkpoint de unidade e `state://` | Retomar no meio do cálculo; referências lógicas de estado. | código, decisão |
 
 ## F07 — Segurança base
