@@ -66,6 +66,9 @@ pub struct ClusterControlService {
     /// Gateways que se apresentaram, por id. Não persiste: cada um se reapresenta a cada poucos
     /// segundos, então um reinício do controller se refaz sozinho.
     gateways: Arc<std::sync::Mutex<std::collections::HashMap<String, GatewayInfo>>>,
+    /// De que endereço (só o IP) cada gateway se apresentou. Enquanto o gateway está vivo, outro
+    /// endereço não toma o id: o token de inferência é compartilhado e não diz quem é quem.
+    gateway_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, std::net::IpAddr>>>,
     rollout: Rollout,
 }
 
@@ -117,6 +120,16 @@ mod attestation_tests {
 const MAX_GATEWAYS: usize = 64;
 /// Um gateway sem se apresentar há mais que isto deixa de contar como vivo (ele repete a cada 15 s).
 const GATEWAY_ALIVE_MS: u64 = 45_000;
+
+/// Um gateway vivo, apresentado de um endereço, não é tomado por outro endereço. Sem endereço
+/// conhecido (teste, transporte sem IP) a regra não se aplica.
+fn gateway_taken(
+    alive: bool,
+    owner: Option<&std::net::IpAddr>,
+    host: Option<std::net::IpAddr>,
+) -> bool {
+    alive && matches!((owner, host), (Some(owner), Some(host)) if *owner != host)
+}
 
 /// Valida o que o gateway diz de si: tamanhos limitados e sem caracteres de controle, porque o
 /// texto vai para a tela do operador.
@@ -179,6 +192,7 @@ impl ClusterControlService {
             shard_calls: Arc::new(tokio::sync::Semaphore::new(MAX_SHARD_CALLS)),
             watchers: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WATCHERS)),
             gateways: Arc::default(),
+            gateway_hosts: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -971,6 +985,7 @@ impl ClusterControl for ClusterControlService {
         request: Request<ReportGatewayRequest>,
     ) -> Result<Response<ReportGatewayResponse>, Status> {
         require_inference(&request)?;
+        let host = request.remote_addr().map(|addr| addr.ip());
         let request = request.into_inner();
         if !valid_gateway(&request) {
             return Err(Status::invalid_argument("apresentação de gateway inválida"));
@@ -981,6 +996,18 @@ impl ClusterControl for ClusterControlService {
                 .gateways
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut hosts = self
+                .gateway_hosts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let alive = gateways.get(&request.gateway_id).is_some_and(|gateway| {
+                now.saturating_sub(gateway.last_seen_unix_ms) <= GATEWAY_ALIVE_MS
+            });
+            if gateway_taken(alive, hosts.get(&request.gateway_id), host) {
+                return Err(Status::permission_denied(
+                    "gateway já apresentado por outro endereço; aguarde ele ficar sem sinal",
+                ));
+            }
             if !gateways.contains_key(&request.gateway_id) && gateways.len() >= MAX_GATEWAYS {
                 // Um gateway morto não segura a vaga para sempre: sai o que está sem sinal há mais
                 // tempo. Se todos estão vivos, quem chega espera.
@@ -994,9 +1021,13 @@ impl ClusterControl for ClusterControlService {
                 match stale {
                     Some(id) => {
                         gateways.remove(&id);
+                        hosts.remove(&id);
                     }
                     None => return Err(Status::resource_exhausted("gateways demais")),
                 }
+            }
+            if let Some(host) = host {
+                hosts.insert(request.gateway_id.clone(), host);
             }
             gateways
                 .insert(
@@ -2741,6 +2772,23 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn um_gateway_vivo_nao_e_tomado_por_outro_endereco() {
+        let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
+        assert!(gateway_taken(true, Some(&a), Some(b)));
+        assert!(!gateway_taken(true, Some(&a), Some(a)), "o dono volta");
+        assert!(
+            !gateway_taken(false, Some(&a), Some(b)),
+            "sem sinal, o id fica livre"
+        );
+        assert!(
+            !gateway_taken(true, Some(&a), None),
+            "sem endereço, sem regra"
+        );
+        assert!(!gateway_taken(true, None, Some(b)), "id novo");
     }
 
     #[tokio::test]
