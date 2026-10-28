@@ -1452,11 +1452,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Who may call: the single `AI_CLUSTER_API_KEY` (tenant "default", every model, no quota) and/or
     // the tenants of `AI_CLUSTER_TENANTS` (F11): `name=key[,models=a|b][,tokens=N][,class=c];...`.
     let mut list = Vec::new();
-    if let Some(key) = std::env::var("AI_CLUSTER_API_KEY")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(key) = ai_cluster_protocol::metadata::secret("AI_CLUSTER_API_KEY") {
         list.push(Tenant::new("default", &key));
     }
     if let Ok(spec) = std::env::var("AI_CLUSTER_TENANTS") {

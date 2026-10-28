@@ -126,10 +126,53 @@ pub const JOIN_TOKEN_ENV: &str = "AI_CLUSTER_JOIN_TOKEN";
 
 /// The join token from the environment; unset or blank is "none".
 pub fn join_token() -> Option<String> {
-    std::env::var(JOIN_TOKEN_ENV)
+    secret(JOIN_TOKEN_ENV)
+}
+
+/// Um segredo do ambiente. `<NOME>_FILE` aponta para um arquivo com o valor (secret do Docker ou
+/// do Kubernetes, arquivo 0600): assim o segredo não aparece em `docker inspect` nem em
+/// `/proc/<pid>/environ`. O arquivo vence a variável. Um arquivo configurado e ilegível não cai
+/// para a variável: devolve "nenhum" (e avisa), e quem exige o segredo recusa subir.
+pub fn secret(name: &str) -> Option<String> {
+    if let Some(path) = std::env::var_os(format!("{name}_FILE")).filter(|path| !path.is_empty()) {
+        return match read_secret_file(std::path::Path::new(&path)) {
+            Ok(value) => Some(value),
+            Err(why) => {
+                eprintln!("aviso: {name}_FILE: {why}");
+                None
+            }
+        };
+    }
+    std::env::var(name)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// O conteúdo do arquivo de segredo, sem espaços nas pontas. Recusa vazio e, no Unix, arquivo
+/// legível por grupo ou outros (um segredo com permissão aberta já vazou).
+fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "{} com permissão {:o}: use 0600 (chmod 600)",
+                path.display(),
+                mode & 0o777
+            ));
+        }
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let value = text.trim().to_string();
+    if value.is_empty() {
+        return Err(format!("{} está vazio", path.display()));
+    }
+    Ok(value)
 }
 
 /// Environment variable holding the operator token (Fase S3a). It authorizes the administrative
@@ -139,10 +182,7 @@ pub const OPERATOR_TOKEN_ENV: &str = "AI_CLUSTER_OPERATOR_TOKEN";
 
 /// The operator token from the environment; unset or blank is "none".
 pub fn operator_token() -> Option<String> {
-    std::env::var(OPERATOR_TOKEN_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    secret(OPERATOR_TOKEN_ENV)
 }
 
 /// Environment variable holding the inference token (J5). It authorizes `ShardMatmul` and
@@ -152,10 +192,7 @@ pub const INFERENCE_TOKEN_ENV: &str = "AI_CLUSTER_INFERENCE_TOKEN";
 
 /// The inference token from the environment; unset or blank is "none".
 pub fn inference_token() -> Option<String> {
-    std::env::var(INFERENCE_TOKEN_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    secret(INFERENCE_TOKEN_ENV)
 }
 
 /// Environment variable holding the recovery token (F19, ADR-017). It is what a node in network
@@ -165,10 +202,7 @@ pub const RECOVERY_TOKEN_ENV: &str = "AI_CLUSTER_RECOVERY_TOKEN";
 
 /// The recovery token from the environment; unset or blank is "none".
 pub fn recovery_token() -> Option<String> {
-    std::env::var(RECOVERY_TOKEN_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    secret(RECOVERY_TOKEN_ENV)
 }
 
 /// Marker the interceptor leaves in a request's extensions when the caller proved the
@@ -582,6 +616,26 @@ pub async fn connect_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segredo_em_arquivo_exige_permissao_fechada_e_conteudo() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aic-secret-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("token");
+        std::fs::write(&file, "  s3gredo\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_secret_file(&file).unwrap(), "s3gredo");
+
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_secret_file(&file).unwrap_err().contains("0600"));
+
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&file, " \n").unwrap();
+        assert!(read_secret_file(&file).unwrap_err().contains("vazio"));
+        assert!(read_secret_file(&dir.join("falta")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn client_stamps_required_metadata() {

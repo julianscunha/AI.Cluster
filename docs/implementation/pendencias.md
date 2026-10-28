@@ -88,11 +88,8 @@ Sem pendências: o código da fase está feito.
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Gateways sem dono | O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada (inclusive a URL) de outro. Amarrar o id a algo do portador. | decisão, código |
 | Nó desconhecido | Um `node_id` que o registro não conhece passa pela checagem de credencial (as chamadas só respondem "desconhecido"; a cópia do estado não sai para ele). | código |
-| Registro alheio | Quem tem o token de join registra um `node_id` alheio como pendente e tenta tomá-lo. | código |
 | Escopo do operador | O operador age sobre qualquer nó, sem escopo. | decisão, código |
-| Segredos fora de variável | Tokens, credenciais e chaves de TLS em arquivo com permissão restrita ou em cofre. | código |
 
 ## F08 — Inferência `[~]`
 

@@ -137,3 +137,12 @@ Estas não são lidas pelos binários.
 | `CARD_BYTES` | `os/image/mk-disk-image.sh` | Tamanho do cartão para o layout A/B (padrão 3.933.208.576 bytes). |
 | `AIC_RUST_IMAGE` | `scripts/dev-cluster.sh` | Imagem Rust usada pelo cluster de desenvolvimento (padrão `rust:1-bookworm`). |
 | `AIC_SSH_PASSWORD` | `os/image/install-disk.py` | Senha SSH do nó em recuperação. Não vai na linha de comando. |
+
+## Segredos em arquivo
+
+Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de um arquivo que guarda o valor (`AI_CLUSTER_JOIN_TOKEN_FILE`, `AI_CLUSTER_OPERATOR_TOKEN_FILE`, `AI_CLUSTER_INFERENCE_TOKEN_FILE`, `AI_CLUSTER_RECOVERY_TOKEN_FILE`, `AI_CLUSTER_API_KEY_FILE`). Serve para secrets do Docker e do Kubernetes e mantém o valor fora de `docker inspect` e de `/proc/<pid>/environ`. O arquivo vence a variável. No Unix ele precisa ter permissão `0600`; arquivo ausente, vazio ou aberto demais conta como "sem segredo" (e avisa), nunca cai para a variável.
+
+## Quem pode tomar um id
+
+- **Nó:** quem tem só o token de join não toma o `node_id` de um nó aprovado nem o de um pendente que ainda responde; um nó pendente sem sinal fica livre. `ai-cluster revoke` também libera o id.
+- **Gateway:** enquanto um gateway está vivo (sinal nos últimos 45 s), outro endereço IP não se apresenta com o mesmo id (`permission_denied`). O token de inferência é compartilhado, então o endereço é o que amarra o id.
