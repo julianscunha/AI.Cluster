@@ -263,7 +263,8 @@ const MAX_EVENT_WATCHERS: usize = 16;
 /// Highest priority class an enqueue may ask for. Aging is 64 passes per class, so an
 /// unbounded `u32` would make a low class wait effectively forever.
 const MAX_PRIORITY: u32 = 9;
-/// Teto de unidades enfileiradas que exigem atestado: cada rodada refaz os atestados (O(nós)).
+/// Teto aproximado de unidades enfileiradas que exigem atestado (só a fila, e a checagem não é atômica
+/// com o enqueue; basta para o operador único): cada rodada refaz os atestados (O(nós)).
 const MAX_ATTESTED_QUEUED: usize = 256;
 
 /// Invalid results in a row that quarantine a node (G1).

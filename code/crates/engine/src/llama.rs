@@ -196,7 +196,10 @@ impl Llama {
             .shape("model.layers.0.self_attn.q_proj.bias")
             .is_some()
         {
-            return Err("viés de atenção (Qwen) não é suportado pelo motor próprio".into());
+            return Err(
+                "viés de atenção em q/k/v (como no Qwen2) não é suportado pelo motor próprio"
+                    .into(),
+            );
         }
         let (executor, nodes) = match remote {
             Some((executor, nodes)) => (Some(executor), nodes),
