@@ -1,0 +1,8 @@
+.git
+code/target
+code/models
+code/os/image/build
+code/third_party/llama.cpp/build
+deploy/data
+**/*.gguf
+**/*.safetensors

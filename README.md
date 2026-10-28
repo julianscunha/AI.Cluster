@@ -58,6 +58,24 @@ Fluxo de uso:
 
 Docker **não** é requisito para usar o AI Cluster. Ele só aparece para quem desenvolve o projeto (veja o fim deste README).
 
+## Início rápido em um computador (Docker)
+
+Para experimentar o fluxo inteiro sem montar nada à mão (precisa de Docker, bash e openssl):
+
+```bash
+bash deploy/init.sh                                    # gera tokens e certificados (uma vez)
+cp meu-modelo.gguf deploy/models/                      # qualquer modelo em GGUF
+docker compose -f deploy/docker-compose.yml up -d --build --scale worker=2
+docker compose -f deploy/docker-compose.yml exec controller ai-cluster model list
+docker compose -f deploy/docker-compose.yml exec controller ai-cluster model start meu-modelo.gguf
+docker compose -f deploy/docker-compose.yml exec controller ai-cluster model status
+```
+
+O `model start` confere a RAM dos workers, divide o modelo entre eles e mostra a chave de API (uma vez).
+Depois é só chamar `POST http://localhost:8080/v1/chat/completions` com `Authorization: Bearer <chave>`.
+Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras máquinas,
+[a instalação](docs/guia/instalacao.md).
+
 ## Instalação passo a passo
 
 ### 1. Compile os binários (uma vez)

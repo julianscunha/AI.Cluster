@@ -16,3 +16,5 @@
 .obsidian/
 # Pesos de modelos baixados para os testes de paridade
 /code/models/
+deploy/data/
+deploy/models/

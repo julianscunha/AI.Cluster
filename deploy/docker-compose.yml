@@ -1,0 +1,72 @@
+# AI Cluster em um computador só (teste). Antes: bash deploy/init.sh. Depois:
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml exec controller ai-cluster model list
+#   docker compose -f deploy/docker-compose.yml exec controller ai-cluster model start <id>
+#
+# Mais workers: `docker compose ... up -d --scale worker=3`. Para workers em outras máquinas, rode o
+# `ai-cluster-worker` lá com o AI_CLUSTER_CONTROLLER apontando para este computador (veja
+# docs/guia/instalacao.md).
+x-ai-cluster: &ai-cluster
+  image: ai-cluster:local
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  restart: unless-stopped
+
+services:
+  controller:
+    <<: *ai-cluster
+    command: ai-cluster-controller
+    env_file: data/controller.env
+    environment:
+      # A rede do compose é privada e fechada; fora dela configure o TLS do gRPC (docs/guia/instalacao.md).
+      AI_CLUSTER_INSECURE: "1"
+      AI_CLUSTER_AUTO_APPROVE: "1"
+      AI_CLUSTER_MODELS_DIR: /models
+      AI_CLUSTER_MODELS_STATE: /state/models.state
+    volumes:
+      - ./models:/models:ro
+      - controller-state:/state
+    ports:
+      - "${AI_CLUSTER_GRPC_PORT:-50051}:50051"
+
+  gateway:
+    <<: *ai-cluster
+    command: ai-cluster-gateway
+    env_file: data/gateway.env
+    depends_on: [controller]
+    environment:
+      AI_CLUSTER_INSECURE: "1"
+      AI_CLUSTER_CONTROLLER: http://controller:50051
+      AI_CLUSTER_GATEWAY_ADDR: 0.0.0.0:8080
+      AI_CLUSTER_MODELS_DIR: /models
+      AI_CLUSTER_LLAMA_SERVER_BIN: /usr/local/bin/llama-server
+      AI_CLUSTER_LLAMA_TLS_CA: /pki/ca.crt
+      AI_CLUSTER_LLAMA_TLS_CERT: /pki/gateway.crt
+      AI_CLUSTER_LLAMA_TLS_KEY: /pki/gateway.key
+      AI_CLUSTER_LLAMA_CTX: "2048"
+      AI_CLUSTER_LLAMA_SLOTS: "1"
+    volumes:
+      - ./models:/models:ro
+      - ./data/pki:/pki:ro
+    ports:
+      - "${AI_CLUSTER_HTTP_PORT:-8080}:8080"
+
+  worker:
+    <<: *ai-cluster
+    command: ai-cluster-worker
+    env_file: data/worker.env
+    depends_on: [controller]
+    environment:
+      AI_CLUSTER_INSECURE: "1"
+      AI_CLUSTER_CONTROLLER: http://controller:50051
+      AI_CLUSTER_RPC_SERVER_BIN: /usr/local/bin/ggml-rpc-server
+      AI_CLUSTER_RPC_TLS_CERT: /pki/worker.crt
+      AI_CLUSTER_RPC_TLS_KEY: /pki/worker.key
+      AI_CLUSTER_RPC_TLS_CLIENT_CA: /pki/ca.crt
+    volumes:
+      - ./data/pki:/pki:ro
+
+volumes:
+  controller-state:
