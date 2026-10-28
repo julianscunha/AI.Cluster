@@ -335,6 +335,19 @@ impl ClusterControlService {
             .collect()
     }
 
+    /// O que os workers com RPC comportam, pela RAM total (sem a ocupação de agora, que oscila).
+    fn rpc_capacity_bytes(&self) -> u64 {
+        self.rpc_node_memory()
+            .into_iter()
+            .map(|node| {
+                ai_cluster_catalog::check::usable_bytes(&ai_cluster_catalog::check::NodeMemory {
+                    used_fraction: 0.0,
+                    ..node
+                })
+            })
+            .fold(0, u64::saturating_add)
+    }
+
     /// A RAM dos mesmos workers, para o veredito do `models start`.
     fn rpc_node_memory(&self) -> Vec<ai_cluster_catalog::check::NodeMemory> {
         let wanted: std::collections::HashSet<String> = self
@@ -778,9 +791,18 @@ impl ClusterControl for ClusterControlService {
             return refuse(check.message.clone(), Some(check));
         }
         self.audit(&peer, "start_model", &wanted);
-        let (generation, keys) =
-            self.orchestrator
-                .start(&api_id, &model.id, request.context, endpoints);
+        let (generation, keys) = self.orchestrator.start(
+            &api_id,
+            &model.id,
+            request.context,
+            // Sem workers o modelo roda só no gateway: não há RAM de worker para conferir depois.
+            if endpoints.is_empty() {
+                0
+            } else {
+                verdict.required_bytes
+            },
+            endpoints,
+        );
         self.events.record(unix_ms(), "model_started", wanted);
         Ok(Response::new(StartModelResponse {
             ok: true,
@@ -1445,7 +1467,9 @@ impl ClusterControl for ClusterControlService {
             self.orchestrator.note_running(running);
         }
         Ok(Response::new(ReportGatewayResponse {
-            desired: self.orchestrator.plan(self.rpc_endpoints(), now),
+            desired: self
+                .orchestrator
+                .plan(self.rpc_endpoints(), now, self.rpc_capacity_bytes()),
             tenants: self.orchestrator.grants(),
         }))
     }

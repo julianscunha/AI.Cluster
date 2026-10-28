@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# DNS de reserva (ADR-022): a raiz é somente leitura e o /etc/resolv.conf aponta para /run. Se o DHCP
+# não entregou servidor de nomes (acontece em redes domésticas), usa o gateway da rota padrão e um
+# resolvedor público. Sem nomes não há NTP, e sem hora certa o certificado do túnel mTLS é recusado.
+name="aic-dns"
+description="DNS de reserva quando o DHCP não entrega"
+
+depend() {
+	need net
+	before chronyd ai-cluster-worker
+}
+
+start() {
+	if ! grep -q '^nameserver' /run/resolv.conf 2>/dev/null; then
+		gw=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')
+		{
+			[ -n "$gw" ] && echo "nameserver $gw"
+			echo "nameserver 1.1.1.1"
+		} > /run/resolv.conf
+	fi
+	return 0
+}

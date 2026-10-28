@@ -22,6 +22,8 @@ struct Wanted {
     /// Relativo à pasta de modelos.
     model_path: String,
     context: u64,
+    /// RAM que o modelo pede dos workers (do veredito do `start`); 0 = modo só-gateway, sem conferir.
+    required_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +40,8 @@ struct Inner {
     applied: Vec<RpcEndpoint>,
     /// A lista nova que está esperando a janela de estabilidade, e desde quando.
     pending: Option<(Vec<RpcEndpoint>, u64)>,
+    /// Os workers de agora não comportam o modelo: o plano para até voltar RAM. O texto é o motivo.
+    insufficient: Option<String>,
     tenants: Vec<StoredTenant>,
     running: Option<ModelStatus>,
 }
@@ -94,13 +98,17 @@ impl Orchestrator {
             for line in text.lines() {
                 let fields: Vec<&str> = line.split('\t').collect();
                 match fields.as_slice() {
-                    ["model", id, model_path, context, generation] => {
+                    ["model", id, model_path, context, generation, rest @ ..] => {
                         if let (Ok(context), Ok(generation)) = (context.parse(), generation.parse())
                         {
                             inner.wanted = Some(Wanted {
                                 model_id: id.to_string(),
                                 model_path: model_path.to_string(),
                                 context,
+                                required_bytes: rest
+                                    .first()
+                                    .and_then(|v| v.parse().ok())
+                                    .unwrap_or(0),
                             });
                             inner.generation = generation;
                         }
@@ -147,8 +155,8 @@ impl Orchestrator {
         let mut text = String::new();
         match &inner.wanted {
             Some(w) => text.push_str(&format!(
-                "model\t{}\t{}\t{}\t{}\n",
-                w.model_id, w.model_path, w.context, inner.generation
+                "model\t{}\t{}\t{}\t{}\t{}\n",
+                w.model_id, w.model_path, w.context, inner.generation, w.required_bytes
             )),
             None => text.push_str(&format!("generation\t{}\n", inner.generation)),
         }
@@ -192,13 +200,16 @@ impl Orchestrator {
         model_id: &str,
         model_path: &str,
         context: u64,
+        required_bytes: u64,
         endpoints: Vec<RpcEndpoint>,
     ) -> (u64, Vec<ApiKey>) {
         let mut inner = self.lock();
+        inner.insufficient = None;
         inner.wanted = Some(Wanted {
             model_id: model_id.to_string(),
             model_path: model_path.to_string(),
             context,
+            required_bytes,
         });
         inner.generation += 1;
         inner.applied = endpoints;
@@ -235,10 +246,34 @@ impl Orchestrator {
 
     /// O modelo que o gateway deve aplicar agora. `endpoints` é a lista atual de workers aptos; ela só
     /// vira plano depois de ficar igual por `STABLE_MS` (e então a geração sobe). `None` = parar.
-    pub fn plan(&self, mut endpoints: Vec<RpcEndpoint>, now_ms: u64) -> Option<DesiredModel> {
+    pub fn plan(
+        &self,
+        mut endpoints: Vec<RpcEndpoint>,
+        now_ms: u64,
+        capacity_bytes: u64,
+    ) -> Option<DesiredModel> {
         endpoints.sort_by(|a, b| a.node_id.cmp(&b.node_id));
         let mut inner = self.lock();
         let wanted = inner.wanted.clone()?;
+        // Sem RAM para o modelo nos workers de agora (um saiu, ou o pedido cabia só com ele): não
+        // adianta carregar e deixar o `rpc-server` morrer por falta de memória. O modelo para e o
+        // `status` diz o motivo; quando a RAM volta, o plano entra na hora.
+        if wanted.required_bytes > 0 && capacity_bytes < wanted.required_bytes {
+            inner.pending = None;
+            inner.insufficient = Some(format!(
+                "os workers de agora oferecem {:.2} GB e o modelo pede {:.2} GB",
+                capacity_bytes as f64 / 1_073_741_824.0,
+                wanted.required_bytes as f64 / 1_073_741_824.0
+            ));
+            return None;
+        }
+        if inner.insufficient.take().is_some() {
+            inner.applied = endpoints.clone();
+            inner.pending = None;
+            inner.generation += 1;
+            inner.running = None;
+            self.save(&inner);
+        }
         if endpoints == inner.applied {
             inner.pending = None;
         } else {
@@ -299,6 +334,23 @@ impl Orchestrator {
             gpu_layers: if inner.applied.is_empty() { 0 } else { 99 },
             endpoints: inner.applied.clone(),
         });
+        if let (Some(reason), Some(d)) = (&inner.insufficient, &desired) {
+            return (
+                desired.clone(),
+                Some(ModelStatus {
+                    model_id: d.model_id.clone(),
+                    state: ModelState::ModelFailed as i32,
+                    reason: reason.clone(),
+                    generation: d.generation,
+                    tokens_per_second: 0.0,
+                }),
+                inner
+                    .tenants
+                    .iter()
+                    .map(|t| format!("{}:{}", t.name, t.prefix))
+                    .collect(),
+            );
+        }
         let running = inner.running.clone().or_else(|| {
             desired.as_ref().map(|d| ModelStatus {
                 model_id: d.model_id.clone(),
@@ -348,7 +400,7 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         let o = orchestrator();
-        let (_, keys) = o.start("m", "m.gguf", 0, vec![]);
+        let (_, keys) = o.start("m", "m.gguf", 0, 0, vec![]);
         assert_eq!(keys.len(), 1);
         let grants = o.grants();
         assert_eq!(grants[0].key_sha256, key_hash(&keys[0].key).to_vec());
@@ -357,15 +409,26 @@ mod tests {
             "a chave em claro não pode vazar"
         );
         // Um segundo start não cria outra chave.
-        assert!(o.start("m", "m.gguf", 0, vec![]).1.is_empty());
+        assert!(o.start("m", "m.gguf", 0, 0, vec![]).1.is_empty());
     }
 
     #[test]
     fn start_and_stop_move_the_generation_and_the_plan() {
         let o = orchestrator();
-        assert!(o.plan(vec![], 0).is_none(), "sem pedido, nada a aplicar");
-        let (g1, _) = o.start("m", "dir/m.gguf", 2048, vec![endpoint("a"), endpoint("b")]);
-        let plan = o.plan(vec![endpoint("b"), endpoint("a")], 10).unwrap();
+        assert!(
+            o.plan(vec![], 0, u64::MAX).is_none(),
+            "sem pedido, nada a aplicar"
+        );
+        let (g1, _) = o.start(
+            "m",
+            "dir/m.gguf",
+            2048,
+            0,
+            vec![endpoint("a"), endpoint("b")],
+        );
+        let plan = o
+            .plan(vec![endpoint("b"), endpoint("a")], 10, u64::MAX)
+            .unwrap();
         assert_eq!(
             (plan.generation, plan.gpu_layers, plan.endpoints.len()),
             (g1, 99, 2)
@@ -373,34 +436,40 @@ mod tests {
         assert_eq!(plan.model_path, "dir/m.gguf");
         let g2 = o.stop();
         assert!(g2 > g1);
-        assert!(o.plan(vec![endpoint("a")], 20).is_none());
+        assert!(o.plan(vec![endpoint("a")], 20, u64::MAX).is_none());
     }
 
     #[test]
     fn a_new_worker_changes_the_plan_only_after_the_stability_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, vec![endpoint("a")]);
+        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
         // Chega o worker b: ainda vale o plano antigo.
-        let early = o.plan(vec![endpoint("a"), endpoint("b")], 100).unwrap();
+        let early = o
+            .plan(vec![endpoint("a"), endpoint("b")], 100, u64::MAX)
+            .unwrap();
         assert_eq!((early.generation, early.endpoints.len()), (g1, 1));
-        let still = o.plan(vec![endpoint("a"), endpoint("b")], 900).unwrap();
+        let still = o
+            .plan(vec![endpoint("a"), endpoint("b")], 900, u64::MAX)
+            .unwrap();
         assert_eq!(still.generation, g1);
         // Estável por 1 s: o plano muda e a geração sobe.
-        let late = o.plan(vec![endpoint("a"), endpoint("b")], 1_200).unwrap();
+        let late = o
+            .plan(vec![endpoint("a"), endpoint("b")], 1_200, u64::MAX)
+            .unwrap();
         assert_eq!((late.generation, late.endpoints.len()), (g1 + 1, 2));
     }
 
     #[test]
     fn a_flapping_worker_never_reaches_the_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, vec![endpoint("a")]);
+        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
         for t in 0..10 {
             let list = if t % 2 == 0 {
                 vec![endpoint("a"), endpoint("b")]
             } else {
                 vec![endpoint("a")]
             };
-            let plan = o.plan(list, t * 400).unwrap();
+            let plan = o.plan(list, t * 400, u64::MAX).unwrap();
             assert_eq!(plan.generation, g1, "oscilou em t={t}");
         }
     }
@@ -411,7 +480,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("models.state");
         let first = Orchestrator::new(Some(path.clone()));
-        let (generation, keys) = first.start("m", "m.gguf", 4096, vec![endpoint("a")]);
+        let (generation, keys) = first.start("m", "m.gguf", 4096, 0, vec![endpoint("a")]);
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains(&keys[0].key), "o arquivo guarda só o hash");
 
@@ -432,7 +501,7 @@ mod tests {
     #[test]
     fn only_the_current_generation_updates_the_status() {
         let o = orchestrator();
-        let (generation, _) = o.start("m", "m.gguf", 0, vec![]);
+        let (generation, _) = o.start("m", "m.gguf", 0, 0, vec![]);
         let status = |g| ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -454,14 +523,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("models.state");
         let first = Orchestrator::new(Some(path.clone()));
-        let (generation, _) = first.start("m", "m.gguf", 0, vec![endpoint("a"), endpoint("b")]);
+        let (generation, _) = first.start("m", "m.gguf", 0, 0, vec![endpoint("a"), endpoint("b")]);
         // Depois do reinício o plano em vigor é o mesmo: a geração não sobe à toa.
         let again = Orchestrator::new(Some(path));
-        let plan = again.plan(vec![endpoint("a"), endpoint("b")], 5).unwrap();
+        let plan = again
+            .plan(vec![endpoint("a"), endpoint("b")], 5, u64::MAX)
+            .unwrap();
         assert_eq!((plan.generation, plan.endpoints.len()), (generation, 2));
         // O estado reportado da geração antiga some quando o plano muda.
         let o = orchestrator();
-        let (g, _) = o.start("m", "m.gguf", 0, vec![endpoint("a")]);
+        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")]);
         o.note_running(ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -469,12 +540,51 @@ mod tests {
             generation: g,
             tokens_per_second: 9.0,
         });
-        o.plan(vec![endpoint("a"), endpoint("b")], 100);
-        let changed = o.plan(vec![endpoint("a"), endpoint("b")], 1_500).unwrap();
+        o.plan(vec![endpoint("a"), endpoint("b")], 100, u64::MAX);
+        let changed = o
+            .plan(vec![endpoint("a"), endpoint("b")], 1_500, u64::MAX)
+            .unwrap();
         assert_eq!(changed.generation, g + 1);
         assert_eq!(
             o.status(0).1.unwrap().state,
             ModelState::ModelLoading as i32
         );
+    }
+    #[test]
+    fn the_model_stops_when_the_workers_cannot_hold_it_and_returns_when_ram_does() {
+        let o = orchestrator();
+        let gib = 1u64 << 30;
+        let (g1, _) = o.start(
+            "m",
+            "m.gguf",
+            0,
+            3 * gib,
+            vec![endpoint("a"), endpoint("b")],
+        );
+        // Com a RAM de dois workers (4 GB) o plano segue.
+        assert_eq!(
+            o.plan(vec![endpoint("a"), endpoint("b")], 10, 4 * gib)
+                .unwrap()
+                .generation,
+            g1
+        );
+        // Um worker saiu: 1 GB não comporta 3 GB. O modelo para e o status diz por quê.
+        assert!(o.plan(vec![endpoint("a")], 20, gib).is_none());
+        let (_, running, _) = o.status(0);
+        let running = running.unwrap();
+        assert_eq!(running.state, ModelState::ModelFailed as i32);
+        assert!(
+            running.reason.contains("pede 3.00 GB"),
+            "{}",
+            running.reason
+        );
+        // O worker voltou: o plano entra na hora, sem esperar a janela, com geração nova.
+        let back = o
+            .plan(vec![endpoint("a"), endpoint("b")], 30, 4 * gib)
+            .unwrap();
+        assert_eq!((back.generation, back.endpoints.len()), (g1 + 1, 2));
+        // Sem exigência (modo só-gateway), nunca para por RAM.
+        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![]);
+        assert_eq!(o.plan(vec![], 40, 0).unwrap().generation, g);
     }
 }

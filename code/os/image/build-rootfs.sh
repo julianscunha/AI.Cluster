@@ -33,7 +33,7 @@ docker rm "$CID" >/dev/null
 # O tar é extraído como root dentro do contêiner, para preservar dono e modo, e vira ext4 sem montar.
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" debian:12-slim sh -c "
   apt-get update -qq >/dev/null && apt-get install -y -qq e2fsprogs >/dev/null &&
-  rm -rf /r && mkdir /r && tar -xf /b/rootfs.tar -C /r && rm -f /r/.dockerenv &&
+  rm -rf /r && mkdir /r && tar -xf /b/rootfs.tar -C /r && rm -f /r/.dockerenv && rm -f /r/etc/resolv.conf && ln -s /run/resolv.conf /r/etc/resolv.conf &&
   rm -f /b/rootfs.ext4 && mke2fs -q -t ext4 -O ^has_journal -L aicroot -d /r -E root_owner=0:0 /b/rootfs.ext4 $SLOT &&
   e2fsck -fn /b/rootfs.ext4 | tail -1 && du -sh /r"
 ls -l build/rootfs.ext4
