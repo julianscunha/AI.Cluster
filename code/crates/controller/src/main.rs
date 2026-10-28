@@ -313,8 +313,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recovery_gate(inference_gate(probe, &gate), &recovery_scope),
             auth,
         ))
-        .serve(addr)
+        .serve_with_shutdown(addr, async {
+            #[cfg(unix)]
+            {
+                let mut term =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("install SIGTERM handler");
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            let _ = tokio::signal::ctrl_c().await;
+        })
         .await?;
+    // Desligamento limpo: grava o que o intervalo mínimo entre gravações ainda segurava.
+    work.flush();
     Ok(())
 }
 

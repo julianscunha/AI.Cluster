@@ -21,7 +21,7 @@ Só o estado de trabalho do controller:
 | Cópia do arquivo | Arquivo ao lado (`.replica`), no mesmo volume | Junto do arquivo principal. |
 | Cópia de nó | Arquivo em cada worker com `AI_CLUSTER_STATE_REPLICA` | Entregue no heartbeat quando o controller avança. |
 
-Resultados sem leitor são descartados. Um snapshot guarda o trabalho que falta, não o histórico. A gravação respeita um intervalo mínimo (`AI_CLUSTER_STATE_WRITE_MS`, 250 ms) e um flush por segundo grava o que ficou; um crash perde no máximo ~1,3 s de mutações.
+Resultados sem leitor são descartados. Um snapshot guarda o trabalho que falta, não o histórico. A gravação respeita um intervalo mínimo (`AI_CLUSTER_STATE_WRITE_MS`, 250 ms) e um flush por segundo grava o que ficou; SIGTERM ou Ctrl+C gravam antes de sair; um crash (`kill -9`, queda de energia) perde no máximo ~1,3 s de mutações.
 
 ## Gravação e leitura
 
