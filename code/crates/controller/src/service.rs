@@ -345,6 +345,7 @@ impl ClusterControl for ClusterControlService {
         }
         let node_id = identity.node_id.clone();
         let now = unix_ms();
+        let seen = format!("{} v{}", identity.architecture, identity.runtime_version);
         // A node offers the copy of the state it holds. A controller that lost its own files
         // takes the newest one — a node keeping the copy is exactly what lets the queue come
         // back after the volume dies (I4).
@@ -365,6 +366,14 @@ impl ClusterControl for ClusterControlService {
             self.work.restore(&replica);
         }
         self.events.record(now, "node_registered", node_id.clone());
+        println!(
+            "nó {node_id} entrou ({seen}){}",
+            if record.trusted {
+                ""
+            } else {
+                "; aguardando aprovação"
+            }
+        );
         Ok(Response::new(RegisterNodeResponse {
             accepted: true,
             cluster_id: self.cluster_id.clone(),
