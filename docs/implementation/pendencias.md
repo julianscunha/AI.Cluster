@@ -83,6 +83,8 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 ## F12 — Model runtime distribuído
 
+O fluxo desejado (pasta de modelos no controller, OK/NOK, envio dos pesos, chaves e benchmark, nó novo) e as etapas E0 a E11 estão no [[adr-022-fluxo-de-modelos-e-motor-hibrido]]. Nada disso foi codado ainda; as linhas abaixo continuam valendo.
+
 | Item | O que falta | Dependência |
 |---|---|---|
 | N1 a N3 | Registro central de modelos, manifest (tensores e assinatura), variantes e quantização (hoje só fp32). | código, decisão |

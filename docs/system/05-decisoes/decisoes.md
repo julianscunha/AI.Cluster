@@ -34,6 +34,7 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-019-imagem-x86-uefi-com-grub]] | decidido | 2026-10-27 | Imagem x86_64 UEFI: GRUB com grubenv, slots A/B por número de partição, kernel dentro do slot, camada `ab.sh` por plataforma |
 | [[adr-020-niveis-de-confianca-do-no]] | decidido | 2026-10-27 | Níveis de confiança do nó: pendente, aprovado e atestado; a exigência de atestado é da unidade (`require_attested`) |
 | [[adr-021-persistencia-de-traces-e-exportacao-de-eventos]] | decidido | 2026-10-27 | Traces em arquivo de acréscimo com rotação, estado do gateway com `GatewayStats`, eventos por syslog UDP |
+| [[adr-022-fluxo-de-modelos-e-motor-hibrido]] | decidido | 2026-10-28 | Controller guia o fluxo de modelos (catálogo, OK/NOK, envio de pesos, chaves, benchmark); llama.cpp como data plane; vazão primeiro |
 
 ## Notas
 
