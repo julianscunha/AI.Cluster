@@ -16,6 +16,13 @@ name = "ai-cluster-benchmark"
 version = "0.1.1"
 
 [[package]]
+name = "ai-cluster-catalog"
+version = "0.1.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "ai-cluster-cli"
 version = "0.1.1"
 dependencies = [
@@ -35,6 +42,7 @@ version = "0.1.1"
 name = "ai-cluster-controller"
 version = "0.1.1"
 dependencies = [
+ "ai-cluster-catalog",
  "ai-cluster-common",
  "ai-cluster-protocol",
  "axum",

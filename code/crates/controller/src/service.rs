@@ -8,14 +8,14 @@ use ai_cluster_protocol::cluster::{
     EnqueueGraphRequest, EnqueueGraphResponse, EnqueueWorkRequest, EnqueueWorkResponse,
     GetMetricsRequest, GetOutputRequest, GetOutputResponse, GetTraceRequest, GetTraceResponse,
     HealthStreamRequest, HealthStreamResponse, HeartbeatRequest, HeartbeatResponse,
-    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListNodesRequest,
-    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest,
-    RegisterNodeResponse, ReleaseReservationRequest, ReleaseReservationResponse,
-    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
-    RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest, SetReleaseResponse,
-    ShardCapacityRequest, ShardCapacityResponse, ShardCompute, ShardMatmulRequest,
-    ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
+    LeaveNodeRequest, LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListModelsRequest,
+    ListModelsResponse, ListNodesRequest, ListNodesResponse, ListReservationsRequest,
+    ListReservationsResponse, MetricsResponse, ModelEntry, NodeShardCapacity, ProbeLinkRequest,
+    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
+    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
+    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, SetReleaseRequest,
+    SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse, ShardCompute,
+    ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult, SubmitWorkResultRequest,
     SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::cluster::{
@@ -70,6 +70,8 @@ pub struct ClusterControlService {
     /// endereço não toma o id: o token de inferência é compartilhado e não diz quem é quem.
     gateway_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, std::net::IpAddr>>>,
     rollout: Rollout,
+    /// Pasta de modelos (`AI_CLUSTER_MODELS_DIR`) que `ListModels` varre.
+    models_dir: Option<std::path::PathBuf>,
 }
 
 /// Whether the node runs the desired release and its measured slot matches the signed image.
@@ -202,6 +204,9 @@ impl ClusterControlService {
             watchers: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WATCHERS)),
             gateways: Arc::default(),
             gateway_hosts: Arc::default(),
+            models_dir: std::env::var_os("AI_CLUSTER_MODELS_DIR")
+                .filter(|dir| !dir.is_empty())
+                .map(Into::into),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -555,6 +560,46 @@ impl ClusterControl for ClusterControlService {
             request.capability,
         );
         Ok(Response::new(HealthStreamResponse { accepted }))
+    }
+
+    /// Os modelos da pasta do controller, lidos pelo cabeçalho (ADR-022, E1). Só o operador.
+    async fn list_models(
+        &self,
+        request: Request<ListModelsRequest>,
+    ) -> Result<Response<ListModelsResponse>, Status> {
+        require_operator(&request)?;
+        let Some(dir) = self.models_dir.clone() else {
+            return Ok(Response::new(ListModelsResponse::default()));
+        };
+        // A varredura lê arquivos: fora do executor assíncrono.
+        let scanned = tokio::task::spawn_blocking({
+            let dir = dir.clone();
+            move || ai_cluster_catalog::scan(&dir, ai_cluster_catalog::Runtime::default())
+        })
+        .await
+        .map_err(|_| Status::internal("varredura interrompida"))?
+        .map_err(|error| {
+            Status::failed_precondition(format!("pasta de modelos {}: {error}", dir.display()))
+        })?;
+        let models = scanned
+            .into_iter()
+            .map(|m| ModelEntry {
+                id: m.id,
+                format: m.format,
+                architecture: m.architecture,
+                parameters: m.parameters,
+                precision: m.precision,
+                bytes: m.bytes,
+                context: m.context,
+                layers: m.layers,
+                supported: m.supported,
+                reason: m.reason,
+            })
+            .collect();
+        Ok(Response::new(ListModelsResponse {
+            models,
+            directory: dir.display().to_string(),
+        }))
     }
 
     async fn list_nodes(
@@ -1793,6 +1838,44 @@ mod tests {
         assert!(accepted.accepted);
         assert_eq!(work_store.completed().len(), 1);
         assert_eq!(work_store.completed()[0].work_id, "w1");
+    }
+
+    #[tokio::test]
+    async fn list_models_scans_the_models_directory_for_the_operator_only() {
+        let dir = std::env::temp_dir().join(format!("aic-models-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("m")).unwrap();
+        let header = r#"{"w":{"dtype":"F32","shape":[3,4],"data_offsets":[0,48]}}"#;
+        let mut file = (header.len() as u64).to_le_bytes().to_vec();
+        file.extend(header.as_bytes());
+        std::fs::write(dir.join("m/model.safetensors"), file).unwrap();
+        std::fs::write(dir.join("m/config.json"), r#"{"model_type":"gpt2"}"#).unwrap();
+        let (mut service, _) = service_with_work();
+        service.models_dir = Some(dir.clone());
+
+        let denied = service
+            .list_models(Request::new(ListModelsRequest {}))
+            .await;
+        assert_eq!(denied.unwrap_err().code(), tonic::Code::PermissionDenied);
+        let reply = service
+            .list_models(op(ListModelsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(reply.models.len(), 1);
+        let model = &reply.models[0];
+        assert_eq!(
+            (model.id.as_str(), model.parameters, model.supported),
+            ("m", 12, true)
+        );
+
+        service.models_dir = None;
+        let none = service
+            .list_models(op(ListModelsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(none.directory.is_empty() && none.models.is_empty());
     }
 
     #[tokio::test]

@@ -62,6 +62,7 @@ Estes comandos leem e gravam arquivos de um diretório de modelo. Não usam o co
 |---|---|
 | `model manifest <dir> --name NOME --version VERSÃO` | Calcula o SHA-256 de cada arquivo e grava `manifest.json` no diretório. |
 | `model verify <dir>` | Confere os arquivos do diretório com o `manifest.json`. Sai com erro se não houver manifest ou se algum arquivo diverge. |
+| `model list` | Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, parâmetros, precisão, tamanho, contexto, se o motor atual o roda e o motivo quando não. Exige o token de operador. |
 
 ## Atualização pelo controller
 

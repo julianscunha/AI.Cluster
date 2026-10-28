@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, CancelRequestRequest, EnqueueGraphRequest, EnqueueWorkRequest,
-    GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListNodesRequest,
+    GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListModelsRequest, ListNodesRequest,
     ListReservationsRequest, Release, ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest,
     SetReleaseRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
@@ -172,6 +172,9 @@ enum ModelAction {
     },
     /// Checks the files of a model directory against its `manifest.json`.
     Verify { dir: std::path::PathBuf },
+    /// Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, tamanho e
+    /// se o motor atual os roda (ADR-022, E1).
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -223,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     manifest.files.len()
                 );
             }
+            ModelAction::List => print_models(&cli.controller).await?,
             ModelAction::Verify { dir } => {
                 match ai_cluster_engine::manifest::Manifest::load(&dir)? {
                     Some(manifest) => {
@@ -569,6 +573,39 @@ fn sanitize_gateway(
             .for_each(|node| *node = clean(node));
     }
     gateway
+}
+
+async fn print_models(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client.list_models(ListModelsRequest {}).await?.into_inner();
+    if reply.directory.is_empty() {
+        println!("O controller não tem pasta de modelos (defina AI_CLUSTER_MODELS_DIR).");
+        return Ok(());
+    }
+    println!("MODELOS {} em {}", reply.models.len(), reply.directory);
+    println!(
+        "{:<34} {:<12} {:<10} {:>9} {:<8} {:>8} {:>7} {:>8}  MOTIVO",
+        "MODELO", "FORMATO", "ARQ", "PARAMS", "PREC", "GB", "CTX", "ROD"
+    );
+    for model in reply.models {
+        let (params, gb) = (
+            model.parameters as f64 / 1e9,
+            model.bytes as f64 / 1_073_741_824.0,
+        );
+        println!(
+            "{:<34} {:<12} {:<10} {:>8.2}B {:<8} {:>8.2} {:>7} {:>8}  {}",
+            clean(&model.id),
+            clean(&model.format),
+            clean(&model.architecture),
+            params,
+            clean(&model.precision),
+            gb,
+            model.context,
+            if model.supported { "sim" } else { "não" },
+            clean(&model.reason),
+        );
+    }
+    Ok(())
 }
 
 async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {

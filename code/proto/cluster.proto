@@ -285,6 +285,34 @@ message HealthStreamResponse {
   bool accepted = 1;
 }
 
+/// Um modelo achado na pasta de modelos do controller (`AI_CLUSTER_MODELS_DIR`), lido só do cabeçalho.
+message ModelEntry {
+  // Pasta, ou `pasta/arquivo.gguf`.
+  string id = 1;
+  // `gguf` ou `safetensors`.
+  string format = 2;
+  string architecture = 3;
+  uint64 parameters = 4;
+  // F32, BF16, Q4_K_M...
+  string precision = 5;
+  uint64 bytes = 6;
+  // Contexto máximo em tokens; 0 = o cabeçalho não diz.
+  uint64 context = 7;
+  uint32 layers = 8;
+  // O motor instalado roda este modelo.
+  bool supported = 9;
+  // Quando não roda, por quê.
+  string reason = 10;
+}
+
+message ListModelsRequest {}
+
+message ListModelsResponse {
+  repeated ModelEntry models = 1;
+  // A pasta varrida; vazio quando o controller não tem `AI_CLUSTER_MODELS_DIR`.
+  string directory = 2;
+}
+
 message ListNodesRequest {}
 
 message ListNodesResponse {
@@ -826,6 +854,7 @@ service ClusterControl {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportHealth(HealthStreamRequest) returns (HealthStreamResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc LeaveNode(LeaveNodeRequest) returns (LeaveNodeResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);

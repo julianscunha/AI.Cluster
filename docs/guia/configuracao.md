@@ -38,6 +38,7 @@ Convenções:
 | `AI_CLUSTER_TLS_CLIENT_CA` | — | CA PEM que assina certificados de cliente. Ativa o mTLS: sem certificado dessa CA, a conexão é recusada no handshake. Exige o par de servidor. |
 | `AI_CLUSTER_INSECURE` | desligado | `1` permite subir sem TLS (tokens em claro). Com certificado presente, o certificado prevalece. |
 | `AI_CLUSTER_RELEASE_STATE` | memória | Arquivo de uma linha com a release desejada do rollout. Sobrevive a reinício. |
+| `AI_CLUSTER_MODELS_DIR` | — | Pasta de modelos do controller (GGUF ou pastas com safetensors). `ai-cluster model list` lê os cabeçalhos e diz o que é cada modelo e se o motor atual o roda. Sem ela, a lista vem vazia. |
 | `AI_CLUSTER_ROLLOUT_WAVE` | `0` (todos) | Quantos nós atualizam ao mesmo tempo depois do canário. |
 | `AI_CLUSTER_PLACEMENT` | ligado | `off`, `0` ou `false` desliga o placement por custo e despacha na ordem de chegada. Serve para comparação. |
 | `AI_CLUSTER_PLACEMENT_TOLERANCE` | `0.10` | Faixa de histerese do custo, como fração do custo do nó mais barato. Negativo vira `0`. |
