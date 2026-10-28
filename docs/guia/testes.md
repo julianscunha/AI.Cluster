@@ -77,6 +77,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 |---|---|
 | `phase-s1-join-token.sh` | Controller não sobe sem token; nó sem token ou com token errado não aparece; CLI sem token é recusada. |
 | `phase-m-catalog.sh` | Catálogo de modelos e OK/NOK: `model list` lê os cabeçalhos, `model check` cabe ou não cabe com o que falta. Precisa dos pesos em `code/models`. |
+| `phase-r-llama-rpc.sh` | Um GGUF no llama.cpp dividido entre gateway e worker por RPC sobre mTLS: pronto, chat e stream, 401/404, o rpc-server escondido e o túnel exigindo certificado. Precisa de `/t/llama/{llama-server,ggml-rpc-server,smollm2-360m-q4.gguf}`. |
 | `phase-s2-approval.sh` | Nó novo fica pendente sem trabalho até `approve`; a aprovação sobrevive a re-registro. |
 | `phase-s3-roles.sh` | Token de join e de inferência não administram; operador administra; ações de operador entram na auditoria. |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; `http://` e CA errada são recusados; sem certificado, só com `INSECURE`. |

@@ -56,6 +56,13 @@ Convenções:
 | `AI_CLUSTER_WORK_SLOTS` | `1` (1 a 64) | Unidades executadas ao mesmo tempo. Os cores reportados são divididos entre elas. |
 | `AI_CLUSTER_MODEL_DIR` | — | Raiz dos modelos. Ativa o canal de fatias residentes. Cada diretório com `manifest.json` é verificado na subida; divergência encerra o worker. |
 | `AI_CLUSTER_SHARD_CACHE_MB` | `2048` | Memória máxima das fatias residentes (despejo LRU). O worker reporta o valor, e o gateway recusa na subida um modelo que não cabe ("faltam X GB"). |
+| `AI_CLUSTER_RPC_SERVER_BIN` | — | Caminho do `ggml-rpc-server` (llama.cpp). Liga o RPC: o worker o roda como filho supervisionado, escutando só em 127.0.0.1, atrás de um túnel mTLS. Exige `AI_CLUSTER_RPC_TLS_CERT`, `_KEY` e `_CLIENT_CA`; sem eles o nó segue sem RPC. |
+| `AI_CLUSTER_RPC_TLS_CERT` / `AI_CLUSTER_RPC_TLS_KEY` | — | Certificado (SAN `aic-worker`, ou o nome combinado com o gateway) e chave do túnel, em PEM. |
+| `AI_CLUSTER_RPC_TLS_CLIENT_CA` | — | CA que assina o certificado do gateway. Sem certificado de cliente dessa CA o handshake falha. |
+| `AI_CLUSTER_RPC_LISTEN` | `0.0.0.0:50061` | Onde o túnel escuta; é a única porta aberta para a rede. |
+| `AI_CLUSTER_RPC_LOCAL_PORT` | `50062` | Porta do `rpc-server` em loopback. |
+| `AI_CLUSTER_RPC_CACHE` | desligado | `1`: `rpc-server -c`, cache dos tensores em disco (no cartão SD ocupa o tamanho da fatia). |
+| `AI_CLUSTER_RPC_ADVERTISE_HOST` / `AI_CLUSTER_RPC_VERSION` | — | Endereço que o gateway usa e versão do llama.cpp com o patch; o nó anuncia os dois. |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | `1` ou `true`: diretório de modelo sem `manifest.json` é erro. |
 | `AI_CLUSTER_UPDATE_CMD` | — | Comando de atualização, executado sem shell com versão, URL, SHA-256 da release, SHA-256 da imagem e assinatura. Sem ele o nó não participa do rollout. |
 | `AI_CLUSTER_UPDATE_MARK` | `/data/state/update-tried` | Arquivo com a última versão tentada. Impede repetir a atualização depois de um rollback. |
@@ -102,6 +109,14 @@ Convenções:
 | `AI_CLUSTER_SMOLLM2_SUBDIR` | `smollm2` | Pasta dos pesos dentro de `AI_CLUSTER_MODEL_DIR` nos workers (só para fatias). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` | — | Liga o modelo `smollm2-135m-instruct` (com template ChatML). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Nós que guardam as projeções do `smollm2-135m-instruct`. |
+| `AI_CLUSTER_LLAMA_MODEL` | — | Caminho de um GGUF. Liga o modelo servido pelo `llama-server` do llama.cpp (ADR-022): o gateway é o nó principal. |
+| `AI_CLUSTER_LLAMA_MODEL_ID` | nome do arquivo | Id do modelo na API (`GET /v1/models`). |
+| `AI_CLUSTER_LLAMA_SERVER_BIN` | `llama-server` | Caminho do `llama-server`. |
+| `AI_CLUSTER_LLAMA_RPC_ENDPOINTS` | — | `host:porta` dos túneis dos workers, separados por vírgula. O `llama-server` divide as camadas com eles. Sem a lista, o modelo roda só na CPU do gateway. |
+| `AI_CLUSTER_LLAMA_TLS_CA` / `_CERT` / `_KEY` | — | CA que assina os workers e o certificado de cliente do gateway. Obrigatórios com endpoints: o RPC não vai em texto puro. |
+| `AI_CLUSTER_LLAMA_RPC_SERVER_NAME` | `aic-worker` | Nome que o certificado do worker precisa ter (SAN). |
+| `AI_CLUSTER_LLAMA_CTX` / `AI_CLUSTER_LLAMA_NGL` | `4096` / `99` | Contexto (`-c`) e camadas enviadas aos workers (`-ngl`). Uma vaga só (`-np 1`). |
+| `AI_CLUSTER_LLAMA_PORT` / `AI_CLUSTER_LLAMA_TUNNEL_BASE` | `18080` / `18100` | Portas locais do `llama-server` e do primeiro túnel (um por worker). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SUBDIR` | `smollm2-instruct` | Subdiretório dos pesos nos workers. |
 
 `AI_CLUSTER_JOIN_TOKEN` também é lida pelo gateway, só para garantir que nenhuma chave de API seja igual a ele.

@@ -135,3 +135,13 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, envio dos pesos, chave
 ## Marcos
 
 M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e ARM) e M7 (celular) dependem de hardware. M4 pede o overhead de comunicação decomposto no trace e os tokens esperado e real. M5 depende de F11, F12 e F13.
+
+## llama.cpp por RPC (ADR-022)
+
+| Item | O que falta | Dependência |
+|---|---|---|
+| Relógio dos nós sem RTC | O Pi iniciou em 2024-04: o certificado mTLS (válido a partir de hoje) foi recusado como "ainda não válido". A imagem não roda NTP. Falta `ntpd`/`chrony` no boot e esperar a hora antes de abrir o túnel. | código |
+| Certificado por nó | O túnel exige certificado da CA, mas não amarra ao `node_id` (o mesmo certificado serve a todos os workers) e um worker poderia abrir o rpc-server de outro. Falta o controller emitir certificados por nó e um papel "gateway" separado. | código |
+| Controller orquestra | `models start/stop/status` no controller, geração das chaves (hash), plano de camadas (`-ngl`, `--tensor-split`) pela RAM dos workers e reação a worker novo. Hoje o gateway lê os endpoints do ambiente. | código |
+| Binários na imagem | `ggml-rpc-server` (armv7 e x86) e `llama-server` ainda não vão nas imagens do SO nem nos contêineres. | código |
+| Queda de worker | Se um worker cai no meio de um pedido o `llama-server` aborta e o gateway o reinicia (o modelo fica `loading` e recarrega). | código |
