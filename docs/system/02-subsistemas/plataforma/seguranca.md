@@ -139,7 +139,13 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 - **Endereço do worker:** o `rpc_host` que o nó anuncia vira destino de conexão do gateway; o controller só aceita IP (não loopback, não link-local, não multicast) ou nome DNS simples.
 - **Plano do controller:** o `model_path` é relativo à pasta de modelos do gateway (sem `..`, sem caminho absoluto); o contexto tem teto; a faixa de portas locais é validada.
 
-**Limite:** o túnel confere a CA, não o `node_id`. Com uma CA só, um worker comprometido poderia abrir o `rpc-server` de outro. Use uma CA que **só assine o gateway** em `AI_CLUSTER_RPC_TLS_CLIENT_CA`. Certificado por nó e o papel "gateway" separado estão nas pendências.
+- **Papel do cliente:** o túnel do worker aceita só certificado de cliente da CA **e** com o nome `aic-gateway` no SAN (`AI_CLUSTER_RPC_CLIENT_NAME`). O certificado de um worker (SAN `aic-worker`) é da mesma CA e não serve de cliente: um worker comprometido não abre o `rpc-server` de outro. Há teste para isso.
+- **Nome por nó:** com `{node_id}` em `AI_CLUSTER_LLAMA_RPC_SERVER_NAME` (por exemplo `aic-worker-{node_id}`) o gateway só aceita, em cada túnel, o certificado com o nome daquele nó. Um certificado roubado não serve a outro worker.
+- **Processos filhos:** o `rpc-server` e o `llama-server` morrem junto com o pai (`PR_SET_PDEATHSIG` no Linux), a porta local é conferida antes de subir (um órfão de antes não responde no lugar do novo) e o gateway derruba e recria o `llama-server` que para de responder ao `/health` três vezes seguidas.
+- **Versão:** o controller deixa fora do plano o worker cuja versão do `rpc-server` difere da do `llama-server` do gateway, porque o protocolo do RPC muda entre commits.
+- **Hora do nó:** o worker só abre o túnel depois que o relógio passa de 2026-01-01; antes disso um certificado válido hoje seria recusado como "ainda não válido".
+
+**Limite:** o certificado ainda não é emitido pelo controller por nó (a CA e os certificados são do operador). O nome por nó exige um certificado por worker.
 
 ## Chaves de API do controller
 

@@ -4,6 +4,11 @@
 #   sudo ./bootstrap.sh --controller https://controller:50051 --join-token-file /raiz/token \
 #        [--binary ./ai-cluster-worker] [--node-id nome] [--prefix /opt/ai-cluster] \
 #        [--model-dir /var/lib/ai-cluster/models] [--insecure] [--force] [--health-timeout 90]
+#        [--rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls]
+#
+# `--rpc-server-bin` e `--rpc-tls-dir` ligam o RPC do llama.cpp neste nó (modelos GGUF, ADR-022): o
+# worker roda o `ggml-rpc-server` em loopback atrás de um túnel mTLS. A pasta de TLS tem de ter
+# `worker.crt`, `worker.key` e `ca.crt` (a CA que assina só o gateway); sem os três o RPC fica desligado.
 #
 # O que faz: cria o usuário `ai-cluster`, instala o binário do worker (dono root), grava o
 # ambiente em `<prefix>/worker.env` (root:ai-cluster, 0640: o token de join mora ali) e sobe o
@@ -29,6 +34,8 @@ BINARY="./ai-cluster-worker"
 NODE_ID=""
 PREFIX="/opt/ai-cluster"
 MODEL_DIR=""
+RPC_BIN=""
+RPC_TLS_DIR=""
 INSECURE=0
 FORCE=0
 HEALTH_TIMEOUT=90
@@ -42,6 +49,8 @@ while [ $# -gt 0 ]; do
     --node-id) NODE_ID=$2; shift 2 ;;
     --prefix) PREFIX=$2; shift 2 ;;
     --model-dir) MODEL_DIR=$2; shift 2 ;;
+    --rpc-server-bin) RPC_BIN=$2; shift 2 ;;
+    --rpc-tls-dir) RPC_TLS_DIR=$2; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
     --force) FORCE=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT=$2; shift 2 ;;
@@ -76,6 +85,18 @@ allowed "o token" "$JOIN_TOKEN"
 allowed --node-id "$NODE_ID"
 allowed --prefix "$PREFIX"
 [ -z "$MODEL_DIR" ] || allowed --model-dir "$MODEL_DIR"
+[ -z "$RPC_BIN" ] || allowed --rpc-server-bin "$RPC_BIN"
+[ -z "$RPC_TLS_DIR" ] || allowed --rpc-tls-dir "$RPC_TLS_DIR"
+# RPC é tudo ou nada: o binário e a pasta de TLS vêm juntos, com os três arquivos.
+if [ -n "$RPC_BIN" ] || [ -n "$RPC_TLS_DIR" ]; then
+  [ -n "$RPC_BIN" ] && [ -n "$RPC_TLS_DIR" ] || die "--rpc-server-bin e --rpc-tls-dir vêm juntos"
+  case "$RPC_BIN" in /*) ;; *) die "--rpc-server-bin deve ser um caminho absoluto" ;; esac
+  case "$RPC_TLS_DIR" in /*) ;; *) die "--rpc-tls-dir deve ser um caminho absoluto" ;; esac
+  [ -x "$RPC_BIN" ] || die "--rpc-server-bin não é um executável: $RPC_BIN"
+  for f in worker.crt worker.key ca.crt; do
+    [ -r "$RPC_TLS_DIR/$f" ] || die "falta $RPC_TLS_DIR/$f (o RPC não vai em texto puro)"
+  done
+fi
 case "$PREFIX" in /*) ;; *) die "--prefix deve ser um caminho absoluto" ;; esac
 [ -z "$MODEL_DIR" ] || case "$MODEL_DIR" in /*) ;; *) die "--model-dir deve ser um caminho absoluto" ;; esac
 case "$CONTROLLER" in
@@ -130,6 +151,12 @@ mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
   echo "AI_CLUSTER_NODE_CREDENTIAL_FILE=$PREFIX/state/credential"
   [ "$INSECURE" = 1 ] && echo "AI_CLUSTER_INSECURE=1"
   [ -n "$MODEL_DIR" ] && echo "AI_CLUSTER_MODEL_DIR=$MODEL_DIR"
+  if [ -n "$RPC_BIN" ]; then
+    echo "AI_CLUSTER_RPC_SERVER_BIN=$RPC_BIN"
+    echo "AI_CLUSTER_RPC_TLS_CERT=$RPC_TLS_DIR/worker.crt"
+    echo "AI_CLUSTER_RPC_TLS_KEY=$RPC_TLS_DIR/worker.key"
+    echo "AI_CLUSTER_RPC_TLS_CLIENT_CA=$RPC_TLS_DIR/ca.crt"
+  fi
   true
 } > "$ENV_FILE.new"
 chown root:ai-cluster "$ENV_FILE.new"

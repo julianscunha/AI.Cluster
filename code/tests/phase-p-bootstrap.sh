@@ -52,6 +52,11 @@ b"; do
   refused --controller https://x --join-token t --prefix "$bad" --binary /t/release/ai-cluster-worker     || fail "prefix com caractere perigoso deveria ser recusado"
 done
 refused --controller https://x --join-token t --prefix relativo --binary /t/release/ai-cluster-worker   || fail "prefix relativo deveria ser recusado"
+# RPC do llama.cpp: tudo ou nada, binário executável, os três arquivos de TLS, nada de texto puro.
+refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server   || fail "RPC sem pasta de TLS deveria ser recusado"
+refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-tls-dir /tmp   || fail "RPC sem binário deveria ser recusado"
+refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /nao/existe --rpc-tls-dir /tmp   || fail "binário de RPC ausente deveria ser recusado"
+refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server --rpc-tls-dir /tmp   || fail "pasta de TLS sem os arquivos deveria ser recusada"
 MSYS_NO_PATHCONV=1 docker exec aic-clean-p test ! -e /opt/ai-cluster || fail "nada deveria ter sido instalado"
 echo "OK"
 

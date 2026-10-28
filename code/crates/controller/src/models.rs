@@ -22,6 +22,26 @@ pub struct Candidate {
     pub usable_bytes: u64,
 }
 
+/// Velocidade estimada de um worker para gerar texto com o llama.cpp. A geração de tokens depende da
+/// banda de memória e da CPU ao mesmo tempo, e nenhuma das duas pontuações do registro prevê sozinha:
+/// só a de CPU (um kernel de f64) dá ao Orange Pi 61 vezes menos que ao PC; só a banda, 4 a 9 vezes;
+/// o llama.cpp quantizado mediu cerca de 14. A média geométrica da CPU com a banda sob carga (a de uma
+/// thread se faltar) dá cerca de 17: a ordem dos workers é a certa e a proporção fica perto da medida.
+pub fn estimated_speed(compute: f64, loaded_bandwidth: f64, bandwidth: f64) -> f64 {
+    let ok = |v: f64| v.is_finite() && v > 1e-6;
+    let bw = if ok(loaded_bandwidth) {
+        loaded_bandwidth
+    } else {
+        bandwidth
+    };
+    match (ok(compute), ok(bw)) {
+        (true, true) => (compute * bw).sqrt(),
+        (true, false) => compute,
+        (false, true) => bw,
+        (false, false) => 0.0,
+    }
+}
+
 /// Escolhe quais workers carregam o modelo e quanto de cada um. Cada worker que entra soma um salto de
 /// rede por token, então um lento só entra quando a RAM dos mais rápidos não basta: com o modelo
 /// cabendo no PC, o Pi ao lado o faria perder a maior parte da velocidade (medido: 38 tokens/s no PC
@@ -1012,5 +1032,23 @@ mod tests {
         assert_eq!(grant.key_sha256, key_hash(&key.key).to_vec());
         assert_eq!(grant.models, vec!["a".to_string(), "b".to_string()]);
         assert_eq!((grant.tokens, grant.class.as_str()), (42, "interactive"));
+    }
+    #[test]
+    fn the_estimated_speed_ratio_is_close_to_what_llama_cpp_measured() {
+        // Valores reais do registro: Orange Pi PC e PC x86.
+        let pi = estimated_speed(0.0188, 0.15, 0.06);
+        let pc = estimated_speed(1.142, 0.67, 0.53);
+        let ratio = pc / pi;
+        // O llama.cpp mediu cerca de 14 vezes (37 contra 2,6 tokens/s no SmolLM2 360M).
+        assert!((10.0..25.0).contains(&ratio), "{ratio}");
+        // Pontuações ausentes não zeram nem estouram.
+        assert_eq!(estimated_speed(0.0, 0.0, 0.0), 0.0);
+        assert_eq!(estimated_speed(2.0, 0.0, 0.0), 2.0);
+        assert_eq!(estimated_speed(0.0, 0.0, 0.5), 0.5);
+        assert_eq!(estimated_speed(f64::NAN, 0.5, 0.0), 0.5);
+        assert!(
+            (estimated_speed(4.0, 0.0, 1.0) - 2.0).abs() < 1e-9,
+            "sem banda sob carga usa a de uma thread"
+        );
     }
 }

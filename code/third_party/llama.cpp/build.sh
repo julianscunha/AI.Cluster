@@ -32,5 +32,15 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/work -v "$(pwd -W 2>/dev/null |
     -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_RPC=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
   cmake --build build-armv7m -j\$(nproc) --target llama-bench ggml-rpc-server
-  ls -l build-x86/bin build-armv7m/bin
+  # x86_64 musl estático (rpc-server da imagem x86 do SO, Alpine), via zig
+  printf '#!/bin/sh\nexec python3 -m ziglang cc -target x86_64-linux-musl -mcpu=x86_64 \"\$@\"\n' > /work/zigcc64
+  printf '#!/bin/sh\nexec python3 -m ziglang c++ -target x86_64-linux-musl -mcpu=x86_64 \"\$@\"\n' > /work/zigcxx64
+  chmod +x /work/zigcc64 /work/zigcxx64
+  cmake -B build-x86m -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+    -DCMAKE_C_COMPILER=/work/zigcc64 -DCMAKE_CXX_COMPILER=/work/zigcxx64 -DCMAKE_AR=/work/zigar \
+    -DCMAKE_RANLIB=/work/zigranlib -DCMAKE_EXE_LINKER_FLAGS=-static -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_RPC=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
+  cmake --build build-x86m -j\$(nproc) --target ggml-rpc-server
+  ls -l build-x86/bin build-armv7m/bin build-x86m/bin
 "

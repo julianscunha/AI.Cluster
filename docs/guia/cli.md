@@ -66,7 +66,11 @@ Estes comandos leem e gravam arquivos de um diretório de modelo. Não usam o co
 | `model check <id> [--ctx N]` | Diz se o cluster comporta o modelo: `OK` ou `NOK` com o motivo (o que falta em GB e quantos nós acrescentar). Soma a RAM dos nós aprovados e vivos (no máximo 80% de cada um, menos 128 MiB) contra pesos, cache de contexto e 10% de margem. Sai com código 1 no NOK. |
 | `model start <id> [--ctx N]` | Sobe o modelo (GGUF) no cluster: confere a RAM, fixa o plano de workers com RPC e cria a chave de API do tenant `default` (mostrada uma vez; o controller guarda o hash). Sai com código 1 no NOK. |
 | `model stop` | Tira o modelo do gateway. As chaves continuam valendo. |
-| `model status` | O modelo pedido, a geração, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e os prefixos das chaves. |
+| `model status` | O modelo pedido, a geração, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e os prefixos das chaves, mais os avisos do plano (workers deixados de fora por versão diferente do rpc-server). |
+| `model key add <tenant> [--models a,b] [--tokens N] [--class c]` | Cria o tenant e mostra a chave (uma vez). `--models` limita os modelos (padrão: todos), `--tokens` dá a cota por janela e `--class` o teto de prioridade (`background`, `batch`, `normal`, `interactive`, `realtime`). |
+| `model key rotate <tenant>` | Troca a chave de um tenant que existe; a antiga deixa de valer na próxima apresentação do gateway (até 15 s) e os limites ficam. |
+| `model key remove <tenant>` | Tira o tenant. |
+| `model key list` | Os tenants, com o prefixo da chave e os limites (nunca a chave). |
 
 ## Atualização pelo controller
 

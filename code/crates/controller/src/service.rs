@@ -349,7 +349,11 @@ impl ClusterControlService {
                 }
                 Some(crate::models::Candidate {
                     endpoint,
-                    speed: capability.compute_score,
+                    speed: crate::models::estimated_speed(
+                        capability.compute_score,
+                        capability.memory_bandwidth_loaded_score,
+                        capability.memory_bandwidth_score,
+                    ),
                     usable_bytes: ai_cluster_catalog::check::usable_bytes(
                         &ai_cluster_catalog::check::NodeMemory {
                             total_bytes: capability.memory_bytes,

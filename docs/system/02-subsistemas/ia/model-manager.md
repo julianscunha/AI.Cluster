@@ -28,7 +28,9 @@ Comandos (veja [[cli]] no guia): `model list`, `model check <id> [--ctx N]`, `mo
 - **Plano de workers** (`controller/src/models.rs`): `select` ordena os workers pela velocidade da CPU e usa os mais rápidos **só até a RAM somada comportar o modelo** (cada worker é um salto de rede por token; um lento só entra quando falta memória). A divisão de camadas (`--tensor-split`) é proporcional à velocidade, limitada pelo que cada worker comporta.
 - **Geração:** sobe a cada `start`, `stop` ou mudança estável do plano. Uma lista nova de workers só vira plano depois de `AI_CLUSTER_PLAN_STABLE_MS` (30 s) igual, para um worker que oscila não recarregar o modelo.
 - **Sem RAM:** se os workers de agora não comportam o pedido, o modelo para com o motivo (`FALHOU`) e volta sozinho quando a RAM volta.
-- **Chaves de API:** o primeiro `start` cria o tenant `default` e mostra a chave **uma vez**. O controller guarda `sha256(chave)` em `AI_CLUSTER_MODELS_STATE` (ou `$AI_CLUSTER_DATA_DIR/models.state`, escrita atômica, só para o dono); o gateway recebe só os hashes.
+- **Velocidade do worker:** média geométrica da pontuação de CPU com a banda de memória sob carga (`estimated_speed`); na amostra real (PC e Orange Pi) dá cerca de 17 vezes contra as 14 medidas no llama.cpp.
+- **Versão do `rpc-server`:** o worker anuncia `rpc_version`, o gateway reporta a do `llama-server`, e o controller deixa fora do plano o worker de versão diferente (aviso em `model status`).
+- **Chaves de API:** `model key add|rotate|remove|list` gerenciam um tenant por chave, com modelos, cota por janela e classe de prioridade. O primeiro `start` cria o tenant `default` e mostra a chave **uma vez**. O controller guarda `sha256(chave)` em `AI_CLUSTER_MODELS_STATE` (ou `$AI_CLUSTER_DATA_DIR/models.state`, escrita atômica, só para o dono); o gateway recebe só os hashes.
 - **Gateway:** a cada apresentação recebe o `DesiredModel` e as chaves em hash; aplica com o `Manager` (túneis mTLS locais e `llama-server`), reporta o estado (`CARREGANDO`, `PRONTO`, `FALHOU`) e o benchmark (tokens/s de um prompt fixo de 64 tokens).
 
 ## Diretório de modelo (motor próprio, safetensors)

@@ -82,7 +82,7 @@ Como o controller escolhe: os workers mais rápidos primeiro, **só até a RAM s
 | `model start` diz NOK | A RAM somada dos workers com RPC não comporta o modelo, ou não há worker com RPC | Acrescente workers (o NOK diz quantos) ou reduza o contexto (`--ctx`) |
 | Status `FALHOU` com "os workers de agora oferecem X GB" | Um worker saiu e a RAM não basta | Traga o worker de volta: o plano volta sozinho |
 | Status `FALHOU` com "llama-server saiu (signal: 6)" | O `rpc-server` de um worker caiu (sem memória) ou recusou a conexão | Veja o log do worker; confira a hora do nó e o certificado |
-| Worker fica fora do plano | Sem `rpc_port` (RPC desligado), reprovado ou sem endereço válido | `ai-cluster node show <id>`; confira as variáveis `AI_CLUSTER_RPC_*` |
+| Worker fica fora do plano | Sem `rpc_port` (RPC desligado), reprovado, sem endereço válido, ou `rpc-server` de outra versão (`model status` mostra `AVISO`) | `ai-cluster node show <id>`; confira as variáveis `AI_CLUSTER_RPC_*` e `AI_CLUSTER_RPC_VERSION` |
 | Muito lento com um Pi no plano | O Pi só entra se a RAM exigir; cada camada nele soma latência | Use um worker maior; um modelo que cabe no PC não precisa do Pi |
 | `certificate expired` no túnel | Relógio do nó errado (placa sem RTC) | Corrija a hora (a imagem 11.8 acerta sozinha com DNS e chrony) |
 

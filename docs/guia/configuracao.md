@@ -61,6 +61,7 @@ Convenções:
 | `AI_CLUSTER_RPC_SERVER_BIN` | — | Caminho do `ggml-rpc-server` (llama.cpp). Liga o RPC: o worker o roda como filho supervisionado, escutando só em 127.0.0.1, atrás de um túnel mTLS. Exige `AI_CLUSTER_RPC_TLS_CERT`, `_KEY` e `_CLIENT_CA`; sem eles o nó segue sem RPC. |
 | `AI_CLUSTER_RPC_TLS_CERT` / `AI_CLUSTER_RPC_TLS_KEY` | — | Certificado (SAN `aic-worker`, ou o nome combinado com o gateway) e chave do túnel, em PEM. |
 | `AI_CLUSTER_RPC_TLS_CLIENT_CA` | — | CA que assina o certificado do gateway. Sem certificado de cliente dessa CA o handshake falha. **Use uma CA que só assine o gateway**: o túnel aceita qualquer certificado dela, e o `rpc-server` executa o que o cliente manda. |
+| `AI_CLUSTER_RPC_CLIENT_NAME` | `aic-gateway` | Nome no SAN que o certificado do **cliente** do túnel precisa ter. O certificado de um worker (SAN `aic-worker`) é da mesma CA, mas não vale como cliente: um worker comprometido não abre o `rpc-server` de outro. |
 | `AI_CLUSTER_RPC_LISTEN` | `0.0.0.0:50061` | Onde o túnel escuta; é a única porta aberta para a rede. |
 | `AI_CLUSTER_RPC_LOCAL_PORT` | `50062` | Porta do `rpc-server` em loopback. |
 | `AI_CLUSTER_RPC_CACHE` | desligado | `1`: `rpc-server -c`, cache dos tensores em disco (no cartão SD ocupa o tamanho da fatia). |
@@ -117,7 +118,8 @@ Convenções:
 | `AI_CLUSTER_LLAMA_SERVER_BIN` | `llama-server` | Caminho do `llama-server`. |
 | `AI_CLUSTER_LLAMA_RPC_ENDPOINTS` | — | `host:porta` dos túneis dos workers, separados por vírgula. O `llama-server` divide as camadas com eles. Sem a lista, o modelo roda só na CPU do gateway. |
 | `AI_CLUSTER_LLAMA_TLS_CA` / `_CERT` / `_KEY` | — | CA que assina os workers e o certificado de cliente do gateway. Obrigatórios com endpoints: o RPC não vai em texto puro. |
-| `AI_CLUSTER_LLAMA_RPC_SERVER_NAME` | `aic-worker` | Nome que o certificado do worker precisa ter (SAN). |
+| `AI_CLUSTER_LLAMA_RPC_SERVER_NAME` | `aic-worker` | Nome que o certificado do worker precisa ter (SAN). Com `{node_id}` (por exemplo `aic-worker-{node_id}`) cada worker precisa de um certificado com o nome do próprio nó: um certificado roubado não serve a outro worker. |
+| `AI_CLUSTER_RPC_VERSION` | — | Versão do llama.cpp com o patch (`llama.cpp-8ca4060+armv7`). O worker a anuncia e o gateway a reporta; o controller deixa fora do plano o worker de versão diferente, porque o protocolo do RPC muda entre commits. As imagens e o Compose já a definem. |
 | `AI_CLUSTER_LLAMA_SPLIT` | automático | Proporção de camadas por worker, na ordem dos endpoints (`1,4` dá um quinto ao primeiro). Vale mais que a divisão do controller. Para experimentos. |
 | `AI_CLUSTER_LLAMA_SLOTS` | `1` (1 a 16) | Gerações ao mesmo tempo no `llama-server` (`-np`) e vagas da fila do gateway. O contexto de cada vaga é `AI_CLUSTER_LLAMA_CTX` (o `-c` do servidor é o total), e o cache KV cresce com as vagas. Mais vagas aumentam a vazão total e alongam cada resposta. |
 | `AI_CLUSTER_LLAMA_CTX` / `AI_CLUSTER_LLAMA_NGL` | `4096` / `99` | Contexto (`-c`) e camadas enviadas aos workers (`-ngl`). Uma vaga só (`-np 1`). |

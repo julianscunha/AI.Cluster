@@ -11,6 +11,11 @@ SLOT=${1:-512M}
 mkdir -p build
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/x86_64-unknown-linux-musl/release/ai-cluster-worker /out/ai-cluster-worker-x86
+# rpc-server do llama.cpp (ADR-022) estático em musl, com o patch de code/third_party/llama.cpp (build.sh
+# o compila no volume aic-llama); sem símbolos.
+MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/w -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
+  sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq binutils >/dev/null && strip -o /out/ggml-rpc-server-x86 /w/llama.cpp/build-x86m/bin/ggml-rpc-server'
+cp build/ggml-rpc-server-x86 ggml-rpc-server
 # AIC_WORKER_FILE troca o binário do worker (teste de rollback com um worker que nunca se registra)
 cp "${AIC_WORKER_FILE:-build/ai-cluster-worker-x86}" ai-cluster-worker
 rm -rf aic-release.d; mkdir aic-release.d
@@ -19,7 +24,7 @@ for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   cp "$PUB" "aic-release.d/$(basename "$PUB")"
 done
 docker build --platform linux/amd64 -f x86/Dockerfile --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs-x86:dev .
-rm -rf ai-cluster-worker aic-release.d
+rm -rf ai-cluster-worker ggml-rpc-server aic-release.d
 CID=$(docker create --platform linux/amd64 aic-os-rootfs-x86:dev)
 docker export "$CID" > build/rootfs-x86.tar
 docker rm "$CID" >/dev/null

@@ -17,7 +17,14 @@
 
 **Transforme as máquinas paradas que você já tem (PCs velhos, notebooks, servidores, Raspberry/Orange Pi) em um único pool de computação para IA.**
 
-Cada uma é fraca; juntas rodam um modelo. O AI Cluster admite os nós com segurança, mede o que cada um aguenta, divide o trabalho, **fatia os pesos do modelo entre as máquinas** e continua funcionando quando uma delas cai. Escrito em Rust, com API compatível com OpenAI.
+Cada uma é fraca; juntas rodam um modelo. Você baixa um modelo em **GGUF**, coloca numa pasta e roda `model start`: o controller confere se a **memória somada** dos workers comporta o modelo (e diz o que falta, se não), escolhe quais máquinas o carregam, divide as camadas entre elas e entrega a **chave de API**. Quando uma máquina nova entra, ele refaz o plano sozinho. Sem GPU, sem configurar nó a nó. A execução é do [llama.cpp](https://github.com/ggml-org/llama.cpp) (centenas de arquiteturas, pesos quantizados, x86 e ARM); o AI Cluster cuida de admitir os nós com segurança, medir o que cada um aguenta, dividir o modelo e continuar funcionando quando uma máquina cai. Escrito em Rust, com API compatível com OpenAI.
+
+```bash
+ai-cluster model list            # os modelos GGUF da pasta
+ai-cluster model check qwen2.5-7b-q4.gguf   # cabe? OK, ou NOK com o que falta
+ai-cluster model start qwen2.5-7b-q4.gguf   # carrega e mostra a chave de API (uma vez)
+ai-cluster model status          # estado, workers do plano e tokens/s medidos
+```
 
 <p align="center">
   <img src="docs/assets/architecture.svg" alt="Arquitetura: cliente, gateway, controller e workers" width="100%">
@@ -40,21 +47,22 @@ O AI Cluster é um sistema Linux com **papéis**. Você escolhe onde cada um rod
 
 Fluxo de uso:
 
+0. **Só para experimentar**, tudo em um computador com Docker: veja o [início rápido](#início-rápido-em-um-computador-docker).
 1. **Instale o controller** no servidor e anote os dois tokens (join e operador).
 2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7** (testada em hardware) e para **PCs x86_64 UEFI** (validada em QEMU, ainda não em hardware real); para **ARM64 ainda não existe**. Nos casos sem imagem o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
 3. **Aprove** cada nó novo e **monitore** tudo pela CLI.
-4. **Suba o gateway** com o modelo e aponte seus aplicativos para ele.
+4. **Ponha um modelo GGUF na pasta do controller e rode `model start`** (passo 5). Aponte seus aplicativos para o gateway com a chave que ele mostrar.
 
 ## Pré-requisitos
 
 | Onde | Precisa de |
 |---|---|
-| **Servidor do controller/gateway** | Linux (x86_64 ou ARM, glibc), acesso de rede dos workers à porta `50051` e dos clientes à `8080`. O gateway com SmolLM2 mantém o modelo em memória (cerca de 1 GB). |
+| **Servidor do controller/gateway** | Linux x86_64 (glibc), acesso de rede dos workers à porta `50051` e dos clientes à `8080`. O gateway é o nó principal do modelo (roda o `llama-server`): precisa de RAM para as camadas que ficarem com ele e para o contexto. |
 | **Cada worker** | **AI Cluster OS** (placa ARMv7 ou PC x86_64 UEFI: o disco é apagado e regravado) **ou** um Linux x86_64/ARMv7/ARM64 já instalado com `root` e, de preferência, systemd. Nos dois casos: conexão de saída até a porta `50051` do controller e memória livre para a fatia do modelo. |
 | **Máquina de build** (uma vez) | Linux com Rust estável ≥ 1.85 (`rustup`). Compila os binários; servidores e dispositivos não precisam de Rust. Para gerar binário ARMv7 a partir de x86, Docker nessa máquina. |
 | **Seu computador** | O binário `ai-cluster` e acesso de rede ao controller. |
-| **Modelos** | Pesos GPT-2 ou SmolLM2 no servidor do gateway ([onde baixar](docs/guia/instalacao.md#pesos-dos-modelos)). Opcional: sem eles o cluster funciona, só não responde chat. |
-| **Catálogo de modelos** | Lista de modelos de pesos abertos, do mais simples ao mais avançado, com notas e quais já foram homologados: [`docs/guia/modelos.md`](docs/guia/modelos.md). |
+| **Modelos** | Arquivos **GGUF** (a maioria dos modelos abertos tem uma versão quantizada), numa pasta que o controller e o gateway enxerguem. Sem modelo o cluster funciona, só não responde chat. |
+| **Catálogo de modelos** | Modelos de pesos abertos, do mais simples ao mais avançado, com notas, RAM estimada, link de download e quais já foram homologados: [`docs/guia/modelos.md`](docs/guia/modelos.md). |
 
 Docker **não** é requisito para usar o AI Cluster. Ele só aparece para quem desenvolve o projeto (veja o fim deste README).
 
@@ -134,31 +142,32 @@ ai-cluster events            # entradas, saídas, falhas
   <img src="docs/assets/terminal-nodes.svg" alt="Saída real do ai-cluster nodes com um PC x86 e um Orange Pi" width="100%">
 </p>
 
-### 5. Gateway e inferência
+### 5. Modelo, gateway e API
 
-No servidor, com os pesos do SmolLM2 em `/srv/models/smollm2`:
+Cada worker que vai dividir modelos roda o `ggml-rpc-server` do llama.cpp **atrás de um túnel mTLS** (o servidor RPC não tem senha, então nunca fica exposto): na imagem ARMv7 ele já vem e liga sozinho quando existem os certificados em `/data/rpc-tls`; em um Linux comum use `bootstrap.sh --rpc-server-bin ... --rpc-tls-dir ...`. O gateway recebe o `llama-server`, a pasta de modelos e os certificados ([`docs/guia/configuracao.md`](docs/guia/configuracao.md)). Depois:
 
 ```bash
-AI_CLUSTER_INSECURE=1 AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8080 \
-AI_CLUSTER_CONTROLLER=http://127.0.0.1:50051 AI_CLUSTER_OPERATOR_TOKEN=<token-de-operador> \
-AI_CLUSTER_API_KEY=<chave-dos-seus-apps> \
-AI_CLUSTER_SMOLLM2_DIR=/srv/models/smollm2 \
-./ai-cluster-gateway
+ai-cluster model list                       # coluna ROD: o motor roda este modelo
+ai-cluster model check meu-modelo.gguf      # soma a RAM dos workers; NOK diz quanto falta
+ai-cluster model start meu-modelo.gguf      # plano, carga e a chave de API (uma vez)
+ai-cluster model status                     # CARREGANDO, PRONTO; workers do plano; tokens/s
 ```
 
 ```bash
 curl http://<ip-do-servidor>:8080/v1/chat/completions \
-  -H "Authorization: Bearer <chave-dos-seus-apps>" -H "Content-Type: application/json" \
-  -d '{"model":"smollm2-135m","messages":[{"role":"user","content":"Hello!"}],"max_tokens":16}'
+  -H "Authorization: Bearer <chave-que-o-start-mostrou>" -H "Content-Type: application/json" \
+  -d '{"model":"meu-modelo","messages":[{"role":"user","content":"Hello!"}],"max_tokens":64}'
 ```
 
-Para **dividir o modelo entre os workers**, instale os pesos também neles (`--model-dir` do `bootstrap.sh`) e inicie o gateway com `AI_CLUSTER_SMOLLM2_SHARDS=sala-pc1,sala-pc2`: cada worker guarda uma fatia na memória e o gateway soma os resultados parciais.
+**Como o controller decide:** os workers mais rápidos primeiro, **só até a RAM somada comportar o modelo**. Cada worker que entra soma um salto de rede por palavra, então um lento (um Pi ao lado de um PC) só participa quando faltaria memória; com o modelo cabendo no PC, o Pi o faria perder cerca de 5 vezes a velocidade (medido). Entre os escolhidos, a divisão de camadas é proporcional à velocidade e limitada pela RAM de cada um. Um worker novo muda o plano só se mudar esse conjunto, depois de 30 s estável. Se a RAM deixa de bastar, o modelo para com o motivo e volta sozinho quando ela volta.
+
+**Chaves de API:** uma por tenant, com modelos, cota e classe de prioridade (`ai-cluster model key add|rotate|remove|list`). O controller guarda só o hash. **Várias vagas** (`AI_CLUSTER_LLAMA_SLOTS`) atendem mais pedidos ao mesmo tempo: no laboratório, 2 pedidos juntos deram 34% mais tokens por segundo no total.
 
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="Uma camada do modelo dividida entre três workers" width="100%">
 </p>
 
-Todas as variáveis, tenants, cotas e a API completa: [`docs/guia/configuracao.md`](docs/guia/configuracao.md) e [`docs/guia/api.md`](docs/guia/api.md).
+O **motor próprio** (GPT-2 e SmolLM2 em safetensors, com as projeções fatiadas entre os workers) continua disponível como referência de paridade; veja [`docs/guia/api.md`](docs/guia/api.md). Todas as variáveis, tenants, cotas e a API: [`docs/guia/configuracao.md`](docs/guia/configuracao.md).
 
 ### 6. AI Cluster OS: o dispositivo vira um worker dedicado
 
@@ -174,16 +183,23 @@ Gerar a imagem, gravar o cartão e publicar releases: [`docs/guia/instalacao.md`
 
 ## O que você ganha
 
-- **Hardware de qualquer arquitetura:** x86_64 e ARM no mesmo cluster, sem GPU obrigatória.
-- **Inferência distribuída de verdade:** os pesos ficam residentes nos workers; só passam resultados parciais. Se um worker cai, o trabalho dele é reatribuído na hora.
-- **Nós entram e saem sem cerimônia:** join com token, aprovação, drain, saída limpa, quarentena automática de nó que erra.
-- **Segurança por papéis:** credenciais separadas para entrar, operar e inferir; TLS e mTLS; o gateway roda sem o token de operador.
+- **Um comando põe o modelo no ar:** `model start` confere a RAM, escolhe os workers, divide as camadas, carrega e entrega a chave de API. Sem variável por modelo nem cópia de pesos para cada nó.
+- **Diz "não cabe" antes de tentar:** o `model check` soma a RAM dos workers e responde OK ou NOK com o que falta e quantos nós acrescentar. Mais máquinas, mais modelo: sem teto de tamanho além da memória somada.
+- **Escolhe os workers certos:** rápidos primeiro, lentos só quando a RAM exige; a divisão de camadas segue a velocidade de cada nó e o limite da memória dele.
+- **Modelos quantizados e centenas de arquiteturas** (GGUF, pelo llama.cpp), em x86_64 e em ARMv7 de 1 GB, sem GPU obrigatória. O Orange Pi PC roda um modelo de 360M a 2,6 tokens/s sozinho e um de 1,5B dividido com um PC.
+- **Worker novo entra sozinho:** o plano se refaz, o modelo recarrega e o benchmark é medido de novo.
+- **Mais pedidos ao mesmo tempo:** várias vagas por modelo, com fila por classe de prioridade.
+- **Chaves de API por tenant:** modelos, cota e classe por chave; rotação e remoção; só o hash fica guardado.
+- **Nós entram e saem sem cerimônia:** join com token, aprovação conferida pela impressão digital da credencial, drain, saída limpa, quarentena automática de nó que erra.
+- **Segurança por papéis:** credenciais separadas para entrar, operar e inferir; TLS e mTLS; o gateway roda sem o token de operador. O `rpc-server` do llama.cpp, que não tem senha, só atende por um túnel mTLS com papel de gateway.
 - **Atualização segura do sistema:** release assinada (Ed25519), canário, ondas e rollback automático.
 - **Observável:** métricas Prometheus em `:9101`, eventos, traces de requisição e painel no terminal.
 
 ## Estado do projeto
 
-Pré-produção: o núcleo (cluster, placement, inferência distribuída, segurança por papéis, imagem A/B com release assinada) roda e é testado em PC x86 e Orange Pi (ARMv7). O que ainda falta está em [`docs/implementation/pendencias.md`](docs/implementation/pendencias.md): aceleradores (GPU/NPU), worker móvel, revogação de chave e *attestation* por hardware, entre outros.
+Pré-produção: o núcleo (cluster, placement por velocidade e RAM, modelos GGUF divididos entre máquinas, segurança por papéis, imagem A/B com release assinada) roda e é testado em PC x86 e Orange Pi (ARMv7). Medidas reais e a decisão por trás de cada escolha estão no [ADR-022](docs/system/05-decisoes/adr-022-fluxo-de-modelos-e-motor-hibrido.md). O que ainda falta está em [`docs/implementation/pendencias.md`](docs/implementation/pendencias.md): certificado do túnel por nó, aceleradores (GPU/NPU), worker móvel, revogação de chave e *attestation* por hardware, entre outros.
+
+**Limites que valem saber:** um worker lento limita a velocidade de todos os pedidos que passam por ele, então o ganho de um cluster aparece quando o modelo **não cabe em uma máquina só**; modelos grandes em hardware fraco geram poucas palavras por segundo; as notas do [catálogo](docs/guia/modelos.md) vêm das fichas oficiais e foram conferidas por amostragem.
 
 ## Documentação
 
@@ -197,10 +213,12 @@ Pré-produção: o núcleo (cluster, placement, inferência distribuída, segura
 
 ```
 code/
-  crates/{common,protocol,controller,worker,transport,benchmark,cli,engine,gateway}
+  crates/{common,protocol,controller,worker,transport,benchmark,cli,engine,gateway,catalog,tunnel}
   proto/cluster.proto      contrato de comunicação (ai.cluster.v1)
   os/                      bootstrap.sh, imagem A/B, netboot, instalador
+  third_party/llama.cpp/   patch para nós de 32 bits e script de build do llama.cpp
   scripts/ tests/          build ARM, cluster de desenvolvimento, testes de ponta a ponta
+deploy/                    Docker Compose: Dockerfile único, init.sh (tokens e certificados)
 docs/                      guia/, system/, implementation/ (pendências)
 ```
 
