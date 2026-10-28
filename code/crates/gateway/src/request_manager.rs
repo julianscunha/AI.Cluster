@@ -134,12 +134,16 @@ pub struct Tenants {
     pub window: Duration,
 }
 
-/// Uma chave de API do controller: o tenant, o `sha256` da chave e os modelos que ela alcança.
+/// Uma chave de API do controller: o tenant, o `sha256` da chave, os modelos que ela alcança e os limites.
 pub struct Grant {
     pub name: String,
     pub sha256: [u8; 32],
     /// `None` = todos os modelos.
     pub models: Option<Vec<String>>,
+    /// Tokens por janela; `None` = sem cota.
+    pub quota: Option<u64>,
+    /// Classe máxima de prioridade; `None` = a maior.
+    pub ceiling: Option<Class>,
 }
 
 /// Parses `name=key[,models=a|b][,tokens=N][,class=batch]` entries separated by `;`.
@@ -213,13 +217,23 @@ impl Tenants {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut next = Vec::with_capacity(grants.len());
         for grant in grants {
+            // Mantém o tenant (e os contadores) só se a chave e os limites são os mesmos.
+            let ceiling = grant.ceiling.unwrap_or(Class::Realtime);
             let kept = granted
                 .iter()
-                .find(|(sha, tenant)| *sha == grant.sha256 && tenant.name == grant.name)
+                .find(|(sha, tenant)| {
+                    *sha == grant.sha256
+                        && tenant.name == grant.name
+                        && tenant.models == grant.models
+                        && tenant.quota == grant.quota
+                        && tenant.ceiling == ceiling
+                })
                 .map(|(_, tenant)| tenant.clone());
             let tenant = kept.unwrap_or_else(|| {
                 let mut tenant = Tenant::new(&grant.name, "");
                 tenant.models = grant.models.clone();
+                tenant.quota = grant.quota;
+                tenant.ceiling = ceiling;
                 Arc::new(tenant)
             });
             next.push((grant.sha256, tenant));
@@ -607,6 +621,8 @@ mod tests {
             name: "default".into(),
             sha256: hash,
             models: None,
+            quota: None,
+            ceiling: None,
         };
         let headers = |key: &str| {
             let mut h = HeaderMap::new();
@@ -674,5 +690,42 @@ mod tests {
         );
         drop(b);
         drop(c);
+    }
+    #[test]
+    fn a_grant_carries_its_limits_and_a_change_of_limits_makes_a_new_tenant() {
+        use sha2::{Digest, Sha256};
+        let tenants = Tenants::new(Vec::new(), Duration::from_secs(60));
+        let hash: [u8; 32] = Sha256::digest(b"aic_limites").into();
+        let grant = |tokens: Option<u64>| Grant {
+            name: "batch".into(),
+            sha256: hash,
+            models: Some(vec!["so-este".into()]),
+            quota: tokens,
+            ceiling: Some(Class::Batch),
+        };
+        let headers = {
+            let mut h = HeaderMap::new();
+            h.insert(header::AUTHORIZATION, "Bearer aic_limites".parse().unwrap());
+            h
+        };
+        tenants.set_grants(vec![grant(Some(100))]);
+        let first = tenants.authenticate(&headers).unwrap();
+        assert!(first.allows("so-este") && !first.allows("outro"));
+        assert_eq!(first.class_for(Some(Class::Realtime)), Class::Batch);
+        first.charge(100);
+        assert!(
+            first.check_quota(Duration::from_secs(60)).is_err(),
+            "a cota de 100 acabou"
+        );
+        // Mesmos limites: o mesmo tenant, com o consumo. Cota nova: tenant novo, janela nova.
+        tenants.set_grants(vec![grant(Some(100))]);
+        assert!(Arc::ptr_eq(
+            &first,
+            &tenants.authenticate(&headers).unwrap()
+        ));
+        tenants.set_grants(vec![grant(Some(500))]);
+        let raised = tenants.authenticate(&headers).unwrap();
+        assert!(!Arc::ptr_eq(&first, &raised));
+        assert!(raised.check_quota(Duration::from_secs(60)).is_ok());
     }
 }

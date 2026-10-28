@@ -56,9 +56,33 @@ pub struct LlamaConfig {
     /// Proporção de camadas por worker, na ordem dos endpoints (`--tensor-split`); vazio = o
     /// llama.cpp reparte pela memória que cada `rpc-server` informa.
     pub split: Vec<f64>,
+    /// O `node_id` de cada endpoint (mesma ordem). Com `{node_id}` em `server_name`, o certificado do
+    /// worker precisa ter o nome daquele nó: um certificado roubado não serve a outro worker.
+    pub nodes: Vec<String>,
 }
 
 impl LlamaConfig {
+    /// O nome que o certificado do worker `index` precisa ter. `{node_id}` vira o id do nó (só
+    /// letras, dígitos, `.` e `-`; o resto vira `-`).
+    pub fn server_name_for(&self, index: usize) -> String {
+        let node: String = self
+            .nodes
+            .get(index)
+            .map(|id| {
+                id.chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.server_name.replace("{node_id}", &node)
+    }
+
     /// Argumentos do `llama-server`: loopback apenas, uma vaga, e os túneis locais como `--rpc`.
     pub fn server_args(&self) -> Vec<String> {
         let mut args: Vec<String> = [
@@ -202,6 +226,7 @@ pub fn from_env() -> Result<Option<LlamaConfig>, String> {
         tunnel_base,
         slots: slots_from_env()?,
         split: split_from_env()?,
+        nodes: Vec::new(),
     }))
 }
 
@@ -267,6 +292,9 @@ pub struct Llama {
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// A geração do plano do controller que este processo aplica (0 = configuração do ambiente).
     pub generation: u64,
+    /// O vigia de saúde avisa aqui quando o `llama-server` parou de responder sem sair: o supervisor
+    /// o encerra e o sobe de novo.
+    unhealthy: tokio::sync::Notify,
 }
 
 impl Llama {
@@ -462,6 +490,7 @@ pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String>
         client: Client::builder(TokioExecutor::new()).build_http(),
         tasks: Mutex::new(Vec::new()),
         generation,
+        unhealthy: tokio::sync::Notify::new(),
     });
     // Tudo o que pode falhar vem antes de qualquer tarefa: um erro no meio não deixa túnel para trás
     // segurando uma porta (os listeners soltos se fecham sozinhos).
@@ -484,8 +513,8 @@ pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String>
     }
     let mut tasks = Vec::new();
     if let Some(tls) = tls {
-        for (remote, listener) in config.endpoints.iter().zip(listeners) {
-            let (remote, name, tls) = (remote.clone(), config.server_name.clone(), tls.clone());
+        for (index, (remote, listener)) in config.endpoints.iter().zip(listeners).enumerate() {
+            let (remote, name, tls) = (remote.clone(), config.server_name_for(index), tls.clone());
             tasks.push(tokio::spawn(async move {
                 if let Err(error) =
                     ai_cluster_tunnel::forward(listener, remote.clone(), name, tls).await
@@ -504,6 +533,40 @@ pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String>
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = tasks;
     Ok(llama)
+}
+
+/// Faz o filho morrer junto com o pai (Linux): `kill_on_drop` não cobre SIGKILL nem falta de memória.
+#[cfg(target_os = "linux")]
+fn die_with_parent(command: &mut tokio::process::Command) {
+    // SAFETY: só chama `prctl` entre o fork e o exec, sem alocar nem tocar em estado do processo.
+    unsafe {
+        command.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn die_with_parent(_command: &mut tokio::process::Command) {}
+
+/// Depois de pronto, sonda o `/health` a cada 10 s; três falhas seguidas derrubam o `llama-server`
+/// (o supervisor o sobe de novo). Sem isto, um servidor travado seguiria anunciado como pronto.
+async fn watch_health(llama: &Arc<Llama>) {
+    let mut failures = 0u32;
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        if llama.healthy().await {
+            failures = 0;
+            continue;
+        }
+        failures += 1;
+        if failures >= 3 {
+            llama.set(State::Failed("o llama-server parou de responder".into()));
+            llama.unhealthy.notify_one();
+            return;
+        }
+    }
 }
 
 /// Aborta a tarefa quando sai de escopo.
@@ -531,23 +594,43 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
     loop {
         llama.set(State::Loading);
         let started = Instant::now();
-        let child = tokio::process::Command::new(&config.server_bin)
+        // Outro processo na porta (um llama-server órfão de antes, por exemplo) responderia ao /health
+        // no lugar do novo e serviria o modelo errado.
+        if std::net::TcpListener::bind(("127.0.0.1", config.port)).is_err() {
+            let reason = format!(
+                "a porta {} do llama-server está ocupada por outro processo",
+                config.port
+            );
+            eprintln!("{reason}; tentando de novo");
+            llama.set(State::Failed(reason));
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(60));
+            continue;
+        }
+        let mut command = tokio::process::Command::new(&config.server_bin);
+        command
             .args(config.server_args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn();
-        match child {
+            .kill_on_drop(true);
+        die_with_parent(&mut command);
+        match command.spawn() {
             Ok(mut child) => {
                 let watcher = llama.clone();
                 // Se o supervisor for abortado dentro do `wait`, o guarda também derruba o vigia: ele
                 // não pode continuar sondando a porta de um modelo novo.
                 let _ready = AbortOnDrop(tokio::spawn(async move { become_ready(&watcher).await }));
-                let status = child.wait().await;
-                let reason = match status {
-                    Ok(status) => format!("llama-server saiu ({status})"),
-                    Err(error) => format!("llama-server: {error}"),
+                let reason = tokio::select! {
+                    status = child.wait() => match status {
+                        Ok(status) => format!("llama-server saiu ({status})"),
+                        Err(error) => format!("llama-server: {error}"),
+                    },
+                    // Parou de responder sem sair: derruba o processo e deixa o laço subir outro.
+                    () = llama.unhealthy.notified() => {
+                        let _ = child.kill().await;
+                        "llama-server parou de responder".to_string()
+                    }
                 };
                 eprintln!("{reason}; reiniciando");
                 llama.set(State::Failed(reason));
@@ -586,6 +669,7 @@ async fn become_ready(llama: &Arc<Llama>) {
                 }
                 None => println!("modelo {} pronto (benchmark sem medida)", llama.id),
             }
+            watch_health(llama).await;
             return;
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -744,6 +828,7 @@ impl Base {
             port: self.port,
             tunnel_base: self.tunnel_base,
             slots: self.slots.max(1),
+            nodes: wanted.endpoints.iter().map(|e| e.node_id.clone()).collect(),
             // A divisão do ambiente (operador) vale mais que a do controller; a do controller só se for
             // completa e sensata (uma proporção por worker, finita, não negativa, soma maior que zero).
             split: if !self.split.is_empty() {
@@ -908,6 +993,7 @@ data: [DONE]
             tunnel_base: 18100,
             slots: 1,
             split: Vec::new(),
+            nodes: Vec::new(),
         }
     }
 

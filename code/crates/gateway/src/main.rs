@@ -261,6 +261,8 @@ fn grants_from(list: &[ai_cluster_protocol::cluster::TenantGrant]) -> Vec<reques
                 name: grant.tenant.clone(),
                 sha256,
                 models: (!grant.models.is_empty()).then(|| grant.models.clone()),
+                quota: (grant.tokens > 0).then_some(grant.tokens),
+                ceiling: request_manager::Class::parse(&grant.class),
             })
         })
         .collect()
@@ -354,6 +356,7 @@ fn announce_gateway(
                 models: models.clone(),
                 stats: Some(stats),
                 running: llama.status(),
+                llama_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {

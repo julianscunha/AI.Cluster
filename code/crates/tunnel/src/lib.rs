@@ -13,9 +13,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rustls::client::verify_server_name;
 use rustls::crypto::{CryptoProvider, ring};
-use rustls::server::WebPkiClientVerifier;
+use rustls::pki_types::UnixTime;
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::server::{ParsedCertificate, WebPkiClientVerifier};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::copy_bidirectional;
@@ -60,15 +64,78 @@ fn roots(ca: &str) -> Result<RootCertStore, String> {
     Ok(store)
 }
 
-/// A configuração do túnel servidor: certificado do worker e CA que assina os clientes. Sem
-/// certificado de cliente válido o handshake falha.
-pub fn server_config(cert: &str, key: &str, client_ca: &str) -> Result<Arc<ServerConfig>, String> {
+/// Aceita só certificados de cliente da CA **e** com o papel combinado no SAN (`aic-gateway`). Com uma
+/// CA só, o certificado de um worker (SAN `aic-worker`) deixa de servir de cliente: um worker
+/// comprometido não abre o `rpc-server` de outro.
+#[derive(Debug)]
+struct RoleVerifier {
+    inner: Arc<dyn ClientCertVerifier>,
+    role: ServerName<'static>,
+}
+
+impl ClientCertVerifier for RoleVerifier {
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        self.inner.root_hint_subjects()
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        let verified = self
+            .inner
+            .verify_client_cert(end_entity, intermediates, now)?;
+        let parsed = ParsedCertificate::try_from(end_entity)?;
+        verify_server_name(&parsed, &self.role)?;
+        Ok(verified)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+/// A configuração do túnel servidor: certificado do worker, CA que assina os clientes e o papel
+/// (`client_role`, um nome no SAN) que o certificado do cliente precisa ter. Sem certificado de
+/// cliente válido e com o papel, o handshake falha.
+pub fn server_config(
+    cert: &str,
+    key: &str,
+    client_ca: &str,
+    client_role: &str,
+) -> Result<Arc<ServerConfig>, String> {
+    let role = ServerName::try_from(client_role.to_string())
+        .map_err(|e| format!("papel do cliente {client_role}: {e}"))?;
     let chain = certs(cert)?;
     let key = PrivateKeyDer::from_pem_file(key).map_err(|e| format!("chave {key}: {e}"))?;
     let verifier =
         WebPkiClientVerifier::builder_with_provider(Arc::new(roots(client_ca)?), provider())
             .build()
             .map_err(|e| format!("CA de clientes {client_ca}: {e}"))?;
+    let verifier: Arc<dyn ClientCertVerifier> = Arc::new(RoleVerifier {
+        inner: verifier,
+        role,
+    });
     let mut config = ServerConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| e.to_string())?
@@ -263,8 +330,13 @@ mod tests {
     }
 
     async fn start_server(pki: &Pki, upstream: std::net::SocketAddr) -> std::net::SocketAddr {
-        let config =
-            server_config(&pki.p("worker.crt"), &pki.p("worker.key"), &pki.p("ca.crt")).unwrap();
+        let config = server_config(
+            &pki.p("worker.crt"),
+            &pki.p("worker.key"),
+            &pki.p("ca.crt"),
+            "aic-gateway",
+        )
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(serve(listener, upstream.to_string(), config));
@@ -352,5 +424,19 @@ mod tests {
             config,
         ));
         assert_eq!(roundtrip(addr).await, None);
+    }
+    #[tokio::test]
+    async fn a_worker_certificate_is_not_accepted_as_a_client() {
+        let pki = pki("role");
+        let server = start_server(&pki, echo().await).await;
+        // Mesma CA, certificado válido, mas o papel é de worker (SAN aic-worker): recusado.
+        let as_worker = start_client(&pki, server, "worker").await;
+        assert_eq!(roundtrip(as_worker).await, None);
+        // O do gateway segue valendo.
+        let as_gateway = start_client(&pki, server, "gateway").await;
+        assert_eq!(
+            roundtrip(as_gateway).await.as_deref(),
+            Some(&b"ola rpc"[..])
+        );
     }
 }

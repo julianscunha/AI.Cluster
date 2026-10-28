@@ -8,16 +8,18 @@ use ai_cluster_protocol::cluster::{
     CheckModelRequest, CheckModelResponse, EnqueueGraphRequest, EnqueueGraphResponse,
     EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetOutputRequest,
     GetOutputResponse, GetTraceRequest, GetTraceResponse, HealthStreamRequest,
-    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
-    ListEventsRequest, ListEventsResponse, ListModelsRequest, ListModelsResponse, ListNodesRequest,
-    ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    ModelEntry, ModelStatus, ModelStatusRequest, ModelStatusResponse, NodeShardCapacity,
-    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
-    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
-    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
-    RpcEndpoint, SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest,
-    ShardCapacityResponse, ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput,
-    ShardResult, StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
+    HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, KeyAddRequest, KeyAddResponse,
+    KeyListRequest, KeyListResponse, KeyRemoveRequest, KeyRemoveResponse, LeaveNodeRequest,
+    LeaveNodeResponse, ListEventsRequest, ListEventsResponse, ListModelsRequest,
+    ListModelsResponse, ListNodesRequest, ListNodesResponse, ListReservationsRequest,
+    ListReservationsResponse, MetricsResponse, ModelEntry, ModelStatus, ModelStatusRequest,
+    ModelStatusResponse, NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse,
+    RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
+    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
+    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, RpcEndpoint,
+    SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse,
+    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
+    StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
     SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
     WorkReportResponse, WorkUnit,
 };
@@ -79,6 +81,10 @@ pub struct ClusterControlService {
     orchestrator: crate::models::Orchestrator,
     /// De que endereço (só o IP) cada nó se registrou: o gateway chega ao túnel RPC por ele.
     node_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// A versão do llama.cpp que o gateway reportou: workers com outra versão ficam fora do plano.
+    llama_version: Arc<std::sync::Mutex<String>>,
+    /// Avisos do último cálculo do plano (workers deixados de fora e por quê).
+    rpc_warnings: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// `host:porta` do túnel RPC de um nó, ou `None` se o host não presta. O host pode vir do próprio nó
@@ -290,6 +296,8 @@ impl ClusterControlService {
                     .map(Into::into),
             ),
             node_hosts: Arc::default(),
+            llama_version: Arc::default(),
+            rpc_warnings: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -313,13 +321,32 @@ impl ClusterControlService {
             .into_iter()
             .map(|e| (e.node_id.clone(), e))
             .collect();
-        self.registry
+        let gateway_version = self
+            .llama_version
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let mut warnings = Vec::new();
+        let candidates = self
+            .registry
             .list()
             .into_iter()
             .filter_map(|node| {
                 let id = node.identity?.node_id;
                 let endpoint = endpoints.get(&id)?.clone();
                 let capability = node.capability?;
+                // O protocolo do RPC muda entre commits: worker com outra versão do rpc-server
+                // derrubaria o llama-server do gateway. Versão vazia de um lado é "não sei": passa.
+                if !gateway_version.is_empty()
+                    && !capability.rpc_version.is_empty()
+                    && capability.rpc_version != gateway_version
+                {
+                    warnings.push(format!(
+                        "worker {id} fora do plano: rpc-server {} e o gateway usa {gateway_version}",
+                        capability.rpc_version
+                    ));
+                    return None;
+                }
                 Some(crate::models::Candidate {
                     endpoint,
                     speed: capability.compute_score,
@@ -331,7 +358,12 @@ impl ClusterControlService {
                     ),
                 })
             })
-            .collect()
+            .collect();
+        *self
+            .rpc_warnings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = warnings;
+        candidates
     }
 
     /// Os workers aptos a servir o `rpc-server`: aprovados, vivos, com túnel anunciado e endereço
@@ -857,10 +889,80 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<ModelStatusResponse>, Status> {
         require_operator(&request)?;
         let (desired, running, key_prefixes) = self.orchestrator.status(unix_ms());
+        // Recalcula os candidatos para os avisos refletirem os workers de agora.
+        let _ = self.rpc_candidates();
+        let warnings = self
+            .rpc_warnings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         Ok(Response::new(ModelStatusResponse {
             desired,
             running,
             key_prefixes,
+            warnings,
+        }))
+    }
+
+    /// Cria a chave de um tenant novo (`model key add`) ou troca a de um que existe (`rotate`). A chave
+    /// em claro volta só aqui. Só o operador.
+    async fn add_key(
+        &self,
+        request: Request<KeyAddRequest>,
+    ) -> Result<Response<KeyAddResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let request = request.into_inner();
+        self.audit(
+            &peer,
+            if request.rotate {
+                "rotate_key"
+            } else {
+                "add_key"
+            },
+            &request.tenant,
+        );
+        let reply = match self.orchestrator.add_key(
+            &request.tenant,
+            request.models,
+            request.tokens,
+            &request.class,
+            request.rotate,
+        ) {
+            Ok(key) => KeyAddResponse {
+                ok: true,
+                message: String::new(),
+                key: Some(key),
+            },
+            Err(message) => KeyAddResponse {
+                ok: false,
+                message,
+                key: None,
+            },
+        };
+        Ok(Response::new(reply))
+    }
+
+    /// Tira o tenant. Só o operador.
+    async fn remove_key(
+        &self,
+        request: Request<KeyRemoveRequest>,
+    ) -> Result<Response<KeyRemoveResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let tenant = request.into_inner().tenant;
+        self.audit(&peer, "remove_key", &tenant);
+        Ok(Response::new(KeyRemoveResponse {
+            removed: self.orchestrator.remove_key(&tenant),
+        }))
+    }
+
+    /// Os tenants com o prefixo da chave e os limites. Só o operador.
+    async fn list_keys(
+        &self,
+        request: Request<KeyListRequest>,
+    ) -> Result<Response<KeyListResponse>, Status> {
+        require_operator(&request)?;
+        Ok(Response::new(KeyListResponse {
+            keys: self.orchestrator.list_keys(),
         }))
     }
 
@@ -1425,6 +1527,15 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument("apresentação de gateway inválida"));
         }
         let running = request.running.clone().and_then(clean_status);
+        if !request.llama_version.is_empty()
+            && request.llama_version.len() <= 64
+            && request.llama_version.chars().all(|c| c.is_ascii_graphic())
+        {
+            *self
+                .llama_version
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = request.llama_version.clone();
+        }
         let now = unix_ms();
         let is_new = {
             let mut gateways = self
@@ -3207,6 +3318,7 @@ mod tests {
         use ai_cluster_protocol::cluster::GatewayModel;
         let service = service();
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
+            llama_version: String::new(),
             running: None,
             stats: None,
             gateway_id: id.into(),
@@ -3319,6 +3431,7 @@ mod tests {
         let service = service();
         let report = |id: String| {
             inference(ReportGatewayRequest {
+                llama_version: String::new(),
                 running: None,
                 stats: None,
                 gateway_id: id,

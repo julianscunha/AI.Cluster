@@ -20,6 +20,8 @@ pub struct RpcConfig {
     pub cert: String,
     pub key: String,
     pub client_ca: String,
+    /// Nome no SAN que o certificado do cliente precisa ter (`aic-gateway`): o de um worker não vale.
+    pub client_role: String,
     pub threads: usize,
     /// `-c` do `rpc-server`: cache dos tensores em disco. No cartão SD ocupa o tamanho da fatia.
     pub cache: bool,
@@ -89,6 +91,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         return Some(Err(format!("AI_CLUSTER_RPC_LISTEN inválido: {listen}")));
     }
     let cache = matches!(var("AI_CLUSTER_RPC_CACHE").as_deref(), Some("1" | "true"));
+    let client_role = var("AI_CLUSTER_RPC_CLIENT_NAME").unwrap_or_else(|| "aic-gateway".into());
     Some(Ok(RpcConfig {
         bin,
         local_port,
@@ -96,6 +99,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         cert,
         key,
         client_ca,
+        client_role,
         threads,
         cache,
     }))
@@ -150,7 +154,13 @@ pub fn config(threads: usize) -> Option<&'static RpcConfig> {
 
 /// Sobe o túnel mTLS e mantém o `rpc-server` vivo. Só retorna se o túnel não puder subir.
 pub async fn run(config: &'static RpcConfig) -> Result<(), String> {
-    let tls = ai_cluster_tunnel::server_config(&config.cert, &config.key, &config.client_ca)?;
+    wait_for_valid_clock().await;
+    let tls = ai_cluster_tunnel::server_config(
+        &config.cert,
+        &config.key,
+        &config.client_ca,
+        &config.client_role,
+    )?;
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await
         .map_err(|e| format!("túnel RPC em {}: {e}", config.listen))?;
@@ -168,19 +178,72 @@ pub async fn run(config: &'static RpcConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// Antes disto (2026-01-01) o relógio é o de uma placa sem RTC que ainda não sincronizou: o
+/// certificado de um túnel válido hoje seria recusado como "ainda não válido".
+const CLOCK_FLOOR_UNIX: u64 = 1_767_225_600;
+
+/// Espera a hora do sistema passar do piso; avisa uma vez e depois a cada minuto.
+async fn wait_for_valid_clock() {
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    };
+    let mut waited = 0u32;
+    while now() < CLOCK_FLOOR_UNIX {
+        if waited.is_multiple_of(12) {
+            eprintln!(
+                "a hora do sistema ainda é anterior a 2026: o túnel RPC espera o relógio acertar (NTP)"
+            );
+        }
+        waited += 1;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// A porta do `rpc-server` em loopback está livre? Outro processo nela receberia o tráfego do túnel.
+fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Faz o filho morrer junto com o pai (Linux): `kill_on_drop` não cobre SIGKILL nem falta de memória.
+#[cfg(target_os = "linux")]
+fn die_with_parent(command: &mut tokio::process::Command) {
+    // SAFETY: só chama `prctl` entre o fork e o exec, sem alocar nem tocar em estado do processo.
+    unsafe {
+        command.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn die_with_parent(_command: &mut tokio::process::Command) {}
+
 /// Roda o `rpc-server`; se sair, espera um pouco (cada vez mais) e o sobe de novo.
 async fn supervise(config: &RpcConfig) {
     let mut wait = Duration::from_secs(1);
     loop {
         let started = std::time::Instant::now();
-        let child = tokio::process::Command::new(&config.bin)
+        if !port_is_free(config.local_port) {
+            eprintln!(
+                "a porta {} (rpc-server) está ocupada por outro processo; tentando de novo",
+                config.local_port
+            );
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(30));
+            continue;
+        }
+        let mut command = tokio::process::Command::new(&config.bin);
+        command
             .args(config.server_args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn();
-        match child {
+            .kill_on_drop(true);
+        die_with_parent(&mut command);
+        match command.spawn() {
             Ok(mut child) => match child.wait().await {
                 Ok(status) => eprintln!("rpc-server saiu ({status}); reiniciando"),
                 Err(error) => eprintln!("rpc-server: {error}; reiniciando"),
@@ -212,6 +275,7 @@ mod tests {
             "AI_CLUSTER_RPC_LOCAL_PORT",
             "AI_CLUSTER_RPC_LISTEN",
             "AI_CLUSTER_RPC_CACHE",
+            "AI_CLUSTER_RPC_CLIENT_NAME",
         ];
         let clear = || {
             names

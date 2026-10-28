@@ -3,10 +3,11 @@ use std::time::{Duration, Instant};
 use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, CancelRequestRequest, CheckModelRequest, EnqueueGraphRequest,
-    EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, ListEventsRequest, ListModelsRequest,
-    ListNodesRequest, ListReservationsRequest, ModelState, ModelStatusRequest, Release,
-    ReleaseReservationRequest, ReserveRequest, RevokeNodeRequest, SetReleaseRequest,
-    StartModelRequest, StopModelRequest, WatchEventsRequest, WorkReportRequest, WorkReportResponse,
+    EnqueueWorkRequest, GetMetricsRequest, GetTraceRequest, KeyAddRequest, KeyListRequest,
+    KeyRemoveRequest, ListEventsRequest, ListModelsRequest, ListNodesRequest,
+    ListReservationsRequest, ModelState, ModelStatusRequest, Release, ReleaseReservationRequest,
+    ReserveRequest, RevokeNodeRequest, SetReleaseRequest, StartModelRequest, StopModelRequest,
+    WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
 use clap::{Parser, Subcommand};
@@ -194,8 +195,36 @@ enum ModelAction {
     Stop,
     /// O modelo pedido, os workers do plano, o estado que o gateway reportou e o benchmark.
     Status,
+    /// Chaves de API do llama.cpp: uma por tenant, com modelos, cota e classe.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
     /// Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, tamanho e
     /// se o motor atual os roda (ADR-022, E1).
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+enum KeyAction {
+    /// Cria o tenant e mostra a chave (uma vez; o controller guarda só o hash).
+    Add {
+        tenant: String,
+        /// Modelos que a chave alcança, separados por vírgula (padrão: todos).
+        #[arg(long, value_delimiter = ',')]
+        models: Vec<String>,
+        /// Tokens por janela (prompt mais gerados); 0 = sem cota.
+        #[arg(long, default_value_t = 0)]
+        tokens: u64,
+        /// Classe máxima: background, batch, normal, interactive ou realtime.
+        #[arg(long, default_value = "")]
+        class: String,
+    },
+    /// Troca a chave de um tenant que existe; a antiga deixa de valer. Mantém os limites.
+    Rotate { tenant: String },
+    /// Tira o tenant.
+    Remove { tenant: String },
+    /// Lista os tenants (prefixo da chave e limites; nunca a chave).
     List,
 }
 
@@ -252,6 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ModelAction::Start { id, ctx } => start_model(&cli.controller, &id, ctx).await?,
             ModelAction::Stop => stop_model(&cli.controller).await?,
             ModelAction::Status => model_status(&cli.controller).await?,
+            ModelAction::Key { action } => model_key(&cli.controller, action).await?,
             ModelAction::Check { id, ctx } => check_model(&cli.controller, &id, ctx).await?,
             ModelAction::Verify { dir } => {
                 match ai_cluster_engine::manifest::Manifest::load(&dir)? {
@@ -648,6 +678,99 @@ async fn start_model(
     Ok(())
 }
 
+async fn model_key(endpoint: &str, action: KeyAction) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    match action {
+        KeyAction::Add {
+            tenant,
+            models,
+            tokens,
+            class,
+        } => key_request(endpoint, tenant, models, tokens, class, false).await,
+        KeyAction::Rotate { tenant } => {
+            key_request(endpoint, tenant, Vec::new(), 0, String::new(), true).await
+        }
+        KeyAction::Remove { tenant } => {
+            let removed = client
+                .remove_key(KeyRemoveRequest {
+                    tenant: tenant.clone(),
+                })
+                .await?
+                .into_inner()
+                .removed;
+            if removed {
+                println!("tenant {} removido", clean(&tenant));
+                Ok(())
+            } else {
+                Err(format!("o tenant {} não existe", clean(&tenant)).into())
+            }
+        }
+        KeyAction::List => {
+            let keys = client.list_keys(KeyListRequest {}).await?.into_inner().keys;
+            println!("CHAVES {}", keys.len());
+            println!(
+                "{:<20} {:<12} {:>10} {:<12} MODELOS",
+                "TENANT", "PREFIXO", "TOKENS", "CLASSE"
+            );
+            for key in keys {
+                println!(
+                    "{:<20} {:<12} {:>10} {:<12} {}",
+                    clean(&key.tenant),
+                    clean(&key.prefix),
+                    if key.tokens == 0 {
+                        "-".to_string()
+                    } else {
+                        key.tokens.to_string()
+                    },
+                    if key.class.is_empty() {
+                        "-"
+                    } else {
+                        key.class.as_str()
+                    },
+                    if key.models.is_empty() {
+                        "todos".to_string()
+                    } else {
+                        clean(&key.models.join(","))
+                    },
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn key_request(
+    endpoint: &str,
+    tenant: String,
+    models: Vec<String>,
+    tokens: u64,
+    class: String,
+    rotate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .add_key(KeyAddRequest {
+            tenant,
+            models,
+            tokens,
+            class,
+            rotate,
+        })
+        .await?
+        .into_inner();
+    match (reply.ok, reply.key) {
+        (true, Some(key)) => {
+            println!(
+                "CHAVE DE API tenant={} {}  (guarde agora: o controller guarda só o hash)",
+                clean(&key.tenant),
+                clean(&key.key)
+            );
+            Ok(())
+        }
+        _ => Err(clean(&reply.message).into()),
+    }
+}
+
 async fn stop_model(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let reply = client.stop_model(StopModelRequest {}).await?.into_inner();
@@ -706,6 +829,9 @@ async fn model_status(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> 
     }
     for prefix in reply.key_prefixes {
         println!("chave {}...", clean(&prefix));
+    }
+    for warning in reply.warnings {
+        println!("AVISO {}", clean(&warning));
     }
     Ok(())
 }

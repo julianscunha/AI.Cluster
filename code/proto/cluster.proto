@@ -371,6 +371,51 @@ message TenantGrant {
   bytes key_sha256 = 2;
   // Vazio = todos os modelos.
   repeated string models = 3;
+  // Tokens por janela (prompt mais gerados); 0 = sem cota.
+  uint64 tokens = 4;
+  // Classe máxima de prioridade (background, batch, normal, interactive, realtime); vazio = a maior.
+  string class = 5;
+}
+
+/// Cria ou gira a chave de um tenant (`model key add` e `model key rotate`).
+message KeyAddRequest {
+  string tenant = 1;
+  // Vazio = todos os modelos.
+  repeated string models = 2;
+  uint64 tokens = 3;
+  string class = 4;
+  // Verdadeiro: o tenant já existe e ganha uma chave nova (a antiga deixa de valer).
+  bool rotate = 5;
+}
+
+message KeyAddResponse {
+  bool ok = 1;
+  string message = 2;
+  // Em claro só aqui.
+  ApiKey key = 3;
+}
+
+message KeyRemoveRequest {
+  string tenant = 1;
+}
+
+message KeyRemoveResponse {
+  bool removed = 1;
+}
+
+message KeyListRequest {}
+
+message KeyInfo {
+  string tenant = 1;
+  // Os primeiros caracteres da chave, nunca ela inteira.
+  string prefix = 2;
+  repeated string models = 3;
+  uint64 tokens = 4;
+  string class = 5;
+}
+
+message KeyListResponse {
+  repeated KeyInfo keys = 1;
 }
 
 /// O que o gateway diz da geração que aplicou.
@@ -418,6 +463,8 @@ message ModelStatusResponse {
   ModelStatus running = 2;
   // Prefixos das chaves (nunca a chave).
   repeated string key_prefixes = 3;
+  // Avisos do plano: workers deixados de fora (por exemplo, versão do rpc-server diferente da do gateway).
+  repeated string warnings = 4;
 }
 
 message ListModelsRequest {}
@@ -593,6 +640,9 @@ message ReportGatewayRequest {
   GatewayStats stats = 4;
   /// O modelo do llama.cpp que o gateway aplicou e como está.
   ModelStatus running = 5;
+  /// Commit do llama.cpp (com o patch) do `llama-server` deste gateway (`AI_CLUSTER_RPC_VERSION`). O
+  /// protocolo do RPC muda entre commits: o controller só põe no plano o worker com a mesma versão.
+  string llama_version = 6;
 }
 
 message ReportGatewayResponse {
@@ -981,6 +1031,9 @@ service ClusterControl {
   rpc StartModel(StartModelRequest) returns (StartModelResponse);
   rpc StopModel(StopModelRequest) returns (StopModelResponse);
   rpc ModelStatus(ModelStatusRequest) returns (ModelStatusResponse);
+  rpc AddKey(KeyAddRequest) returns (KeyAddResponse);
+  rpc RemoveKey(KeyRemoveRequest) returns (KeyRemoveResponse);
+  rpc ListKeys(KeyListRequest) returns (KeyListResponse);
   rpc LeaveNode(LeaveNodeRequest) returns (LeaveNodeResponse);
   rpc RequestWork(RequestWorkRequest) returns (RequestWorkResponse);
   rpc SubmitWorkResult(SubmitWorkResultRequest) returns (SubmitWorkResultResponse);

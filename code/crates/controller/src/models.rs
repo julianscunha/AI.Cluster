@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use ai_cluster_protocol::cluster::{
-    ApiKey, DesiredModel, ModelState, ModelStatus, RpcEndpoint, TenantGrant,
+    ApiKey, DesiredModel, KeyInfo, ModelState, ModelStatus, RpcEndpoint, TenantGrant,
 };
 use sha2::{Digest, Sha256};
 
@@ -136,6 +136,25 @@ struct StoredTenant {
     name: String,
     sha256: [u8; 32],
     prefix: String,
+    /// Vazio = todos os modelos.
+    models: Vec<String>,
+    /// Tokens por janela; 0 = sem cota.
+    tokens: u64,
+    /// Classe máxima de prioridade; vazio = a maior.
+    class: String,
+}
+
+/// Quantos tenants o controller guarda.
+const MAX_TENANTS: usize = 64;
+const CLASSES: [&str; 5] = ["background", "batch", "normal", "interactive", "realtime"];
+
+/// Nome seguro para rótulo de métrica e para o arquivo de estado.
+fn valid_tenant_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 #[derive(Default, Debug)]
@@ -232,12 +251,23 @@ impl Orchestrator {
                     ["generation", generation] => {
                         inner.generation = generation.parse().unwrap_or(inner.generation);
                     }
-                    ["tenant", name, sha, prefix] => {
+                    ["tenant", name, sha, prefix, rest @ ..] => {
                         if let Some(sha256) = unhex(sha) {
                             inner.tenants.push(StoredTenant {
                                 name: name.to_string(),
                                 sha256,
                                 prefix: prefix.to_string(),
+                                models: rest
+                                    .first()
+                                    .map(|m| {
+                                        m.split(',')
+                                            .filter(|m| !m.is_empty())
+                                            .map(str::to_string)
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                tokens: rest.get(1).and_then(|v| v.parse().ok()).unwrap_or(0),
+                                class: rest.get(2).map(|c| c.to_string()).unwrap_or_default(),
                             });
                         }
                     }
@@ -281,10 +311,13 @@ impl Orchestrator {
         }
         for t in &inner.tenants {
             text.push_str(&format!(
-                "tenant\t{}\t{}\t{}\n",
+                "tenant\t{}\t{}\t{}\t{}\t{}\t{}\n",
                 t.name,
                 hex(&t.sha256),
-                t.prefix
+                t.prefix,
+                t.models.join(","),
+                t.tokens,
+                t.class
             ));
         }
         // Escrita atômica e durável, só para o dono: um corte no meio não deixa as chaves pela metade,
@@ -340,6 +373,9 @@ impl Orchestrator {
                 name: DEFAULT_TENANT.to_string(),
                 sha256: key_hash(&key),
                 prefix: key.chars().take(8).collect(),
+                models: Vec::new(),
+                tokens: 0,
+                class: String::new(),
             });
             keys.push(ApiKey {
                 tenant: DEFAULT_TENANT.to_string(),
@@ -429,7 +465,107 @@ impl Orchestrator {
             .map(|t| TenantGrant {
                 tenant: t.name.clone(),
                 key_sha256: t.sha256.to_vec(),
-                models: Vec::new(),
+                models: t.models.clone(),
+                tokens: t.tokens,
+                class: t.class.clone(),
+            })
+            .collect()
+    }
+
+    /// Cria a chave de um tenant novo, ou (com `rotate`) troca a de um que existe: a antiga deixa de
+    /// valer na próxima apresentação do gateway. A chave em claro volta só aqui.
+    pub fn add_key(
+        &self,
+        tenant: &str,
+        models: Vec<String>,
+        tokens: u64,
+        class: &str,
+        rotate: bool,
+    ) -> Result<ApiKey, String> {
+        if !valid_tenant_name(tenant) {
+            return Err("nome de tenant inválido: use letras, dígitos, '_' e '-' (até 64)".into());
+        }
+        if !class.is_empty() && !CLASSES.contains(&class) {
+            return Err(format!("classe inválida: use {}", CLASSES.join(", ")));
+        }
+        if models.len() > 32
+            || models.iter().any(|m| {
+                m.is_empty()
+                    || m.len() > 64
+                    || !m
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            })
+        {
+            return Err("lista de modelos inválida".into());
+        }
+        let mut inner = self.lock();
+        let position = inner.tenants.iter().position(|t| t.name == tenant);
+        match (position, rotate) {
+            (Some(_), false) => {
+                return Err(format!(
+                    "o tenant {tenant} já existe: use `model key rotate`"
+                ));
+            }
+            (None, true) => return Err(format!("o tenant {tenant} não existe")),
+            (None, false) if inner.tenants.len() >= MAX_TENANTS => {
+                return Err("tenants demais".into());
+            }
+            _ => {}
+        }
+        let key = new_key();
+        let stored = StoredTenant {
+            name: tenant.to_string(),
+            sha256: key_hash(&key),
+            prefix: key.chars().take(8).collect(),
+            // Girar a chave sem pedir limites novos mantém os que o tenant já tinha.
+            models: match position {
+                Some(i) if models.is_empty() => inner.tenants[i].models.clone(),
+                _ => models,
+            },
+            tokens: match position {
+                Some(i) if tokens == 0 => inner.tenants[i].tokens,
+                _ => tokens,
+            },
+            class: match position {
+                Some(i) if class.is_empty() => inner.tenants[i].class.clone(),
+                _ => class.to_string(),
+            },
+        };
+        match position {
+            Some(i) => inner.tenants[i] = stored,
+            None => inner.tenants.push(stored),
+        }
+        self.save(&inner);
+        Ok(ApiKey {
+            tenant: tenant.to_string(),
+            key,
+        })
+    }
+
+    /// Tira o tenant; a chave dele para de valer na próxima apresentação do gateway.
+    pub fn remove_key(&self, tenant: &str) -> bool {
+        let mut inner = self.lock();
+        let before = inner.tenants.len();
+        inner.tenants.retain(|t| t.name != tenant);
+        let removed = inner.tenants.len() != before;
+        if removed {
+            self.save(&inner);
+        }
+        removed
+    }
+
+    /// Os tenants, com o prefixo da chave e os limites (nunca a chave).
+    pub fn list_keys(&self) -> Vec<KeyInfo> {
+        self.lock()
+            .tenants
+            .iter()
+            .map(|t| KeyInfo {
+                tenant: t.name.clone(),
+                prefix: t.prefix.clone(),
+                models: t.models.clone(),
+                tokens: t.tokens,
+                class: t.class.clone(),
             })
             .collect()
     }
@@ -796,5 +932,85 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert!(none.is_empty());
         assert!(select(Vec::new(), gib).0.is_empty());
+    }
+    #[test]
+    fn keys_are_added_rotated_listed_and_removed_with_their_limits() {
+        let o = orchestrator();
+        let acme = o
+            .add_key("acme", vec!["m1".into()], 1000, "batch", false)
+            .unwrap();
+        assert!(acme.key.starts_with("aic_"));
+        // Repetir o nome sem `rotate` falha; girar o que não existe também.
+        assert!(
+            o.add_key("acme", vec![], 0, "", false)
+                .unwrap_err()
+                .contains("já existe")
+        );
+        assert!(
+            o.add_key("novo", vec![], 0, "", true)
+                .unwrap_err()
+                .contains("não existe")
+        );
+        // Nome, classe e modelos inválidos.
+        for (name, class, models) in [
+            ("com espaço", "", vec![]),
+            ("", "", vec![]),
+            ("ok", "turbo", vec![]),
+            ("ok", "", vec!["id ruim".to_string()]),
+        ] {
+            assert!(
+                o.add_key(name, models, 0, class, false).is_err(),
+                "{name:?} {class:?}"
+            );
+        }
+        // Girar troca a chave e mantém os limites que o tenant tinha.
+        let rotated = o.add_key("acme", vec![], 0, "", true).unwrap();
+        assert_ne!(rotated.key, acme.key);
+        let info = o
+            .list_keys()
+            .into_iter()
+            .find(|k| k.tenant == "acme")
+            .unwrap();
+        assert_eq!(
+            (info.tokens, info.class.as_str(), info.models.len()),
+            (1000, "batch", 1)
+        );
+        let grant = o.grants().into_iter().find(|g| g.tenant == "acme").unwrap();
+        assert_eq!(grant.key_sha256, key_hash(&rotated.key).to_vec());
+        assert_ne!(
+            grant.key_sha256,
+            key_hash(&acme.key).to_vec(),
+            "a chave antiga deixou de valer"
+        );
+        assert_eq!((grant.tokens, grant.class.as_str()), (1000, "batch"));
+        assert!(o.remove_key("acme"));
+        assert!(!o.remove_key("acme"));
+        assert!(o.list_keys().is_empty());
+    }
+
+    #[test]
+    fn tenants_and_their_limits_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("aic-models-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("models.state");
+        let first = Orchestrator::new(Some(path.clone()));
+        let key = first
+            .add_key(
+                "acme",
+                vec!["a".into(), "b".into()],
+                42,
+                "interactive",
+                false,
+            )
+            .unwrap();
+        let again = Orchestrator::new(Some(path));
+        let grant = again
+            .grants()
+            .into_iter()
+            .find(|g| g.tenant == "acme")
+            .unwrap();
+        assert_eq!(grant.key_sha256, key_hash(&key.key).to_vec());
+        assert_eq!(grant.models, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!((grant.tokens, grant.class.as_str()), (42, "interactive"));
     }
 }
