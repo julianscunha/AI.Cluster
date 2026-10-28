@@ -60,7 +60,7 @@ Convenções:
 | `AI_CLUSTER_SHARD_CACHE_MB` | `2048` | Memória máxima das fatias residentes (despejo LRU). O worker reporta o valor, e o gateway recusa na subida um modelo que não cabe ("faltam X GB"). |
 | `AI_CLUSTER_RPC_SERVER_BIN` | — | Caminho do `ggml-rpc-server` (llama.cpp). Liga o RPC: o worker o roda como filho supervisionado, escutando só em 127.0.0.1, atrás de um túnel mTLS. Exige `AI_CLUSTER_RPC_TLS_CERT`, `_KEY` e `_CLIENT_CA`; sem eles o nó segue sem RPC. |
 | `AI_CLUSTER_RPC_TLS_CERT` / `AI_CLUSTER_RPC_TLS_KEY` | — | Certificado (SAN `aic-worker`, ou o nome combinado com o gateway) e chave do túnel, em PEM. |
-| `AI_CLUSTER_RPC_TLS_CLIENT_CA` | — | CA que assina o certificado do gateway. Sem certificado de cliente dessa CA o handshake falha. |
+| `AI_CLUSTER_RPC_TLS_CLIENT_CA` | — | CA que assina o certificado do gateway. Sem certificado de cliente dessa CA o handshake falha. **Use uma CA que só assine o gateway**: o túnel aceita qualquer certificado dela, e o `rpc-server` executa o que o cliente manda. |
 | `AI_CLUSTER_RPC_LISTEN` | `0.0.0.0:50061` | Onde o túnel escuta; é a única porta aberta para a rede. |
 | `AI_CLUSTER_RPC_LOCAL_PORT` | `50062` | Porta do `rpc-server` em loopback. |
 | `AI_CLUSTER_RPC_CACHE` | desligado | `1`: `rpc-server -c`, cache dos tensores em disco (no cartão SD ocupa o tamanho da fatia). |

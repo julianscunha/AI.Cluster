@@ -148,3 +148,6 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 | Versão do `rpc-server` | O worker anuncia `rpc_version`, mas o controller não a confere com a do `llama-server` do gateway. | código |
 | Várias chaves | Só nasce o tenant `default` (todos os modelos, sem cota). Faltam `model key add/rotate`, cota e modelos por tenant. | código |
 | Recarga ao entrar worker | Cada mudança no plano reinicia o `llama-server` (relê o GGUF e reenvia os tensores). | código |
+| Identidade do par no túnel | O túnel servidor aceita qualquer certificado de cliente da CA e o cliente aceita qualquer servidor com o nome `aic-worker`. Com uma CA só, um worker comprometido abre o `rpc-server` de outro (que executa o que o cliente manda) ou se passa por worker. Mitigação hoje: CA exclusiva do gateway em `AI_CLUSTER_RPC_TLS_CLIENT_CA`. Falta certificado por nó, papel "gateway" e conferir o SAN do par. | código |
+| `rpc-server` órfão | Se o gateway ou o worker morre por SIGKILL ou OOM, o `llama-server` ou o `rpc-server` fica vivo segurando a porta e a RAM (`kill_on_drop` não cobre). Falta `PR_SET_PDEATHSIG` ou checar a porta antes de subir. | código |
+| Saúde depois de pronto | Depois de `Ready` ninguém sonda o `llama-server`; se ele trava sem sair, o gateway segue anunciando pronto. | código |

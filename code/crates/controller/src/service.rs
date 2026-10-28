@@ -11,13 +11,13 @@ use ai_cluster_protocol::cluster::{
     HealthStreamResponse, HeartbeatRequest, HeartbeatResponse, LeaveNodeRequest, LeaveNodeResponse,
     ListEventsRequest, ListEventsResponse, ListModelsRequest, ListModelsResponse, ListNodesRequest,
     ListNodesResponse, ListReservationsRequest, ListReservationsResponse, MetricsResponse,
-    ModelEntry, ModelStatusRequest, ModelStatusResponse, NodeShardCapacity, ProbeLinkRequest,
-    ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
-    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, RpcEndpoint,
-    SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse,
-    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
-    StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
+    ModelEntry, ModelStatus, ModelStatusRequest, ModelStatusResponse, NodeShardCapacity,
+    ProbeLinkRequest, ProbeLinkResponse, RegisterNodeRequest, RegisterNodeResponse,
+    ReleaseReservationRequest, ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse,
+    Reservation, ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse,
+    RpcEndpoint, SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest,
+    ShardCapacityResponse, ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput,
+    ShardResult, StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
     SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
     WorkReportResponse, WorkUnit,
 };
@@ -79,6 +79,55 @@ pub struct ClusterControlService {
     orchestrator: crate::models::Orchestrator,
     /// De que endereço (só o IP) cada nó se registrou: o gateway chega ao túnel RPC por ele.
     node_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+}
+
+/// `host:porta` do túnel RPC de um nó, ou `None` se o host não presta. O host pode vir do próprio nó
+/// (`rpc_host`) e o gateway conecta nele: só IP ou nome DNS simples, nunca loopback, não especificado
+/// ou link-local. Um IPv6 vai entre colchetes.
+fn rpc_address(host: &str, port: u32) -> Option<String> {
+    let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let bad = ip.is_loopback()
+            || ip.is_unspecified()
+            || ip.is_multicast()
+            || match ip {
+                std::net::IpAddr::V4(v4) => v4.is_link_local() || v4.is_broadcast(),
+                std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+            };
+        return (!bad).then(|| match ip {
+            std::net::IpAddr::V4(_) => format!("{ip}:{port}"),
+            std::net::IpAddr::V6(_) => format!("[{ip}]:{port}"),
+        });
+    }
+    let name_ok = !host.is_empty()
+        && host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        });
+    (name_ok && !host.eq_ignore_ascii_case("localhost")).then(|| format!("{host}:{port}"))
+}
+
+/// O estado que o gateway reporta vira texto na tela do operador: id seguro e motivo curto, sem
+/// caracteres de controle. Um id fora do padrão descarta o relato inteiro.
+fn clean_status(mut status: ModelStatus) -> Option<ModelStatus> {
+    let id_ok = !status.model_id.is_empty()
+        && status.model_id.len() <= 64
+        && status
+            .model_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if !id_ok || !status.tokens_per_second.is_finite() || status.tokens_per_second < 0.0 {
+        return None;
+    }
+    status.reason = status
+        .reason
+        .chars()
+        .take(200)
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect();
+    Some(status)
 }
 
 /// Quantos endereços de nó o controller guarda (um por nó registrado).
@@ -277,8 +326,9 @@ impl ClusterControlService {
                 } else {
                     capability.rpc_host
                 };
+                let address = rpc_address(&host, capability.rpc_port)?;
                 Some(RpcEndpoint {
-                    address: format!("{host}:{}", capability.rpc_port),
+                    address,
                     node_id: id,
                 })
             })
@@ -1333,7 +1383,7 @@ impl ClusterControl for ClusterControlService {
         if !valid_gateway(&request) {
             return Err(Status::invalid_argument("apresentação de gateway inválida"));
         }
-        let running = request.running.clone();
+        let running = request.running.clone().and_then(clean_status);
         let now = unix_ms();
         let is_new = {
             let mut gateways = self
@@ -3372,5 +3422,62 @@ mod tests {
                 .is_none()
         );
         assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    }
+    #[test]
+    fn rpc_address_refuses_loopback_link_local_and_odd_names() {
+        assert_eq!(
+            rpc_address("192.168.1.18", 50061).as_deref(),
+            Some("192.168.1.18:50061")
+        );
+        assert_eq!(
+            rpc_address("fd00::5", 50061).as_deref(),
+            Some("[fd00::5]:50061")
+        );
+        assert_eq!(
+            rpc_address("worker-1.lan", 50061).as_deref(),
+            Some("worker-1.lan:50061")
+        );
+        for bad in [
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "169.254.1.1",
+            "fe80::1",
+            "224.0.0.1",
+            "localhost",
+            "a b",
+            "",
+            "x..y",
+            "-",
+        ] {
+            let ok = rpc_address(bad, 50061);
+            assert!(ok.is_none() || bad == "-", "{bad} -> {ok:?}");
+        }
+        assert!(rpc_address("10.0.0.1", 0).is_none());
+        assert!(rpc_address("10.0.0.1", 70_000).is_none());
+    }
+
+    #[test]
+    fn clean_status_drops_bad_ids_and_control_characters() {
+        let status = |id: &str, reason: &str, rate: f64| ModelStatus {
+            model_id: id.into(),
+            state: 3,
+            reason: reason.into(),
+            generation: 1,
+            tokens_per_second: rate,
+        };
+        let ok = clean_status(status("smollm2-q4", "falhou\x1b[31m!", 2.0)).unwrap();
+        assert!(!ok.reason.contains('\x1b'));
+        assert_eq!(
+            clean_status(status("x", &"a".repeat(1000), 0.0))
+                .unwrap()
+                .reason
+                .len(),
+            200
+        );
+        assert!(clean_status(status("com espaço", "", 1.0)).is_none());
+        assert!(clean_status(status("", "", 1.0)).is_none());
+        assert!(clean_status(status("m", "", f64::NAN)).is_none());
+        assert!(clean_status(status("m", "", -1.0)).is_none());
     }
 }

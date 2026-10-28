@@ -33,6 +33,8 @@ const DEFAULT_PORT: u16 = 18080;
 /// Prompt fixo do benchmark e quantos tokens ele gera.
 const BENCH_PROMPT: &str = "Explique em poucas frases o que é um cluster de computadores.";
 const BENCH_TOKENS: u32 = 64;
+/// Maior contexto que o plano do controller pode pedir (1 M de tokens).
+const MAX_CONTEXT: u32 = 1 << 20;
 
 /// A configuração lida do ambiente.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,15 +77,24 @@ impl LlamaConfig {
             args.push("-ngl".into());
             args.push(self.gpu_layers.to_string());
             args.push("--rpc".into());
-            args.push(self.local_endpoints().join(","));
+            // `start` já validou a faixa; sem ela o `--rpc` ficaria vazio e o erro apareceria lá.
+            args.push(self.local_endpoints().unwrap_or_default().join(","));
         }
         args
     }
 
-    /// Os túneis locais, na ordem dos endpoints dos workers.
-    pub fn local_endpoints(&self) -> Vec<String> {
+    /// Os túneis locais, na ordem dos endpoints dos workers. Erro se a faixa passa de 65535 ou
+    /// atravessa a porta do próprio `llama-server`.
+    pub fn local_endpoints(&self) -> Result<Vec<String>, String> {
         (0..self.endpoints.len())
-            .map(|i| format!("127.0.0.1:{}", self.tunnel_base + i as u16))
+            .map(|i| {
+                let port = u16::try_from(i)
+                    .ok()
+                    .and_then(|i| self.tunnel_base.checked_add(i))
+                    .filter(|port| *port != self.port)
+                    .ok_or_else(|| "faixa de portas dos túneis inválida".to_string())?;
+                Ok(format!("127.0.0.1:{port}"))
+            })
             .collect()
     }
 }
@@ -198,30 +209,21 @@ pub struct Llama {
     pub generation: u64,
 }
 
-impl Drop for Llama {
-    fn drop(&mut self) {
-        for task in self
-            .tasks
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .drain(..)
-        {
-            task.abort();
-        }
-    }
-}
-
 impl Llama {
-    /// Encerra os túneis e o supervisor (e, com ele, o `llama-server`).
-    pub fn shutdown(&self) {
-        for task in self
+    /// Encerra os túneis e o supervisor (e, com ele, o `llama-server`). As tarefas guardam um
+    /// `Arc<Llama>`, então só este método as encerra: quem solta o modelo deve chamá-lo antes. Devolve
+    /// as tarefas abortadas para quem precisar esperar o fim delas.
+    pub fn shutdown(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        let tasks: Vec<_> = self
             .tasks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .drain(..)
-        {
+            .collect();
+        for task in &tasks {
             task.abort();
         }
+        tasks
     }
 
     pub fn state(&self) -> State {
@@ -289,8 +291,7 @@ impl Llama {
         let stream = Tap {
             inner: Box::pin(Body::new(incoming).into_data_stream()),
             tail: Vec::new(),
-            all: Vec::new(),
-            keep_all: !streaming,
+            seen: 0,
             tenant,
             charged: false,
             _permit: permit,
@@ -335,16 +336,35 @@ struct Tap {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, axum::Error>> + Send>>,
     /// Últimos bytes vistos: o `usage` de um stream vem no fim.
     tail: Vec<u8>,
-    all: Vec<u8>,
-    /// Resposta sem stream: guarda o corpo (limitado) para ler o `usage`.
-    keep_all: bool,
+    /// Bytes repassados: se o cliente desiste antes do `usage`, a cota paga uma estimativa disto.
+    seen: u64,
     tenant: Arc<Tenant>,
     charged: bool,
     _permit: Permit,
 }
 
 const TAIL: usize = 4096;
-const WHOLE: usize = 1 << 20;
+
+impl Tap {
+    /// Cobra uma vez: o `usage` do fim da resposta, ou, se ela foi cortada, cerca de um token a cada
+    /// quatro bytes já enviados (desistir no meio não sai de graça).
+    fn charge(&mut self) {
+        if self.charged {
+            return;
+        }
+        self.charged = true;
+        let tokens = total_tokens(&self.tail).unwrap_or(self.seen.div_ceil(4));
+        if tokens > 0 {
+            self.tenant.charge(tokens);
+        }
+    }
+}
+
+impl Drop for Tap {
+    fn drop(&mut self) {
+        self.charge();
+    }
+}
 
 impl Stream for Tap {
     type Item = Result<Bytes, axum::Error>;
@@ -358,19 +378,11 @@ impl Stream for Tap {
                     let cut = this.tail.len() - TAIL;
                     this.tail.drain(..cut);
                 }
-                if this.keep_all && this.all.len() < WHOLE {
-                    this.all.extend_from_slice(&chunk);
-                }
+                this.seen += chunk.len() as u64;
                 Poll::Ready(Some(Ok(chunk)))
             }
             Poll::Ready(None) => {
-                if !this.charged {
-                    this.charged = true;
-                    let source = if this.keep_all { &this.all } else { &this.tail };
-                    if let Some(tokens) = total_tokens(source) {
-                        this.tenant.charge(tokens);
-                    }
-                }
+                this.charge();
                 Poll::Ready(None)
             }
             other => other,
@@ -391,15 +403,28 @@ pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String>
         tasks: Mutex::new(Vec::new()),
         generation,
     });
-    let mut tasks = Vec::new();
+    // Tudo o que pode falhar vem antes de qualquer tarefa: um erro no meio não deixa túnel para trás
+    // segurando uma porta (os listeners soltos se fecham sozinhos).
+    let mut listeners = Vec::new();
+    let mut tls = None;
     if !config.endpoints.is_empty() {
-        let tls = ai_cluster_tunnel::client_config(&config.ca, &config.cert, &config.key)?;
-        for (remote, local) in config.endpoints.iter().zip(config.local_endpoints()) {
+        tls = Some(ai_cluster_tunnel::client_config(
+            &config.ca,
+            &config.cert,
+            &config.key,
+        )?);
+        for local in config.local_endpoints()? {
             // Escuta já, de forma síncrona: o llama-server só sobe depois que as portas existem.
             let listener = std::net::TcpListener::bind(&local)
                 .and_then(|l| l.set_nonblocking(true).map(|()| l))
                 .and_then(tokio::net::TcpListener::from_std)
                 .map_err(|e| format!("túnel em {local}: {e}"))?;
+            listeners.push(listener);
+        }
+    }
+    let mut tasks = Vec::new();
+    if let Some(tls) = tls {
+        for (remote, listener) in config.endpoints.iter().zip(listeners) {
             let (remote, name, tls) = (remote.clone(), config.server_name.clone(), tls.clone());
             tasks.push(tokio::spawn(async move {
                 if let Err(error) =
@@ -421,6 +446,25 @@ pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String>
     Ok(llama)
 }
 
+/// Aborta a tarefa quando sai de escopo.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Espera a porta local ficar livre (o `llama-server` antigo ainda pode estar saindo).
+async fn wait_port_free(port: u16) {
+    for _ in 0..50 {
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Roda o `llama-server`; se sair, marca falha e o sobe de novo (com espera crescente).
 async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
     let mut wait = Duration::from_secs(2);
@@ -437,9 +481,10 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
         match child {
             Ok(mut child) => {
                 let watcher = llama.clone();
-                let ready = tokio::spawn(async move { become_ready(&watcher).await });
+                // Se o supervisor for abortado dentro do `wait`, o guarda também derruba o vigia: ele
+                // não pode continuar sondando a porta de um modelo novo.
+                let _ready = AbortOnDrop(tokio::spawn(async move { become_ready(&watcher).await }));
                 let status = child.wait().await;
-                ready.abort();
                 let reason = match status {
                     Ok(status) => format!("llama-server saiu ({status})"),
                     Err(error) => format!("llama-server: {error}"),
@@ -526,6 +571,8 @@ pub struct Manager {
     base: Base,
     /// Com modelo fixo pelo ambiente, o plano do controller é ignorado.
     fixed: bool,
+    /// O último plano recusado, para o log não repetir o mesmo erro a cada apresentação.
+    last_error: Mutex<String>,
 }
 
 /// O que não muda com o modelo: binário, pasta de modelos, TLS e portas locais.
@@ -608,10 +655,13 @@ impl Base {
         if wanted.endpoints.len() > 64 {
             return Err("workers demais no plano".into());
         }
+        // O plano vem da rede: nada de contexto que estoure a RAM nem faixa de portas fora de 16 bits.
         let context = if wanted.context == 0 {
             self.default_context
         } else {
-            u32::try_from(wanted.context).unwrap_or(u32::MAX)
+            u32::try_from(wanted.context)
+                .unwrap_or(u32::MAX)
+                .min(MAX_CONTEXT)
         };
         Ok(LlamaConfig {
             id: id.clone(),
@@ -639,6 +689,7 @@ impl Manager {
             current: Mutex::new(None),
             base,
             fixed: false,
+            last_error: Mutex::new(String::new()),
         }
     }
 
@@ -649,6 +700,7 @@ impl Manager {
             current: Mutex::new(Some(llama)),
             base,
             fixed: true,
+            last_error: Mutex::new(String::new()),
         })
     }
 
@@ -692,7 +744,14 @@ impl Manager {
         }
         let config = match desired.map(|wanted| self.base.config_for(wanted)) {
             Some(Err(error)) => {
-                eprintln!("plano do controller recusado: {error}");
+                let mut last = self
+                    .last_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if *last != error {
+                    eprintln!("plano do controller recusado: {error}");
+                    *last = error;
+                }
                 return;
             }
             Some(Ok(config)) => Some(config),
@@ -700,8 +759,10 @@ impl Manager {
         };
         // O processo antigo sai antes: as portas locais são as mesmas.
         if let Some(old) = self.take() {
-            old.shutdown();
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            for task in old.shutdown() {
+                let _ = task.await;
+            }
+            wait_port_free(self.base.port).await;
         }
         if let (Some(config), Some(wanted)) = (config, desired) {
             match start(config, wanted.generation) {
@@ -881,5 +942,61 @@ data: [DONE]
                 .is_err()
         );
         assert!(open.config_for(&desired("m.gguf", "m", &[])).is_ok());
+    }
+    #[test]
+    fn the_tunnel_range_cannot_overflow_or_cross_the_server_port() {
+        let mut c = config();
+        c.tunnel_base = u16::MAX - 1; // cabem 2 portas: 65534 e 65535
+        assert_eq!(c.local_endpoints().unwrap().len(), 2);
+        c.endpoints.push("10.0.0.7:50061".into());
+        assert!(
+            c.local_endpoints().is_err(),
+            "a terceira porta passaria de 65535"
+        );
+        let mut clash = config();
+        clash.port = clash.tunnel_base + 1; // o llama-server no meio da faixa
+        assert!(clash.local_endpoints().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_early_still_pays_an_estimate() {
+        use crate::request_manager::{Admission, Class};
+        let tenant = Arc::new(Tenant::new("t", "k"));
+        let admission = Admission::new(1, Duration::from_secs(1));
+        let permit = admission.acquire(Class::Normal).await.unwrap();
+        let chunks: Vec<Result<Bytes, axum::Error>> = vec![
+            Ok(Bytes::from(vec![b'x'; 400])),
+            Ok(Bytes::from(vec![b'y'; 400])),
+        ];
+        let mut tap = Tap {
+            inner: Box::pin(futures_core_stream(chunks)),
+            tail: Vec::new(),
+            seen: 0,
+            tenant: tenant.clone(),
+            charged: false,
+            _permit: permit,
+        };
+        // Lê só o primeiro pedaço e desiste.
+        let first = std::future::poll_fn(|cx| Pin::new(&mut tap).poll_next(cx)).await;
+        assert!(first.is_some());
+        drop(tap);
+        assert_eq!(tenant.charged_total(), 100, "400 bytes ≈ 100 tokens");
+    }
+
+    /// Um stream pronto, sem depender de uma biblioteca de streams nos testes.
+    fn futures_core_stream(
+        items: Vec<Result<Bytes, axum::Error>>,
+    ) -> impl Stream<Item = Result<Bytes, axum::Error>> + Send {
+        struct Ready(std::vec::IntoIter<Result<Bytes, axum::Error>>);
+        impl Stream for Ready {
+            type Item = Result<Bytes, axum::Error>;
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                Poll::Ready(self.0.next())
+            }
+        }
+        Ready(items.into_iter())
     }
 }

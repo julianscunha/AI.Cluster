@@ -105,6 +105,10 @@ impl Orchestrator {
                             inner.generation = generation;
                         }
                     }
+                    ["worker", node_id, address] => inner.applied.push(RpcEndpoint {
+                        node_id: node_id.to_string(),
+                        address: address.to_string(),
+                    }),
                     ["generation", generation] => {
                         inner.generation = generation.parse().unwrap_or(inner.generation);
                     }
@@ -148,6 +152,9 @@ impl Orchestrator {
             )),
             None => text.push_str(&format!("generation\t{}\n", inner.generation)),
         }
+        for worker in &inner.applied {
+            text.push_str(&format!("worker\t{}\t{}\n", worker.node_id, worker.address));
+        }
         for t in &inner.tenants {
             text.push_str(&format!(
                 "tenant\t{}\t{}\t{}\n",
@@ -156,10 +163,25 @@ impl Orchestrator {
                 t.prefix
             ));
         }
-        // Escrita atômica: um corte no meio não deixa as chaves pela metade.
+        // Escrita atômica e durável, só para o dono: um corte no meio não deixa as chaves pela metade,
+        // e o hash de uma chave já entregue ao operador não some em silêncio.
         let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
+        let written = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&tmp)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&tmp, path)
+        })();
+        if let Err(error) = written {
+            eprintln!("não consegui gravar {}: {error}", path.display());
         }
     }
 
@@ -226,6 +248,8 @@ impl Orchestrator {
                         inner.applied = endpoints;
                         inner.pending = None;
                         inner.generation += 1;
+                        // O que o gateway reportou era da geração anterior.
+                        inner.running = None;
                         self.save(&inner);
                     }
                 }
@@ -423,5 +447,34 @@ mod tests {
         );
         o.note_running(status(generation));
         assert_eq!(o.status(0).1.unwrap().tokens_per_second, 3.5);
+    }
+    #[test]
+    fn the_applied_plan_survives_a_restart_and_a_new_generation_clears_the_status() {
+        let dir = std::env::temp_dir().join(format!("aic-models-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("models.state");
+        let first = Orchestrator::new(Some(path.clone()));
+        let (generation, _) = first.start("m", "m.gguf", 0, vec![endpoint("a"), endpoint("b")]);
+        // Depois do reinício o plano em vigor é o mesmo: a geração não sobe à toa.
+        let again = Orchestrator::new(Some(path));
+        let plan = again.plan(vec![endpoint("a"), endpoint("b")], 5).unwrap();
+        assert_eq!((plan.generation, plan.endpoints.len()), (generation, 2));
+        // O estado reportado da geração antiga some quando o plano muda.
+        let o = orchestrator();
+        let (g, _) = o.start("m", "m.gguf", 0, vec![endpoint("a")]);
+        o.note_running(ModelStatus {
+            model_id: "m".into(),
+            state: ModelState::ModelReady as i32,
+            reason: String::new(),
+            generation: g,
+            tokens_per_second: 9.0,
+        });
+        o.plan(vec![endpoint("a"), endpoint("b")], 100);
+        let changed = o.plan(vec![endpoint("a"), endpoint("b")], 1_500).unwrap();
+        assert_eq!(changed.generation, g + 1);
+        assert_eq!(
+            o.status(0).1.unwrap().state,
+            ModelState::ModelLoading as i32
+        );
     }
 }

@@ -113,6 +113,12 @@ impl Tenant {
         self.lock().1 += tokens;
     }
 
+    /// Tokens cobrados ao tenant desde o início.
+    #[cfg(test)]
+    pub fn charged_total(&self) -> u64 {
+        self.tokens_total.load(Ordering::Relaxed)
+    }
+
     /// A rejection that is not the quota's (capacity), counted for the tenant.
     pub fn note_rejected(&self) {
         self.rejected_total.fetch_add(1, Ordering::Relaxed);

@@ -24,8 +24,11 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Quanto o handshake e a conexão ao destino podem levar.
 const SETUP: Duration = Duration::from_secs(10);
-/// Conexões abertas ao mesmo tempo em cada ponta.
+/// Conexões abertas ao mesmo tempo em cada ponta (depois do handshake).
 const MAX_CONNECTIONS: usize = 64;
+/// Handshakes em andamento: quem abre TCP e cala só ocupa uma destas vagas, por no máximo `SETUP`,
+/// e nunca uma das conexões abertas.
+const MAX_HANDSHAKES: usize = 32;
 
 /// ChaCha20-Poly1305 primeiro; AES só como reserva para clientes que não falem ChaCha.
 fn provider() -> Arc<CryptoProvider> {
@@ -92,6 +95,11 @@ pub fn client_config(ca: &str, cert: &str, key: &str) -> Result<Arc<ClientConfig
 
 fn nodelay(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
+    // Um par que some sem FIN (queda de energia, cabo) não segura a vaga para sempre.
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(30))
+        .with_interval(Duration::from_secs(10));
+    let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&keepalive);
 }
 
 /// Servidor: aceita TLS em `listener` e repassa cada conexão a `upstream` (o `rpc-server` local).
@@ -103,6 +111,7 @@ pub async fn serve(
 ) -> std::io::Result<()> {
     let acceptor = TlsAcceptor::from(config);
     let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let handshakes = Arc::new(tokio::sync::Semaphore::new(MAX_HANDSHAKES));
     loop {
         let (tcp, _) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -112,14 +121,19 @@ pub async fn serve(
                 continue;
             }
         };
-        let Ok(permit) = open.clone().acquire_owned().await else {
-            return Ok(());
+        // Sem vaga de handshake a conexão é descartada na hora: o accept nunca espera por um intruso.
+        let Ok(handshake) = handshakes.clone().try_acquire_owned() else {
+            continue;
         };
         nodelay(&tcp);
-        let (acceptor, upstream) = (acceptor.clone(), upstream.clone());
+        let (acceptor, upstream, open) = (acceptor.clone(), upstream.clone(), open.clone());
         tokio::spawn(async move {
-            let _permit = permit;
             let Ok(Ok(mut tls)) = tokio::time::timeout(SETUP, acceptor.accept(tcp)).await else {
+                return;
+            };
+            // Só quem tem certificado válido ocupa uma das conexões abertas.
+            drop(handshake);
+            let Ok(_permit) = open.try_acquire_owned() else {
                 return;
             };
             let Ok(Ok(mut local)) =
@@ -154,8 +168,9 @@ pub async fn forward(
                 continue;
             }
         };
-        let Ok(permit) = open.clone().acquire_owned().await else {
-            return Ok(());
+        // Acima do limite a conexão local é recusada, em vez de travar o accept.
+        let Ok(permit) = open.clone().try_acquire_owned() else {
+            continue;
         };
         nodelay(&local);
         let (connector, remote, name) = (connector.clone(), remote.clone(), name.clone());
