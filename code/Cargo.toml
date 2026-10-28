@@ -11,4 +11,5 @@ members = [
   "crates/gateway",
   "crates/engine",
   "crates/catalog",
+  "crates/tunnel",
 ]
