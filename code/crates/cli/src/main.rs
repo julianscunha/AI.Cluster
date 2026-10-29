@@ -855,6 +855,12 @@ async fn check_model(
         if reply.ok { "OK " } else { "NOK" },
         clean(&reply.message)
     );
+    if reply.gateway_bytes > 0 {
+        println!(
+            "gateway: o llama-server ocupa cerca de {:.2} GB na máquina dele",
+            gb(reply.gateway_bytes)
+        );
+    }
     if reply.estimated_tokens_per_second > 0.0 {
         println!(
             "velocidade estimada ~{:.1} tokens/s (a partir do modelo em execução, mesmos workers)",

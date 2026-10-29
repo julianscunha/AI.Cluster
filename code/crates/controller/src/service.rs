@@ -85,6 +85,8 @@ pub struct ClusterControlService {
     llama_version: Arc<std::sync::Mutex<String>>,
     /// Vagas que o gateway informou (0 = ainda não); vale mais que o ambiente do controller.
     llama_slots: Arc<std::sync::atomic::AtomicU32>,
+    /// RAM livre que o gateway informou (0 = ainda não): confere o `llama-server` dele no OK/NOK.
+    gateway_free: Arc<std::sync::atomic::AtomicU64>,
     /// Avisos do último cálculo do plano (workers deixados de fora e por quê).
     rpc_warnings: Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -303,6 +305,7 @@ impl ClusterControlService {
             node_hosts: Arc::default(),
             llama_version: Arc::default(),
             llama_slots: Arc::default(),
+            gateway_free: Arc::default(),
             rpc_warnings: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
@@ -321,6 +324,14 @@ impl ClusterControlService {
 
     /// Os workers aptos, com a velocidade da CPU e a RAM que oferecem; o orquestrador escolhe quais
     /// carregam o modelo (`models::select`).
+    /// RAM livre do gateway, se ele já informou.
+    fn gateway_free(&self) -> Option<u64> {
+        match self.gateway_free.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            free => Some(free),
+        }
+    }
+
     /// Vagas do llama-server para o cálculo do cache KV: as que o gateway informou, ou o ambiente.
     fn slots(&self) -> u64 {
         match self.llama_slots.load(std::sync::atomic::Ordering::Relaxed) {
@@ -853,8 +864,13 @@ impl ClusterControl for ClusterControlService {
         };
         let candidates = self.rpc_candidates();
         let nodes = self.rpc_node_memory();
-        let verdict =
-            ai_cluster_catalog::check::check(&model, request.context, self.slots(), &nodes);
+        let verdict = ai_cluster_catalog::check::check(
+            &model,
+            request.context,
+            self.slots(),
+            &nodes,
+            self.gateway_free(),
+        );
         let check = CheckModelResponse {
             ok: verdict.ok,
             weights_bytes: verdict.weights_bytes,
@@ -865,6 +881,7 @@ impl ClusterControl for ClusterControlService {
             nodes: verdict.nodes,
             survives_one_loss: verdict.survives_one_loss,
             estimated_tokens_per_second: 0.0,
+            gateway_bytes: verdict.gateway_bytes,
             message: verdict.message,
         };
         // Sem workers com RPC o modelo roda só na CPU do gateway, cuja RAM o controller não conhece.
@@ -1055,8 +1072,13 @@ impl ClusterControl for ClusterControlService {
                 })
             })
             .collect();
-        let verdict =
-            ai_cluster_catalog::check::check(&model, request.context, self.slots(), &nodes);
+        let verdict = ai_cluster_catalog::check::check(
+            &model,
+            request.context,
+            self.slots(),
+            &nodes,
+            self.gateway_free(),
+        );
         let (ok, message) = if model.supported {
             (verdict.ok, verdict.message)
         } else {
@@ -1075,6 +1097,7 @@ impl ClusterControl for ClusterControlService {
             nodes: verdict.nodes,
             survives_one_loss: verdict.survives_one_loss,
             estimated_tokens_per_second,
+            gateway_bytes: verdict.gateway_bytes,
             message,
         }))
     }
@@ -1599,6 +1622,12 @@ impl ClusterControl for ClusterControlService {
                 .llama_version
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = request.llama_version.clone();
+        }
+        if request.memory_available_bytes > 0 {
+            self.gateway_free.store(
+                request.memory_available_bytes,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         if (1..=16).contains(&request.llama_slots) {
             self.llama_slots
@@ -3437,6 +3466,7 @@ mod tests {
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
             llama_version: String::new(),
             llama_slots: 0,
+            memory_available_bytes: 0,
             running: None,
             stats: None,
             gateway_id: id.into(),
@@ -3551,6 +3581,7 @@ mod tests {
             inference(ReportGatewayRequest {
                 llama_version: String::new(),
                 llama_slots: 0,
+                memory_available_bytes: 0,
                 running: None,
                 stats: None,
                 gateway_id: id,

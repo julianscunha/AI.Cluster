@@ -334,6 +334,8 @@ message CheckModelResponse {
   bool survives_one_loss = 9;
   // Estimativa de tokens por segundo a partir do modelo em execução (0 = sem estimativa).
   double estimated_tokens_per_second = 10;
+  // RAM estimada que o gateway precisa para o llama-server deste modelo (0 = não estimada).
+  uint64 gateway_bytes = 11;
 }
 
 /// Estado do modelo do llama.cpp no gateway (ADR-022).
@@ -650,6 +652,9 @@ message ReportGatewayRequest {
   /// Vagas do llama-server (`AI_CLUSTER_LLAMA_SLOTS`) deste gateway; 0 = não informa. O OK/NOK do
   /// controller conta o cache KV de cada vaga, então usa este valor em vez do seu próprio ambiente.
   uint32 llama_slots = 7;
+  /// RAM disponível na máquina do gateway (`MemAvailable`); 0 = não informa. O `llama-server` roda nele
+  /// e o OK/NOK do controller confere a necessidade estimada contra este valor.
+  uint64 memory_available_bytes = 8;
 }
 
 message ReportGatewayResponse {

@@ -34,6 +34,8 @@ pub struct Verdict {
     pub nodes: u32,
     /// Ainda cabe sem o maior nó; só informa, não muda `ok` (com 2 nós em casa quase nada passaria).
     pub survives_one_loss: bool,
+    /// RAM estimada do `llama-server` no gateway (0,1 GB + 30% dos pesos, medido com três modelos).
+    pub gateway_bytes: u64,
     pub message: String,
 }
 
@@ -99,8 +101,22 @@ pub fn slots_from_env() -> u64 {
         .map_or(1, |n| n.clamp(1, 16))
 }
 
+/// RAM que o `llama-server` ocupa no gateway: reserva fixa mais uma fração dos pesos. Medido (RSS em
+/// repouso) com 0,25, 0,37 e 0,92 GB de pesos: 84, 210 e 262 MB. Durante a carga o pico chega a 1,3 a
+/// 1,5 vezes os pesos, mas são páginas do arquivo mapeado, que o kernel devolve sob pressão.
+pub fn gateway_need(weights_bytes: u64) -> u64 {
+    (128 << 20) + (weights_bytes as f64 * 0.30) as u64
+}
+
 /// Compara `model` com a RAM de `nodes` para `slots` vagas de `context` tokens cada (0 = o padrão).
-pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory]) -> Verdict {
+/// `gateway_free` é a RAM disponível que o gateway informou (`None` = não conhecida, não confere).
+pub fn check(
+    model: &ModelEntry,
+    context: u64,
+    slots: u64,
+    nodes: &[NodeMemory],
+    gateway_free: Option<u64>,
+) -> Verdict {
     let context = if context == 0 {
         DEFAULT_CONTEXT
     } else {
@@ -114,7 +130,9 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
         .saturating_add(margin_bytes);
     let available_bytes: u64 = nodes.iter().map(usable_bytes).fold(0, u64::saturating_add);
     let count = nodes.len() as u32;
-    let ok = count > 0 && available_bytes >= required_bytes;
+    let gateway_bytes = gateway_need(weights_bytes);
+    let gateway_fits = gateway_free.is_none_or(|free| free >= gateway_bytes);
+    let ok = count > 0 && available_bytes >= required_bytes && gateway_fits;
     let largest = nodes.iter().map(usable_bytes).max().unwrap_or(0);
     let survives_one_loss = count > 1 && available_bytes - largest >= required_bytes;
     let kv_note = if kv == 0 && (model.layers == 0 || model.hidden == 0 || model.heads == 0) {
@@ -136,6 +154,12 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
         )
     } else if count == 0 {
         "nenhum nó aprovado e vivo para receber o modelo".to_string()
+    } else if available_bytes >= required_bytes {
+        format!(
+            "não cabe no gateway: o llama-server precisa de cerca de {:.2} GB e a máquina dele tem {:.2} GB livres",
+            gb(gateway_bytes),
+            gb(gateway_free.unwrap_or(0))
+        )
     } else {
         let missing = required_bytes - available_bytes;
         let average = available_bytes / u64::from(count);
@@ -166,6 +190,7 @@ pub fn check(model: &ModelEntry, context: u64, slots: u64, nodes: &[NodeMemory])
         available_bytes,
         nodes: count,
         survives_one_loss,
+        gateway_bytes,
         message,
     }
 }
@@ -206,7 +231,7 @@ mod tests {
 
     #[test]
     fn it_fits_when_the_sum_of_the_nodes_covers_weights_and_margin() {
-        let verdict = check(&model(8), 0, 1, &[node(4), node(4), node(4)]);
+        let verdict = check(&model(8), 0, 1, &[node(4), node(4), node(4)], None);
         assert!(verdict.ok, "{}", verdict.message);
         assert_eq!(verdict.nodes, 3);
         assert!(verdict.required_bytes > 8 * GIB);
@@ -215,24 +240,40 @@ mod tests {
 
     #[test]
     fn the_failover_margin_is_reported_but_does_not_decide() {
-        let three = check(&model(8), 0, 1, &[node(4), node(4), node(4)]);
+        let three = check(&model(8), 0, 1, &[node(4), node(4), node(4)], None);
         assert!(three.ok && !three.survives_one_loss);
         assert!(three.message.contains("sem folga"), "{}", three.message);
         let four: Vec<_> = (0..4).map(|_| node(4)).collect();
-        let four = check(&model(8), 0, 1, &four);
+        let four = check(&model(8), 0, 1, &four, None);
         assert!(four.ok && four.survives_one_loss);
-        assert!(!check(&model(1), 0, 1, &[node(8)]).survives_one_loss);
+        assert!(!check(&model(1), 0, 1, &[node(8)], None).survives_one_loss);
+    }
+
+    #[test]
+    fn the_gateway_ram_can_veto_a_model_the_workers_hold() {
+        // 8 GiB de pesos pedem ~2,5 GiB no gateway (128 MiB + 30%).
+        let need = gateway_need(8 * GIB);
+        assert!(need > 2 * GIB && need < 3 * GIB);
+        let nodes = [node(8), node(8)];
+        assert!(
+            check(&model(8), 0, 1, &nodes, None).ok,
+            "sem informação não confere"
+        );
+        assert!(check(&model(8), 0, 1, &nodes, Some(need)).ok);
+        let no = check(&model(8), 0, 1, &nodes, Some(GIB));
+        assert!(!no.ok && no.message.contains("gateway"), "{}", no.message);
+        assert_eq!(no.gateway_bytes, need);
     }
 
     #[test]
     fn it_says_how_much_is_missing_and_how_many_nodes_to_add() {
-        let verdict = check(&model(16), 0, 1, &[node(4), node(4)]);
+        let verdict = check(&model(16), 0, 1, &[node(4), node(4)], None);
         assert!(!verdict.ok);
         assert!(verdict.message.contains("faltam"), "{}", verdict.message);
         assert!(verdict.message.contains("acrescente cerca de"));
         // Mais nós do mesmo tamanho resolvem: o veredito deixa de ser NOK.
         let more: Vec<_> = (0..8).map(|_| node(4)).collect();
-        assert!(check(&model(16), 0, 1, &more).ok);
+        assert!(check(&model(16), 0, 1, &more, None).ok);
     }
 
     #[test]
@@ -241,7 +282,7 @@ mod tests {
             total_bytes: 100 << 20,
             used_fraction: 0.0,
         };
-        let verdict = check(&model(1), 0, 1, &[starved]);
+        let verdict = check(&model(1), 0, 1, &[starved], None);
         assert!(!verdict.ok);
         assert!(
             verdict.message.contains("quase não têm RAM"),
@@ -264,7 +305,7 @@ mod tests {
             total_bytes: u64::MAX,
             used_fraction: 0.0,
         };
-        assert!(check(&model(1), 0, 1, &[huge.clone(), huge]).ok);
+        assert!(check(&model(1), 0, 1, &[huge.clone(), huge], None).ok);
         // Medida inválida: o nó conta como cheio.
         let nan = NodeMemory {
             total_bytes: 8 * GIB,
@@ -275,7 +316,7 @@ mod tests {
 
     #[test]
     fn a_missing_kv_estimate_is_said_out_loud() {
-        let verdict = check(&model(1), 0, 1, &[node(8)]);
+        let verdict = check(&model(1), 0, 1, &[node(8)], None);
         assert!(verdict.ok);
         assert!(
             verdict.message.contains("não estimado"),
@@ -286,7 +327,7 @@ mod tests {
 
     #[test]
     fn no_node_is_a_nok_with_its_own_reason() {
-        let verdict = check(&model(1), 0, 1, &[]);
+        let verdict = check(&model(1), 0, 1, &[], None);
         assert!(!verdict.ok);
         assert!(verdict.message.contains("nenhum nó"));
     }
@@ -315,9 +356,9 @@ mod tests {
         m.heads = 32;
         m.kv_heads = 32;
         m.context = 4096;
-        let one = check(&m, 4096, 1, &[node(8)]).kv_bytes;
-        assert_eq!(check(&m, 4096, 4, &[node(8)]).kv_bytes, 4 * one);
-        assert_eq!(check(&m, 4096, 0, &[node(8)]).kv_bytes, one);
+        let one = check(&m, 4096, 1, &[node(8)], None).kv_bytes;
+        assert_eq!(check(&m, 4096, 4, &[node(8)], None).kv_bytes, 4 * one);
+        assert_eq!(check(&m, 4096, 0, &[node(8)], None).kv_bytes, one);
     }
 
     #[test]
@@ -329,7 +370,7 @@ mod tests {
         m.kv_heads = 32;
         m.context = 131_072;
         let nodes = [node(4), node(4)];
-        assert!(check(&m, 2048, 1, &nodes).ok);
-        assert!(!check(&m, 131_072, 1, &nodes).ok);
+        assert!(check(&m, 2048, 1, &nodes, None).ok);
+        assert!(!check(&m, 131_072, 1, &nodes, None).ok);
     }
 }

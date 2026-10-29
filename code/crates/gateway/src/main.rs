@@ -361,6 +361,7 @@ fn announce_gateway(
                 running: llama.status(),
                 llama_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
                 llama_slots: llama.slots(),
+                memory_available_bytes: memory_available_bytes(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {
@@ -391,6 +392,18 @@ fn announce_gateway(
             });
         }
     });
+}
+
+/// `MemAvailable` de `/proc/meminfo` em bytes; 0 quando não dá para ler (fora do Linux).
+fn memory_available_bytes() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("MemAvailable:"))
+                .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
+        })
+        .map_or(0, |kib| kib.saturating_mul(1024))
 }
 
 /// A SmolLM2 checkpoint the gateway can serve, and the environment variables that configure it.

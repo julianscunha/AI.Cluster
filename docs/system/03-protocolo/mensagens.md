@@ -64,7 +64,7 @@ Total: 2 serviços e 24 RPCs.
 | `StateReplica` | `epoch_unix_ms` (1), `snapshot` (2) | `WorkSnapshot` codificado, com os mesmos bytes do arquivo de estado do controller |
 | `ListNodesRequest` / `ListNodesResponse` | — / `nodes` (1) | |
 | `ListModelsRequest` / `ListModelsResponse` | — / `models` (1: `ModelEntry` com id, format, architecture, parameters, precision, bytes, context, layers, supported, reason), `directory` (2) | vazio sem a pasta |
-| `CheckModelRequest` / `CheckModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `weights_bytes` (2), `kv_bytes` (3), `margin_bytes` (4), `required_bytes` (5), `available_bytes` (6), `nodes` (7), `message` (8), `survives_one_loss` (9), `estimated_tokens_per_second` (10) | `ok` falso também quando o motor não roda o modelo |
+| `CheckModelRequest` / `CheckModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `weights_bytes` (2), `kv_bytes` (3), `margin_bytes` (4), `required_bytes` (5), `available_bytes` (6), `nodes` (7), `message` (8), `survives_one_loss` (9), `estimated_tokens_per_second` (10), `gateway_bytes` (11) | `ok` falso também quando o motor não roda o modelo |
 | `StartModelRequest` / `StartModelResponse` | `model_id` (1), `context` (2) / `ok` (1), `message` (2), `generation` (3), `check` (4: `CheckModelResponse`), `keys` (5: `ApiKey` com `tenant` e `key`, só na criação) | `ok` falso quando não cabe ou o motor não roda; a chave em claro só vem aqui |
 | `StopModelRequest` / `StopModelResponse` | — / `generation` (1) | as chaves continuam valendo |
 | `ModelStatusRequest` / `ModelStatusResponse` | — / `desired` (1: `DesiredModel`), `running` (2: `ModelStatus`), `key_prefixes` (3), `warnings` (4, workers deixados de fora) | nunca a chave inteira |
@@ -74,7 +74,7 @@ Total: 2 serviços e 24 RPCs.
 | `DesiredModel` | `generation` (1), `model_id` (2), `model_path` (3, relativo à pasta de modelos), `context` (4), `gpu_layers` (5), `endpoints` (6: `RpcEndpoint` com `node_id` e `address`), `split` (7, proporção de camadas por worker, `--tensor-split`) | o que o gateway deve aplicar; ausente na resposta = parar |
 | `ModelStatus` | `model_id` (1), `state` (2: `ModelState` STOPPED, LOADING, READY, FAILED), `reason` (3), `generation` (4), `tokens_per_second` (5) | o gateway diz o que aplicou; o controller descarta ids fora do padrão |
 | `TenantGrant` | `tenant` (1), `key_sha256` (2), `models` (3), `tokens` (4, cota por janela; 0 = sem cota), `class` (5, teto de prioridade) | só o hash da chave; vazio em `models` = todos |
-| `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6), `llama_slots` (7) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
+| `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6), `llama_slots` (7), `memory_available_bytes` (8) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
 | `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
 | `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |
