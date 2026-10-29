@@ -215,7 +215,7 @@ Hoje o controle é por nó e por papel, não por unidade. Qualquer nó aprovado 
 
 - **Um segredo de join para todos os nós.** Quem o tiver pode registrar um `node_id` pendente e tentar tomá-lo. Um nó já aprovado só é substituído por revogação.
 - **Identidade autodeclarada** até a credencial do nó. O registro pode ser disputado.
-- **Operador sem escopo.** O operador age sobre qualquer nó.
+- **Operador sem escopo, por desenho.** Há um único token de operador e ele age sobre qualquer nó: o modelo de confiança é de um operador só (a casa de uma pessoa ou um laboratório). Escopo por nó só faria sentido com mais de um operador, e então pede identidades de operador, não um recorte do token. `WorkReport` e `ListEvents` exigem esse token.
 - **Segredos em claro** em variáveis de ambiente e em arquivos.
 - **Atestação só de software.** Um nó comprometido pode mentir sobre a medida.
 - **Sem rotação de chave de release por revogação.** Só por substituição de imagem.

@@ -34,8 +34,8 @@ Autorização: **join** = token de join (todo nó e cliente); **op** = token de 
 | `EnqueueWork` | `ClusterControl` | `EnqueueWorkRequest` → `EnqueueWorkResponse` | operador | op | enfileira `repetitions` unidades independentes |
 | `EnqueueGraph` | `ClusterControl` | `EnqueueGraphRequest` → `EnqueueGraphResponse` | operador | op | enfileira um grafo sintético de quatro unidades com dependência; recusa quando a fila passa de 256 unidades |
 | `CancelRequest` | `ClusterControl` | `CancelRequestRequest` → `CancelRequestResponse` | operador | op | retira da fila as unidades da requisição que ainda não foram despachadas e as que dependiam delas |
-| `WorkReport` | `ClusterControl` | `WorkReportRequest` → `WorkReportResponse` | operador ou CLI | join | concluídas, pendentes e falhas |
-| `ListEvents` | `ClusterControl` | `ListEventsRequest` → `ListEventsResponse` | operador ou CLI | join | eventos recentes do controller |
+| `WorkReport` | `ClusterControl` | `WorkReportRequest` → `WorkReportResponse` | operador ou CLI | operador | concluídas, pendentes e falhas |
+| `ListEvents` | `ClusterControl` | `ListEventsRequest` → `ListEventsResponse` | operador ou CLI | operador | eventos recentes do controller |
 | `WatchEvents` | `ClusterControl` | `WatchEventsRequest` → stream de `Event` | operador ou CLI | operador | barramento: cada evento novo, assim que é gravado; 16 assinantes; assinante lento recebe `events_lagged` |
 | `GetMetrics` | `ClusterControl` | `GetMetricsRequest` → `MetricsResponse` | operador, exportador | join | roll-up do cluster no instante |
 | `GetTrace` | `ClusterControl` | `GetTraceRequest` → `GetTraceResponse` | operador ou CLI | join | caminho requisição → unidades |
