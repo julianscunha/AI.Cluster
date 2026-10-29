@@ -78,7 +78,7 @@ Convenções:
 | `AI_CLUSTER_COMPUTE_SCORE` | medido | Fixa o score de compute (maior que zero). O nó deixa de remedir. |
 | `AI_CLUSTER_NETWORK_SCORE` | medido na interface | Fixa o score de rede (maior que zero). Zero ou inválido não fixa: o nó mede. |
 | `AI_CLUSTER_STORAGE_CLASSES` | detectado em `/sys/block` | Lista de classes separadas por vírgula (`HOT`, `WARM`, `COLD`) no lugar da detecção. |
-| `AI_CLUSTER_STORAGE_PROBE_DIR` | diretório temporário (ou `/var/tmp` se o temporário for RAM) | Onde gravar as sondas de disco. |
+| `AI_CLUSTER_STORAGE_PROBE_DIR` | primeiro de: diretório temporário, `/var/tmp`, diretório de trabalho do worker que não seja RAM | Onde gravar as sondas de disco. |
 | `AI_CLUSTER_STORAGE_HEALTH` | medido | Fixa a saúde do armazenamento entre 0 e 1 e desliga a sonda. |
 | `AI_CLUSTER_RECOMPUTE_INTERVAL_SECS` | `60` | Intervalo de remedição quando ocioso. `0` remede a cada passada ociosa. |
 | `AI_CLUSTER_TEMPERATURE_C` | sensor do sistema | Fixa a temperatura, em °C. |

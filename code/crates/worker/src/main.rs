@@ -1452,22 +1452,31 @@ fn storage_devices() -> Vec<StorageDevice> {
         .collect()
 }
 
-/// Where the storage probes write. `AI_CLUSTER_STORAGE_PROBE_DIR` wins; otherwise the temp dir,
-/// unless that is RAM (many embedded images mount `/tmp` as tmpfs, and the probe then measured
-/// memory: an SD card doing 6 MB/s scored as 780 MB/s), in which case `/var/tmp`.
+/// Where the storage probes write. `AI_CLUSTER_STORAGE_PROBE_DIR` wins; otherwise the first of the
+/// temp dir, `/var/tmp` and the working dir that is not RAM (many embedded images mount `/tmp` as
+/// tmpfs, and the probe then measured memory: an SD card doing 6 MB/s scored as 780 MB/s; the
+/// Orange Pi image has `/var/tmp` as tmpfs too, and the worker's working dir `/data/state` is the
+/// real disk).
 fn probe_dir() -> std::path::PathBuf {
     if let Some(dir) = std::env::var_os("AI_CLUSTER_STORAGE_PROBE_DIR") {
         return dir.into();
     }
-    let temp = std::env::temp_dir();
     let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-    if ram_backed(&mounts, &temp) {
-        let fallback = std::path::PathBuf::from("/var/tmp");
-        if fallback.is_dir() && !ram_backed(&mounts, &fallback) {
-            return fallback;
-        }
-    }
-    temp
+    let candidates = [
+        std::env::temp_dir(),
+        std::path::PathBuf::from("/var/tmp"),
+        std::env::current_dir().unwrap_or_default(),
+    ];
+    pick_probe_dir(&mounts, &candidates)
+}
+
+/// The first existing directory that is not RAM-backed; the first candidate when all are.
+fn pick_probe_dir(mounts: &str, candidates: &[std::path::PathBuf]) -> std::path::PathBuf {
+    candidates
+        .iter()
+        .find(|dir| dir.is_dir() && !ram_backed(mounts, dir))
+        .unwrap_or(&candidates[0])
+        .clone()
 }
 
 /// Whether `path` lives on a RAM filesystem, from the text of `/proc/self/mounts`: the longest
@@ -2607,6 +2616,28 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn the_probe_skips_every_ram_dir_down_to_the_working_dir() {
+        use std::path::PathBuf;
+        let dirs = [
+            PathBuf::from("/tmp"),
+            PathBuf::from("/var/tmp"),
+            PathBuf::from("/usr"),
+        ];
+        let both_ram = "/dev/x / ext4 rw 0 0
+tmpfs /tmp tmpfs rw 0 0
+tmpfs /var/tmp tmpfs rw 0 0
+";
+        assert_eq!(pick_probe_dir(both_ram, &dirs), PathBuf::from("/usr"));
+        let only_tmp = "/dev/x / ext4 rw 0 0
+tmpfs /tmp tmpfs rw 0 0
+";
+        assert_eq!(pick_probe_dir(only_tmp, &dirs), PathBuf::from("/var/tmp"));
+        let all_ram = "tmpfs / tmpfs rw 0 0
+";
+        assert_eq!(pick_probe_dir(all_ram, &dirs), PathBuf::from("/tmp"));
     }
 
     #[test]

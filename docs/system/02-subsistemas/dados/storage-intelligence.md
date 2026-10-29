@@ -29,7 +29,7 @@ O relatório de capacidade traz `storage_classes` da classe mais quente para a m
 
 ## Medida de escrita
 
-O worker escreve 16 MiB com `fsync` no diretório temporário (ou em `AI_CLUSTER_STORAGE_PROBE_DIR`), pega a melhor de três execuções e relaciona a taxa a 500 MB/s (um SSD SATA). Também mede a latência de escrita de 4 KiB com `fsync`. A medida é remedida no ocioso.
+O worker escreve 16 MiB com `fsync` no primeiro diretório que não seja RAM entre o temporário, `/var/tmp` e o diretório de trabalho do worker (ou em `AI_CLUSTER_STORAGE_PROBE_DIR`; na imagem do Orange Pi `/tmp` e `/var/tmp` são tmpfs, e antes disso o cartão SD saía com score de RAM), pega a melhor de três execuções e relaciona a taxa a 500 MB/s (um SSD SATA). Também mede a latência de escrita de 4 KiB com `fsync`. A medida é remedida no ocioso.
 
 O `fsync` faz a medida refletir o disco, e não o cache de página.
 
