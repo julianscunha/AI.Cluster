@@ -276,12 +276,18 @@ pub fn slots_from_env() -> Result<u32, String> {
 /// 503 `MODEL_LOADING` (0 a 600; padrão 120). Cobre recargas curtas (queda de worker, plano novo) sem
 /// que o cliente precise tentar de novo.
 pub fn wait_from_env() -> Duration {
-    let seconds = std::env::var("AI_CLUSTER_LLAMA_WAIT_SECS")
-        .ok()
+    parse_wait(std::env::var("AI_CLUSTER_LLAMA_WAIT_SECS").ok().as_deref())
+}
+
+fn parse_wait(value: Option<&str>) -> Duration {
+    let seconds = value
         .and_then(|v| v.trim().parse::<u64>().ok())
         .map_or(120, |n| n.min(600));
     Duration::from_secs(seconds)
 }
+
+/// Quanto o estado pode seguir `Ready` depois de um erro de conexão antes de o erro ser tido como outro.
+const CRASH_GRACE: Duration = Duration::from_secs(3);
 
 /// Espera `loading()` virar falso, no máximo `max`; devolve se virou.
 pub async fn wait_while(max: Duration, loading: impl Fn() -> bool) -> bool {
@@ -321,6 +327,20 @@ pub struct Llama {
 }
 
 impl Llama {
+    fn new(id: String, context: u32, port: u16, generation: u64) -> Self {
+        Self {
+            id,
+            context,
+            port,
+            state: Mutex::new(State::Loading),
+            tokens_per_second: Mutex::new(0.0),
+            client: Client::builder(TokioExecutor::new()).build_http(),
+            tasks: Mutex::new(Vec::new()),
+            generation,
+            unhealthy: tokio::sync::Notify::new(),
+        }
+    }
+
     /// Encerra os túneis e o supervisor (e, com ele, o `llama-server`). As tarefas guardam um
     /// `Arc<Llama>`, então só este método as encerra: quem solta o modelo deve chamá-lo antes. Devolve
     /// as tarefas abortadas para quem precisar esperar o fim delas.
@@ -337,14 +357,44 @@ impl Llama {
         tasks
     }
 
+    /// Manda o corpo ao servidor. Sem resposta nenhuma ainda, nada chegou ao cliente: uma queda do
+    /// servidor (worker que caiu) é refeita uma vez, depois da recarga. `None` se não deu.
+    async fn send_with_retry(
+        &self,
+        body: &Bytes,
+        grace: Duration,
+        max: Duration,
+    ) -> Option<hyper::Response<hyper::body::Incoming>> {
+        let build = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "http://127.0.0.1:{}/v1/chat/completions",
+                    self.port
+                ))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.clone()))
+                .expect("requisição válida")
+        };
+        let mut retried = false;
+        loop {
+            match self.client.request(build()).await {
+                Ok(response) => return Some(response),
+                Err(error) => {
+                    eprintln!("llama-server: {error}");
+                    if retried || !self.recovered(grace, max).await {
+                        return None;
+                    }
+                    retried = true;
+                }
+            }
+        }
+    }
+
     /// Depois de um erro de conexão: o servidor caiu e voltou? Espera o estado sair de `Ready` (até 3 s;
     /// se não sair, o erro era outro) e terminar de carregar (até `max`).
-    async fn recovered(&self, max: Duration) -> bool {
-        if !wait_while(Duration::from_secs(3), || {
-            matches!(self.state(), State::Ready)
-        })
-        .await
-        {
+    async fn recovered(&self, grace: Duration, max: Duration) -> bool {
+        if !wait_while(grace, || matches!(self.state(), State::Ready)).await {
             return false;
         }
         // `Failed` logo após a queda é o backoff do supervisor antes de subir o servidor de novo.
@@ -393,36 +443,15 @@ impl Llama {
             .ok()
             .is_some_and(|v| v["stream"].as_bool().unwrap_or(false));
         let body = if streaming { with_usage(&body) } else { body };
-        let build = || {
-            Request::builder()
-                .method("POST")
-                .uri(format!(
-                    "http://127.0.0.1:{}/v1/chat/completions",
-                    self.port
-                ))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(body.clone()))
-                .expect("requisição válida")
-        };
-        let mut retried = false;
-        let response = loop {
-            match self.client.request(build()).await {
-                Ok(response) => break response,
-                Err(error) => {
-                    eprintln!("llama-server: {error}");
-                    // Sem resposta nenhuma ainda: nada chegou ao cliente, então uma queda do servidor
-                    // (worker que caiu) pode ser refeita uma vez depois da recarga.
-                    if !retried && self.recovered(wait_from_env()).await {
-                        retried = true;
-                        continue;
-                    }
-                    return crate::error(
-                        StatusCode::BAD_GATEWAY,
-                        "MODEL_UNAVAILABLE",
-                        "o servidor do modelo não respondeu",
-                    );
-                }
-            }
+        let Some(response) = self
+            .send_with_retry(&body, CRASH_GRACE, wait_from_env())
+            .await
+        else {
+            return crate::error(
+                StatusCode::BAD_GATEWAY,
+                "MODEL_UNAVAILABLE",
+                "o servidor do modelo não respondeu",
+            );
         };
         let (parts, incoming) = response.into_parts();
         let stream = Tap {
@@ -530,17 +559,12 @@ impl Stream for Tap {
 /// Sobe os túneis, o `llama-server` e o supervisiona. Devolve já, com o estado `Loading`; o
 /// carregamento e o benchmark seguem em segundo plano. `shutdown` encerra tudo.
 pub fn start(config: LlamaConfig, generation: u64) -> Result<Arc<Llama>, String> {
-    let llama = Arc::new(Llama {
-        id: config.id.clone(),
-        context: config.context,
-        port: config.port,
-        state: Mutex::new(State::Loading),
-        tokens_per_second: Mutex::new(0.0),
-        client: Client::builder(TokioExecutor::new()).build_http(),
-        tasks: Mutex::new(Vec::new()),
+    let llama = Arc::new(Llama::new(
+        config.id.clone(),
+        config.context,
+        config.port,
         generation,
-        unhealthy: tokio::sync::Notify::new(),
-    });
+    ));
     // Tudo o que pode falhar vem antes de qualquer tarefa: um erro no meio não deixa túnel para trás
     // segurando uma porta (os listeners soltos se fecham sozinhos).
     let mut listeners = Vec::new();
@@ -1221,6 +1245,133 @@ data: [DONE]
         }
         Ready(items.into_iter())
     }
+    #[test]
+    fn the_wait_setting_parses_clamps_and_defaults() {
+        assert_eq!(parse_wait(None), Duration::from_secs(120));
+        assert_eq!(parse_wait(Some("")), Duration::from_secs(120));
+        assert_eq!(parse_wait(Some("abc")), Duration::from_secs(120));
+        assert_eq!(parse_wait(Some(" 7 ")), Duration::from_secs(7));
+        assert_eq!(parse_wait(Some("0")), Duration::ZERO);
+        assert_eq!(parse_wait(Some("999")), Duration::from_secs(600));
+    }
+
+    fn llama_on(port: u16, state: State) -> Arc<Llama> {
+        let llama = Arc::new(Llama::new("m".into(), 1024, port, 1));
+        llama.set(state);
+        llama
+    }
+
+    #[tokio::test]
+    async fn recovered_needs_the_server_to_leave_ready_and_come_back() {
+        let ms = Duration::from_millis;
+        // Sempre Ready: o erro era outro, nada a esperar.
+        let steady = llama_on(1, State::Ready);
+        assert!(!steady.recovered(ms(200), ms(2000)).await);
+        // Ready -> Failed (backoff) -> Loading -> Ready: voltou.
+        let back = llama_on(1, State::Ready);
+        let flip = back.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(ms(50)).await;
+            flip.set(State::Failed("caiu".into()));
+            tokio::time::sleep(ms(300)).await;
+            flip.set(State::Loading);
+            tokio::time::sleep(ms(300)).await;
+            flip.set(State::Ready);
+        });
+        assert!(back.recovered(ms(1000), ms(5000)).await);
+        // Falha permanente: desiste no prazo.
+        let dead = llama_on(1, State::Failed("x".into()));
+        assert!(!dead.recovered(ms(200), ms(600)).await);
+    }
+
+    /// Servidor de teste: as primeiras `drop_first` conexões são fechadas sem resposta (o llama-server
+    /// caiu); as seguintes recebem 200. Devolve a porta e o contador de conexões.
+    async fn flaky_server(drop_first: usize) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                if n < drop_first {
+                    continue; // fecha sem responder
+                }
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                    .await;
+            }
+        });
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_is_retried_once_after_the_reload() {
+        use std::sync::atomic::Ordering;
+        let ms = Duration::from_millis;
+        let (port, seen) = flaky_server(1).await;
+        let llama = llama_on(port, State::Ready);
+        // O supervisor percebe a queda e recarrega.
+        let flip = llama.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(ms(50)).await;
+            flip.set(State::Failed("caiu".into()));
+            tokio::time::sleep(ms(200)).await;
+            flip.set(State::Ready);
+        });
+        let body = Bytes::from_static(b"{}");
+        let response = llama.send_with_retry(&body, ms(1000), ms(5000)).await;
+        assert_eq!(response.expect("refeito").status(), StatusCode::OK);
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            2,
+            "uma queda, uma nova tentativa"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_drop_or_a_steady_server_is_not_retried_again() {
+        use std::sync::atomic::Ordering;
+        let ms = Duration::from_millis;
+        let body = Bytes::from_static(b"{}");
+        // Cai duas vezes: a segunda queda desiste (uma única nova tentativa).
+        let (port, seen) = flaky_server(2).await;
+        let llama = llama_on(port, State::Ready);
+        let flip = llama.clone();
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                tokio::time::sleep(ms(30)).await;
+                flip.set(State::Failed("caiu".into()));
+                tokio::time::sleep(ms(120)).await;
+                flip.set(State::Ready);
+            }
+        });
+        assert!(
+            llama
+                .send_with_retry(&body, ms(500), ms(3000))
+                .await
+                .is_none()
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 2);
+        // Servidor que não sai de Ready: o erro não era queda, uma tentativa só.
+        let (port, seen) = flaky_server(5).await;
+        let steady = llama_on(port, State::Ready);
+        assert!(
+            steady
+                .send_with_retry(&body, ms(100), ms(500))
+                .await
+                .is_none()
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn a_request_waits_for_a_short_reload_but_not_forever() {
         use std::sync::atomic::{AtomicU32, Ordering};

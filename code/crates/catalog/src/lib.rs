@@ -939,6 +939,32 @@ mod tests {
     }
 
     #[test]
+    fn family_knows_the_common_quantization_tags() {
+        assert_eq!(family("m-iq3_xs.gguf"), "m");
+        assert_eq!(family("m-bf16.gguf"), "m");
+        assert_eq!(family("m-fp16.gguf"), "m");
+        assert_eq!(family("m-Q6_K.gguf"), "m");
+        assert_eq!(family("m-instruct.gguf"), "m-instruct");
+    }
+
+    #[test]
+    fn split_checks_skip_parts_without_a_sidecar_and_bound_the_part_count() {
+        let dir = std::env::temp_dir().join(format!("aic-sha-edge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Parte 1 sem .sha256 e a parte 2 ausente: não há o que conferir, passa.
+        std::fs::write(dir.join("e-00001-of-00002.gguf"), b"abc").unwrap();
+        assert!(verify_checksum(&dir, "e-00001-of-00002.gguf").is_ok());
+        // Pedir a parte 2 confere o mesmo conjunto.
+        assert!(verify_checksum(&dir, "e-00002-of-00002.gguf").is_ok());
+        // Nome sem o padrão de partes: só o arquivo.
+        std::fs::write(dir.join("plain.gguf"), b"abc").unwrap();
+        assert!(verify_checksum(&dir, "plain.gguf").is_ok());
+        // Total absurdo: a lista de partes é limitada.
+        assert!(gguf_parts(&dir.join("z-00001-of-99999.gguf")).len() <= MAX_PARTS as usize);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn every_part_of_a_split_gguf_is_checked() {
         let dir = std::env::temp_dir().join(format!("aic-sha-parts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

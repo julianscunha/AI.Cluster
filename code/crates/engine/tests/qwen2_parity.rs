@@ -39,6 +39,7 @@ fn argmax(logits: &[f64]) -> usize {
 }
 
 #[test]
+#[ignore = "precisa dos pesos do Qwen2.5-0.5B em AI_CLUSTER_QWEN2_DIR; rode com --ignored"]
 fn the_tokenizer_matches_the_reference() {
     let Some(dir) = model_dir() else { return };
     let tokenizer = Tokenizer::open(&dir).unwrap();
@@ -55,6 +56,7 @@ fn the_tokenizer_matches_the_reference() {
 }
 
 #[test]
+#[ignore = "precisa dos pesos do Qwen2.5-0.5B em AI_CLUSTER_QWEN2_DIR; rode com --ignored"]
 fn the_logits_match_the_reference() {
     let Some(dir) = model_dir() else { return };
     let model = Llama::load(&dir).unwrap();
@@ -90,6 +92,7 @@ fn the_logits_match_the_reference() {
 }
 
 #[test]
+#[ignore = "precisa dos pesos do Qwen2.5-0.5B em AI_CLUSTER_QWEN2_DIR; rode com --ignored"]
 fn cached_generation_matches_recomputing_the_whole_prompt() {
     let Some(dir) = model_dir() else { return };
     let model = Llama::load(&dir).unwrap();

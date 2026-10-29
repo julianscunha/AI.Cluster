@@ -205,6 +205,15 @@ fn contraction(rest: &[char]) -> Option<usize> {
     }
 }
 
+/// `(dígitos soltos, regex do Qwen2)` segundo o `pre_tokenizer` de um `tokenizer.json`.
+fn pre_tokenizer_style(json: &serde_json::Value) -> (bool, bool) {
+    let text = json["pre_tokenizer"].to_string();
+    (
+        text.contains("\"individual_digits\":true"),
+        text.contains(r"\\p{L}+|\\p{N}|"),
+    )
+}
+
 impl Tokenizer {
     pub fn open(dir: &Path) -> Result<Self, String> {
         let read = |name: &str| {
@@ -216,13 +225,7 @@ impl Tokenizer {
         if let Ok(text) = read("tokenizer.json") {
             let json: serde_json::Value =
                 serde_json::from_str(&text).map_err(|err| format!("tokenizer.json: {err}"))?;
-            tokenizer.split_digits = json["pre_tokenizer"]
-                .to_string()
-                .contains("\"individual_digits\":true");
-            // A regex `Split` do Qwen2 troca a do GPT-2: letras com um caractere de abertura opcional.
-            tokenizer.qwen_style = json["pre_tokenizer"]
-                .to_string()
-                .contains(r"\\p{L}+|\\p{N}|");
+            (tokenizer.split_digits, tokenizer.qwen_style) = pre_tokenizer_style(&json);
         }
         Ok(tokenizer)
     }
@@ -371,6 +374,40 @@ mod tests {
         assert_eq!(pieces("x 12"), ["x", " ", "1", "2"]);
         assert_eq!(pieces("I'M ok"), ["I", "'M", " ok"]);
         assert_eq!(pieces("a\n  b"), ["a", "\n", " ", " b"]);
+    }
+
+    #[test]
+    fn the_qwen2_regex_edge_cases() {
+        let cut = |t: &str| split_qwen(t);
+        assert_eq!(cut(""), Vec::<String>::new());
+        assert_eq!(
+            cut("it's THEY'RE we'll"),
+            ["it", "'s", " THEY", "'RE", " we", "'ll"]
+        );
+        assert_eq!(cut("a\r\nb"), ["a", "\r\n", "b"]);
+        assert_eq!(cut("!\nx"), ["!\n", "x"]);
+        assert_eq!(cut("a  "), ["a", "  "]);
+        assert_eq!(cut("x  y"), ["x", " ", " y"]);
+        assert_eq!(cut("a\tb"), ["a", "\tb"]);
+        assert_eq!(cut("é中文"), ["é中文"]);
+        assert_eq!(cut("٣1"), ["٣", "1"]);
+        // Nada se perde: juntar os pedaços devolve o texto.
+        let text = "def f(x):\r\n\treturn x  +  1\n\n# fim";
+        assert_eq!(cut(text).concat(), text);
+    }
+
+    #[test]
+    fn only_a_qwen_tokenizer_json_turns_the_qwen_regex_on() {
+        let gpt2 =
+            serde_json::json!({"pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false}});
+        assert_eq!(pre_tokenizer_style(&gpt2), (false, false));
+        let digits =
+            serde_json::json!({"pre_tokenizer": {"type": "Digits", "individual_digits": true}});
+        assert_eq!(pre_tokenizer_style(&digits), (true, false));
+        let qwen = serde_json::json!({"pre_tokenizer": {"type": "Split", "pattern": {"Regex":
+            r"(?i:'s|'t)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*"}}});
+        assert_eq!(pre_tokenizer_style(&qwen), (false, true));
+        assert_eq!(pre_tokenizer_style(&serde_json::json!({})), (false, false));
     }
 
     #[test]

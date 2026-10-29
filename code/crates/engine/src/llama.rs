@@ -688,6 +688,60 @@ mod tests {
     }
 
     #[test]
+    fn a_janela_respeita_o_config_e_o_cache_incremental() {
+        let cfg = |extra: &str| format!(r#","tie_word_embeddings":true{extra}"#);
+        let logits = |dir: &std::path::Path| {
+            Llama::load(dir)
+                .unwrap()
+                .next_token_logits(&[1, 3, 2])
+                .unwrap()
+        };
+        let open = tiny_model("w-open", &cfg(""), None);
+        // use_sliding_window falso desliga a janela mesmo com sliding_window presente.
+        let off = tiny_model(
+            "w-off",
+            &cfg(r#","sliding_window":1,"use_sliding_window":false"#),
+            None,
+        );
+        assert_eq!(logits(&open), logits(&off));
+        // Janela maior ou igual ao contexto não limita nada.
+        let wide = tiny_model("w-wide", &cfg(r#","sliding_window":16"#), None);
+        assert_eq!(logits(&open), logits(&wide));
+        // Janela por camada é recusada.
+        let layered = tiny_model(
+            "w-layers",
+            &cfg(r#","sliding_window":2,"layer_types":["full"]"#),
+            None,
+        );
+        assert!(
+            Llama::load(&layered)
+                .err()
+                .expect("recusa")
+                .contains("camada")
+        );
+        // Janela 2 com o cache de chaves: gerar token a token = recalcular tudo.
+        let win = tiny_model("w-two", &cfg(r#","sliding_window":2"#), None);
+        let model = Llama::load(&win).unwrap();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let generated = model.generate(&[1, 3], 4, None, &cancel).unwrap();
+        let mut context = vec![1u32, 3];
+        for expected in &generated {
+            let scores = model.next_token_logits(&context).unwrap();
+            let best = scores
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .unwrap()
+                .0 as u32;
+            assert_eq!(best, *expected);
+            context.push(best);
+        }
+        for dir in [open, off, wide, layered, win] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn rope_scaling_default_e_linear_e_llama3() {
         let config = |scaling: &str| serde_json::from_str::<serde_json::Value>(scaling).unwrap();
         let base = rope_frequencies(&config(r#"{}"#), 500_000.0, 128).unwrap();

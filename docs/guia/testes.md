@@ -40,8 +40,9 @@ Três testes em `code/crates/engine/tests/` comparam a saída do motor com a do 
 | `gpt2_parity.rs` | `AI_CLUSTER_GPT2_DIR` |
 | `smollm2_parity.rs` | `AI_CLUSTER_SMOLLM2_DIR` |
 | `smollm2_chat_parity.rs` | `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` |
+| `qwen2_parity.rs` | `AI_CLUSTER_QWEN2_DIR` (marcado `#[ignore]`: rode com `cargo test --release -p ai-cluster-engine --test qwen2_parity -- --ignored --test-threads=1`) |
 
-Sem a variável, o teste avisa e **passa sem verificar nada**. Para rodar de verdade, baixe os pesos para `code/models/gpt2`, `code/models/smollm2` e `code/models/smollm2-instruct` (a pasta não vai para o git) e aponte a variável para o diretório. O `gpt2` tem cerca de 500 MB.
+Sem a variável, o teste avisa e **passa sem verificar nada** (o do Qwen2 fica `#[ignore]`, então a ausência aparece no relatório). O Qwen2.5-0.5B inteiro não cabe na RAM do motor (pesos em `f64`, ~4 GB): use um diretório com `num_hidden_layers` reduzido para 4 e gere o fixture com o mesmo diretório (`reference/smollm2_reference.py`). Para rodar de verdade, baixe os pesos para `code/models/gpt2`, `code/models/smollm2` e `code/models/smollm2-instruct` (a pasta não vai para o git) e aponte a variável para o diretório. O `gpt2` tem cerca de 500 MB.
 
 ## Suíte E2E
 

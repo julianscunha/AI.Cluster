@@ -3518,6 +3518,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_gateway_reports_its_ram_and_slots_and_invalid_values_keep_the_last() {
+        let service = service();
+        assert_eq!(service.gateway_free(), None, "sem relatório, não confere");
+        let report = |slots: u32, free: u64| ReportGatewayRequest {
+            llama_version: String::new(),
+            llama_slots: slots,
+            memory_available_bytes: free,
+            running: None,
+            stats: None,
+            gateway_id: "gw1".into(),
+            url: "http://gw:8080".into(),
+            models: Vec::new(),
+        };
+        service
+            .report_gateway(inference(report(4, 1 << 30)))
+            .await
+            .unwrap();
+        assert_eq!(service.gateway_free(), Some(1 << 30));
+        assert_eq!(service.slots(), 4);
+        // Zero e vagas fora de 1..=16 não apagam o que valia.
+        service
+            .report_gateway(inference(report(99, 0)))
+            .await
+            .unwrap();
+        assert_eq!(service.gateway_free(), Some(1 << 30));
+        assert_eq!(service.slots(), 4);
+    }
+
+    #[test]
+    fn the_gateway_ram_makes_pick_model_drop_a_variant_the_workers_could_hold() {
+        use ai_cluster_catalog::{ModelEntry, check::NodeMemory};
+        const GIB: u64 = 1 << 30;
+        let (service, _, _) = service_with_registry_and_work();
+        let entry = |id: &str, gib: u64| ModelEntry {
+            id: id.into(),
+            bytes: gib * GIB,
+            supported: true,
+            ..ModelEntry::default()
+        };
+        let found = [entry("m-q8.gguf", 8), entry("m-q4.gguf", 4)];
+        let nodes = [NodeMemory {
+            total_bytes: 32 * GIB,
+            used_fraction: 0.0,
+        }];
+        let id = || service.pick_model(&found, "m", 0, &nodes).map(|m| m.id);
+        assert_eq!(
+            id().as_deref(),
+            Some("m-q8.gguf"),
+            "sem informação, o maior"
+        );
+        // O gateway só tem 2 GiB livres: o q8 pede ~2,5 GiB lá, o q4 ~1,3.
+        service
+            .gateway_free
+            .store(2 * GIB, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(id().as_deref(), Some("m-q4.gguf"));
+    }
+
+    #[tokio::test]
     async fn o_gateway_se_apresenta_e_o_operador_o_lista() {
         use ai_cluster_protocol::cluster::GatewayModel;
         let service = service();

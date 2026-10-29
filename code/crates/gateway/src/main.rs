@@ -385,25 +385,31 @@ fn announce_gateway(
             let loading = llama.status().is_some_and(|s| {
                 s.state == ai_cluster_protocol::cluster::ModelState::ModelLoading as i32
             });
-            wait = Duration::from_secs(if loading {
-                GATEWAY_REPORT_LOADING_SECS
-            } else {
-                GATEWAY_REPORT_SECS
-            });
+            wait = report_interval(loading);
         }
     });
 }
 
 /// `MemAvailable` de `/proc/meminfo` em bytes; 0 quando não dá para ler (fora do Linux).
 fn memory_available_bytes() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("MemAvailable:"))
-                .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
-        })
+    parse_mem_available(&std::fs::read_to_string("/proc/meminfo").unwrap_or_default())
+}
+
+fn parse_mem_available(meminfo: &str) -> u64 {
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:"))
+        .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
         .map_or(0, |kib| kib.saturating_mul(1024))
+}
+
+/// Espera até a próxima apresentação ao controller: curta enquanto o modelo carrega.
+fn report_interval(loading: bool) -> Duration {
+    Duration::from_secs(if loading {
+        GATEWAY_REPORT_LOADING_SECS
+    } else {
+        GATEWAY_REPORT_SECS
+    })
 }
 
 /// A SmolLM2 checkpoint the gateway can serve, and the environment variables that configure it.
@@ -1955,6 +1961,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn meminfo_gives_mem_available_in_bytes_and_zero_when_missing() {
+        assert_eq!(
+            parse_mem_available(
+                "MemTotal: 4096 kB
+MemAvailable:   1024 kB
+Buffers: 1 kB
+"
+            ),
+            1_048_576
+        );
+        assert_eq!(
+            parse_mem_available(
+                "MemTotal: 4096 kB
+"
+            ),
+            0
+        );
+        assert_eq!(parse_mem_available(""), 0);
+        assert_eq!(parse_mem_available("MemAvailable: lixo kB"), 0);
+    }
+
+    #[test]
+    fn the_report_cadence_is_short_only_while_loading() {
+        assert_eq!(report_interval(true), Duration::from_secs(1));
+        assert_eq!(report_interval(false), Duration::from_secs(5));
+    }
+
     fn cap(node: &str, available: bool, cache: u64, memory: u64) -> NodeShardCapacity {
         NodeShardCapacity {
             node_id: node.into(),
