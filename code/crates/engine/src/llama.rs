@@ -29,6 +29,8 @@ struct Block {
     gate: Weight,
     up: Weight,
     down: Weight,
+    /// Viés de q, k e v (Qwen2): somado depois da projeção e antes do rope.
+    qkv_bias: Option<[Vec<f64>; 3]>,
 }
 
 pub struct Llama {
@@ -47,6 +49,8 @@ pub struct Llama {
     blocks: Vec<Block>,
     norm: Vec<f64>,
     executor: Option<Arc<dyn Executor>>,
+    /// Janela deslizante uniforme (Mistral): cada token vê só os últimos `window` (ele incluído).
+    window: Option<usize>,
 }
 
 /// `theta^(-2i/head_dim)` para os pares girados, com o `rope_scaling` da configuração aplicado:
@@ -191,16 +195,26 @@ impl Llama {
         let tied = config["tie_word_embeddings"].as_bool().unwrap_or(false);
 
         let tensors = Tensors::open(&dir.join("model.safetensors"))?;
-        // O Qwen2 não declara `attention_bias` no config: o viés de q/k/v é implícito e seria ignorado.
+        // O Qwen2 não declara `attention_bias` no config: o viés de q/k/v é implícito e vem nos tensores.
+        // Viés em o_proj (Llama com attention_bias) não é suportado e seria ignorado.
         if tensors
-            .shape("model.layers.0.self_attn.q_proj.bias")
+            .shape("model.layers.0.self_attn.o_proj.bias")
             .is_some()
         {
-            return Err(
-                "viés de atenção em q/k/v (como no Qwen2) não é suportado pelo motor próprio"
-                    .into(),
-            );
+            return Err("viés em o_proj não é suportado pelo motor próprio".into());
         }
+        // Janela deslizante: só a uniforme (todas as camadas). O Qwen2 declara `sliding_window` mas o
+        // desliga com `use_sliding_window: false`; camadas alternadas (Gemma 2) são recusadas.
+        if config.get("layer_types").is_some() {
+            return Err("janela deslizante por camada não é suportada".into());
+        }
+        let window = match config["sliding_window"].as_u64() {
+            Some(w) if config["use_sliding_window"].as_bool() != Some(false) => {
+                Some(usize::try_from(w).map_err(|_| "sliding_window grande demais")?)
+            }
+            _ => None,
+        }
+        .filter(|w| *w > 0 && *w < context);
         let (executor, nodes) = match remote {
             Some((executor, nodes)) => (Some(executor), nodes),
             None => (None, Vec::new()),
@@ -241,7 +255,18 @@ impl Llama {
         let blocks = (0..layers)
             .map(|n| {
                 let at = |part: &str| format!("model.layers.{n}.{part}.weight");
+                let bias_at = |part: &str| format!("model.layers.{n}.{part}.bias");
+                let qkv_bias = if tensors.shape(&bias_at("self_attn.q_proj")).is_some() {
+                    Some([
+                        vector(bias_at("self_attn.q_proj"), width)?,
+                        vector(bias_at("self_attn.k_proj"), kv_width)?,
+                        vector(bias_at("self_attn.v_proj"), kv_width)?,
+                    ])
+                } else {
+                    None
+                };
                 Ok(Block {
+                    qkv_bias,
                     attn_norm: vector(at("input_layernorm"), width)?,
                     q: weight(at("self_attn.q_proj"), width, width)?,
                     k: weight(at("self_attn.k_proj"), kv_width, width)?,
@@ -267,6 +292,7 @@ impl Llama {
             blocks,
             norm: vector("model.norm.weight".into(), width)?,
             executor,
+            window,
         })
     }
 
@@ -302,10 +328,17 @@ impl Llama {
     ) -> Result<Matrix, String> {
         let tokens = input.rows as usize;
         let past = cache.len;
-        let [mut q, mut k, v]: [Matrix; 3] = self
+        let [mut q, mut k, mut v]: [Matrix; 3] = self
             .linear(input, &[&block.q, &block.k, &block.v])?
             .try_into()
             .map_err(|_| "saídas de q, k e v")?;
+        if let Some([bq, bk, bv]) = &block.qkv_bias {
+            for (m, bias) in [(&mut q, bq), (&mut k, bk), (&mut v, bv)] {
+                for row in m.data.chunks_exact_mut(bias.len()) {
+                    row.iter_mut().zip(bias).for_each(|(x, b)| *x += b);
+                }
+            }
+        }
         self.rope(&mut q, past);
         self.rope(&mut k, past);
         cache.keys[layer].extend_from_slice(&k.data);
@@ -323,14 +356,17 @@ impl Llama {
             for t in 0..tokens {
                 let query = &q.data[t * width + q_at..t * width + q_at + hd];
                 let visible = past + t + 1;
-                for (s, weight) in weights[..visible].iter_mut().enumerate() {
-                    let key = &keys[s * kv_width + kv_at..s * kv_width + kv_at + hd];
+                let first = self.window.map_or(0, |w| visible.saturating_sub(w));
+                for (s, weight) in weights[first..visible].iter_mut().enumerate() {
+                    let key =
+                        &keys[(first + s) * kv_width + kv_at..(first + s) * kv_width + kv_at + hd];
                     *weight = query.iter().zip(key).map(|(a, b)| a * b).sum::<f64>() * scale;
                 }
-                softmax(&mut weights[..visible]);
+                softmax(&mut weights[first..visible]);
                 let out = &mut mixed.data[t * width + q_at..t * width + q_at + hd];
-                for (s, weight) in weights[..visible].iter().enumerate() {
-                    let value = &values[s * kv_width + kv_at..s * kv_width + kv_at + hd];
+                for (s, weight) in weights[first..visible].iter().enumerate() {
+                    let value = &values
+                        [(first + s) * kv_width + kv_at..(first + s) * kv_width + kv_at + hd];
                     for (o, v) in out.iter_mut().zip(value) {
                         *o += weight * v;
                     }
@@ -461,6 +497,7 @@ mod tests {
             blocks: Vec::new(),
             norm: Vec::new(),
             executor: None,
+            window: None,
         }
     }
 
@@ -539,6 +576,11 @@ mod tests {
         ];
         if config_extra.contains("qwen2") {
             tensors.push(("model.layers.0.self_attn.q_proj.bias", vec![4]));
+            tensors.push(("model.layers.0.self_attn.k_proj.bias", vec![4]));
+            tensors.push(("model.layers.0.self_attn.v_proj.bias", vec![4]));
+        }
+        if config_extra.contains("oproj") {
+            tensors.push(("model.layers.0.self_attn.o_proj.bias", vec![4]));
         }
         if head.is_some() {
             tensors.push(("lm_head.weight", vec![4, 4]));
@@ -602,15 +644,47 @@ mod tests {
     }
 
     #[test]
-    fn o_vies_de_atencao_implicito_do_qwen_e_recusado() {
-        let dir = tiny_model(
-            "qwen",
+    fn o_vies_de_qkv_do_qwen_muda_a_saida_e_o_de_o_proj_e_recusado() {
+        let plain = tiny_model("plain-b", r#","tie_word_embeddings":true"#, None);
+        let biased = tiny_model(
+            "qwen-b",
             r#","model_type":"qwen2","tie_word_embeddings":true"#,
             None,
         );
-        let error = Llama::load(&dir).err().expect("viés recusado");
-        assert!(error.contains("viés de atenção"), "{error}");
-        std::fs::remove_dir_all(dir).unwrap();
+        let logits = |dir: &std::path::Path| {
+            Llama::load(dir)
+                .unwrap()
+                .next_token_logits(&[1, 2])
+                .unwrap()
+        };
+        assert_ne!(logits(&plain), logits(&biased), "o viés entra na conta");
+
+        let output = tiny_model("oproj-b", r#","tie_word_embeddings":true,"oproj":1"#, None);
+        let error = Llama::load(&output).err().expect("viés de o_proj recusado");
+        assert!(error.contains("o_proj"), "{error}");
+        for dir in [plain, biased, output] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_janela_deslizante_limita_o_que_cada_token_ve() {
+        let open = tiny_model("win-off", r#","tie_word_embeddings":true"#, None);
+        let windowed = tiny_model(
+            "win-on",
+            r#","tie_word_embeddings":true,"sliding_window":1"#,
+            None,
+        );
+        let logits = |dir: &std::path::Path, ids: &[u32]| {
+            Llama::load(dir).unwrap().next_token_logits(ids).unwrap()
+        };
+        // Janela 1: o último token só vê a si mesmo, então o que veio antes não importa.
+        assert_eq!(logits(&windowed, &[1, 3]), logits(&windowed, &[2, 3]));
+        // Sem janela o passado conta.
+        assert_ne!(logits(&open, &[1, 3]), logits(&open, &[2, 3]));
+        for dir in [open, windowed] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

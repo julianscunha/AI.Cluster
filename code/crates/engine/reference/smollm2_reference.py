@@ -22,6 +22,9 @@ TOKENIZER_TEXTS = [
     "naïve café – 数字 123",
     "In 2024, pi is 3.14159 and 100% of 7 is 7.",
     "The quick brown fox jumps over the lazy dog.",
+    "def add(a, b):\n    return a + b\n\n\nprint(add(1, 22))",
+    "x  =  [1, 2,3]\r\n\t# comentário\n",
+    "It's THEY'RE we'll I'M 'quoted' \"text\" (a) [b] {c}",
 ]
 LOGIT_TEXTS = [
     "The capital of France is",

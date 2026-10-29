@@ -26,6 +26,8 @@ pub struct Tokenizer {
     char_to_byte: HashMap<char, u8>,
     /// Every digit is its own piece before the regex runs (SmolLM2's `Digits` pre-tokenizer).
     split_digits: bool,
+    /// The Qwen2 pre-tokenizer regex instead of GPT-2's (`tokenizer.json` says which).
+    qwen_style: bool,
 }
 
 /// The reversible byte -> printable char table GPT-2 uses, so every byte has a visible stand-in.
@@ -127,6 +129,73 @@ fn split_regex(text: &str) -> Vec<String> {
     pieces
 }
 
+/// Splits `text` the way the Qwen2 regex does:
+/// `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`.
+/// Alternatives are tried in that order at each position, like the regex engine does.
+pub fn split_qwen(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let is_newline = |c: char| c == '\r' || c == '\n';
+    let letter = |c: char| class(c) == Class::Letter;
+    let other = |c: char| class(c) == Class::Other;
+    let mut pieces = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let end = 'piece: {
+            // (?i:'s|'t|'re|'ve|'m|'ll|'d)
+            if c == '\'' {
+                let rest: Vec<char> = chars[i + 1..]
+                    .iter()
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect();
+                if let Some(len) = contraction(&rest) {
+                    break 'piece i + 1 + len;
+                }
+            }
+            // [^\r\n\p{L}\p{N}]?\p{L}+
+            let lead = usize::from(!letter(c) && !is_newline(c) && class(c) != Class::Number);
+            if chars.get(i + lead).is_some_and(|c| letter(*c)) {
+                let mut j = i + lead;
+                while j < chars.len() && letter(chars[j]) {
+                    j += 1;
+                }
+                break 'piece j;
+            }
+            // \p{N}
+            if class(c) == Class::Number {
+                break 'piece i + 1;
+            }
+            // ` ?[^\s\p{L}\p{N}]+[\r\n]*`
+            let start = i + usize::from(c == ' ');
+            if chars.get(start).is_some_and(|c| other(*c)) {
+                let mut j = start;
+                while j < chars.len() && other(chars[j]) {
+                    j += 1;
+                }
+                while j < chars.len() && is_newline(chars[j]) {
+                    j += 1;
+                }
+                break 'piece j;
+            }
+            // Whitespace: \s*[\r\n]+, then \s+(?!\S), then \s+.
+            let mut run = i;
+            while run < chars.len() && class(chars[run]) == Class::Space {
+                run += 1;
+            }
+            if let Some(last) = (i..run).rev().find(|k| is_newline(chars[*k])) {
+                break 'piece last + 1;
+            }
+            if run < chars.len() && run - i > 1 {
+                break 'piece run - 1;
+            }
+            run
+        };
+        pieces.push(chars[i..end].iter().collect());
+        i = end;
+    }
+    pieces
+}
+
 /// Length of the contraction suffix (`s t m d re ve ll`) at the start of `rest`, if any.
 fn contraction(rest: &[char]) -> Option<usize> {
     match rest {
@@ -150,6 +219,10 @@ impl Tokenizer {
             tokenizer.split_digits = json["pre_tokenizer"]
                 .to_string()
                 .contains("\"individual_digits\":true");
+            // A regex `Split` do Qwen2 troca a do GPT-2: letras com um caractere de abertura opcional.
+            tokenizer.qwen_style = json["pre_tokenizer"]
+                .to_string()
+                .contains(r"\\p{L}+|\\p{N}|");
         }
         Ok(tokenizer)
     }
@@ -185,6 +258,7 @@ impl Tokenizer {
             byte_to_char,
             char_to_byte,
             split_digits: false,
+            qwen_style: false,
         })
     }
 
@@ -204,7 +278,12 @@ impl Tokenizer {
             return Err(format!("texto acima de {MAX_TEXT_BYTES} bytes"));
         }
         let mut ids = Vec::new();
-        for piece in pre_tokenize_with(text, self.split_digits) {
+        let pieces = if self.qwen_style {
+            split_qwen(text)
+        } else {
+            pre_tokenize_with(text, self.split_digits)
+        };
+        for piece in pieces {
             if piece.len() > MAX_PIECE_BYTES {
                 return Err(format!(
                     "trecho sem separador acima de {MAX_PIECE_BYTES} bytes"
@@ -280,6 +359,18 @@ mod tests {
         assert_eq!(pre_tokenize("'x"), ["'", "x"]);
         assert_eq!(pre_tokenize(" 12 ab"), [" 12", " ab"]);
         assert!(pre_tokenize("").is_empty());
+    }
+
+    #[test]
+    fn the_qwen2_regex_keeps_a_leading_mark_with_the_word_and_cuts_digits() {
+        let pieces = |t: &str| split_qwen(t);
+        assert_eq!(
+            pieces("def add(a, b):"),
+            ["def", " add", "(a", ",", " b", "):"]
+        );
+        assert_eq!(pieces("x 12"), ["x", " ", "1", "2"]);
+        assert_eq!(pieces("I'M ok"), ["I", "'M", " ok"]);
+        assert_eq!(pieces("a\n  b"), ["a", "\n", " ", " b"]);
     }
 
     #[test]
