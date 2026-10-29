@@ -242,6 +242,9 @@ pub struct WorkStore {
     /// disco fraco em rajadas; o que ficou para trás sai no `flush`.
     write_gap_ms: AtomicU64,
     last_write_ms: AtomicU64,
+    /// Quanto durou a última gravação: o intervalo nunca fica abaixo de 9 vezes isto, então gravar
+    /// custa no máximo ~10% do tempo, qualquer que seja o tamanho do estado ou a velocidade do disco.
+    last_cost_ms: AtomicU64,
     dirty: AtomicBool,
 }
 
@@ -628,6 +631,12 @@ impl WorkStore {
         }
         let gap = self.write_gap_ms.load(Ordering::Relaxed);
         let now = crate::registry::unix_ms();
+        // Intervalo desligado (0) segue desligado; ligado, nunca abaixo de 9 vezes o custo da última gravação.
+        let gap = if gap == 0 {
+            0
+        } else {
+            gap.max(self.last_cost_ms.load(Ordering::Relaxed).saturating_mul(9))
+        };
         if gap > 0 && now.saturating_sub(self.last_write_ms.load(Ordering::Relaxed)) < gap {
             self.dirty.store(true, Ordering::Relaxed);
             return;
@@ -654,8 +663,8 @@ impl WorkStore {
             return;
         };
         self.dirty.store(false, Ordering::Relaxed);
-        self.last_write_ms
-            .store(crate::registry::unix_ms(), Ordering::Relaxed);
+        let started = crate::registry::unix_ms();
+        self.last_write_ms.store(started, Ordering::Relaxed);
         let epoch = match self.replica_epoch() {
             0 => self.next_epoch(),
             current if !bump_epoch => current,
@@ -719,6 +728,10 @@ impl WorkStore {
             epoch_unix_ms: epoch,
             snapshot: bytes,
         }));
+        self.last_cost_ms.store(
+            crate::registry::unix_ms().saturating_sub(started),
+            Ordering::Relaxed,
+        );
     }
 
     /// Guarda o histórico de concluídas em `path` (veja `traces.rs`) e recarrega o que já havia, no
@@ -2447,6 +2460,29 @@ mod tests {
                 .work_id,
             "w1"
         );
+    }
+
+    #[test]
+    fn a_slow_save_stretches_the_gap_to_nine_times_its_cost() {
+        let dir = std::env::temp_dir().join(format!("aic-work-cost-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("state.bin");
+        let store = WorkStore::with_state(&path);
+        store.set_write_gap_ms(5); // curto: sozinho deixaria a segunda gravação passar
+        store.enqueue([unit("w1")]);
+        // Como se a última gravação tivesse levado um minuto (disco lento, estado grande).
+        store.last_cost_ms.store(60_000, Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        store.enqueue([unit("w2")]);
+        assert_eq!(
+            WorkStore::with_state(&path).pending(),
+            1,
+            "segurada pelo custo"
+        );
+        store.flush();
+        assert_eq!(WorkStore::with_state(&path).pending(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
