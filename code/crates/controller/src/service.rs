@@ -324,6 +324,28 @@ impl ClusterControlService {
 
     /// Os workers aptos, com a velocidade da CPU e a RAM que oferecem; o orquestrador escolhe quais
     /// carregam o modelo (`models::select`).
+    /// Resolve o nome pedido: o id exato, ou, sendo uma família, a variante mais precisa que cabe (a
+    /// menor, se nenhuma cabe, para o veredito dizer quanto falta).
+    fn pick_model(
+        &self,
+        found: &[ai_cluster_catalog::ModelEntry],
+        wanted: &str,
+        context: u64,
+        nodes: &[ai_cluster_catalog::check::NodeMemory],
+    ) -> Option<ai_cluster_catalog::ModelEntry> {
+        let list = ai_cluster_catalog::variants(found, wanted);
+        if list.len() <= 1 {
+            return list.first().map(|m| (*m).clone());
+        }
+        let (slots, free) = (self.slots(), self.gateway_free());
+        list.iter()
+            .find(|m| {
+                m.supported && ai_cluster_catalog::check::check(m, context, slots, nodes, free).ok
+            })
+            .or(list.last())
+            .map(|m| (*m).clone())
+    }
+
     /// RAM livre do gateway, se ele já informou.
     fn gateway_free(&self) -> Option<u64> {
         match self.gateway_free.load(std::sync::atomic::Ordering::Relaxed) {
@@ -818,7 +840,8 @@ impl ClusterControl for ClusterControlService {
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
         .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
-        let Some(model) = found.into_iter().find(|m| m.id == wanted) else {
+        let nodes = self.rpc_node_memory();
+        let Some(model) = self.pick_model(&found, &wanted, request.context, &nodes) else {
             return Err(Status::not_found(format!(
                 "modelo {wanted} não está na pasta"
             )));
@@ -863,7 +886,6 @@ impl ClusterControl for ClusterControlService {
             );
         };
         let candidates = self.rpc_candidates();
-        let nodes = self.rpc_node_memory();
         let verdict = ai_cluster_catalog::check::check(
             &model,
             request.context,
@@ -1047,16 +1069,6 @@ impl ClusterControl for ClusterControlService {
                 .find(|m| api_model_id(&m.id).as_deref() == Some(s.model_id.as_str()))
                 .map_or(0, |m| m.bytes)
         });
-        let Some(model) = found.into_iter().find(|m| m.id == wanted) else {
-            return Err(Status::not_found(format!(
-                "modelo {wanted} não está na pasta"
-            )));
-        };
-        let estimated_tokens_per_second = crate::models::estimate_tokens_per_second(
-            running.map_or(0.0, |s| s.tokens_per_second),
-            running_bytes,
-            model.bytes,
-        );
         let nodes: Vec<ai_cluster_catalog::check::NodeMemory> = self
             .registry
             .list()
@@ -1072,6 +1084,16 @@ impl ClusterControl for ClusterControlService {
                 })
             })
             .collect();
+        let Some(model) = self.pick_model(&found, &wanted, request.context, &nodes) else {
+            return Err(Status::not_found(format!(
+                "modelo {wanted} não está na pasta"
+            )));
+        };
+        let estimated_tokens_per_second = crate::models::estimate_tokens_per_second(
+            running.map_or(0.0, |s| s.tokens_per_second),
+            running_bytes,
+            model.bytes,
+        );
         let verdict = ai_cluster_catalog::check::check(
             &model,
             request.context,
@@ -2571,6 +2593,42 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn a_family_name_picks_the_most_precise_variant_that_fits() {
+        use ai_cluster_catalog::{ModelEntry, check::NodeMemory};
+        const GIB: u64 = 1 << 30;
+        let (service, _, _) = service_with_registry_and_work();
+        let entry = |id: &str, gib: u64| ModelEntry {
+            id: id.into(),
+            bytes: gib * GIB,
+            supported: true,
+            ..ModelEntry::default()
+        };
+        let found = [
+            entry("m-q8.gguf", 8),
+            entry("m-q4.gguf", 4),
+            entry("m-q2.gguf", 2),
+        ];
+        let node = |gib: u64| NodeMemory {
+            total_bytes: gib * GIB,
+            used_fraction: 0.0,
+        };
+        let id = |nodes: &[NodeMemory], wanted: &str| {
+            service.pick_model(&found, wanted, 0, nodes).map(|m| m.id)
+        };
+        // 3 nós de 4 GiB (~9,2 GB úteis) comportam o q8; 2 nós (~6,1 GB) só o q4.
+        assert_eq!(
+            id(&[node(4), node(4), node(4)], "m").as_deref(),
+            Some("m-q8.gguf")
+        );
+        assert_eq!(id(&[node(4), node(4)], "m").as_deref(), Some("m-q4.gguf"));
+        // Nada cabe: devolve a menor, para o veredito dizer quanto falta.
+        assert_eq!(id(&[node(1)], "m").as_deref(), Some("m-q2.gguf"));
+        // Id exato não troca de variante.
+        assert_eq!(id(&[node(1)], "m-q8.gguf").as_deref(), Some("m-q8.gguf"));
+        assert_eq!(id(&[node(1)], "nada"), None);
     }
 
     #[test]

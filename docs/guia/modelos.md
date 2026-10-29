@@ -32,13 +32,14 @@ ai-cluster model status                  # estado (CARREGANDO, PRONTO), workers 
 
 1. Baixe um modelo em **GGUF** e ponha na pasta `AI_CLUSTER_MODELS_DIR` do controller (a mesma pasta
    precisa estar visível ao gateway).
-2. `model start` confere a soma da RAM dos workers aprovados e vivos. Se não couber, diz o que falta e
+2. O nome pode ser o arquivo (`qwen25-05b-q4.gguf`) ou a **família** (`qwen25-05b`, o nome sem a etiqueta de quantização `-q4`, `-Q4_K_M`, `-q8_0`, `-f16`...). Pela família, `model check` e `model start` escolhem a variante mais precisa (a maior) que cabe na RAM; se nenhuma cabe, mostram o veredito da menor. O GGUF não traz uma versão confiável: a versão é a do nome do arquivo.
+3. `model start` confere a soma da RAM dos workers aprovados e vivos. Se não couber, diz o que falta e
    quantos workers acrescentar. Se couber, o controller guarda o pedido, cria a chave de API (só o
    **hash** fica com ele) e o gateway carrega o modelo pelo llama.cpp, dividido com os workers por RPC
    sobre mTLS.
-3. Use a chave como `Authorization: Bearer <chave>` em `POST /v1/chat/completions`, com o `model` que
+4. Use a chave como `Authorization: Bearer <chave>` em `POST /v1/chat/completions`, com o `model` que
    `GET /v1/models` mostra (o nome do arquivo sem `.gguf`).
-4. **Worker novo:** depois de 30 s com a mesma lista de workers, o controller refaz o plano, o gateway
+5. **Worker novo:** depois de 30 s com a mesma lista de workers, o controller refaz o plano, o gateway
    recarrega o modelo e o `model status` mostra o benchmark novo. `model stop` tira o modelo da API; a
    chave continua valendo no próximo `start`.
 

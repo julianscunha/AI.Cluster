@@ -126,6 +126,37 @@ pub fn verify_checksum(dir: &Path, id: &str) -> Result<(), String> {
     }
 }
 
+/// Nome-base de um modelo: sem `.gguf` e sem a etiqueta de quantização no fim (`-q4`, `-Q4_K_M`,
+/// `-q8_0`, `-iq3_xs`, `-f16`, `-bf16`), para que as variantes do mesmo modelo tenham a mesma família.
+pub fn family(id: &str) -> String {
+    let stem = id.strip_suffix(".gguf").unwrap_or(id);
+    let Some((base, tag)) = stem.rsplit_once('-') else {
+        return stem.to_string();
+    };
+    let tag = tag.to_ascii_lowercase();
+    let digits = tag.strip_prefix("iq").or_else(|| tag.strip_prefix('q'));
+    let quant = digits.is_some_and(|d| {
+        d.starts_with(|c: char| c.is_ascii_digit())
+            && d.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }) || matches!(tag.as_str(), "f16" | "f32" | "bf16" | "fp16" | "fp32");
+    if quant {
+        base.to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+/// Os modelos que `name` pede: o de id exato, ou, não havendo, as variantes da família `name`, da
+/// maior (mais precisa) para a menor.
+pub fn variants<'a>(entries: &'a [ModelEntry], name: &str) -> Vec<&'a ModelEntry> {
+    if let Some(exact) = entries.iter().find(|m| m.id == name) {
+        return vec![exact];
+    }
+    let mut found: Vec<&ModelEntry> = entries.iter().filter(|m| family(&m.id) == name).collect();
+    found.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.id.cmp(&b.id)));
+    found
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -850,6 +881,36 @@ mod tests {
                 .contains("válido")
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn variants_share_a_family_and_come_largest_first() {
+        assert_eq!(family("qwen25-05b-q4.gguf"), "qwen25-05b");
+        assert_eq!(family("Llama-3-8B-Q4_K_M.gguf"), "Llama-3-8B");
+        assert_eq!(family("m-f16.gguf"), "m");
+        assert_eq!(family("dir/x-q8_0.gguf"), "dir/x");
+        assert_eq!(family("plain.gguf"), "plain");
+        assert_eq!(
+            family("model-quest.gguf"),
+            "model-quest",
+            "quest não é quantização"
+        );
+        let entry = |id: &str, bytes: u64| ModelEntry {
+            id: id.into(),
+            bytes,
+            ..ModelEntry::default()
+        };
+        let all = [
+            entry("m-q4.gguf", 4),
+            entry("m-q8.gguf", 8),
+            entry("other.gguf", 1),
+        ];
+        let ids = |name: &str| -> Vec<String> {
+            variants(&all, name).iter().map(|m| m.id.clone()).collect()
+        };
+        assert_eq!(ids("m"), ["m-q8.gguf", "m-q4.gguf"]);
+        assert_eq!(ids("m-q4.gguf"), ["m-q4.gguf"], "id exato vence");
+        assert!(ids("nada").is_empty());
     }
 
     #[test]
