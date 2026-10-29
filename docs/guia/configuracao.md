@@ -64,7 +64,7 @@ Convenções:
 | `AI_CLUSTER_RPC_CLIENT_NAME` | `aic-gateway` | Nome no SAN que o certificado do **cliente** do túnel precisa ter. O certificado de um worker (SAN `aic-worker`) é da mesma CA, mas não vale como cliente: um worker comprometido não abre o `rpc-server` de outro. |
 | `AI_CLUSTER_RPC_LISTEN` | `0.0.0.0:50061` | Onde o túnel escuta; é a única porta aberta para a rede. |
 | `AI_CLUSTER_RPC_LOCAL_PORT` | `50062` | Porta do `rpc-server` em loopback. |
-| `AI_CLUSTER_RPC_CACHE` | automático | `1`/`true`: liga o `rpc-server -c` (cache dos tensores em disco; no cartão SD ocupa o tamanho da fatia); qualquer outro valor desliga. Sem a variável, liga sozinho se `AI_CLUSTER_RPC_CACHE_DIR` existir e tiver livre o dobro da RAM do nó. |
+| `AI_CLUSTER_RPC_CACHE` | desligado | `1`/`true`: liga o `rpc-server -c` (cache dos tensores em disco; no cartão SD ocupa o tamanho da fatia). Medido num Orange Pi com um modelo de 0,37 GB: sem ganho no tempo de carga. |
 | `AI_CLUSTER_RPC_CACHE_DIR` | diretório do usuário do llama.cpp | Onde o `rpc-server` guarda o cache (`LLAMA_CACHE`). No Compose é o volume `worker-cache` em `/cache`; fora de contêiner, aponte para o disco real do nó, não para tmpfs. |
 | `AI_CLUSTER_RPC_ADVERTISE_HOST` / `AI_CLUSTER_RPC_VERSION` | — | Endereço que o gateway usa e versão do llama.cpp com o patch; o nó anuncia os dois. |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | `1` ou `true`: diretório de modelo sem `manifest.json` é erro. |

@@ -94,16 +94,8 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         return Some(Err(format!("AI_CLUSTER_RPC_LISTEN inválido: {listen}")));
     }
     let cache_dir = var("AI_CLUSTER_RPC_CACHE_DIR");
-    // Explícito vale; sem a variável o cache liga sozinho se o diretório tem o dobro da RAM livre.
-    // shortcut: a regra é grosseira (2 × RAM total), refine se houver medida de ganho por disco.
-    let cache = match var("AI_CLUSTER_RPC_CACHE").as_deref() {
-        Some("1" | "true") => true,
-        Some(_) => false,
-        None => cache_dir.as_deref().is_some_and(|dir| {
-            let ram = memory_total_bytes();
-            ram > 0 && free_bytes(dir) >= ram.saturating_mul(2)
-        }),
-    };
+    // Só liga se pedido: no Orange Pi (SD, modelo de 0,37 GB) o cache não mostrou ganho e ocupa disco.
+    let cache = matches!(var("AI_CLUSTER_RPC_CACHE").as_deref(), Some("1" | "true"));
     let client_role = var("AI_CLUSTER_RPC_CLIENT_NAME").unwrap_or_else(|| "aic-gateway".into());
     Some(Ok(RpcConfig {
         bin,
@@ -213,42 +205,6 @@ async fn wait_for_valid_clock() {
         waited += 1;
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
-}
-
-/// Espaço livre, em bytes, no sistema de arquivos de `dir` (0 se não existe ou fora do Linux).
-#[cfg(target_os = "linux")]
-fn free_bytes(dir: &str) -> u64 {
-    let Ok(path) = std::ffi::CString::new(dir) else {
-        return 0;
-    };
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
-    // SAFETY: `path` é uma string C válida e `stat` tem o tamanho de uma `statvfs`.
-    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return 0;
-    }
-    // SAFETY: a chamada preencheu a estrutura.
-    let stat = unsafe { stat.assume_init() };
-    // Em armv7 os campos são u32: o cast é necessário lá, redundante em x86_64.
-    #[allow(clippy::unnecessary_cast)]
-    let free = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
-    free
-}
-
-#[cfg(not(target_os = "linux"))]
-fn free_bytes(_dir: &str) -> u64 {
-    0
-}
-
-/// RAM total da máquina em bytes (`/proc/meminfo`); 0 quando não dá para ler.
-fn memory_total_bytes() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("MemTotal:"))
-                .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
-        })
-        .map_or(0, |kib| kib.saturating_mul(1024))
 }
 
 /// A porta do `rpc-server` em loopback está livre? Outro processo nela receberia o tráfego do túnel.
@@ -365,18 +321,14 @@ mod tests {
         assert_eq!(config.server_args().last().map(String::as_str), Some("-c"));
         assert_eq!(config.server_args()[5], "1", "pelo menos uma thread");
 
-        // Com o diretório e sem a opção: liga só se houver o dobro da RAM livre (o /tmp do teste decide).
+        // O diretório sozinho não liga o cache; `0` o mantém desligado.
         unsafe {
             std::env::remove_var("AI_CLUSTER_RPC_CACHE");
-            std::env::set_var("AI_CLUSTER_RPC_CACHE_DIR", "/nao/existe");
+            std::env::set_var("AI_CLUSTER_RPC_CACHE_DIR", "/cache");
         }
         let config = from_env(4).unwrap().unwrap();
-        assert!(!config.cache, "diretório inexistente não liga o cache");
-        assert_eq!(config.cache_dir.as_deref(), Some("/nao/existe"));
-        unsafe { std::env::set_var("AI_CLUSTER_RPC_CACHE", "0") };
-        assert!(!from_env(4).unwrap().unwrap().cache, "0 desliga");
-        #[cfg(target_os = "linux")]
-        assert!(free_bytes("/tmp") > 0 && memory_total_bytes() > 0);
+        assert!(!config.cache);
+        assert_eq!(config.cache_dir.as_deref(), Some("/cache"));
 
         unsafe { std::env::set_var("AI_CLUSTER_RPC_LISTEN", "sem-porta") };
         assert!(from_env(4).unwrap().is_err());
