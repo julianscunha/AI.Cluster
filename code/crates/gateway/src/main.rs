@@ -220,7 +220,10 @@ fn grpc_executor(
 /// Presents this gateway to the controller now and every `GATEWAY_REPORT_SECS`, so the operator's
 /// topology shows it: who it is, where clients reach it, which models it serves and which nodes hold
 /// their slices. Best effort: a controller that is down or too old only means it is not listed.
-const GATEWAY_REPORT_SECS: u64 = 15;
+const GATEWAY_REPORT_SECS: u64 = 5;
+/// Enquanto o modelo carrega: o controller ouve "pronto" e entrega o plano novo sem esperar o ciclo
+/// normal (medido: dois ciclos de 15 s eram um terço do tempo até PRONTO).
+const GATEWAY_REPORT_LOADING_SECS: u64 = 1;
 
 /// Where the counters survive a restart: `AI_CLUSTER_GATEWAY_STATE`, else a file named for the
 /// gateway under `AI_CLUSTER_DATA_DIR`. None when neither is set (counters then start at zero).
@@ -322,11 +325,11 @@ fn announce_gateway(
     }
     let mut client = client.clone();
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(GATEWAY_REPORT_SECS));
+        let mut wait = Duration::ZERO;
         let mut failing = false;
         let mut ring = metrics::RateRing::default();
         loop {
-            tick.tick().await;
+            tokio::time::sleep(wait).await;
             // Sampled before the send and even when the send fails, so a controller outage leaves
             // no hole in the rates.
             let now_s = std::time::SystemTime::now()
@@ -378,6 +381,14 @@ fn announce_gateway(
                     llama.apply(reply.desired.as_ref()).await;
                 }
             }
+            let loading = llama.status().is_some_and(|s| {
+                s.state == ai_cluster_protocol::cluster::ModelState::ModelLoading as i32
+            });
+            wait = Duration::from_secs(if loading {
+                GATEWAY_REPORT_LOADING_SECS
+            } else {
+                GATEWAY_REPORT_SECS
+            });
         }
     });
 }

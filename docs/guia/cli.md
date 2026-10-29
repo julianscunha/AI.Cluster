@@ -68,7 +68,7 @@ Estes comandos leem e gravam arquivos de um diretório de modelo. Não usam o co
 | `model stop` | Tira o modelo do gateway. As chaves continuam valendo. |
 | `model status` | O modelo pedido, a geração, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e os prefixos das chaves, mais os avisos do plano (workers deixados de fora por versão diferente do rpc-server). |
 | `model key add <tenant> [--models a,b] [--tokens N] [--class c]` | Cria o tenant e mostra a chave (uma vez). `--models` limita os modelos (padrão: todos), `--tokens` dá a cota por janela e `--class` o teto de prioridade (`background`, `batch`, `normal`, `interactive`, `realtime`). |
-| `model key rotate <tenant>` | Troca a chave de um tenant que existe; a antiga deixa de valer na próxima apresentação do gateway (até 15 s) e os limites ficam. |
+| `model key rotate <tenant>` | Troca a chave de um tenant que existe; a antiga deixa de valer na próxima apresentação do gateway (até 5 s) e os limites ficam. |
 | `model key remove <tenant>` | Tira o tenant. |
 | `model key list` | Os tenants, com o prefixo da chave e os limites (nunca a chave). |
 

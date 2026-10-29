@@ -83,7 +83,7 @@ Percentis são nearest-rank, sobre as últimas 1024 amostras de cada série. Can
 
 ## Inferência no painel
 
-O gateway se apresenta ao controller a cada 15 s e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `ai-cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.
+O gateway se apresenta ao controller a cada 5 s (a cada 1 s enquanto o modelo carrega) e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `ai-cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.
 
 - **Taxas e tendência:** requisições e tokens gerados por segundo nas janelas de 1 e 5 minutos, com a razão como tendência (`↑`, `→`, `↓`). Zero antes de a história cobrir a janela; nunca extrapolado.
 - **Gateway sem sinal:** o painel diz há quantos segundos e avisa que os números são do último sinal.
