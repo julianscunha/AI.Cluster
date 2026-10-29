@@ -91,7 +91,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
-| N4 a N9 | Pré-carga de modelo nos workers e cache de fatias ligado por padrão (hoje opcional, `AI_CLUSTER_RPC_CACHE`; falta limpar fatias de modelos antigos e medir o disco livre), pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
+| N4 a N9 | Pré-carga de modelo nos workers; limpeza das fatias de modelos antigos no cache do `rpc-server` (o cache liga sozinho com disco livre, mas não apaga nada); medir o ganho do cache por tipo de disco (SD, USB, SSD), pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer

@@ -25,6 +25,9 @@ pub struct RpcConfig {
     pub threads: usize,
     /// `-c` do `rpc-server`: cache dos tensores em disco. No cartão SD ocupa o tamanho da fatia.
     pub cache: bool,
+    /// `LLAMA_CACHE` do `rpc-server`: onde o cache mora (`AI_CLUSTER_RPC_CACHE_DIR`). Sem ele, o
+    /// llama.cpp usa o diretório do usuário, que num contêiner some junto com ele.
+    pub cache_dir: Option<String>,
 }
 
 impl RpcConfig {
@@ -90,7 +93,17 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     {
         return Some(Err(format!("AI_CLUSTER_RPC_LISTEN inválido: {listen}")));
     }
-    let cache = matches!(var("AI_CLUSTER_RPC_CACHE").as_deref(), Some("1" | "true"));
+    let cache_dir = var("AI_CLUSTER_RPC_CACHE_DIR");
+    // Explícito vale; sem a variável o cache liga sozinho se o diretório tem o dobro da RAM livre.
+    // shortcut: a regra é grosseira (2 × RAM total), refine se houver medida de ganho por disco.
+    let cache = match var("AI_CLUSTER_RPC_CACHE").as_deref() {
+        Some("1" | "true") => true,
+        Some(_) => false,
+        None => cache_dir.as_deref().is_some_and(|dir| {
+            let ram = memory_total_bytes();
+            ram > 0 && free_bytes(dir) >= ram.saturating_mul(2)
+        }),
+    };
     let client_role = var("AI_CLUSTER_RPC_CLIENT_NAME").unwrap_or_else(|| "aic-gateway".into());
     Some(Ok(RpcConfig {
         bin,
@@ -102,6 +115,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         client_role,
         threads,
         cache,
+        cache_dir,
     }))
 }
 
@@ -201,6 +215,42 @@ async fn wait_for_valid_clock() {
     }
 }
 
+/// Espaço livre, em bytes, no sistema de arquivos de `dir` (0 se não existe ou fora do Linux).
+#[cfg(target_os = "linux")]
+fn free_bytes(dir: &str) -> u64 {
+    let Ok(path) = std::ffi::CString::new(dir) else {
+        return 0;
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `path` é uma string C válida e `stat` tem o tamanho de uma `statvfs`.
+    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return 0;
+    }
+    // SAFETY: a chamada preencheu a estrutura.
+    let stat = unsafe { stat.assume_init() };
+    // Em armv7 os campos são u32: o cast é necessário lá, redundante em x86_64.
+    #[allow(clippy::unnecessary_cast)]
+    let free = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
+    free
+}
+
+#[cfg(not(target_os = "linux"))]
+fn free_bytes(_dir: &str) -> u64 {
+    0
+}
+
+/// RAM total da máquina em bytes (`/proc/meminfo`); 0 quando não dá para ler.
+fn memory_total_bytes() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("MemTotal:"))
+                .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
+        })
+        .map_or(0, |kib| kib.saturating_mul(1024))
+}
+
 /// A porta do `rpc-server` em loopback está livre? Outro processo nela receberia o tráfego do túnel.
 fn port_is_free(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
@@ -242,6 +292,9 @@ async fn supervise(config: &RpcConfig) {
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
+        if let Some(dir) = &config.cache_dir {
+            command.env("LLAMA_CACHE", dir);
+        }
         die_with_parent(&mut command);
         match command.spawn() {
             Ok(mut child) => match child.wait().await {
@@ -275,6 +328,7 @@ mod tests {
             "AI_CLUSTER_RPC_LOCAL_PORT",
             "AI_CLUSTER_RPC_LISTEN",
             "AI_CLUSTER_RPC_CACHE",
+            "AI_CLUSTER_RPC_CACHE_DIR",
             "AI_CLUSTER_RPC_CLIENT_NAME",
         ];
         let clear = || {
@@ -310,6 +364,19 @@ mod tests {
         assert_eq!(config.port(), 6000);
         assert_eq!(config.server_args().last().map(String::as_str), Some("-c"));
         assert_eq!(config.server_args()[5], "1", "pelo menos uma thread");
+
+        // Com o diretório e sem a opção: liga só se houver o dobro da RAM livre (o /tmp do teste decide).
+        unsafe {
+            std::env::remove_var("AI_CLUSTER_RPC_CACHE");
+            std::env::set_var("AI_CLUSTER_RPC_CACHE_DIR", "/nao/existe");
+        }
+        let config = from_env(4).unwrap().unwrap();
+        assert!(!config.cache, "diretório inexistente não liga o cache");
+        assert_eq!(config.cache_dir.as_deref(), Some("/nao/existe"));
+        unsafe { std::env::set_var("AI_CLUSTER_RPC_CACHE", "0") };
+        assert!(!from_env(4).unwrap().unwrap().cache, "0 desliga");
+        #[cfg(target_os = "linux")]
+        assert!(free_bytes("/tmp") > 0 && memory_total_bytes() > 0);
 
         unsafe { std::env::set_var("AI_CLUSTER_RPC_LISTEN", "sem-porta") };
         assert!(from_env(4).unwrap().is_err());

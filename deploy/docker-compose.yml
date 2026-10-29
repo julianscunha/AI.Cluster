@@ -65,8 +65,12 @@ services:
       AI_CLUSTER_RPC_TLS_CERT: /pki/worker.crt
       AI_CLUSTER_RPC_TLS_KEY: /pki/worker.key
       AI_CLUSTER_RPC_TLS_CLIENT_CA: /pki/ca.crt
+      # Cache dos tensores: o worker o liga sozinho se o disco tem o dobro da RAM livre.
+      AI_CLUSTER_RPC_CACHE_DIR: /cache
     volumes:
       - ./data/pki:/pki:ro
+      - worker-cache:/cache
 
 volumes:
   controller-state:
+  worker-cache:
