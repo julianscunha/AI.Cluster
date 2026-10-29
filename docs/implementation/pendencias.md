@@ -124,7 +124,6 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Rollout | HTTPS no download (hoje HTTP, segue redirecionamento); marca guarda uma versão só; downgrade legítimo (decisão); ondas com mais de um nó. | código, decisão, hardware |
 | Integridade de boot | dm-verity com root hash assinado; TPM e secure boot; medida de 512 MiB leva 25 a 40 s no SD. | hardware |
 | Auditoria | O log persiste, mas não é assinado nem à prova de adulteração. | código, decisão |
-| Testes de resistência | Partição de rede, controller reiniciado na carga, soak de horas medindo memória. | código |
 | Saúde do upgrade | Binário que registra e quebra depois passa; sem rollback sem systemd. | código |
 
 ## Marcos

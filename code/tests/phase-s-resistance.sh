@@ -34,6 +34,7 @@ teardown() {
 fail() {
   echo "FALHA: $1"
   echo "--- controller"; docker logs --tail 10 $CTRL 2>&1 | cut -c1-200
+  for w in aic-worker-s1 aic-worker-s2; do echo "--- $w"; docker logs --tail 5 $w 2>&1 | cut -c1-200; done
   teardown
   exit 1
 }
@@ -74,6 +75,7 @@ progress() {
   return 1
 }
 
+trap teardown EXIT INT TERM
 teardown
 docker network create "$NET" >/dev/null
 docker run $TOKENS --rm -v aic-target:/t "$IMG" sh -c "rm -rf $STATE_DIR && mkdir -p $STATE_DIR" >/dev/null
@@ -88,6 +90,7 @@ start_load aic-load-s2
 progress "carga concluindo com 2 workers" 20 60 || fail "a carga não andou depois de subir o cluster"
 sleep 60
 BASE_C=$(mem $CTRL); BASE_W1=$(mem aic-worker-s1); BASE_W2=$(mem aic-worker-s2)
+[ -n "$BASE_C" ] && [ -n "$BASE_W1" ] && [ -n "$BASE_W2" ] || fail "não consegui medir a memória de base"
 echo "memória de base (MiB): controller=$BASE_C worker1=$BASE_W1 worker2=$BASE_W2"
 
 echo "=== B) partição de rede de um worker ==="

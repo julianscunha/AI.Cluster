@@ -650,8 +650,25 @@ impl WorkStore {
         self.write_gap_ms.store(ms, Ordering::Relaxed);
     }
 
-    /// Grava agora o que a pausa entre gravações segurou.
+    /// Grava o que a pausa entre gravações segurou, se o intervalo (e o custo da última gravação)
+    /// já passou. É o que o relógio periódico chama.
     pub fn flush(&self) {
+        if self.dirty.load(Ordering::Relaxed) {
+            let mut inner = self.lock();
+            let gap = self
+                .write_gap_ms
+                .load(Ordering::Relaxed)
+                .max(self.last_cost_ms.load(Ordering::Relaxed).saturating_mul(9));
+            let since = crate::registry::unix_ms()
+                .saturating_sub(self.last_write_ms.load(Ordering::Relaxed));
+            if since >= gap {
+                self.persist(&mut inner, true);
+            }
+        }
+    }
+
+    /// Grava já, sem esperar o intervalo: o desligamento limpo.
+    pub fn flush_now(&self) {
         if self.dirty.load(Ordering::Relaxed) {
             let mut inner = self.lock();
             self.persist(&mut inner, true);
@@ -728,10 +745,12 @@ impl WorkStore {
             epoch_unix_ms: epoch,
             snapshot: bytes,
         }));
-        self.last_cost_ms.store(
-            crate::registry::unix_ms().saturating_sub(started),
-            Ordering::Relaxed,
-        );
+        // Média entre o custo anterior e este: um pico isolado de latência (um minuto de disco preso)
+        // não segura as gravações para sempre.
+        let cost = crate::registry::unix_ms().saturating_sub(started);
+        let before = self.last_cost_ms.load(Ordering::Relaxed);
+        self.last_cost_ms
+            .store(before.saturating_add(cost) / 2, Ordering::Relaxed);
     }
 
     /// Guarda o histórico de concluídas em `path` (veja `traces.rs`) e recarrega o que já havia, no
@@ -2480,7 +2499,9 @@ mod tests {
             1,
             "segurada pelo custo"
         );
-        store.flush();
+        store.flush(); // o relógio periódico respeita o intervalo
+        assert_eq!(WorkStore::with_state(&path).pending(), 1);
+        store.flush_now(); // o desligamento limpo não espera
         assert_eq!(WorkStore::with_state(&path).pending(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2497,7 +2518,9 @@ mod tests {
         store.enqueue([unit("w1")]); // primeira gravação passa
         store.enqueue([unit("w2")]); // dentro da pausa: só em memória
         assert_eq!(WorkStore::with_state(&path).pending(), 1);
-        store.flush();
+        store.flush(); // o relógio periódico respeita o intervalo
+        assert_eq!(WorkStore::with_state(&path).pending(), 1);
+        store.flush_now(); // o desligamento limpo não espera
         assert_eq!(WorkStore::with_state(&path).pending(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -329,7 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     // Desligamento limpo: grava o que o intervalo mínimo entre gravações ainda segurava.
-    work.flush();
+    work.flush_now();
     Ok(())
 }
 

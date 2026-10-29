@@ -459,21 +459,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // rpc-server do llama.cpp (ADR-022): filho supervisionado atrás do túnel mTLS.
     if let Some(shared) = rpc::config(cores) {
         let mut rpc = shared.clone();
-        // Sem AI_CLUSTER_RPC_CACHE, o cache liga sozinho se há diretório para ele e o disco lê bem mais
-        // rápido que o enlace.
-        if !rpc.cache_explicit && rpc.cache_dir.is_some() {
-            let disk = tokio::task::spawn_blocking(storage_read_score)
-                .await
-                .unwrap_or(0.0)
-                * REFERENCE_STORAGE_MBPS;
-            let link = network_score() * REFERENCE_LINK_MBPS;
-            rpc.cache = rpc::cache_pays_off(disk, link);
-            println!(
-                "cache de tensores do rpc-server: {} (disco {disk:.0} MB/s, enlace {link:.0} Mbit/s)",
-                if rpc.cache { "ligado" } else { "desligado" }
-            );
-        }
         tokio::spawn(async move {
+            // Sem AI_CLUSTER_RPC_CACHE, o cache liga sozinho se há diretório para ele e o disco dele lê
+            // bem mais rápido que o enlace. Na própria tarefa, para a sonda não atrasar a subida do nó.
+            if let (false, Some(dir)) = (rpc.cache_explicit, rpc.cache_dir.clone()) {
+                let disk = tokio::task::spawn_blocking(move || {
+                    let _ = std::fs::create_dir_all(&dir);
+                    storage_read_score_in(std::path::Path::new(&dir), STORAGE_PROBE_BYTES)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    eprintln!("sonda de leitura do cache falhou: {error}");
+                    0.0
+                }) * REFERENCE_STORAGE_MBPS;
+                let link = network_score() * REFERENCE_LINK_MBPS;
+                rpc.cache = rpc::cache_pays_off(disk, link);
+                println!(
+                    "cache de tensores do rpc-server: {} (disco {disk:.0} MB/s, enlace {link:.0} Mbit/s)",
+                    if rpc.cache { "ligado" } else { "desligado" }
+                );
+            }
             if let Err(error) = rpc::run(rpc).await {
                 eprintln!("rpc-server desligado: {error}");
             }

@@ -33,14 +33,15 @@ pub struct RpcConfig {
     pub cache_explicit: bool,
 }
 
-/// Apaga os arquivos mais antigos do cache (`dir` e `dir/rpc`) até o total caber em `max_bytes`.
+/// Apaga os arquivos mais antigos do cache (`dir/rpc`, onde o llama.cpp grava) até o total caber em
+/// `max_bytes`. Só essa pasta e só arquivos comuns: um `AI_CLUSTER_RPC_CACHE_DIR` apontado por engano
+/// para um diretório com outros arquivos não perde nada, e um `rpc` que seja atalho é ignorado.
 /// É só uma otimização: o `rpc-server` refaz o que faltar. Devolve quantos bytes apagou.
 pub fn prune_cache(dir: &std::path::Path, max_bytes: u64) -> u64 {
     let mut files: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = Vec::new();
-    for folder in [dir.to_path_buf(), dir.join("rpc")] {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
+    let folder = dir.join("rpc");
+    let real_dir = std::fs::symlink_metadata(&folder).is_ok_and(|m| m.is_dir());
+    if let (true, Ok(entries)) = (real_dir, std::fs::read_dir(&folder)) {
         for entry in entries.flatten() {
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_file() {
