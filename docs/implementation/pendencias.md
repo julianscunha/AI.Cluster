@@ -54,7 +54,6 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Latência do canal de fatias | Cada camada espera a anterior (cerca de 120 idas e voltas por token). Medir em máquinas separadas antes de otimizar. | código, hardware |
 | Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; mais de 64 operações em voo por nó dão 503. | código |
 | Quarentena | Derruba a sessão de inferência (contenção de segurança, por desenho); falta devolver ao cliente um erro limpo (503 com motivo). | código |

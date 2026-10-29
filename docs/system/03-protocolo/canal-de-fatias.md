@@ -13,7 +13,7 @@ Canal pelo qual o gateway faz uma projeção de modelo ser calculada nos workers
 
 Um decode de token executa centenas de multiplicações dependentes. Com a fila de trabalho (puxar, depois devolver com `SubmitWorkResult`), cada operação dependente custaria dezenas de milissegundos, e um token levaria segundos. Um canal aberto pelo worker, que empurra quadros, reduz cada chamada a uma ida e volta de rede mais o cálculo.
 
-Num único host o caminho remoto ainda é mais lento que o local. O ganho aparece quando o modelo não cabe num nó ou quando o lote é grande.
+Num único host o caminho remoto ainda é mais lento que o local. Medido entre o PC (gateway) e um Orange Pi (worker em cabo) com o SmolLM2-135M-Instruct em duas faixas, uma em cada máquina: a pré-carga de um pedido (~25 linhas por chamada) fez 92 chamadas em 29,8 s, ou 324 ms por chamada, dos quais 185 ms são cálculo no Pi e 139 ms transporte e serialização (as ativações e saídas somam ~0,5 MB por chamada em `double`). Nenhum token saiu dentro do prazo de 30 s do gateway. O motor próprio com fatias em placas ARM fracas serve à paridade numérica e a pesquisa, não a uso: o caminho de produção é o llama.cpp por RPC. O ganho aparece quando o modelo não cabe num nó ou quando o lote é grande.
 
 ## Topologia
 
