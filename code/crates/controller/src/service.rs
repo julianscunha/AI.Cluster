@@ -1894,6 +1894,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<WorkReportRequest>,
     ) -> Result<Response<WorkReportResponse>, Status> {
+        require_operator(&request)?;
         let limit = request.into_inner().limit as usize;
         // Lido sob o lock e convertido direto: sem a cópia intermediária do histórico inteiro, e só
         // a janela pedida (as mais recentes) quando há limite.
@@ -1921,6 +1922,7 @@ impl ClusterControl for ClusterControlService {
         &self,
         request: Request<ListEventsRequest>,
     ) -> Result<Response<ListEventsResponse>, Status> {
+        require_operator(&request)?;
         let limit = request.into_inner().limit as usize;
         Ok(Response::new(ListEventsResponse {
             events: self.events.recent(limit),
@@ -3090,7 +3092,7 @@ mod tests {
             .unwrap();
 
         let events = service
-            .list_events(Request::new(ListEventsRequest { limit: 0 }))
+            .list_events(op(ListEventsRequest { limit: 0 }))
             .await
             .unwrap()
             .into_inner()
@@ -3101,7 +3103,7 @@ mod tests {
 
         // A limit returns only the newest event, still oldest first.
         let limited = service
-            .list_events(Request::new(ListEventsRequest { limit: 1 }))
+            .list_events(op(ListEventsRequest { limit: 1 }))
             .await
             .unwrap()
             .into_inner()
@@ -3515,6 +3517,27 @@ mod tests {
         let restored = work.pending();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(restored, 1);
+    }
+
+    #[tokio::test]
+    async fn reports_and_events_are_for_the_operator_only() {
+        let (service, _) = service_with_work();
+        let denied = service
+            .work_report(Request::new(WorkReportRequest { limit: 0 }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+        let denied = service
+            .list_events(Request::new(ListEventsRequest { limit: 0 }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+        assert!(
+            service
+                .work_report(op(WorkReportRequest { limit: 0 }))
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
