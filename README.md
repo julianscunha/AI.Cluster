@@ -163,6 +163,8 @@ curl http://<ip-do-servidor>:8080/v1/chat/completions \
 
 **Chaves de API:** uma por tenant, com modelos, cota e classe de prioridade (`ai-cluster model key add|rotate|remove|list`). O controller guarda só o hash. **Várias vagas** (`AI_CLUSTER_LLAMA_SLOTS`) atendem mais pedidos ao mesmo tempo: no laboratório, 2 pedidos juntos deram 34% mais tokens por segundo no total.
 
+**Admissão e operação em casa:** `model check` conta o cache de contexto por vaga, a memória do gateway (128 MiB mais 30% dos pesos) e se o modelo sobrevive à perda de um worker; pedir o nome da família escolhe a variante mais precisa que cabe. Se um worker cai, o gateway espera a recarga (até 120 s) e refaz o pedido uma vez. Workers com disco rápido ligam sozinhos o cache de tensores do `rpc-server` (a 2ª carga no Orange Pi levou 42 s, contra 51 a 67 s sem cache). Para um Linux x86_64, `code/scripts/package-worker.sh` gera um pacote com worker, `rpc-server` e `install.sh`. O controller grava o estado sem passar de ~10% do tempo e grava ao receber SIGTERM. Resistência medida: 60 min de carga com partição de rede e reinícios do controller, 14.432 unidades sem falha e memória estável.
+
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="Uma camada do modelo dividida entre três workers" width="100%">
 </p>
