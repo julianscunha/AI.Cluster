@@ -68,6 +68,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | E3, E5 | Memória compartilhada sem implementação; perda e congestionamento contínuo (`TCP_INFO`/netlink). | código |
 | E4, USB | Vai para F18. | hardware |
 | Storage | Leitura sem cache de página; alocação dinâmica por classe (swap, cache de modelo e tensor, checkpoint); dashboard; adaptação por desgaste. | código |
+| Imagem do Orange Pi | A imagem 11.8 tem o worker antigo, cuja sonda de disco mede `/var/tmp` em RAM (SD com score 0,80 em vez de 0,01). O conserto está no código; falta gerar e gravar uma imagem nova. | código, hardware |
 | Disco real | SMART/NVMe, políticas HDD × NVMe, SSD como cache ou swap. | hardware |
 
 ## F11 — Request Manager
@@ -91,7 +92,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Compatibilidade de arquiteturas | Faltam viés de atenção e de MLP (Qwen), MoE, janela deslizante, ativações além de `silu` e a paridade contra o `transformers` com pesos de um Llama 3.x (veja [[inference-engine]]). `lm_head` fica em f64 (4 GB num 8B). | código, dados |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
 | Memória do gateway | O `llama-server` roda no gateway e embeddings, normalizações e KV das camadas que ficam nele moram lá; a RAM do gateway não entra no OK/NOK. Medir com um 7B. | código, dados |
-| N4 a N9 | Pré-carga de modelo nos workers; limpeza das fatias de modelos antigos no cache do `rpc-server` (o cache é opcional e não apaga nada); medir o ganho do cache com um modelo grande (num Orange Pi, SD e um modelo de 0,37 GB não mostrou ganho: 51 a 67 s sem cache, 56 a 61 s com, e o cache guardou só 138 MB), pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
+| N4 a N9 | Pré-carga de modelo nos workers; limpeza das fatias de modelos antigos no cache do `rpc-server` (o cache é opcional e não apaga nada); medir o ganho do cache com um modelo grande (num Orange Pi, SD e um modelo de 0,37 GB não mostrou ganho: 51 a 67 s sem cache, 56 a 61 s com, e o cache guardou só 138 MB; o SD escreve ~5 MB/s, tão lento quanto a rede), decidir ligar o cache pela razão entre a leitura do disco e a banda da rede, em vez de uma regra fixa, pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
