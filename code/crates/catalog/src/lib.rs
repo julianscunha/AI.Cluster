@@ -82,10 +82,35 @@ pub fn scan(dir: &Path, runtime: Runtime) -> std::io::Result<Vec<ModelEntry>> {
 /// Confere o GGUF `id` contra o `<arquivo>.sha256` ao lado dele (formato do `sha256sum`: o hash
 /// vem primeiro). Sem esse arquivo não há o que conferir e o modelo passa. Um download truncado
 /// ou corrompido falha aqui, com o motivo, em vez de quebrar a carga nos workers.
-/// shortcut: só a primeira parte de um GGUF dividido é conferida, estenda se as partes ganharem hash.
+/// Num GGUF dividido cada parte é conferida contra o próprio `.sha256`, quando existe.
 pub fn verify_checksum(dir: &Path, id: &str) -> Result<(), String> {
+    gguf_parts(&dir.join(id))
+        .iter()
+        .try_for_each(|part| verify_file(part))
+}
+
+/// O arquivo de `path` e, se for a parte N de um GGUF dividido, todas as partes (até `MAX_PARTS`).
+fn gguf_parts(path: &Path) -> Vec<PathBuf> {
+    let name = file_name(path);
+    let (Some((_, total)), Some(parent)) = (split_part(&name), path.parent()) else {
+        return vec![path.to_path_buf()];
+    };
+    let Some((stem, _)) = name
+        .rsplit_once("-of-")
+        .and_then(|(head, _)| head.rsplit_once('-'))
+    else {
+        return vec![path.to_path_buf()];
+    };
+    (1..=total.min(MAX_PARTS))
+        .map(|part| parent.join(format!("{stem}-{part:05}-of-{total:05}.gguf")))
+        .collect()
+}
+
+fn verify_file(path: &Path) -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    let path = dir.join(id);
+    let id = file_name(path);
+    let id = id.as_str();
+    let path = path.to_path_buf();
     let mut sidecar = path.clone().into_os_string();
     sidecar.push(".sha256");
     let Ok(text) = std::fs::read_to_string(&sidecar) else {
@@ -911,6 +936,23 @@ mod tests {
         assert_eq!(ids("m"), ["m-q8.gguf", "m-q4.gguf"]);
         assert_eq!(ids("m-q4.gguf"), ["m-q4.gguf"], "id exato vence");
         assert!(ids("nada").is_empty());
+    }
+
+    #[test]
+    fn every_part_of_a_split_gguf_is_checked() {
+        let dir = std::env::temp_dir().join(format!("aic-sha-parts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        std::fs::write(dir.join("m-00001-of-00002.gguf"), b"abc").unwrap();
+        std::fs::write(dir.join("m-00002-of-00002.gguf"), b"abc").unwrap();
+        std::fs::write(dir.join("m-00001-of-00002.gguf.sha256"), abc).unwrap();
+        std::fs::write(dir.join("m-00002-of-00002.gguf.sha256"), abc).unwrap();
+        assert!(verify_checksum(&dir, "m-00001-of-00002.gguf").is_ok());
+        // A segunda parte corrompida é pega pedindo a primeira.
+        std::fs::write(dir.join("m-00002-of-00002.gguf"), b"abd").unwrap();
+        let error = verify_checksum(&dir, "m-00001-of-00002.gguf").unwrap_err();
+        assert!(error.contains("m-00002-of-00002.gguf"), "{error}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -72,7 +72,7 @@ A chave de uma faixa de peso no worker é (subdiretório, tensor, linhas). Ela n
 - **Manifesto não é assinado.** Quem escreve no diretório escreve no manifesto. Ele detecta corrupção e divergência, não adulteração por quem tem acesso ao disco.
 - **Sem registry central de versões.** O gateway e os workers não comparam versões entre si. O controller não confere a `rpc_version` do `rpc-server` com a do `llama-server`.
 - **Motor próprio:** uma só variante por modelo (float32 ou BF16, sem quantização). A quantização vem do GGUF, pelo llama.cpp.
-- **Catálogo:** varre um nível da pasta e recalcula a cada chamada; não há cache de catálogo. Se existir `<arquivo>.gguf.sha256` (formato do `sha256sum`) ao lado do GGUF, o `model start` confere o SHA-256 da primeira parte e recusa o modelo com hash diferente; o último hash conferido fica em memória e vale enquanto tamanho e data não mudarem. Sem o arquivo, não confere.
+- **Catálogo:** varre um nível da pasta e recalcula a cada chamada; não há cache de catálogo. Se existir `<arquivo>.gguf.sha256` (formato do `sha256sum`) ao lado do GGUF, o `model start` confere o SHA-256 de cada parte que tenha o próprio `.sha256` (num GGUF dividido, todas as partes) e recusa o modelo com hash diferente; o último hash conferido fica em memória e vale enquanto tamanho e data não mudarem. Sem o arquivo, não confere.
 - **Pesos no gateway:** o GGUF precisa estar na mesma pasta (`AI_CLUSTER_MODELS_DIR`) no gateway; o llama.cpp envia os tensores aos workers pelo RPC, então os workers não guardam o modelo.
 
 > Planejado: registry com as entidades Model, Version, Variant, Manifest, Artifact e Shard.

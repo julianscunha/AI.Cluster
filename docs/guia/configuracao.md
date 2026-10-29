@@ -175,4 +175,4 @@ Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de u
 - **Nó:** quem tem só o token de join não toma o `node_id` de um nó aprovado nem o de um pendente que ainda responde; um nó pendente sem sinal fica livre. `ai-cluster revoke` também libera o id.
 - **Gateway:** enquanto um gateway está vivo (sinal nos últimos 45 s), outro endereço IP não se apresenta com o mesmo id (`permission_denied`). O token de inferência é compartilhado, então o endereço é o que amarra o id.
 
-**Checksum de modelo:** coloque `<arquivo>.gguf.sha256` (saída do `sha256sum`) ao lado do GGUF e o `model start` confere o hash antes de planejar; hash diferente recusa o modelo. Sem o arquivo, não confere.
+**Checksum de modelo:** coloque `<arquivo>.gguf.sha256` (saída do `sha256sum`) ao lado do GGUF e o `model start` confere o hash antes de planejar (num GGUF dividido, cada parte pode ter o seu); hash diferente recusa o modelo. Sem o arquivo, não confere.
