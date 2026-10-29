@@ -86,7 +86,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta manifesto assinado. O motor próprio segue só em fp32. | código, decisão |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
-| N4 a N9 | Pré-carga de modelo nos workers; medir o ganho do cache com um modelo grande (num Orange Pi, SD e um modelo de 0,37 GB não mostrou ganho: 51 a 67 s sem cache, 56 a 61 s com, e o cache guardou só 138 MB; o SD escreve ~5 MB/s, tão lento quanto a rede), pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
+| N4 a N9 | Pré-carga de modelo nos workers; pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. | código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
