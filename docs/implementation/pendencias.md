@@ -143,4 +143,3 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 |---|---|---|
 | Certificado por nó | O papel do cliente (SAN `aic-gateway`) e o nome por nó (`{node_id}`) já valem; falta o controller emitir os certificados de nó (hoje a CA e os certificados são do operador) e renová-los. | código |
 | Binários nas imagens | O `ggml-rpc-server` está nas imagens armv7 e x86 do SO, na imagem única do Compose (que leva também o `llama-server`) e no `bootstrap.sh` (`--rpc-server-bin`). Falta empacotar o binário para o worker em systemd (hoje o operador o fornece). | código |
-| Plano de camadas | A velocidade vem de uma estimativa (média geométrica da CPU com a banda de memória sob carga), calibrada com um par PC e Pi. Falta medir o llama.cpp em cada worker no registro e fixar a ordem dos dispositivos com `--device`. | código |
