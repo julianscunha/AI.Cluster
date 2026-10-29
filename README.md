@@ -84,6 +84,16 @@ Depois é só chamar `POST http://localhost:8080/v1/chat/completions` com `Autho
 Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras máquinas,
 [a instalação](docs/guia/instalacao.md).
 
+## Instalação em 3 comandos (Linux x86_64)
+
+```bash
+sudo ./aic-setup server        # no servidor: controller + gateway + CLI, credenciais e certificados
+sudo aic-setup invite          # imprime a linha para os outros PCs entrarem (e aprova sozinho)
+curl -fsSL http://<ip>:8099/join | sudo sh     # em cada outro PC
+```
+
+Depois, `ai-cluster model start <arquivo.gguf>` e a API está em `http://<ip>:8080`. O pacote vem de `code/scripts/package-cluster.sh`; detalhes e limites em [a instalação](docs/guia/instalacao.md). O passo a passo manual abaixo continua valendo para ARM e para quem quer controlar cada peça.
+
 ## Instalação passo a passo
 
 ### 1. Compile os binários (uma vez)

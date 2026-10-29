@@ -15,6 +15,23 @@ Volte ao [[guia]] para o índice. Valores de configuração estão em [[configur
 - Docker, para o cluster de desenvolvimento, os testes E2E e o build cruzado para armv7.
 - `openssl`, para gerar certificados e chaves de release.
 
+## Instalador automático (recomendado, Linux x86_64)
+
+Três comandos levam um conjunto de PCs ao ponto de uso, sem gerar token, certificado ou unit à mão:
+
+```bash
+# 1. no servidor (o PC sempre ligado): controller + gateway + CLI
+tar xzf ai-cluster-x86_64.tar.gz && cd ai-cluster-x86_64 && sudo ./aic-setup server
+# 2. ainda no servidor: abre um convite de 15 min e imprime a linha para os outros PCs
+sudo aic-setup invite
+# 3. em cada outro PC, a linha impressa:
+curl -fsSL http://<ip-do-servidor>:8099/join | sudo sh
+```
+
+O `server` instala em `/opt/ai-cluster`, grava as credenciais em `/etc/ai-cluster` (só root), gera uma CA e os certificados do túnel RPC (CA 10 anos, certificados 825 dias), cria as units do systemd (ou sobe em segundo plano sem systemd) e deixa o comando `ai-cluster` pronto, sem exportar nada. O `invite` serve, por HTTP e só durante a janela, o script `join` e o pacote do worker (conferido por SHA-256); cada nó que entra enquanto o convite está aberto é aprovado sozinho. Depois: copie um `.gguf` para `/var/lib/ai-cluster/models` e rode `ai-cluster model start <arquivo>`. `aic-setup status` mostra os nós e o modelo.
+
+O pacote sai de `bash code/scripts/package-cluster.sh` (imagem `ai-cluster:local`). Limites: x86_64 com glibc 2.36+ (`libgomp1`, `openssl`, `iproute2` e `python3` no servidor); o gRPC fica sem TLS (rede local confiável) e o convite trafega o token de join em HTTP na janela aberta, então use só em casa. Teste: `code/tests/phase-u-setup.sh` (dois contêineres, sem systemd; as units do systemd não foram exercitadas num sistema real).
+
 ## Em um computador só, com Docker
 
 O caminho mais curto (`deploy/`): `bash deploy/init.sh` gera um token por papel (controller, gateway e worker recebem só o que precisam) e a PKI do túnel RPC (uma CA, o certificado do gateway e o dos workers, 30 dias); `docker compose -f deploy/docker-compose.yml up -d --build --scale worker=2` constrói uma imagem única (controller, gateway, worker, CLI, `llama-server` e `rpc-server` do llama.cpp com o patch) e sobe tudo. Os modelos GGUF ficam em `deploy/models`. O passo a passo está no [README](../../README.md#início-rápido-em-um-computador-docker) e o fluxo dos modelos em [[modelos]]. As portas do host mudam com `AI_CLUSTER_GRPC_PORT` e `AI_CLUSTER_HTTP_PORT`.
