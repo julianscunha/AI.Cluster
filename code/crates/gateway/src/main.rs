@@ -1399,6 +1399,11 @@ async fn llama_chat(
     if !tenant.allows(&llama.id) {
         return model_forbidden();
     }
+    // Recarga em andamento: espera um pouco em vez de devolver 503 de imediato.
+    llama::wait_while(llama::wait_from_env(), || {
+        matches!(llama.state(), llama::State::Loading)
+    })
+    .await;
     match llama.state() {
         llama::State::Ready => {}
         llama::State::Loading => {

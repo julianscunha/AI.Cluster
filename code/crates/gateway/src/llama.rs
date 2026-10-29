@@ -272,6 +272,29 @@ pub fn slots_from_env() -> Result<u32, String> {
     }
 }
 
+/// `AI_CLUSTER_LLAMA_WAIT_SECS`: quanto um pedido espera o modelo terminar de carregar antes de levar
+/// 503 `MODEL_LOADING` (0 a 600; padrão 120). Cobre recargas curtas (queda de worker, plano novo) sem
+/// que o cliente precise tentar de novo.
+pub fn wait_from_env() -> Duration {
+    let seconds = std::env::var("AI_CLUSTER_LLAMA_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map_or(120, |n| n.min(600));
+    Duration::from_secs(seconds)
+}
+
+/// Espera `loading()` virar falso, no máximo `max`; devolve se virou.
+pub async fn wait_while(max: Duration, loading: impl Fn() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + max;
+    while loading() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    true
+}
+
 /// Em que ponto está o modelo.
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -312,6 +335,21 @@ impl Llama {
             task.abort();
         }
         tasks
+    }
+
+    /// Depois de um erro de conexão: o servidor caiu e voltou? Espera o estado sair de `Ready` (até 3 s;
+    /// se não sair, o erro era outro) e terminar de carregar (até `max`).
+    async fn recovered(&self, max: Duration) -> bool {
+        if !wait_while(Duration::from_secs(3), || {
+            matches!(self.state(), State::Ready)
+        })
+        .await
+        {
+            return false;
+        }
+        // `Failed` logo após a queda é o backoff do supervisor antes de subir o servidor de novo.
+        wait_while(max, || !matches!(self.state(), State::Ready)).await;
+        matches!(self.state(), State::Ready)
     }
 
     pub fn state(&self) -> State {
@@ -355,24 +393,35 @@ impl Llama {
             .ok()
             .is_some_and(|v| v["stream"].as_bool().unwrap_or(false));
         let body = if streaming { with_usage(&body) } else { body };
-        let request = Request::builder()
-            .method("POST")
-            .uri(format!(
-                "http://127.0.0.1:{}/v1/chat/completions",
-                self.port
-            ))
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body))
-            .expect("requisição válida");
-        let response = match self.client.request(request).await {
-            Ok(response) => response,
-            Err(error) => {
-                eprintln!("llama-server: {error}");
-                return crate::error(
-                    StatusCode::BAD_GATEWAY,
-                    "MODEL_UNAVAILABLE",
-                    "o servidor do modelo não respondeu",
-                );
+        let build = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "http://127.0.0.1:{}/v1/chat/completions",
+                    self.port
+                ))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.clone()))
+                .expect("requisição válida")
+        };
+        let mut retried = false;
+        let response = loop {
+            match self.client.request(build()).await {
+                Ok(response) => break response,
+                Err(error) => {
+                    eprintln!("llama-server: {error}");
+                    // Sem resposta nenhuma ainda: nada chegou ao cliente, então uma queda do servidor
+                    // (worker que caiu) pode ser refeita uma vez depois da recarga.
+                    if !retried && self.recovered(wait_from_env()).await {
+                        retried = true;
+                        continue;
+                    }
+                    return crate::error(
+                        StatusCode::BAD_GATEWAY,
+                        "MODEL_UNAVAILABLE",
+                        "o servidor do modelo não respondeu",
+                    );
+                }
             }
         };
         let (parts, incoming) = response.into_parts();
@@ -1172,6 +1221,23 @@ data: [DONE]
         }
         Ready(items.into_iter())
     }
+    #[tokio::test]
+    async fn a_request_waits_for_a_short_reload_but_not_forever() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let polls = AtomicU32::new(0);
+        // Fica pronto na 4a consulta: espera e devolve verdadeiro.
+        assert!(
+            wait_while(Duration::from_secs(5), || polls
+                .fetch_add(1, Ordering::Relaxed)
+                < 3)
+            .await
+        );
+        // Nunca fica pronto: desiste no prazo.
+        assert!(!wait_while(Duration::from_millis(300), || true).await);
+        // Já pronto: não espera.
+        assert!(wait_while(Duration::from_secs(2), || false).await);
+    }
+
     #[test]
     fn the_slots_set_np_and_scale_the_total_context() {
         let mut c = config();

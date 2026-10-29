@@ -132,7 +132,7 @@ Todo erro vem como JSON `{"error": {"type": "...", "message": "..."}}`. A causa 
 | 429 | `QUOTA_EXCEEDED` | Cota de tokens da janela esgotada. `Retry-After` diz quando a janela renova. |
 | 429 | `CAPACITY_UNAVAILABLE` | Sem vaga: fila de chat cheia ou espera esgotada, muitos embeddings em andamento, ou fila de unidades do controller cheia. `Retry-After` de 1 a 5 s. |
 | 503 | `MODEL_UNAVAILABLE` | Uma unidade ou a geração falhou no cluster. |
-| 503 | `MODEL_LOADING` | O modelo do llama.cpp ainda carrega (o GGUF e os tensores enviados aos workers). `Retry-After` de 10 s. |
+| 503 | `MODEL_LOADING` | O modelo do llama.cpp ainda carrega (o GGUF e os tensores enviados aos workers) e a espera de `AI_CLUSTER_LLAMA_WAIT_SECS` (120 s) acabou. `Retry-After` de 10 s. |
 | 503 | `EMBEDDINGS_DISABLED` | Embeddings pedidos sem token de operador configurado. |
 | 503 | `SERVICE_UNAVAILABLE` | Controller inalcançável. |
 | 504 | `TIMEOUT` | A geração ou o grafo não terminou em 30 s. |

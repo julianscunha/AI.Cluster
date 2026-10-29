@@ -72,7 +72,7 @@ O fluxo, de ponta a ponta (veja [[modelos]] e [[cli]]):
 
 1. Ponha o GGUF em `AI_CLUSTER_MODELS_DIR` (a mesma pasta no controller e no gateway) e confira com `model list` (coluna `ROD`) e `model check <id>`.
 2. `model start <id>`: o controller confere a RAM, escolhe os workers e o gateway carrega. Guarde a chave de API que ele mostra (só o hash fica com o controller).
-3. `model status` mostra o plano, o estado (`CARREGANDO`, `PRONTO`, `FALHOU`) e os tokens/s do benchmark. O Pi leva minutos para receber os tensores; no começo as chamadas dão 503 `MODEL_LOADING`.
+3. `model status` mostra o plano, o estado (`CARREGANDO`, `PRONTO`, `FALHOU`) e os tokens/s do benchmark. O Pi leva minutos para receber os tensores; no começo as chamadas esperam até `AI_CLUSTER_LLAMA_WAIT_SECS` (120 s) pelo modelo e, passado o prazo, dão 503 `MODEL_LOADING`.
 4. `model stop` tira o modelo; a chave continua valendo no próximo `start`.
 
 Como o controller escolhe: os workers mais rápidos primeiro, **só até a RAM somada comportar o modelo**. Um worker lento entra apenas quando faltaria memória (cada um soma um salto de rede por token). Um worker novo muda o plano só se mudar esse conjunto, e só depois de `AI_CLUSTER_PLAN_STABLE_MS` com a mesma lista.
