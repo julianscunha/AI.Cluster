@@ -25,8 +25,6 @@ services:
       AI_CLUSTER_AUTO_APPROVE: "1"
       AI_CLUSTER_MODELS_DIR: /models
       AI_CLUSTER_MODELS_STATE: /state/models.state
-      # Igual ao do gateway: o OK/NOK conta o cache KV de cada vaga.
-      AI_CLUSTER_LLAMA_SLOTS: "1"
     volumes:
       - ./models:/models:ro
       - controller-state:/state

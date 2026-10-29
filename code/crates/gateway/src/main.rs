@@ -357,6 +357,7 @@ fn announce_gateway(
                 stats: Some(stats),
                 running: llama.status(),
                 llama_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
+                llama_slots: llama.slots(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {

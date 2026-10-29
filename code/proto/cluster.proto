@@ -647,6 +647,9 @@ message ReportGatewayRequest {
   /// Commit do llama.cpp (com o patch) do `llama-server` deste gateway (`AI_CLUSTER_RPC_VERSION`). O
   /// protocolo do RPC muda entre commits: o controller só põe no plano o worker com a mesma versão.
   string llama_version = 6;
+  /// Vagas do llama-server (`AI_CLUSTER_LLAMA_SLOTS`) deste gateway; 0 = não informa. O OK/NOK do
+  /// controller conta o cache KV de cada vaga, então usa este valor em vez do seu próprio ambiente.
+  uint32 llama_slots = 7;
 }
 
 message ReportGatewayResponse {

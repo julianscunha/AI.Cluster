@@ -83,6 +83,8 @@ pub struct ClusterControlService {
     node_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     /// A versão do llama.cpp que o gateway reportou: workers com outra versão ficam fora do plano.
     llama_version: Arc<std::sync::Mutex<String>>,
+    /// Vagas que o gateway informou (0 = ainda não); vale mais que o ambiente do controller.
+    llama_slots: Arc<std::sync::atomic::AtomicU32>,
     /// Avisos do último cálculo do plano (workers deixados de fora e por quê).
     rpc_warnings: Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -300,6 +302,7 @@ impl ClusterControlService {
             ),
             node_hosts: Arc::default(),
             llama_version: Arc::default(),
+            llama_slots: Arc::default(),
             rpc_warnings: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
@@ -318,6 +321,14 @@ impl ClusterControlService {
 
     /// Os workers aptos, com a velocidade da CPU e a RAM que oferecem; o orquestrador escolhe quais
     /// carregam o modelo (`models::select`).
+    /// Vagas do llama-server para o cálculo do cache KV: as que o gateway informou, ou o ambiente.
+    fn slots(&self) -> u64 {
+        match self.llama_slots.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => ai_cluster_catalog::check::slots_from_env(),
+            reported => u64::from(reported),
+        }
+    }
+
     fn rpc_candidates(&self) -> Vec<crate::models::Candidate> {
         let endpoints: std::collections::HashMap<String, RpcEndpoint> = self
             .rpc_endpoints()
@@ -842,12 +853,8 @@ impl ClusterControl for ClusterControlService {
         };
         let candidates = self.rpc_candidates();
         let nodes = self.rpc_node_memory();
-        let verdict = ai_cluster_catalog::check::check(
-            &model,
-            request.context,
-            ai_cluster_catalog::check::slots_from_env(),
-            &nodes,
-        );
+        let verdict =
+            ai_cluster_catalog::check::check(&model, request.context, self.slots(), &nodes);
         let check = CheckModelResponse {
             ok: verdict.ok,
             weights_bytes: verdict.weights_bytes,
@@ -1048,12 +1055,8 @@ impl ClusterControl for ClusterControlService {
                 })
             })
             .collect();
-        let verdict = ai_cluster_catalog::check::check(
-            &model,
-            request.context,
-            ai_cluster_catalog::check::slots_from_env(),
-            &nodes,
-        );
+        let verdict =
+            ai_cluster_catalog::check::check(&model, request.context, self.slots(), &nodes);
         let (ok, message) = if model.supported {
             (verdict.ok, verdict.message)
         } else {
@@ -1596,6 +1599,10 @@ impl ClusterControl for ClusterControlService {
                 .llama_version
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = request.llama_version.clone();
+        }
+        if (1..=16).contains(&request.llama_slots) {
+            self.llama_slots
+                .store(request.llama_slots, std::sync::atomic::Ordering::Relaxed);
         }
         let now = unix_ms();
         let is_new = {
@@ -2538,6 +2545,17 @@ mod tests {
     }
 
     #[test]
+    fn the_slots_reported_by_the_gateway_beat_the_environment() {
+        let (service, _, _) = service_with_registry_and_work();
+        let env = service.slots();
+        assert!((1..=16).contains(&env));
+        service
+            .llama_slots
+            .store(7, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(service.slots(), 7);
+    }
+
+    #[test]
     fn a_draining_node_stays_in_the_inference_plan_until_it_is_removed() {
         let (service, registry, _) = service_with_registry_and_work();
         let capability = CapabilityReport {
@@ -3418,6 +3436,7 @@ mod tests {
         let service = service();
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
             llama_version: String::new(),
+            llama_slots: 0,
             running: None,
             stats: None,
             gateway_id: id.into(),
@@ -3531,6 +3550,7 @@ mod tests {
         let report = |id: String| {
             inference(ReportGatewayRequest {
                 llama_version: String::new(),
+                llama_slots: 0,
                 running: None,
                 stats: None,
                 gateway_id: id,

@@ -74,7 +74,7 @@ Total: 2 serviços e 24 RPCs.
 | `DesiredModel` | `generation` (1), `model_id` (2), `model_path` (3, relativo à pasta de modelos), `context` (4), `gpu_layers` (5), `endpoints` (6: `RpcEndpoint` com `node_id` e `address`), `split` (7, proporção de camadas por worker, `--tensor-split`) | o que o gateway deve aplicar; ausente na resposta = parar |
 | `ModelStatus` | `model_id` (1), `state` (2: `ModelState` STOPPED, LOADING, READY, FAILED), `reason` (3), `generation` (4), `tokens_per_second` (5) | o gateway diz o que aplicou; o controller descarta ids fora do padrão |
 | `TenantGrant` | `tenant` (1), `key_sha256` (2), `models` (3), `tokens` (4, cota por janela; 0 = sem cota), `class` (5, teto de prioridade) | só o hash da chave; vazio em `models` = todos |
-| `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
+| `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6), `llama_slots` (7) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
 | `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
 | `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |
