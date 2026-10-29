@@ -32,7 +32,11 @@ start_pre() {
 		export AI_CLUSTER_RPC_TLS_KEY=/data/rpc-tls/worker.key
 		export AI_CLUSTER_RPC_TLS_CLIENT_CA=/data/rpc-tls/ca.crt
 		export AI_CLUSTER_RPC_VERSION="${AI_CLUSTER_RPC_VERSION:-llama.cpp-8ca4060+armv7}"
+		# Cache de tensores do rpc-server em disco real (o /tmp é RAM); o worker o liga sozinho se o
+		# disco lê bem mais rápido que o enlace.
+		export AI_CLUSTER_RPC_CACHE_DIR="${AI_CLUSTER_RPC_CACHE_DIR:-/data/cache}"
 	fi
 	[ -n "$AI_CLUSTER_NODE_ID" ] && hostname "$AI_CLUSTER_NODE_ID"
 	checkpath -d -o ai-cluster:ai-cluster -m 0700 /data/state
+	[ -z "$AI_CLUSTER_RPC_CACHE_DIR" ] || checkpath -d -o ai-cluster:ai-cluster -m 0700 "$AI_CLUSTER_RPC_CACHE_DIR"
 }

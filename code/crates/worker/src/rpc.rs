@@ -28,6 +28,56 @@ pub struct RpcConfig {
     /// `LLAMA_CACHE` do `rpc-server`: onde o cache mora (`AI_CLUSTER_RPC_CACHE_DIR`). Sem ele, o
     /// llama.cpp usa o diretório do usuário, que num contêiner some junto com ele.
     pub cache_dir: Option<String>,
+    /// `AI_CLUSTER_RPC_CACHE` foi dado: vale como está. Sem ele, com `cache_dir`, quem sobe o
+    /// `rpc-server` decide pela razão entre a leitura do disco e a velocidade do enlace.
+    pub cache_explicit: bool,
+}
+
+/// Apaga os arquivos mais antigos do cache (`dir` e `dir/rpc`) até o total caber em `max_bytes`.
+/// É só uma otimização: o `rpc-server` refaz o que faltar. Devolve quantos bytes apagou.
+pub fn prune_cache(dir: &std::path::Path, max_bytes: u64) -> u64 {
+    let mut files: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = Vec::new();
+    for folder in [dir.to_path_buf(), dir.join("rpc")] {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_file() {
+                let age = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                files.push((age, meta.len(), entry.path()));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort();
+    let mut freed = 0;
+    for (_, len, path) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+            freed += len;
+        }
+    }
+    freed
+}
+
+/// `AI_CLUSTER_RPC_CACHE_MAX_MB`: teto do cache em disco (padrão 2048).
+fn cache_max_bytes() -> u64 {
+    std::env::var("AI_CLUSTER_RPC_CACHE_MAX_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(2048)
+        .saturating_mul(1 << 20)
+}
+
+/// O cache de tensores compensa quando ler do disco é bem mais rápido que receber pela rede: o disco
+/// precisa ler pelo menos 1,5 vez o que o enlace entrega (medido no Orange Pi: SD a 22 MB/s contra
+/// ~7,5 MB/s recebidos num enlace de 100 Mbit). Zero em qualquer das medidas = não mediu, não liga.
+pub fn cache_pays_off(disk_read_mbps: f64, link_mbps: f64) -> bool {
+    disk_read_mbps > 0.0 && link_mbps > 0.0 && disk_read_mbps >= 1.5 * link_mbps / 8.0
 }
 
 impl RpcConfig {
@@ -95,6 +145,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     }
     let cache_dir = var("AI_CLUSTER_RPC_CACHE_DIR");
     // Só liga se pedido: no Orange Pi (SD, modelo de 0,37 GB) o cache não mostrou ganho e ocupa disco.
+    let cache_explicit = var("AI_CLUSTER_RPC_CACHE").is_some();
     let cache = matches!(var("AI_CLUSTER_RPC_CACHE").as_deref(), Some("1" | "true"));
     let client_role = var("AI_CLUSTER_RPC_CLIENT_NAME").unwrap_or_else(|| "aic-gateway".into());
     Some(Ok(RpcConfig {
@@ -108,6 +159,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         threads,
         cache,
         cache_dir,
+        cache_explicit,
     }))
 }
 
@@ -159,7 +211,7 @@ pub fn config(threads: usize) -> Option<&'static RpcConfig> {
 }
 
 /// Sobe o túnel mTLS e mantém o `rpc-server` vivo. Só retorna se o túnel não puder subir.
-pub async fn run(config: &'static RpcConfig) -> Result<(), String> {
+pub async fn run(config: RpcConfig) -> Result<(), String> {
     wait_for_valid_clock().await;
     let tls = ai_cluster_tunnel::server_config(
         &config.cert,
@@ -180,7 +232,7 @@ pub async fn run(config: &'static RpcConfig) -> Result<(), String> {
             eprintln!("túnel RPC encerrou: {error}");
         }
     });
-    supervise(config).await;
+    supervise(&config).await;
     Ok(())
 }
 
@@ -231,6 +283,12 @@ fn die_with_parent(_command: &mut tokio::process::Command) {}
 async fn supervise(config: &RpcConfig) {
     let mut wait = Duration::from_secs(1);
     loop {
+        if let (true, Some(dir)) = (config.cache, &config.cache_dir) {
+            let freed = prune_cache(std::path::Path::new(dir), cache_max_bytes());
+            if freed > 0 {
+                println!("cache do rpc-server: {} MB antigos apagados", freed >> 20);
+            }
+        }
         let started = std::time::Instant::now();
         if !port_is_free(config.local_port) {
             eprintln!(
@@ -339,6 +397,49 @@ mod tests {
         assert!(from_env(4).unwrap().is_err());
         clear();
     }
+    #[test]
+    fn prune_removes_the_oldest_files_until_the_cache_fits() {
+        let dir = std::env::temp_dir().join(format!("aic-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("rpc")).unwrap();
+        let write = |name: &str, age_secs: u64| {
+            let path = dir.join("rpc").join(name);
+            std::fs::write(&path, vec![0u8; 100]).unwrap();
+            let when = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        };
+        write("velho", 300);
+        write("meio", 200);
+        write("novo", 100);
+        // 300 bytes, teto 250: sai só o mais antigo.
+        assert_eq!(prune_cache(&dir, 250), 100);
+        assert!(!dir.join("rpc/velho").exists() && dir.join("rpc/meio").exists());
+        // Teto 0: tudo.
+        assert_eq!(prune_cache(&dir, 0), 200);
+        // Dentro do teto, ou diretório que não existe: nada.
+        assert_eq!(prune_cache(&dir, 10_000), 0);
+        assert_eq!(prune_cache(&dir.join("nao-existe"), 0), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_cache_pays_off_only_when_the_disk_reads_faster_than_the_link() {
+        // Orange Pi: SD a 22 MB/s, enlace de 100 Mbit.
+        assert!(cache_pays_off(22.0, 100.0));
+        // HDD de 150 MB/s num gigabit (125 MB/s): a rede basta.
+        assert!(!cache_pays_off(150.0, 1000.0));
+        // NVMe num gigabit.
+        assert!(cache_pays_off(2000.0, 1000.0));
+        // Sem medida de um dos lados, não liga.
+        assert!(!cache_pays_off(0.0, 100.0));
+        assert!(!cache_pays_off(22.0, 0.0));
+    }
+
     #[test]
     fn the_local_ip_is_the_one_on_the_route_to_the_controller() {
         // Sem rede externa: para um alvo local, o IP é o da interface (ou nenhum, se só há loopback).
