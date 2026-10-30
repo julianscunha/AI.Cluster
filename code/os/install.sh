@@ -280,12 +280,13 @@ case "$ROLE" in
   gateway|worker) need_server ;;
 esac
 CODE=""
-if [ "$ROLE" = gateway ]; then
+if [ "$ROLE" = gateway ] || [ "$ROLE" = worker ]; then
   if [ -z "${AIC_CODE:-}" ]; then
-    note "$(t 'O código aparece no convite do controller (sudo aic-setup invite), junto ao comando do gateway.' 'The code appears in the controller invitation (sudo aic-setup invite), next to the gateway command.')"
-    ask CODE "$(t 'Código do convite do gateway' 'Gateway invitation code')" ""
+    note "$(t "O código de 8 caracteres aparece no convite do controller (sudo aic-setup invite)." "The 8-character code appears in the controller invitation (sudo aic-setup invite).")"
+    ask CODE "$(t 'Código do convite' 'Invitation code')" ""
   else CODE=$AIC_CODE; fi
-  [ -n "$CODE" ] || die "$(t 'sem o código do convite o gateway não recebe as credenciais' 'without the invitation code the gateway does not receive its credentials')"
+  CODE=$(printf '%s' "$CODE" | tr a-z A-Z)
+  [ -n "$CODE" ] || die "$(t 'sem o código do convite não dá para entrar no cluster' 'without the invitation code you cannot join the cluster')"
 fi
 case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "$(t 'endereço do servidor inválido' 'invalid server address')" ;; esac
 
@@ -358,6 +359,6 @@ case "$ROLE" in
   server) "$SETUP" server --role both --yes "$@" || rc=$? ;;
   controller) "$SETUP" server --role controller --yes "$@" || rc=$? ;;
   gateway) "$SETUP" gateway --server "$SERVER" --code "$CODE" ${MODELS:+--models-dir "$MODELS"} --yes || rc=$? ;;
-  worker) "$SETUP" worker --server "$SERVER" --yes || rc=$? ;;
+  worker) "$SETUP" worker --server "$SERVER" --code "$CODE" --yes || rc=$? ;;
 esac
 exit $rc

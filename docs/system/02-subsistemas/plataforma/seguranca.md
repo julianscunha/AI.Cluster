@@ -145,6 +145,8 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 - **Versão:** o controller deixa fora do plano o worker cuja versão do `rpc-server` difere da do `llama-server` do gateway, porque o protocolo do RPC muda entre commits.
 - **Hora do nó:** o worker só abre o túnel depois que o relógio passa de 2026-01-01; antes disso um certificado válido hoje seria recusado como "ainda não válido".
 
+**Código do convite:** o token de join só sai no script `/join-<CÓDIGO>` e o `/sign` exige o mesmo código (comparação em tempo constante). O código tem 8 caracteres de um alfabeto de 32 símbolos (40 bits), único por convite, e 30 tentativas erradas (arquivo inexistente em `/join-*` ou `/gw-*`, ou `/sign` com código errado) travam o convite com 429. O convite é HTTP puro: quem escuta a rede vê o código.
+
 **Certificado por nó:** o `aic-setup` não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. O certificado vale só como servidor (`extendedKeyUsage=serverAuth`), o servidor assina um por nome em cada convite e mostra cada emissão no terminal do operador. **Limite:** o `/sign` não tem outra autenticação além de estar na janela do convite (quem alcança a porta também lê o `join` e o token de join), e não há renovação nem revogação do certificado (825 dias).
 
 ## Chaves de API do controller

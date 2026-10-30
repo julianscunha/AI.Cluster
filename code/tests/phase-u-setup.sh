@@ -8,6 +8,7 @@
 #   A) install.sh instala o servidor (controller + gateway) baixando só os pacotes desse papel;
 #   B) o convite entrega o pacote do worker pelo processador e o nó fica READY e aprovado;
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
+#   B3) o worker exige o código do convite (8 caracteres) e o convite trava com chutes demais;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
 #   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem;
 #      --lang fr é recusado e --mode dedicated (alias em inglês) funciona;
@@ -44,7 +45,13 @@ echo "OK: servidor instalado"
 echo "=== B) o convite entrega o worker e o nó fica READY e aprovado ==="
 docker exec -d aic-srv sh -c "aic-setup invite --minutes 2 > /tmp/invite.log 2>&1"; sleep 25
 SIP=$(docker exec aic-srv cat /etc/ai-cluster/server-ip)
-inst aic-wk --role worker --arch x86_64 --server "$SIP" >/dev/null || fail "o worker não entrou"
+WCODE=$(docker exec aic-srv sh -c "grep -o -- '--code [A-Za-z0-9]*' /tmp/invite.log | head -n 1 | cut -d' ' -f2")
+[ ${#WCODE} -eq 8 ] || fail "o convite deveria mostrar um código de 8 caracteres (veio: $WCODE)"
+# O worker precisa do código: sem ele o instalador recusa, o /join antigo não existe e o /sign nega.
+inst aic-wk --role worker --arch x86_64 --server "$SIP" >/dev/null 2>&1 && fail "o worker sem código deveria ser recusado"
+[ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' http://$SIP:8099/join)" = 404 ] || fail "o /join sem código não deveria existir"
+[ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' -X POST --data x "http://$SIP:8099/sign?name=intruso&code=ZZZZZZZZ")" = 403 ] || fail "o /sign com código errado deveria dar 403"
+docker exec aic-wk sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role worker --arch x86_64 --server $SIP" >/dev/null 2>&1 || fail "o worker não entrou"
 for _ in $(seq 20); do
   docker exec aic-srv ai-cluster nodes 2>/dev/null | grep -E "READY.*aprovado" >/dev/null && break; sleep 2
 done
@@ -69,6 +76,11 @@ docker exec aic-wk grep -q "Impressão digital" /tmp/wait.log || fail "a tela de
 for _ in $(seq 10); do docker exec aic-srv grep -q "quer instalar" /tmp/invite.log && break; sleep 2; done
 docker exec aic-srv grep -q "quer instalar" /tmp/invite.log || fail "o convite deveria avisar o operador do aparelho"
 echo "OK: aparelho aguardando aprovação"
+
+# Chutes demais travam o convite: o código é curto.
+for _ in $(seq 31); do docker exec aic-wk curl -s -o /dev/null "http://$SIP:8099/join-AAAAAAAA"; done
+[ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' http://$SIP:8099/join-$WCODE)" = 429 ] || fail "o convite deveria travar depois de chutes demais"
+echo "OK: o worker exige o código e o convite trava com chutes demais"
 
 echo "=== C) controller sozinho e gateway noutro computador ==="
 inst aic-ctl --role controller --arch x86_64 >/dev/null || fail "install.sh controller"
@@ -113,7 +125,10 @@ docker exec aic-ctl sh -c "echo pt > /etc/ai-cluster/lang"
 echo "OK E2) aic-setup lê o idioma salvo em /etc/ai-cluster/lang"
 # Um convite com AIC_LANG=en gera join e wait em inglês (porta 8098, para não colidir com o convite da C).
 docker exec -d aic-ctl sh -c "AIC_LANG=en aic-setup invite --minutes 1 --port 8098 > /tmp/invite-en.log 2>&1"
-for _ in $(seq 10); do docker exec aic-ctl curl -fsS "http://$CIP:8098/join" -o /tmp/join-en.sh 2>/dev/null && break; sleep 1; done
+for _ in $(seq 10); do docker exec aic-ctl grep -q -- "--code" /tmp/invite-en.log 2>/dev/null && break; sleep 1; done
+ECODE=$(docker exec aic-ctl sh -c "grep -o -- '--code [A-Za-z0-9]*' /tmp/invite-en.log | head -n 1 | cut -d' ' -f2")
+[ -n "$ECODE" ] || fail "o convite em inglês deveria mostrar o código"
+docker exec aic-ctl curl -fsS "http://$CIP:8098/join-$ECODE" -o /tmp/join-en.sh || fail "o /join-<código> deveria existir"
 docker exec aic-ctl sh -c "curl -fsS http://$CIP:8098/wait -o /tmp/wait-en.sh && sh -n /tmp/join-en.sh && sh -n /tmp/wait-en.sh && grep -q 'joins this cluster' /tmp/join-en.sh && grep -q 'dedicated mode' /tmp/wait-en.sh" \
   || fail "o convite em inglês deveria gerar join e wait em inglês"
 echo "OK E3) convite em inglês gera join e wait em inglês"

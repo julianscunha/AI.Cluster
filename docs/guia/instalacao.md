@@ -44,10 +44,12 @@ A ordem é sempre: **primeiro o controller**, depois os outros.
 ```bash
 # 1. no primeiro computador: escolha "Controller" (com o gateway junto, o mais simples)
 # 2. ainda nele: abre um convite de 15 min e mostra as linhas de entrada
-sudo aic-setup invite
+sudo aic-setup invite     # mostra um código de 8 caracteres
 # 3. em cada outro computador, o mesmo instalador, escolhendo "Worker" (ou a linha curta do convite)
-curl -fsSL http://<ip-do-servidor>:8099/join | sudo sh
+curl -fsSL http://<ip-do-servidor>:8099/join-<CÓDIGO> | sudo sh
 ```
+
+O **código do convite** (8 caracteres, letras maiúsculas e números sem `0/O/1/I`) é a credencial do convite: o instalador o pergunta quando o papel é worker ou gateway (minúsculas valem), e a linha curta o leva no endereço (`/join-<CÓDIGO>`). Sem ele o servidor não entrega o token de join nem assina o certificado do túnel. Como o código é curto, 30 tentativas erradas travam o convite até ele ser aberto de novo (`aic-setup invite`). O convite continua em HTTP puro, então o código serve contra quem só alcança a porta, não contra quem escuta a rede.
 
 O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. Cada worker gera a própria chave do túnel RPC; o servidor só assina o pedido de certificado (SAN `aic-worker-<nome do nó>`), e a chave nunca sai do worker. O gateway em outro computador entra pelo mesmo convite (`sudo aic-setup gateway --server <ip> --code <código>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
 

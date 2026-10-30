@@ -4,14 +4,14 @@
 #
 #   sudo ./aic-setup server  [--role both|controller] [--ip 192.168.1.10] [--models-dir DIR] [--yes]
 #   sudo ./aic-setup gateway --server IP[:8099] [--models-dir DIR] [--yes]   # gateway noutro computador
-#   sudo ./aic-setup worker  --server IP[:8099] [--yes]                      # entra como worker
+#   sudo ./aic-setup worker  --server IP[:8099] --code CÓDIGO [--yes]        # entra como worker
 #   sudo aic-setup invite    [--minutes 15] [--port 8099]
 #   aic-setup status
 #
 # `server` instala o controller (e, com --role both, o gateway) neste Linux (systemd, ou segundo
 # plano se não houver), gera tokens, a CA do túnel RPC e os certificados, e deixa o `ai-cluster`
 # pronto. `invite` abre uma janela curta em que outros computadores entram no cluster:
-#     curl -fsSL http://<ip>:8099/join | sudo sh          # worker (x86_64 ou armv7)
+#     curl -fsSL http://<ip>:8099/join-<código> | sudo sh   # worker (x86_64 ou armv7); o código está no convite
 # e aprova sozinho os nós que entram enquanto o convite está aberto. O pacote do worker de cada
 # processador vem da release do servidor (a mesma versão do cluster) e fica em cache.
 #
@@ -416,7 +416,7 @@ cmd_gateway() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --server) [ $# -ge 2 ] || die "$(t '--server pede um valor' '--server needs a value')"; SERVER=$2; shift 2 ;;
-      --code) [ $# -ge 2 ] || die "$(t '--code pede um valor' '--code needs a value')"; CODE=$2; shift 2 ;;
+      --code) [ $# -ge 2 ] || die "$(t '--code pede um valor' '--code needs a value')"; CODE=$(printf '%s' "$2" | tr a-z A-Z); shift 2 ;;
       --models-dir) [ $# -ge 2 ] || die "$(t '--models-dir pede um valor' '--models-dir needs a value')"; MODELS=$2; shift 2 ;;
       --yes|-y) YES=1; shift ;;
       *) die "$(t "argumento desconhecido: $1" "unknown argument: $1")" ;;
@@ -460,23 +460,25 @@ cmd_gateway() {
 
 # ---------- worker ----------
 cmd_worker() {
-  SERVER=""
+  SERVER=""; CODE=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --server) [ $# -ge 2 ] || die "$(t '--server pede um valor' '--server needs a value')"; SERVER=$2; shift 2 ;;
+      --code) [ $# -ge 2 ] || die "$(t '--code pede um valor' '--code needs a value')"; CODE=$(printf '%s' "$2" | tr a-z A-Z); shift 2 ;;
       --yes|-y) shift ;;
       *) die "$(t "argumento desconhecido: $1" "unknown argument: $1")" ;;
     esac
   done
   need_root worker
+  case "$CODE" in ""|*[!A-Za-z0-9]*) die "$(t "informe o código do convite: --code (aparece no 'aic-setup invite' do controller)" "give the invitation code: --code (shown by 'aic-setup invite' on the controller)")" ;; esac
   [ -n "$SERVER" ] || die "$(t 'informe o servidor: --server IP[:porta do convite]' 'give the server: --server IP[:invitation port]')"
   case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "$(t '--server com caracteres inválidos' '--server with invalid characters')" ;; esac
   SERVER=$(server_arg "$SERVER")
   banner "$(t 'Entrar no cluster como worker' 'Join the cluster as a worker')"
   note "$(t "Buscando o pacote do worker em ${SERVER%%:*}…" "Fetching the worker package from ${SERVER%%:*}…")"
   jd=$(mktemp -d)
-  curl -fsS "http://$SERVER/join" -o "$jd/join" \
-    || { rm -rf "$jd"; die "$(t "o convite em $SERVER não respondeu; rode 'sudo aic-setup invite' no servidor" "the invitation at $SERVER did not respond; run 'sudo aic-setup invite' on the server")"; }
+  curl -fsS "http://$SERVER/join-$CODE" -o "$jd/join" \
+    || { rm -rf "$jd"; die "$(t "o convite em $SERVER não respondeu ou o código está errado; rode 'sudo aic-setup invite' no servidor e confira o código" "the invitation at $SERVER did not respond or the code is wrong; run 'sudo aic-setup invite' on the server and check the code")"; }
   # O idioma do convite é o do servidor: o script que ele entrega não herda o deste comando.
   unset AIC_LANG
   rc=0; AIC_ARCH="${AIC_HW_ARCH:-}" sh "$jd/join" || rc=$?
@@ -510,7 +512,7 @@ cmd_invite() {
     else warn "$(t "sem pacote de worker para $a (sem internet ou a release não o traz)" "no worker package for $a (no internet, or the release does not include it)")"; fi
   done
   [ -n "$AVAILABLE" ] || die "$(t 'nenhum pacote de worker disponível; confira a internet do servidor' 'no worker package available; check the server internet connection')"
-  WEB=$(mktemp -d); GCODE=$(rand | cut -c1-16)
+  WEB=$(mktemp -d); GCODE=$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-HJ-NP-Z2-9' | head -c 8)
   SUMS=""
   for a in $AVAILABLE; do
     cp "$PREFIX/kit/$(get "$CONF/release" VERSION)-worker-linux-$a.tar.gz" "$WEB/worker-linux-$a.tar.gz"
@@ -529,11 +531,11 @@ cmd_invite() {
   # Os scripts que a outra máquina baixa são gerados no idioma deste servidor (fixado aqui).
   # O script para entrar como worker: escolhe o pacote pelo processador, confere e instala.
   if [ "$LANG_AIC" = en ]; then
-    cat > "$WEB/join" <<JOIN_SCRIPT
+    cat > "$WEB/join-$GCODE" <<JOIN_SCRIPT
 #!/bin/sh
-# AI Cluster — joins this cluster as a worker.  Usage: curl -fsSL http://$IP:$PORT/join | sudo sh
+# AI Cluster — joins this cluster as a worker.  Usage: curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh
 set -eu
-[ "\$(id -u)" = 0 ] || { echo "run with sudo: curl -fsSL http://$IP:$PORT/join | sudo sh" >&2; exit 1; }
+[ "\$(id -u)" = 0 ] || { echo "run with sudo: curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" >&2; exit 1; }
 case "\$(uname -m)" in
   x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
   *) echo "this computer is \$(uname -m): there is no worker package for it yet" >&2; exit 1 ;;
@@ -564,7 +566,7 @@ NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 command -v openssl >/dev/null || { echo "needs openssl (apt install openssl)" >&2; exit 1; }
 ( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -keyout /etc/ai-cluster/rpc-tls/worker.key -out "\$T/worker.csr" -subj "/CN=\$NAME" >/dev/null 2>&1 )
-curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME" -o /etc/ai-cluster/rpc-tls/worker.crt \
+curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME&code=$GCODE" -o /etc/ai-cluster/rpc-tls/worker.crt \
   || { echo "the server did not sign the node certificate (is the name already used in this invitation? open another with aic-setup invite)" >&2; exit 1; }
 openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null \
   || { echo "node certificate does not match the cluster CA" >&2; exit 1; }
@@ -576,11 +578,11 @@ AIC_LANG=en AIC_INVITED=1 sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PO
 echo "Done: \$NAME joined the cluster. The server approves the node shortly."
 JOIN_SCRIPT
   else
-    cat > "$WEB/join" <<JOIN_SCRIPT
+    cat > "$WEB/join-$GCODE" <<JOIN_SCRIPT
 #!/bin/sh
-# AI Cluster — entra neste cluster como worker.  Uso: curl -fsSL http://$IP:$PORT/join | sudo sh
+# AI Cluster — entra neste cluster como worker.  Uso: curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh
 set -eu
-[ "\$(id -u)" = 0 ] || { echo "rode com sudo: curl -fsSL http://$IP:$PORT/join | sudo sh" >&2; exit 1; }
+[ "\$(id -u)" = 0 ] || { echo "rode com sudo: curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" >&2; exit 1; }
 case "\$(uname -m)" in
   x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
   *) echo "este computador é \$(uname -m): ainda não há pacote de worker para ele" >&2; exit 1 ;;
@@ -611,7 +613,7 @@ NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)" >&2; exit 1; }
 ( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -keyout /etc/ai-cluster/rpc-tls/worker.key -out "\$T/worker.csr" -subj "/CN=\$NAME" >/dev/null 2>&1 )
-curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME" -o /etc/ai-cluster/rpc-tls/worker.crt \
+curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME&code=$GCODE" -o /etc/ai-cluster/rpc-tls/worker.crt \
   || { echo "o servidor não assinou o certificado do nó (o nome já foi usado neste convite? abra outro com aic-setup invite)" >&2; exit 1; }
 openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null \
   || { echo "certificado do nó não confere com a CA do cluster" >&2; exit 1; }
@@ -685,25 +687,50 @@ WAIT_SCRIPT
   # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
   HD=$(mktemp -d)
   cat > "$HD/invite.py" <<'PYSERVER'
-import http.server, os, re, subprocess, sys, tempfile, threading
+import hmac, http.server, os, re, subprocess, sys, tempfile, threading
 
 CA = os.environ["AIC_CA_DIR"]
+CODE = os.environ["AIC_INVITE_CODE"]
+MAX_WRONG = 30  # o código é curto: tentativas erradas demais travam o convite até ele ser aberto de novo
+wrong = 0
 SIGNED = os.environ["AIC_SIGNED_LOG"]
 LOCK = threading.Lock()  # o ca.srl é lido e regravado pelo openssl: um pedido por vez
 done = set()  # nomes já assinados nesta janela
 
 
+def wrong_guess():
+    global wrong
+    with LOCK:
+        wrong += 1
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     timeout = 10  # cliente que anuncia corpo e não envia não segura a thread
+
+    def do_GET(self):
+        # Os arquivos com o código no nome (join, gateway) são a parte secreta: pedir um que não existe
+        # é chute, e chutes demais travam o convite.
+        if self.path.startswith(("/join-", "/gw-")):
+            if wrong >= MAX_WRONG:
+                return self.send_error(429)
+            if not os.path.exists(self.translate_path(self.path)):
+                wrong_guess()
+                return self.send_error(404)
+        return super().do_GET()
 
     def list_directory(self, path):
         self.send_error(404)
 
     def do_POST(self):
-        m = re.fullmatch(r"/sign\?name=([A-Za-z0-9.-]{1,40})", self.path)
+        m = re.fullmatch(r"/sign\?name=([A-Za-z0-9.-]{1,40})&code=([A-Za-z0-9]{1,64})", self.path)
         size = int(self.headers.get("Content-Length") or 0)
         if not m or not 0 < size <= 8192:
             return self.send_error(400)
+        if wrong >= MAX_WRONG:
+            return self.send_error(429)
+        if not hmac.compare_digest(m.group(2).upper(), CODE):  # sem o código do convite ninguém ganha certificado
+            wrong_guess()
+            return self.send_error(403)
         name = m.group(1)
         with LOCK:
             if name in done:  # quem entra de novo com o mesmo nome precisa de outro convite
@@ -735,7 +762,7 @@ class H(http.server.SimpleHTTPRequestHandler):
 http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()
 PYSERVER
   : > "$HD/signed"
-  AIC_CA_DIR="$CONF/pki" AIC_SIGNED_LOG="$HD/signed" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
+  AIC_CA_DIR="$CONF/pki" AIC_INVITE_CODE="$GCODE" AIC_SIGNED_LOG="$HD/signed" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
   SRV=$!
   MSG_CLOSED=$(t "Convite encerrado." "Invitation closed.")
   # Qualquer saída (erro, Ctrl+C, fim do prazo) derruba o servidor e apaga o que ele servia.
@@ -756,7 +783,7 @@ PYSERVER
     || warn "$(t 'não consegui abrir a porta de espera da instalação; o /wait não vai funcionar' 'could not open the installation waiting port; /wait will not work')"
   if [ "$LANG_AIC" = en ]; then
     box "Worker (any x86_64 or 32-bit ARM computer), run:" "" \
-        "curl -fsSL http://$IP:$PORT/join | sudo sh" "" \
+        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" "" \
         "Gateway on another computer: sudo aic-setup gateway --server $IP:$PORT --code $GCODE" "" \
         "Install the AI Cluster OS (dedicated mode) on a computer that already has Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
@@ -764,7 +791,7 @@ PYSERVER
     printf '\n  %sWaiting for computers… (Ctrl+C ends the invitation)%s\n\n' "$D" "$Z"
   else
     box "Worker (qualquer computador x86_64 ou ARM de 32 bits), rode:" "" \
-        "curl -fsSL http://$IP:$PORT/join | sudo sh" "" \
+        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" "" \
         "Gateway noutro computador: sudo aic-setup gateway --server $IP:$PORT --code $GCODE" "" \
         "Instalar o AI Cluster OS (modo dedicado) num computador que já tem Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
