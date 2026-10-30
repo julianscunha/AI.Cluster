@@ -4,6 +4,10 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
+    ApproveInstallRequest, ApproveInstallResponse, ListPendingInstallsRequest,
+    ListPendingInstallsResponse, RejectInstallRequest, RejectInstallResponse,
+};
+use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, ApproveNodeResponse, CancelRequestRequest, CancelRequestResponse,
     CheckModelRequest, CheckModelResponse, EnqueueGraphRequest, EnqueueGraphResponse,
     EnqueueWorkRequest, EnqueueWorkResponse, GetMetricsRequest, GetOutputRequest,
@@ -97,6 +101,8 @@ pub struct ClusterControlService {
     gateway_free: Arc<std::sync::atomic::AtomicU64>,
     /// Avisos do último cálculo do plano (workers deixados de fora e por quê).
     rpc_warnings: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Aparelhos que se apresentaram para instalar e aguardam aprovação (ADR-023).
+    enrollments: Arc<crate::enrollment::Enrollments>,
 }
 
 /// `host:porta` do túnel RPC de um nó, ou `None` se o host não presta. O host pode vir do próprio nó
@@ -341,6 +347,7 @@ impl ClusterControlService {
             llama_slots: Arc::default(),
             gateway_free: Arc::default(),
             rpc_warnings: Arc::default(),
+            enrollments: Arc::default(),
             // AI_CLUSTER_RELEASE_STATE guarda a release desejada entre reinícios (F19).
             rollout: Rollout::new(std::env::var_os("AI_CLUSTER_RELEASE_STATE").map(Into::into))
                 .with_wave(
@@ -350,6 +357,11 @@ impl ClusterControlService {
                         .unwrap_or(0),
                 ),
         }
+    }
+
+    /// A lista que o serviço `Enrollment` (sem credencial) alimenta e o operador aprova.
+    pub fn enrollments(&self) -> &Arc<crate::enrollment::Enrollments> {
+        &self.enrollments
     }
 
     pub fn work(&self) -> &Arc<WorkStore> {
@@ -2090,6 +2102,55 @@ impl ClusterControl for ClusterControlService {
     /// O nó precisa existir e estar disponível: reservar um nó que o controller não
     /// entregaria trabalho nenhum não protege nada, então isso é recusado em vez de
     /// aceito e ignorado. Uma reserva nova sobre o mesmo nó substitui a anterior.
+    async fn list_pending_installs(
+        &self,
+        request: Request<ListPendingInstallsRequest>,
+    ) -> Result<Response<ListPendingInstallsResponse>, Status> {
+        require_operator(&request)?;
+        let now = unix_ms();
+        Ok(Response::new(ListPendingInstallsResponse {
+            pending: self.enrollments.list(now),
+            now_unix_ms: now,
+        }))
+    }
+
+    async fn approve_install(
+        &self,
+        request: Request<ApproveInstallRequest>,
+    ) -> Result<Response<ApproveInstallResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let request = request.into_inner();
+        if request.fingerprint.trim().is_empty() || request.disk.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "fingerprint e disco são obrigatórios: a aprovação apaga o disco",
+            ));
+        }
+        let approved =
+            self.enrollments
+                .approve(&request.fingerprint, request.disk.trim(), unix_ms())?;
+        if approved {
+            self.audit(
+                &peer,
+                "approve-install",
+                &format!("{} disco {}", request.fingerprint, request.disk),
+            );
+        }
+        Ok(Response::new(ApproveInstallResponse { approved }))
+    }
+
+    async fn reject_install(
+        &self,
+        request: Request<RejectInstallRequest>,
+    ) -> Result<Response<RejectInstallResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let fingerprint = request.into_inner().fingerprint;
+        let rejected = self.enrollments.reject(&fingerprint);
+        if rejected {
+            self.audit(&peer, "reject-install", &fingerprint);
+        }
+        Ok(Response::new(RejectInstallResponse { rejected }))
+    }
+
     async fn reserve(
         &self,
         request: Request<ReserveRequest>,
@@ -3567,6 +3628,81 @@ mod tests {
         let restored = work.pending();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(restored, 1);
+    }
+
+    #[tokio::test]
+    async fn so_o_operador_lista_aprova_e_recusa_instalacoes() {
+        use ai_cluster_protocol::cluster::{AnnounceRequest, InstallDisk};
+        let (service, _) = service_with_work();
+        let fingerprint = service
+            .enrollments()
+            .announce(
+                AnnounceRequest {
+                    secret: vec![7; 32],
+                    mac: "aa:bb:cc:dd:ee:01".into(),
+                    disks: vec![InstallDisk {
+                        name: "sda".into(),
+                        size_bytes: 1,
+                        model: String::new(),
+                    }],
+                    ..Default::default()
+                },
+                None,
+                unix_ms(),
+            )
+            .unwrap()
+            .fingerprint;
+        let denied = service
+            .list_pending_installs(Request::new(ListPendingInstallsRequest {}))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+        let approve = |disk: &str| {
+            op(ApproveInstallRequest {
+                fingerprint: fingerprint.clone(),
+                disk: disk.into(),
+            })
+        };
+        assert!(
+            service
+                .approve_install(Request::new(approve("sda").into_inner()))
+                .await
+                .is_err()
+        );
+        let listed = service
+            .list_pending_installs(op(ListPendingInstallsRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .pending;
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].approved_disk.is_empty());
+        assert!(
+            service
+                .approve_install(op(ApproveInstallRequest {
+                    fingerprint: fingerprint.clone(),
+                    disk: String::new(),
+                }))
+                .await
+                .is_err(),
+            "sem disco não há o que apagar"
+        );
+        assert!(
+            service
+                .approve_install(approve("sda"))
+                .await
+                .unwrap()
+                .into_inner()
+                .approved
+        );
+        assert!(
+            service
+                .reject_install(op(RejectInstallRequest { fingerprint }))
+                .await
+                .unwrap()
+                .into_inner()
+                .rejected
+        );
     }
 
     #[tokio::test]

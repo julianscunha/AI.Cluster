@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ai_cluster_controller::enrollment::EnrollmentService;
 use ai_cluster_controller::events::EventLog;
 use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::{ClusterControlService, LinkProbeService, MAX_PROBE_BYTES};
 use ai_cluster_controller::work::WorkStore;
 use ai_cluster_protocol::cluster::cluster_control_server::ClusterControlServer;
+use ai_cluster_protocol::cluster::enrollment_server::EnrollmentServer;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbeServer;
 use ai_cluster_protocol::metadata::{
     INFERENCE_TOKEN_ENV, INSECURE_ENV, JOIN_TOKEN_ENV, MAX_MESSAGE_BYTES, OPERATOR_TOKEN_ENV,
@@ -163,6 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
+    let enrollments = service.enrollments().clone();
 
     // ponytail: single sweep interval for all nodes; per-node timers only if grace must vary.
     let sweep = registry.clone();
@@ -268,6 +271,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("AI_CLUSTER_TLS_CERT e AI_CLUSTER_TLS_KEY vêm juntos".into());
         }
     };
+    // ADR-023: a única porta sem token, só para a etapa de espera de instalação. Desligada por
+    // padrão; sem client CA de propósito, porque o aparelho ainda não tem certificado nenhum.
+    if let Some(enroll_addr) = std::env::var("AI_CLUSTER_ENROLL_ADDR")
+        .ok()
+        .filter(|addr| !addr.trim().is_empty())
+    {
+        let enroll_addr: std::net::SocketAddr = enroll_addr.parse()?;
+        let mut enroll_server = Server::builder();
+        if let Some(identity) = identity.clone() {
+            enroll_server = enroll_server.tls_config(ServerTlsConfig::new().identity(identity))?;
+        }
+        let service = EnrollmentServer::new(EnrollmentService::new(enrollments))
+            .max_decoding_message_size(16 * 1024);
+        println!("etapa de espera de instalação em {enroll_addr} (sem token)");
+        tokio::spawn(async move {
+            if let Err(err) = enroll_server.add_service(service).serve(enroll_addr).await {
+                println!("servidor de instalação parou: {err}");
+            }
+        });
+    }
     // Detects a worker that vanished without closing its resident stream.
     let mut builder = Server::builder()
         .http2_keepalive_interval(Some(std::time::Duration::from_secs(10)))

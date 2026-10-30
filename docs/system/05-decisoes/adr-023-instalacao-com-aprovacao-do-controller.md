@@ -7,7 +7,7 @@ type: sistema/adr
 
 # ADR-023 — Instalação só com aprovação do controller
 
-Status: decidido (ainda sem código) · Data: 2026-10-30 · Voltar para [[decisoes]].
+Status: decidido · registro de pendentes e aprovação implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`); faltam a etapa de espera, o uso do token e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -28,6 +28,12 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 - A segurança depende do operador conferir a impressão digital: aprovar sem conferir aprova o aparelho de outra pessoa.
 - Quem está na mesma rede local pode falsificar o MAC, mas a etapa de espera não entrega nada que sirva a ele.
 - Exige um canal de registro anônimo e limitado no controller (pendentes antes de ter credencial); é a parte mais sensível do desenho e precisa de revisão de segurança.
+
+## Implementação (primeira etapa)
+
+- Serviço `Enrollment` (`Announce`) em porta própria e sem interceptor, ligada por `AI_CLUSTER_ENROLL_ADDR`: ligar o anônimo no `ClusterControl` abriria os handlers que dependem do interceptor para exigir o token de join.
+- A impressão digital é o início do SHA-256 de um segredo aleatório que o aparelho guarda só na memória. Quem repete o segredo recebe o token, uma vez; o MAC aprovado não é derrubado por quem copia o MAC.
+- Limite conhecido: sem TLS (certificado do controller ainda não fixado na etapa de espera) o segredo e o token trafegam em claro na rede local; quem espiona a rede pode disputar o token com o aparelho. O desenho completo deve fixar a CA do controller na imagem de espera.
 
 ## Alternativas
 

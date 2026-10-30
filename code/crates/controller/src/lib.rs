@@ -1,3 +1,4 @@
+pub mod enrollment;
 pub mod events;
 pub mod exporter;
 pub mod metrics;

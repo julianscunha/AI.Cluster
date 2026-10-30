@@ -46,6 +46,7 @@ Os tokens entram por variável de ambiente, que aparece para quem inspeciona o p
 - `ai-cluster approve <nó> --fingerprint <fp>` aprova, conferindo a impressão digital da credencial que o worker imprimiu ao registrar-se (e `nodes` mostra em `IMPRESSÃO`). Se o id foi tomado por outro registro depois de um `revoke`, a impressão muda e a aprovação é recusada. O nó passa a `aprovado` e começa a receber unidades.
 - `AI_CLUSTER_AUTO_APPROVE=1` aprova todo nó que se registra. Use só em rede fechada e de teste.
 - `ai-cluster revoke <nó>` retira a aprovação, troca a credencial do nó, devolve as unidades em voo à fila e registra o evento. O worker revogado encerra com `Unauthenticated`. Se ele for reiniciado, volta pendente. Com `AUTO_APPROVE`, a revogação não dura: o nó volta aprovado.
+- Instalação do AI Cluster OS ([[adr-023-instalacao-com-aprovacao-do-controller]]): com `AI_CLUSTER_ENROLL_ADDR` ligado, o aparelho que dá boot na etapa de espera aparece em `ai-cluster installs` com a impressão digital que ele mostra na tela. Confira as duas e rode `ai-cluster approve-install <impressão> --disk <disco>`; a aprovação apaga o disco. `reject-install` tira da lista. As aprovações aparecem na auditoria como `approve-install` e `reject-install`. A etapa de espera e o uso do token na instalação ainda não existem.
 - Um nó aprovado que tenta se registrar de novo sem a credencial dele é recusado até um `revoke`. É o caminho quando o worker perdeu o arquivo de credencial.
 - Com `AI_CLUSTER_NODES`, aprovações e credenciais sobrevivem a reinício do controller. Sem ele, todo nó volta a pendente depois de reiniciar.
 - Com `AI_CLUSTER_NODE_CREDENTIAL_FILE` no worker, o nó mantém a aprovação depois de reiniciar. Sem o arquivo, ele se registra de novo e fica pendente (ou aprovado, com `AUTO_APPROVE`).
@@ -94,7 +95,7 @@ Como o controller escolhe: os workers mais rápidos primeiro, **só até a RAM s
 - Trabalho: `work_enqueued`, `work_completed`, `work_rejected`, `graph_enqueued`, `request_cancelled`.
 - Reservas: `node_reserved`, `reservation_released`.
 - Rollout: `rollout` (canário escolhido, pausa, conclusão), `shard_channel_opened`.
-- Auditoria: `audit`, com ação, alvo e endereço de quem chamou. Ações registradas: `approve`, `revoke`, `set_release`, `enqueue_work`, `enqueue_graph`, `cancel_request`, `reserve`, `release_reservation`. Leituras não entram. Tentativas negadas por token errado também não entram, porque são recusadas antes da ação. Uma ação é registrada antes de ser executada.
+- Auditoria: `audit`, com ação, alvo e endereço de quem chamou. Ações registradas: `approve`, `revoke`, `set_release`, `enqueue_work`, `enqueue_graph`, `cancel_request`, `reserve`, `release_reservation`, `approve-install`, `reject-install`. Leituras não entram. Tentativas negadas por token errado também não entram, porque são recusadas antes da ação. Uma ação é registrada antes de ser executada.
 
 Limites:
 

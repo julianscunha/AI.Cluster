@@ -121,6 +121,21 @@ enum Command {
         #[arg(long, conflicts_with = "fingerprint")]
         trust_listed: bool,
     },
+    /// Aparelhos na etapa de espera, aguardando aprovação para instalar (ADR-023).
+    Installs,
+    /// Aprova a instalação de um aparelho da lista, apagando o disco informado.
+    ApproveInstall {
+        /// Impressão digital que o aparelho mostra na tela (e `installs` lista).
+        fingerprint: String,
+        /// Disco que será apagado (`sda`, `mmcblk0`); precisa ser um dos que o aparelho informou.
+        #[arg(long)]
+        disk: String,
+    },
+    /// Tira um aparelho da lista de espera.
+    RejectInstall {
+        /// Impressão digital do aparelho.
+        fingerprint: String,
+    },
     /// Retira a confiança e a credencial de um nó e devolve o trabalho dele à fila (S5).
     Revoke {
         /// Nó a revogar.
@@ -353,6 +368,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             trust_listed,
         } => approve_node(&cli.controller, &node, fingerprint, trust_listed).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
+        Command::Installs => print_installs(&cli.controller).await?,
+        Command::ApproveInstall { fingerprint, disk } => {
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let approved = client
+                .approve_install(ai_cluster_protocol::cluster::ApproveInstallRequest {
+                    fingerprint: fingerprint.clone(),
+                    disk: disk.clone(),
+                })
+                .await?
+                .into_inner()
+                .approved;
+            if approved {
+                println!("INSTALAÇÃO aprovada fingerprint={fingerprint} apaga={disk}");
+            } else {
+                println!("INSTALAÇÃO não encontrada fingerprint={fingerprint}");
+            }
+        }
+        Command::RejectInstall { fingerprint } => {
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let rejected = client
+                .reject_install(ai_cluster_protocol::cluster::RejectInstallRequest {
+                    fingerprint: fingerprint.clone(),
+                })
+                .await?
+                .into_inner()
+                .rejected;
+            let what = if rejected {
+                "recusada"
+            } else {
+                "não encontrada"
+            };
+            println!("INSTALAÇÃO {what} fingerprint={fingerprint}");
+        }
         Command::Rollout {
             version,
             url,
@@ -534,6 +582,43 @@ async fn approve_node(
         println!("NÓ aprovado no={node}");
     } else {
         println!("NÓ não encontrado no={node}");
+    }
+    Ok(())
+}
+
+async fn print_installs(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let reply = client
+        .list_pending_installs(ai_cluster_protocol::cluster::ListPendingInstallsRequest {})
+        .await?
+        .into_inner();
+    if reply.pending.is_empty() {
+        println!("nenhum aparelho aguardando");
+    }
+    for item in reply.pending {
+        let disks = item
+            .disks
+            .iter()
+            .map(|d| format!("{}={}GB", d.name, d.size_bytes / 1_000_000_000))
+            .collect::<Vec<_>>()
+            .join(",");
+        let waiting = reply.now_unix_ms.saturating_sub(item.first_seen_unix_ms) / 1000;
+        let state = if item.approved_disk.is_empty() {
+            "aguardando".to_string()
+        } else {
+            format!("aprovado apaga={}", item.approved_disk)
+        };
+        println!(
+            "INSTALAÇÃO fingerprint={} {state} mac={} host={} arch={} firmware={} cpu=\"{}\" núcleos={} ram={}MB discos={disks} espera={waiting}s",
+            item.fingerprint,
+            item.mac,
+            item.host,
+            item.arch,
+            item.firmware,
+            item.cpu_model,
+            item.cpu_cores,
+            item.ram_bytes / 1_000_000,
+        );
     }
     Ok(())
 }

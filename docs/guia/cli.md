@@ -34,6 +34,9 @@ ai-cluster [--controller <endpoint>] <comando>
 |---|---|
 | `approve <nó> --fingerprint <fp>` | Aprova um nó pendente, para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a que o controller mostra agora, sem conferir (anula a proteção). Aprovar de novo não faz mal. Também libera um nó em quarentena. |
 | `revoke <nó>` | Retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
+| `installs` | Aparelhos na etapa de espera de instalação (ADR-023): impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
+| `approve-install <impressão> --disk <disco>` | Aprova a instalação do aparelho, apagando o disco informado (precisa ser um dos que ele listou). Gera o token de instalação, que só o aparelho dono do segredo recebe, uma vez. |
+| `reject-install <impressão>` | Tira o aparelho da lista de espera. |
 
 ## Reservas
 

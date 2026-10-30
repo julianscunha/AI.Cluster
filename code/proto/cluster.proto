@@ -1013,6 +1013,92 @@ message WorkOutput {
 
 // Serviço próprio para que o servidor imponha um teto de mensagem de 4 MiB só aqui, sem
 // tocar o limite de 64 MiB do tráfego de dados do ClusterControl.
+// ---- Instalação com aprovação do controller (ADR-023) ----
+
+/// Disco que a etapa de espera enxergou no aparelho.
+message InstallDisk {
+  /// Nome do dispositivo (`sda`, `nvme0n1`, `mmcblk0`).
+  string name = 1;
+  uint64 size_bytes = 2;
+  string model = 3;
+}
+
+/// O que a etapa de espera conta sobre o aparelho. Chega sem credencial: nada aqui é confiável até
+/// o operador conferir a impressão digital na tela do aparelho.
+message AnnounceRequest {
+  /// Segredo aleatório (16 a 64 bytes) que só existe na memória do aparelho. A impressão digital é
+  /// derivada dele, e só quem o repete recebe o token depois da aprovação.
+  bytes secret = 1;
+  string mac = 2;
+  string arch = 3;
+  string firmware = 4;
+  string cpu_model = 5;
+  uint32 cpu_cores = 6;
+  uint64 ram_bytes = 7;
+  repeated InstallDisk disks = 8;
+}
+
+message AnnounceResponse {
+  /// A mesma que o aparelho mostra na tela e o operador confere em `ListPendingInstalls`.
+  string fingerprint = 1;
+  bool approved = 2;
+  /// Só na primeira resposta depois da aprovação, e só a quem repete o segredo.
+  string install_token = 3;
+  /// O disco que o operador aprovou para ser apagado.
+  string disk = 4;
+  /// Quando perguntar de novo.
+  uint32 retry_after_secs = 5;
+}
+
+message PendingInstall {
+  string fingerprint = 1;
+  string mac = 2;
+  /// De que IP o aparelho se apresentou.
+  string host = 3;
+  string arch = 4;
+  string firmware = 5;
+  string cpu_model = 6;
+  uint32 cpu_cores = 7;
+  uint64 ram_bytes = 8;
+  repeated InstallDisk disks = 9;
+  uint64 first_seen_unix_ms = 10;
+  uint64 last_seen_unix_ms = 11;
+  /// Disco aprovado; vazio enquanto aguarda.
+  string approved_disk = 12;
+}
+
+message ListPendingInstallsRequest {}
+
+message ListPendingInstallsResponse {
+  repeated PendingInstall pending = 1;
+  uint64 now_unix_ms = 2;
+}
+
+message ApproveInstallRequest {
+  string fingerprint = 1;
+  /// Disco que será apagado; precisa ser um dos que o aparelho informou.
+  string disk = 2;
+}
+
+message ApproveInstallResponse {
+  /// Falso quando a impressão digital não está (mais) na lista.
+  bool approved = 1;
+}
+
+message RejectInstallRequest {
+  string fingerprint = 1;
+}
+
+message RejectInstallResponse {
+  bool rejected = 1;
+}
+
+/// Porta separada e sem interceptor: é a única coisa que o controller atende sem token, e só serve
+/// à etapa de espera.
+service Enrollment {
+  rpc Announce(AnnounceRequest) returns (AnnounceResponse);
+}
+
 service LinkProbe {
   rpc ProbeLink(ProbeLinkRequest) returns (ProbeLinkResponse);
 }
@@ -1063,6 +1149,9 @@ service ClusterControl {
   rpc GetTrace(GetTraceRequest) returns (GetTraceResponse);
   rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
   rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  rpc ListPendingInstalls(ListPendingInstallsRequest) returns (ListPendingInstallsResponse);
+  rpc ApproveInstall(ApproveInstallRequest) returns (ApproveInstallResponse);
+  rpc RejectInstall(RejectInstallRequest) returns (RejectInstallResponse);
   rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
   rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
 }
