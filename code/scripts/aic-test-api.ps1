@@ -22,7 +22,7 @@
   .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Key SUA_CHAVE -Chat
 #>
 param(
-  [Parameter(Mandatory = $true)][string]$Url,
+  [string]$Url = "",
   [string]$Key = $env:AIC_API_KEY,
   [string]$Model = "",
   [string]$Prompt = "",
@@ -49,11 +49,36 @@ function Fail([string]$text) {
   Write-Host ""
   Write-Host "  [x] $text" -ForegroundColor Red
   Write-Host ""
+  Wait-Close
   exit 1
 }
 function Sec([double]$s) { ([math]::Round($s, 2)).ToString([Globalization.CultureInfo]::InvariantCulture) + "s" }
 function Rate([double]$r) { ([math]::Round($r, 1)).ToString([Globalization.CultureInfo]::InvariantCulture) }
 
+# Aberto com duplo clique (sem parâmetros), o script pergunta o que falta e não fecha sozinho.
+$guided = [string]::IsNullOrWhiteSpace($Url) -and [string]::IsNullOrWhiteSpace($Key)
+function Wait-Close { if ($guided) { Write-Host ""; Read-Host (T "  Enter para fechar" "  Press Enter to close") | Out-Null } }
+if ($guided) {
+  Banner (T "Teste da API" "API test")
+  Write-Host "  $(T 'Responda o que falta. Enter aceita o valor entre colchetes.' 'Answer what is missing. Enter accepts the value in brackets.')" -ForegroundColor DarkGray
+  Write-Host ""
+}
+if (-not $Url) {
+  $default = "http://192.168.1.25:8080"
+  $typed = Read-Host (T "  Endereço do gateway [$default]" "  Gateway address [$default]")
+  $Url = if ($typed) { $typed.Trim() } else { $default }
+}
+# Aceita "192.168.1.25", "192.168.1.25:8080" ou o endereço completo.
+if ($Url -notmatch "^https?://") { $Url = "http://$Url" }
+if ($Url -match "^https?://[^/:]+$") { $Url = "${Url}:8080" }
+if (-not $Key) {
+  $Key = (Read-Host (T "  Chave de API (no servidor: /etc/ai-cluster/gateway.env, linha AI_CLUSTER_API_KEY)" "  API key (on the server: /etc/ai-cluster/gateway.env, line AI_CLUSTER_API_KEY)")).Trim()
+  if ($Key -match "^AI_CLUSTER_API_KEY=") { $Key = $Key.Substring("AI_CLUSTER_API_KEY=".Length) }
+}
+if ($guided -and -not $Chat) {
+  $mode = Read-Host (T "  [M]edir a velocidade ou [C]onversar? [M]" "  [M]easure speed or [C]hat? [M]")
+  if ($mode -match "^[cC]") { $Chat = [switch]$true }
+}
 if (-not $Key) {
   Fail (T "informe -Key (ou a variável AIC_API_KEY): está em /etc/ai-cluster/gateway.env no servidor" "give -Key (or the AIC_API_KEY variable): it is in /etc/ai-cluster/gateway.env on the server")
 }
@@ -174,6 +199,7 @@ if ($Chat) {
     Write-Host "  $(Stats $r)" -ForegroundColor DarkGray
   }
   Write-Host ""
+  Wait-Close
   exit 0
 }
 
@@ -205,3 +231,4 @@ if ($Runs -gt 1) {
   Write-Host "  $(T 'velocidade' 'speed'): $(T 'média' 'mean') $(Rate (($rates | Measure-Object -Average).Average)) tokens/s, $(T 'mínima' 'min') $(Rate (($rates | Measure-Object -Minimum).Minimum)), $(T 'máxima' 'max') $(Rate (($rates | Measure-Object -Maximum).Maximum))"
 }
 Write-Host ""
+Wait-Close
