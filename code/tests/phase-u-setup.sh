@@ -8,6 +8,7 @@
 #   A) install.sh instala o servidor (controller + gateway) baixando só os pacotes desse papel;
 #   B) o convite entrega o pacote do worker pelo processador e o nó fica READY e aprovado;
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
+#   B2b) `aic change` muda um nó de controller pelo convite (token, CA, certificado novo; falha não altera nada);
 #   B3) o worker exige o código do convite (8 caracteres) e o convite trava com chutes demais;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
 #   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem;
@@ -26,7 +27,7 @@ teardown; docker network create $NET >/dev/null
 # Imagem base com as dependências do instalador (construída uma vez; o cache do Docker a reaproveita).
 docker build -q -t aic-test-base - >/dev/null <<'DOCKERFILE' || { echo "FALHA: imagem base"; exit 1; }
 FROM debian:12
-RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl libgomp1 iproute2 python3 curl procps >/dev/null && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl libgomp1 iproute2 python3 curl wget procps >/dev/null && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 docker run -d --name aic-mirror --network $NET -v "$DIST:/r:ro" -w /r aic-test-base python3 -m http.server 9000 >/dev/null
 for n in aic-srv aic-wk aic-ctl aic-gw; do docker run -d --name $n --network $NET aic-test-base sleep 900 >/dev/null; done
@@ -76,6 +77,28 @@ docker exec aic-wk grep -q "Impressão digital" /tmp/wait.log || fail "a tela de
 for _ in $(seq 10); do docker exec aic-srv grep -q "quer instalar" /tmp/invite.log && break; sleep 2; done
 docker exec aic-srv grep -q "quer instalar" /tmp/invite.log || fail "o convite deveria avisar o operador do aparelho"
 echo "OK: aparelho aguardando aprovação"
+
+# `aic change` (AI Cluster OS): muda um nó de controller pelo convite, sem regravar a imagem. O nó de
+# mentira usa pastas e um rc-service de mentira; o resto (wget, openssl, convite) é de verdade.
+AICDIR=$(cd "$(dirname "$0")/../os/image/overlay/usr/sbin" && pwd -W 2>/dev/null || pwd)
+docker cp "$AICDIR/aic-change" aic-wk:/tmp/aic-change >/dev/null
+docker exec aic-wk sh -c "mkdir -p /tmp/fd/state /tmp/fd/rpc-tls; printf 'AI_CLUSTER_CONTROLLER=http://velho:50051
+AI_CLUSTER_JOIN_TOKEN=velho
+AI_CLUSTER_NODE_ID=nodechange
+AI_CLUSTER_INSECURE=1
+' > /tmp/fd/worker.env; echo cred > /tmp/fd/state/credential; printf '#!/bin/sh
+echo \$@ >> /tmp/fd/rc.log
+' > /tmp/fd/rc; chmod +x /tmp/fd/rc"
+CH="AIC_DATA=/tmp/fd AIC_RC=/tmp/fd/rc sh /tmp/aic-change"
+docker exec aic-wk sh -c "$CH --server $SIP:8099 --code ZZZZZZZZ" >/dev/null 2>&1 && fail "aic change com código errado deveria falhar"
+docker exec aic-wk grep -q 'JOIN_TOKEN=velho' /tmp/fd/worker.env || fail "aic change com falha não pode mexer no nó"
+docker exec aic-wk sh -c "$CH --server $SIP:8099 --code $(echo $WCODE | tr A-Z a-z) --controller http://192.168.1.25:50051" >/dev/null || fail "aic change pelo convite"
+NEWTOK=$(docker exec aic-srv sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)
+docker exec aic-wk grep -q "AI_CLUSTER_JOIN_TOKEN=$NEWTOK" /tmp/fd/worker.env || fail "o token novo deveria estar no worker.env"
+docker exec aic-wk grep -q 'AI_CLUSTER_CONTROLLER=http://192.168.1.25:50051' /tmp/fd/worker.env || fail "o --controller deveria valer"
+docker exec aic-wk grep -q 'AI_CLUSTER_INSECURE=1' /tmp/fd/worker.env || fail "o resto do worker.env deveria ficar"
+docker exec aic-wk sh -c "test ! -e /tmp/fd/state/credential && openssl verify -CAfile /tmp/fd/rpc-tls/ca.crt /tmp/fd/rpc-tls/worker.crt && openssl x509 -in /tmp/fd/rpc-tls/worker.crt -noout -ext subjectAltName | grep -q 'aic-worker-nodechange' && grep -q stop /tmp/fd/rc.log && grep -q start /tmp/fd/rc.log" >/dev/null || fail "aic change deveria trocar credencial e certificado e reiniciar o worker"
+echo "OK: aic change troca de controller pelo convite"
 
 # Chutes demais travam o convite: o código é curto.
 for _ in $(seq 31); do docker exec aic-wk curl -s -o /dev/null "http://$SIP:8099/join-AAAAAAAA"; done

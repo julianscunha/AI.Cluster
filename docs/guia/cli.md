@@ -22,7 +22,7 @@ ai-cluster [--controller <endpoint>] <comando>
 | Comando | O que faz |
 |---|---|
 | `status` | Mesmo que `nodes`. |
-| `nodes` | Tabela de todos os nós: estado, confiança (`pendente` ou `aprovado`), arquitetura, threads, RAM, scores, saúde, temperatura, swap, classes de armazenamento, versão e medida (`confere` quando a medida bate com a release assinada). |
+| `nodes` | Tabela de todos os nós (a coluna `VELOC` é a velocidade estimada que o plano de modelo usa para ordenar os workers: média geométrica da CPU com a banda de memória; só serve para comparar nós): estado, confiança (`pendente` ou `aprovado`), arquitetura, threads, RAM, scores, saúde, temperatura, swap, classes de armazenamento, versão e medida (`confere` quando a medida bate com a release assinada). |
 | `node show <id>` | Tudo que o controller sabe sobre um nó: capacidade, saúde e reserva. |
 | `metrics` | Roll-up do cluster: contagem de nós, profundidade da fila e tempos das unidades concluídas. |
 | `events [--limit N]` | Eventos recentes, do mais antigo para o mais novo. `--limit` padrão 20; `0` mostra tudo que o controller ainda guarda. |
@@ -33,7 +33,9 @@ ai-cluster [--controller <endpoint>] <comando>
 | Comando | O que faz |
 |---|---|
 | `approve <nó> --fingerprint <fp>` | Aprova um nó pendente, para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a que o controller mostra agora, sem conferir (anula a proteção). Aprovar de novo não faz mal. Também libera um nó em quarentena. |
-| `revoke <nó>` | Retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
+| `revoke <nó>` | **Revoga a credencial**: retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
+| `retire <nó>` | Tira o worker do trabalho **mantendo a identidade**: perde a aprovação (não recebe unidades nem entra no plano de modelo), as unidades em voo voltam à fila, e a credencial e a impressão digital continuam as mesmas. O worker segue conectado, como pendente. Volta com `approve <nó> --fingerprint <a impressão de antes>`. Registra `node_retired`. |
+| `remove <nó>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e credencial). Se o processo continuar rodando, ele se apresenta de novo como um nó novo e pendente. Registra `node_removed`. |
 | `installs` | Aparelhos na etapa de espera de instalação (ADR-023): impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
 | `approve-install <impressão> --disk <disco>` | Aprova a instalação do aparelho, apagando o disco informado (precisa ser um dos que ele listou). Gera o token de instalação, que só o aparelho dono do segredo recebe. |
 | `enrollment open [--minutes N]` / `enrollment close` | Abre (1 a 120 min, padrão 15) ou fecha a porta em que os aparelhos se apresentam para instalar. Fechada é o normal; a janela se fecha sozinha. O `aic-setup invite` a abre e fecha por você. |

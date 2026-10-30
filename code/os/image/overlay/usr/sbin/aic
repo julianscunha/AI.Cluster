@@ -14,6 +14,7 @@ comandos:
   version           versao do sistema, placa e slot em uso
   logs [-f]         ultimos registros do worker (-f acompanha)
   update            estado da ultima atualizacao (somente leitura)
+  change            muda este no para outro controller (pelo convite dele, sem regravar a imagem)
   passwd [--remove] define ou remove a senha do console do monitor (root)
   help              esta ajuda
 
@@ -62,6 +63,9 @@ update)
 	;;
 passwd)
 	exec /usr/sbin/aic-passwd "$@"
+	;;
+change)
+	exec /usr/sbin/aic-change "$@"
 	;;
 *)
 	echo "aic: comando desconhecido: $cmd" >&2

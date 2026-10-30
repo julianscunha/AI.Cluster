@@ -160,9 +160,19 @@ enum Command {
         /// Impressão digital do aparelho.
         fingerprint: String,
     },
-    /// Retira a confiança e a credencial de um nó e devolve o trabalho dele à fila (S5).
+    /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
+    Retire {
+        /// Nó a retirar.
+        node: String,
+    },
+    /// Revoga a credencial do worker: ele fica offline e só volta com um novo join (S5).
     Revoke {
         /// Nó a revogar.
+        node: String,
+    },
+    /// Remove o worker do cluster: o controller o esquece por inteiro.
+    Remove {
+        /// Nó a remover.
         node: String,
     },
     /// Define a release que os nós devem rodar: um canário primeiro, os demais depois (F19).
@@ -396,6 +406,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             trust_listed,
         } => approve_node(&cli.controller, &node, fingerprint, trust_listed).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
+        Command::Retire { node } => {
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let reply = client
+                .retire_node(ai_cluster_protocol::cluster::RetireNodeRequest {
+                    node_id: node.clone(),
+                })
+                .await?
+                .into_inner();
+            if reply.retired {
+                println!(
+                    "NÓ retirado no={node} reenfileiradas={}; para devolvê-lo: ai-cluster approve {node} --fingerprint <a impressão de antes>",
+                    reply.requeued
+                );
+            } else {
+                println!("NÓ não encontrado no={node}");
+            }
+        }
+        Command::Remove { node } => {
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let reply = client
+                .remove_node(ai_cluster_protocol::cluster::RemoveNodeRequest {
+                    node_id: node.clone(),
+                })
+                .await?
+                .into_inner();
+            if reply.removed {
+                println!("NÓ removido no={node} reenfileiradas={}", reply.requeued);
+            } else {
+                println!("NÓ não encontrado no={node}");
+            }
+        }
         Command::Installs => print_installs(&cli.controller).await?,
         Command::Enrollment { action } => {
             let minutes = match action {
@@ -1058,7 +1099,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Vec<_>>();
     println!("NÓS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16}",
+        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6}",
         "NÓ",
         "ESTADO",
         "ARQ",
@@ -1074,7 +1115,8 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         "ARMAZ_SCORE",
         "VERSÃO",
         "MEDIDA",
-        "IMPRESSÃO"
+        "IMPRESSÃO",
+        "VELOC"
     );
     for node in nodes {
         let identity = node.identity.unwrap_or_default();
@@ -1088,7 +1130,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16}",
+            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6.2}",
             identity.node_id,
             // a largura vem antes da cor: os códigos de escape não contam como coluna
             ai_cluster_common::brand::paint(
@@ -1122,6 +1164,7 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 &node.fingerprint
             },
+            node.estimated_speed,
         );
     }
     Ok(())

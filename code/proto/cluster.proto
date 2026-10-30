@@ -178,6 +178,9 @@ message NodeSnapshot {
   /// Impressão digital da credencial do nó (SHA-256, 16 hex). O nó a mostra no log ao registrar-se; o
   /// operador a confere no `approve` para não aprovar quem tomou o id. Não revela a credencial.
   string fingerprint = 9;
+  /// Velocidade estimada para gerar texto (a nota que o plano de modelo usa para ordenar os workers):
+  /// média geométrica da CPU com a banda de memória. Só serve para comparar nós entre si.
+  double estimated_speed = 10;
 }
 
 message ApproveNodeRequest {
@@ -194,6 +197,28 @@ message RevokeNodeRequest {
 message RevokeNodeResponse {
   // Falso quando o nó é desconhecido.
   bool revoked = 1;
+  // Unidades em voo que voltaram para a fila.
+  uint32 requeued = 2;
+}
+
+message RetireNodeRequest {
+  string node_id = 1;
+}
+
+message RetireNodeResponse {
+  // Falso quando o nó é desconhecido.
+  bool retired = 1;
+  // Unidades em voo que voltaram para a fila.
+  uint32 requeued = 2;
+}
+
+message RemoveNodeRequest {
+  string node_id = 1;
+}
+
+message RemoveNodeResponse {
+  // Falso quando o nó é desconhecido.
+  bool removed = 1;
   // Unidades em voo que voltaram para a fila.
   uint32 requeued = 2;
 }
@@ -1117,6 +1142,8 @@ service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
   rpc RevokeNode(RevokeNodeRequest) returns (RevokeNodeResponse);
+  rpc RetireNode(RetireNodeRequest) returns (RetireNodeResponse);
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
   rpc SetRelease(SetReleaseRequest) returns (SetReleaseResponse);
   rpc GetOutput(GetOutputRequest) returns (GetOutputResponse);
   /// Canal residente de um worker (J5): o worker abre o stream e recebe operações de fatia de

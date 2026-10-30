@@ -97,6 +97,11 @@ impl NodeRecord {
             trusted: self.trusted,
             attested: false,
             fingerprint: ai_cluster_protocol::metadata::credential_fingerprint(&self.credential),
+            estimated_speed: crate::models::estimated_speed(
+                self.capability.compute_score,
+                self.capability.memory_bandwidth_loaded_score,
+                self.capability.memory_bandwidth_score,
+            ),
         }
     }
 }
@@ -267,6 +272,40 @@ impl Registry {
             self.save(&known);
         }
         existed
+    }
+
+    /// Tira o nó do trabalho sem tirar a identidade: perde a confiança (não recebe unidades nem entra
+    /// no plano de modelo), mas a credencial e a impressão digital continuam as mesmas. O worker segue
+    /// conectado, como pendente; `approve` com a impressão digital de antes o põe de volta. False se o
+    /// nó é desconhecido.
+    pub fn retire(&self, node_id: &str) -> bool {
+        let live = self.lock().get_mut(node_id).map(|record| {
+            record.trusted = false;
+            record.credential.clone()
+        });
+        if let Some(credential) = live {
+            self.remember(node_id, &credential, false);
+            return true;
+        }
+        let mut known = self.lock_known();
+        let Some(entry) = known.get_mut(node_id) else {
+            return false;
+        };
+        entry.trusted = false;
+        self.save(&known);
+        true
+    }
+
+    /// Esquece o nó por inteiro: registro vivo e credencial guardada. Se o worker continuar rodando, ele
+    /// se apresenta de novo como um nó novo e pendente. False se o nó é desconhecido.
+    pub fn forget(&self, node_id: &str) -> bool {
+        let live = self.lock().remove(node_id).is_some();
+        let mut known = self.lock_known();
+        let had = known.remove(node_id).is_some();
+        if had {
+            self.save(&known);
+        }
+        live || had
     }
 
     /// Counts an invalid result against a node; at `limit` in a row it is quarantined.
@@ -685,6 +724,49 @@ mod tests {
             registry.approve_checked("ghost", &theirs),
             Approval::Unknown
         );
+    }
+
+    #[test]
+    fn retirar_tira_do_trabalho_e_a_impressao_de_antes_devolve_o_no() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        let seen = ai_cluster_protocol::metadata::credential_fingerprint(&first.credential);
+        assert_eq!(registry.approve_checked("n1", &seen), Approval::Approved);
+
+        assert!(registry.retire("n1"));
+        assert!(!registry.is_trusted("n1"));
+        // A identidade fica: mesma credencial, mesma impressão digital.
+        assert_eq!(registry.list()[0].fingerprint, seen);
+        assert!(registry.authorizes("n1", first.credential.as_bytes()));
+        // O worker que volta com a credencial dele continua o mesmo nó, ainda fora do trabalho.
+        let back = registry
+            .register_as(
+                identity("n1"),
+                CapabilityReport::default(),
+                2,
+                first.credential.as_bytes(),
+            )
+            .unwrap();
+        assert_eq!(back.credential, first.credential);
+        assert!(!registry.is_trusted("n1"));
+        assert_eq!(registry.approve_checked("n1", &seen), Approval::Approved);
+        assert!(registry.is_trusted("n1"));
+        assert!(!registry.retire("ghost"));
+    }
+
+    #[test]
+    fn remover_esquece_o_no_e_a_credencial() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        let seen = ai_cluster_protocol::metadata::credential_fingerprint(&first.credential);
+        registry.approve_checked("n1", &seen);
+        assert!(registry.forget("n1"));
+        assert!(registry.list().is_empty());
+        assert!(!registry.forget("n1"), "esquecer duas vezes: desconhecido");
+        // Quem volta é um nó novo e pendente, com outra credencial.
+        let again = registry.register(identity("n1"), CapabilityReport::default(), 2);
+        assert_ne!(again.credential, first.credential);
+        assert!(!registry.is_trusted("n1"));
     }
 
     #[test]

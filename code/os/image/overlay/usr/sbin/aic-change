@@ -1,0 +1,119 @@
+#!/bin/sh
+# aic-change - muda este no para outro controller, sem regravar a imagem.
+#
+#   aic change --server IP[:8099] --code CODIGO [--controller URL]
+#       usa o convite do novo controller (aic-setup invite la): baixa o token e a CA, pede um
+#       certificado novo do tunel com a chave que nasce aqui e troca tudo de uma vez
+#   aic change --controller URL --token TOKEN
+#       so o endereco e o token (nao mexe no certificado do tunel)
+#
+# Nada e trocado antes de tudo ter sido baixado e conferido: se algo falhar, o no continua como estava.
+
+DATA=${AIC_DATA:-/data}
+RC=${AIC_RC:-rc-service}
+ENV_FILE="$DATA/worker.env"
+
+usage() {
+	cat <<'USO'
+aic-change - muda este no para outro controller
+
+uso:
+  aic change --server IP[:8099] --code CODIGO [--controller URL]
+      pelo convite do novo controller (rode 'aic-setup invite' la). Troca o token, a CA e o
+      certificado do tunel. --controller sobrepoe o endereco que o convite informa (use se o
+      controller aparece com outro IP para este no, por exemplo atras de NAT)
+  aic change --controller URL --token TOKEN
+      so o endereco do controller e o token de join
+  aic change --help
+
+O no precisa ser aprovado no novo controller depois (o convite aprova sozinho enquanto aberto).
+USO
+}
+
+die() { echo "aic change: $1" >&2; exit 1; }
+
+SERVER=""; CODE=""; CONTROLLER=""; TOKEN=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--server | --code | --controller | --token)
+		[ $# -ge 2 ] || die "$1 pede um valor"
+		case "$1" in
+		--server) SERVER=$2 ;; --code) CODE=$(printf '%s' "$2" | tr a-z A-Z) ;;
+		--controller) CONTROLLER=$2 ;; --token) TOKEN=$2 ;;
+		esac
+		shift 2 ;;
+	*) die "argumento desconhecido: $1 (aic change --help)" ;;
+	esac
+done
+
+[ "$(id -u)" = 0 ] || die "rode como root"
+[ -r "$ENV_FILE" ] || die "falta $ENV_FILE: este no nao tem identidade"
+NODE=$(sed -n 's/^AI_CLUSTER_NODE_ID=//p' "$ENV_FILE" | head -n 1 | tr -d "\"'")
+[ -n "$NODE" ] || die "o worker.env nao tem AI_CLUSTER_NODE_ID"
+
+if [ -n "$SERVER" ]; then
+	[ -n "$CODE" ] || die "com --server informe tambem --code (aparece no 'aic-setup invite' do controller)"
+	case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "--server invalido" ;; esac
+	case "$SERVER" in *:*) ;; *) SERVER="$SERVER:8099" ;; esac
+	case "$CODE" in *[!A-Z0-9]*) die "o codigo tem so letras e numeros" ;; esac
+	case "$NODE" in *[!A-Za-z0-9.-]*) die "o id do no ($NODE) tem caracteres que o convite nao aceita" ;; esac
+	command -v openssl >/dev/null || die "precisa do openssl"
+else
+	[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] || { usage >&2; exit 2; }
+fi
+
+T=$(mktemp -d) || die "sem espaco temporario"
+trap 'rm -rf "$T"' EXIT
+
+if [ -n "$SERVER" ]; then
+	echo "baixando do convite em $SERVER ..."
+	wget -q -T 10 -O "$T/node.env" "http://$SERVER/node-$CODE" || die "o convite nao respondeu ou o codigo esta errado"
+	[ -n "$CONTROLLER" ] || CONTROLLER=$(sed -n 's/^AI_CLUSTER_CONTROLLER=//p' "$T/node.env" | head -n 1)
+	TOKEN=$(sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' "$T/node.env" | head -n 1)
+	[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] || die "o convite nao trouxe controller e token"
+	wget -q -T 10 -O "$T/pki.tgz" "http://$SERVER/pki-worker.tar.gz" || die "nao consegui baixar a CA do convite"
+	mkdir "$T/pki" && tar -C "$T/pki" -xzf "$T/pki.tgz" ca.crt 2>/dev/null || tar -C "$T/pki" -xzf "$T/pki.tgz" ./ca.crt 2>/dev/null || die "a CA do convite veio invalida"
+	grep -q "BEGIN CERTIFICATE" "$T/pki/ca.crt" || die "a CA do convite veio invalida"
+	# A chave nasce aqui e nunca sai; o convite so assina o pedido.
+	(umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+		-keyout "$T/worker.key" -out "$T/worker.csr" -subj "/CN=$NODE" >/dev/null 2>&1) || die "nao consegui gerar a chave"
+	wget -q -T 15 -O "$T/worker.crt" --post-file "$T/worker.csr" "http://$SERVER/sign?name=$NODE&code=$CODE" \
+		|| die "o convite nao assinou o certificado (o nome $NODE ja foi usado neste convite? abra outro com 'aic-setup invite')"
+	openssl verify -CAfile "$T/pki/ca.crt" "$T/worker.crt" >/dev/null 2>&1 || die "o certificado nao confere com a CA do convite"
+fi
+case "$CONTROLLER" in http://* | https://*) ;; *) die "o controller precisa comecar com http:// ou https://" ;; esac
+case "$CONTROLLER$TOKEN" in *[!A-Za-z0-9.:/_@-]*) die "controller ou token com caracteres invalidos" ;; esac
+
+# Tudo baixado e conferido: agora sim troca, guardando o anterior.
+BK="$DATA/.change-backup"
+rm -rf "$BK"; mkdir -p "$BK"
+cp "$ENV_FILE" "$BK/worker.env"
+[ -d "$DATA/rpc-tls" ] && cp -r "$DATA/rpc-tls" "$BK/rpc-tls"
+[ -f "$DATA/state/credential" ] && cp "$DATA/state/credential" "$BK/credential"
+
+"$RC" ai-cluster-worker stop >/dev/null 2>&1
+set_key() { # set_key CHAVE VALOR: troca a linha ou acrescenta
+	if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+set_key AI_CLUSTER_CONTROLLER "$CONTROLLER"
+set_key AI_CLUSTER_JOIN_TOKEN "$TOKEN"
+rm -f "$DATA/state/credential"
+if [ -n "$SERVER" ]; then
+	mkdir -p "$DATA/rpc-tls"
+	cp "$T/pki/ca.crt" "$DATA/rpc-tls/ca.crt"; cp "$T/worker.crt" "$DATA/rpc-tls/worker.crt"; cp "$T/worker.key" "$DATA/rpc-tls/worker.key"
+	chmod 644 "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt"; chmod 600 "$DATA/rpc-tls/worker.key"
+	chown ai-cluster:ai-cluster "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt" "$DATA/rpc-tls/worker.key" 2>/dev/null
+fi
+"$RC" ai-cluster-worker start >/dev/null 2>&1 || {
+	echo "aic change: o worker nao subiu; restaurando o estado anterior" >&2
+	cp "$BK/worker.env" "$ENV_FILE"
+	[ -d "$BK/rpc-tls" ] && cp -r "$BK/rpc-tls/." "$DATA/rpc-tls/"
+	[ -f "$BK/credential" ] && cp "$BK/credential" "$DATA/state/credential"
+	"$RC" ai-cluster-worker start >/dev/null 2>&1
+	exit 1
+}
+
+echo "no $NODE agora aponta para $CONTROLLER"
+echo "falta aprovar no novo controller: ai-cluster nodes  (e ai-cluster approve $NODE --fingerprint ...)"
+echo "o estado anterior ficou em $BK"

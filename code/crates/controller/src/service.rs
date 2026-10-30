@@ -5,7 +5,8 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
     ApproveInstallRequest, ApproveInstallResponse, ListPendingInstallsRequest,
-    ListPendingInstallsResponse, RejectInstallRequest, RejectInstallResponse, SetEnrollmentRequest,
+    ListPendingInstallsResponse, RejectInstallRequest, RejectInstallResponse, RemoveNodeRequest,
+    RemoveNodeResponse, RetireNodeRequest, RetireNodeResponse, SetEnrollmentRequest,
     SetEnrollmentResponse,
 };
 use ai_cluster_protocol::cluster::{
@@ -755,6 +756,63 @@ impl ClusterControl for ClusterControlService {
     }
 
     /// Strips a node of trust and its credential, and hands its in-flight units back (S5).
+    /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
+    async fn retire_node(
+        &self,
+        request: Request<RetireNodeRequest>,
+    ) -> Result<Response<RetireNodeResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let node_id = request.into_inner().node_id;
+        if node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        self.audit(&peer, "retire", &node_id);
+        let retired = self.registry.retire(&node_id);
+        self.shards.drop_node(&node_id);
+        let requeued = if retired {
+            self.work.requeue_for_node(&node_id).requeued as u32
+        } else {
+            0
+        };
+        if retired {
+            self.events.record(
+                unix_ms(),
+                "node_retired",
+                format!("{node_id} reenfileiradas={requeued}"),
+            );
+        }
+        Ok(Response::new(RetireNodeResponse { retired, requeued }))
+    }
+
+    /// Esquece o worker: some do registro e perde a credencial.
+    async fn remove_node(
+        &self,
+        request: Request<RemoveNodeRequest>,
+    ) -> Result<Response<RemoveNodeResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let node_id = request.into_inner().node_id;
+        if node_id.trim().is_empty() {
+            return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        self.audit(&peer, "remove", &node_id);
+        // Antes de esquecer: as unidades em voo voltam para a fila com o nó ainda conhecido.
+        let requeued = self.work.requeue_for_node(&node_id).requeued as u32;
+        let removed = self.registry.forget(&node_id);
+        self.shards.drop_node(&node_id);
+        self.node_hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&node_id);
+        if removed {
+            self.events.record(
+                unix_ms(),
+                "node_removed",
+                format!("{node_id} reenfileiradas={requeued}"),
+            );
+        }
+        Ok(Response::new(RemoveNodeResponse { removed, requeued }))
+    }
+
     async fn revoke_node(
         &self,
         request: Request<RevokeNodeRequest>,

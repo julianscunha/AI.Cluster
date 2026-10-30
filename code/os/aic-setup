@@ -682,6 +682,11 @@ chmod 755 "\$T/aic-wait"
 AIC_INSTALL_OUT=/run/aic-install.json "\$T/aic-wait" http://$IP:$ENROLL_PORT
 WAIT_SCRIPT
   fi
+  # Para quem já é um AI Cluster OS e só quer mudar de controller (`aic change` no nó): endereço e token,
+  # sob o código do convite como o /join.
+  printf 'AI_CLUSTER_CONTROLLER=http://%s:%s
+AI_CLUSTER_JOIN_TOKEN=%s
+' "$IP" "$GRPC_PORT" "$JOIN" > "$WEB/node-$GCODE"
   cd "$WEB"
   # Servidor do convite: arquivos sem listagem de diretório (o código do gateway não pode ser
   # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
@@ -710,7 +715,7 @@ class H(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         # Os arquivos com o código no nome (join, gateway) são a parte secreta: pedir um que não existe
         # é chute, e chutes demais travam o convite.
-        if self.path.startswith(("/join-", "/gw-")):
+        if self.path.startswith(("/join-", "/gw-", "/node-")):
             if wrong >= MAX_WRONG:
                 return self.send_error(429)
             if not os.path.exists(self.translate_path(self.path)):

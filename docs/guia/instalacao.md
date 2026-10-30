@@ -67,6 +67,18 @@ curl -fsSL http://<ip-do-servidor>:8099/wait | sudo sh
 
 O script confere o processador, o firmware e o espaço, baixa só o `aic-wait` do servidor (SHA-256 conferido) e o roda. A tela mostra a **impressão digital**, o MAC, a CPU, a RAM e os discos. No servidor: `ai-cluster installs` lista os aparelhos; confira a impressão digital com a da tela e aprove com `ai-cluster approve-install <impressão> --disk <disco>` (a aprovação apaga o disco informado). `ai-cluster reject-install` tira da lista. A porta de espera só aceita aparelhos enquanto o convite está aberto (ou `ai-cluster enrollment open`). O reinício para a imagem de espera e a instalação em si ainda não existem ([ADR-023](../system/05-decisoes/adr-023-instalacao-com-aprovacao-do-controller.md)).
 
+### Mudar um worker (AI Cluster OS) de controller
+
+Num worker que já roda o AI Cluster OS (placa ou PC dedicado) a identidade fica em `/data/worker.env`, gravada na imagem. Para apontá-lo para outro controller sem regravar a imagem, rode **no worker**, com o convite do novo controller aberto (`sudo aic-setup invite` lá):
+
+```bash
+aic change --server <ip-do-novo-controller>:8099 --code <CÓDIGO>
+# se o controller aparece para o worker com outro IP (por exemplo, atrás de NAT):
+aic change --server <ip>:8099 --code <CÓDIGO> --controller http://<ip-que-o-worker-alcança>:50051
+```
+
+O comando baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic change --controller <url> --token <token>`.
+
 ## Instalação dedicada
 
 Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o cluster, imutável, com slots A/B, volta automática e release assinada ([[adr-017-instalacao-a-b-e-boot-de-rede]], [[adr-019-imagem-x86-uefi-com-grub]]). É o equivalente ao ESXi: desempenho previsível, sem outros serviços competindo.
