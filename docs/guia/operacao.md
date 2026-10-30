@@ -155,7 +155,9 @@ Limites:
 Regras gerais:
 
 - O controller empurra **apenas** a release assinada, e só para nós com AI Cluster OS. Ele não empurra atualização para workers nem gateways em Linux comum.
-- Em Linux comum não há empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada nó, para o operador ver quem está para trás.
+- Falhas no meio do `aic update apply` desfazem tudo: os binários, o `setup`, o `bootstrap.sh`, o wrapper `aic` e os arquivos `.env` voltam ao que eram (guardados em `/opt/ai-cluster/bin/.prev`; a geração anterior só é substituída depois de a nova subir), o serviço antigo é reiniciado e confirmado, e o comando sai com erro (com texto distinto se o antigo também não subir). O worker confirma o registro no controller depois de reiniciar. Sem `BASE` na release de origem, o update do worker recusa em vez de cair no último lançamento público do GitHub; informe `--version`.
+
+Em Linux comum não há empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada nó, para o operador ver quem está para trás.
 - Trocar o controller de um worker (AI Cluster OS) não é atualização: é `aic worker change` ([[cli]]).
 
 ### Worker em Linux sem o `aic`

@@ -49,7 +49,7 @@ sudo aic cluster invite   # mostra um código de 8 caracteres
 curl -fsSL http://<ip-do-servidor>:8099/join-<CÓDIGO> | sudo sh
 ```
 
-O **código do convite** (8 caracteres, letras maiúsculas e números sem `0/O/1/I`) é a credencial do convite: o instalador o pergunta quando o papel é worker ou gateway (minúsculas valem), e a linha curta o leva no endereço (`/join-<CÓDIGO>`). Sem ele o servidor não entrega o token de join nem assina o certificado do túnel. Como o código é curto, 30 tentativas erradas travam o convite até ele ser aberto de novo (`aic cluster invite`). O convite continua em HTTP puro, então o código serve contra quem só alcança a porta, não contra quem escuta a rede.
+O **código do convite** (8 caracteres, letras maiúsculas e números sem `0/O/1/I`) é a credencial do convite: o instalador o pergunta quando o papel é worker ou gateway (minúsculas valem), e a linha curta o leva no endereço (`/join-<CÓDIGO>`). Sem ele o servidor não entrega o token de join nem assina o certificado do túnel. Como o código é curto, cada endereço IP que errar 30 vezes (arquivo inexistente em `/join-*`, `/gw-*`, `/node-*`, por GET ou HEAD, com o caminho já normalizado, ou `/sign` com código errado) é travado com 429, e há um teto global de 300 chutes; o terminal do convite avisa quando um IP trava, e os outros endereços seguem servidos. O convite expira sozinho no fim da janela (o servidor Python também se encerra, mesmo que o terminal seja fechado à força). O convite continua em HTTP puro, então o código serve contra quem só alcança a porta, não contra quem escuta a rede.
 
 O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. Cada worker gera a própria chave do túnel RPC; o servidor só assina o pedido de certificado (SAN `aic-worker-<nome do nó>`), e a chave nunca sai do worker. O gateway em outro computador entra pelo mesmo convite (papel gateway no instalador, ou `sudo aic gateway install --server <ip> --code <código>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
 
@@ -92,7 +92,7 @@ aic worker change --server <ip-do-novo-controller>:8099 --code <CÓDIGO>
 aic worker change --server <ip>:8099 --code <CÓDIGO> --controller http://<ip-que-o-worker-alcança>:50051
 ```
 
-O comando baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`.
+O comando mostra o controller de destino e pede confirmação (`S/n`; `--yes`/`AIC_ASSUME_YES=1` dispensa). Depois baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`.
 
 ## Instalação dedicada
 
