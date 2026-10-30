@@ -81,6 +81,8 @@ One script asks what each computer will be and downloads only what that role nee
 
 Start with the controller (with the gateway on the same computer, or on another one: the script asks), then run `sudo aic-setup invite` on it. The invite prints how the other computers join: the same installer choosing "Worker", or the short `curl .../join | sudo sh` line. Each worker generates its own tunnel key; the server only signs the certificate request. A worker's package comes from your own server, in the cluster's version, so the workers do not need internet access. Then `ai-cluster model start <file.gguf>` puts the model online at `http://<ip>:8080`.
 
+On a computer that already runs Linux and will become a dedicated AI Cluster OS, the invite also prints `curl -fsSL http://<ip>:8099/wait | sudo sh`: the machine introduces itself with a fingerprint, and **nothing is installed or erased until you approve it** on the server (`ai-cluster installs`, `ai-cluster approve-install <fingerprint> --disk <disk>`). The installation itself does not exist yet ([ADR-023](docs/system/05-decisoes/adr-023-instalacao-com-aprovacao-do-controller.md)).
+
 The script can also install on a **Linux you already have** (shared with whatever else runs on it) or, for the worker, point you to the **dedicated AI Cluster OS** image (the machine only runs the cluster; the disk is rewritten). Details, limits and the dedicated-install order (controller first) are in [the installation guide](docs/guia/instalacao.md). ARM 64-bit and phones do not have packages yet; the script says so instead of installing anything.
 
 Without prompts: `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.

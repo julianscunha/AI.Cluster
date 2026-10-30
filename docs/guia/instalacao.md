@@ -53,6 +53,16 @@ Sem perguntas (automação): `sudo sh install.sh --mode linux --role server|cont
 
 O `install.sh` baixa `VERSION`, `SHA256SUMS` e os pacotes `tools`, `controller-linux-<arq>`, `gateway-linux-x86_64` e `worker-linux-<arq>`, e confere o SHA-256 de cada um. `bash code/scripts/package-release.sh` gera esses arquivos (nomes sem versão, para `releases/latest/download/`). Sobre um Linux existente o desempenho é compartilhado com o que já roda nele e o cluster confia no sistema operacional da máquina; o modo dedicado existe para evitar os dois problemas.
 
+### Apresentar um computador para instalar o AI Cluster OS
+
+No convite aberto (`sudo aic-setup invite`) o servidor mostra também a linha para quem já tem Linux e quer virar um worker dedicado:
+
+```bash
+curl -fsSL http://<ip-do-servidor>:8099/wait | sudo sh
+```
+
+O script confere o processador, o firmware e o espaço, baixa só o `aic-wait` do servidor (SHA-256 conferido) e o roda. A tela mostra a **impressão digital**, o MAC, a CPU, a RAM e os discos. No servidor: `ai-cluster installs` lista os aparelhos; confira a impressão digital com a da tela e aprove com `ai-cluster approve-install <impressão> --disk <disco>` (a aprovação apaga o disco informado). `ai-cluster reject-install` tira da lista. A porta de espera só aceita aparelhos enquanto o convite está aberto (ou `ai-cluster enrollment open`). O reinício para a imagem de espera e a instalação em si ainda não existem ([ADR-023](../system/05-decisoes/adr-023-instalacao-com-aprovacao-do-controller.md)).
+
 ## Instalação dedicada
 
 Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o cluster, imutável, com slots A/B, volta automática e release assinada ([[adr-017-instalacao-a-b-e-boot-de-rede]], [[adr-019-imagem-x86-uefi-com-grub]]). É o equivalente ao ESXi: desempenho previsível, sem outros serviços competindo.
