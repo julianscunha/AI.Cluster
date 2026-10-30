@@ -56,7 +56,19 @@ const DIMENSIONS: u32 = 16;
 const GRAPH_UNITS: usize = 4;
 const MAX_INPUT_BYTES: usize = 8 * 1024;
 const BODY_LIMIT: usize = 64 * 1024;
-const DEADLINE: Duration = Duration::from_secs(30);
+/// Prazo de uma requisição inteira (`AI_CLUSTER_GATEWAY_DEADLINE_MS`, 1 s a 1 h, padrão 30 s): o
+/// motor próprio em placas lentas pede mais, e um cliente com pressa pede menos. Lido uma vez.
+fn deadline() -> Duration {
+    static VALUE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| parse_deadline(std::env::var("AI_CLUSTER_GATEWAY_DEADLINE_MS").ok()))
+}
+
+fn parse_deadline(value: Option<String>) -> Duration {
+    let ms = value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(30_000);
+    Duration::from_millis(ms.clamp(1_000, 3_600_000))
+}
 const POLL: Duration = Duration::from_millis(50);
 /// Requests running at once. Past it the gateway answers 429 instead of queueing without bound.
 const MAX_IN_FLIGHT: usize = 4;
@@ -798,7 +810,7 @@ struct EmbeddingRequest {
 
 /// Why a run did not produce a vector.
 enum Failure {
-    /// The graph did not finish inside `DEADLINE` — usually no worker is up.
+    /// The graph did not finish inside `deadline()` — usually no worker is up.
     Timeout,
     /// A unit failed, or its result is gone or unusable.
     Failed,
@@ -847,7 +859,7 @@ async fn run_graph(
         armed: true,
     };
 
-    let deadline = Instant::now() + DEADLINE;
+    let deadline = Instant::now() + deadline();
     loop {
         let trace = client
             .get_trace(GetTraceRequest {
@@ -1509,7 +1521,7 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
         }
         Ok::<_, String>(all)
     });
-    let all = match tokio::time::timeout(DEADLINE, task).await {
+    let all = match tokio::time::timeout(deadline(), task).await {
         Ok(Ok(Ok(all))) => all,
         Err(_) => {
             cancel.store(true, Ordering::Relaxed);
@@ -1686,7 +1698,7 @@ fn stream_chat(mut prepared: Prepared) -> Response {
     let usage_id = id.clone();
     tokio::spawn(async move {
         put(&tx, event(json!({ "role": "assistant" }), json!(null))).await;
-        let failure = match tokio::time::timeout(DEADLINE, task).await {
+        let failure = match tokio::time::timeout(deadline(), task).await {
             Ok(Ok(Ok(generated))) => {
                 log_remote(&llm, generated.len());
                 let stopped = generated.last() == Some(&llm.end_of_text);
@@ -1992,7 +2004,23 @@ fn generation_failure(detail: &str) -> (&'static str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::generation_failure;
+    use super::{generation_failure, parse_deadline};
+    use std::time::Duration;
+
+    #[test]
+    fn the_deadline_is_configurable_and_clamped() {
+        assert_eq!(parse_deadline(None), Duration::from_secs(30));
+        assert_eq!(
+            parse_deadline(Some("90000".into())),
+            Duration::from_secs(90)
+        );
+        assert_eq!(parse_deadline(Some("5".into())), Duration::from_secs(1));
+        assert_eq!(
+            parse_deadline(Some("999999999".into())),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(parse_deadline(Some("abc".into())), Duration::from_secs(30));
+    }
 
     #[test]
     fn the_client_learns_why_a_generation_failed_without_node_names() {

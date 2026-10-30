@@ -70,7 +70,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Estados, idempotência, orçamento | Não existem. | código |
 | Equidade e backpressure | Hoje há tetos fixos de admissão. | código |
-| Deadlines | O do `ShardMatmul` é configurável (`AI_CLUSTER_SHARD_TIMEOUT_MS`), mas fixo por processo; o do gateway (30 s) segue fixo. Falta derivar do tempo medido de cada nó. | código |
+| Deadlines | Os do `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`) e do gateway (`AI_CLUSTER_GATEWAY_DEADLINE_MS`) são configuráveis, mas fixos por processo. Falta derivar do tempo medido de cada nó. | código |
 | Entrada arbitrária no grafo | Hoje só o grafo sintético e os modelos fixos. | código |
 | Fora do gateway | O Request Manager ainda mora no gateway. | código, decisão |
 
