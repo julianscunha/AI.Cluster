@@ -86,6 +86,8 @@ Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras má
 
 ## Instalação em 3 comandos (Linux x86_64)
 
+Baixe `ai-cluster-v0.2.0-linux-x86_64-completo.tar.gz` e o `SHA256SUMS` da [release](https://github.com/julianscunha/Real.AI.Cluster/releases/latest), confira com `sha256sum -c SHA256SUMS`, extraia (`tar xzf`) e entre na pasta `ai-cluster-x86_64`. Depois:
+
 ```bash
 sudo ./aic-setup server        # no servidor: controller + gateway + CLI, credenciais e certificados
 sudo aic-setup invite          # imprime a linha para os outros PCs entrarem (e aprova sozinho)
@@ -107,7 +109,7 @@ cargo build --release --workspace
 # binários em target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, ai-cluster
 ```
 
-Copie `ai-cluster-controller` e `ai-cluster-gateway` para o servidor, `ai-cluster` para quem vai administrar e `ai-cluster-worker` para cada dispositivo **da mesma arquitetura**. Para placas ARMv7 compile com `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (veja o [guia de instalação](docs/guia/instalacao.md)). Ainda não há binários pré-compilados para download.
+Copie `ai-cluster-controller` e `ai-cluster-gateway` para o servidor, `ai-cluster` para quem vai administrar e `ai-cluster-worker` para cada dispositivo **da mesma arquitetura**. Para placas ARMv7 compile com `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (veja o [guia de instalação](docs/guia/instalacao.md)). Para x86_64 há um pacote pronto na [release v0.2.0](https://github.com/julianscunha/Real.AI.Cluster/releases/tag/v0.2.0).
 
 ### 2. Controller (no servidor)
 
