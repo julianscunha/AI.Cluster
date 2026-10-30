@@ -4,6 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
+ai-cluster-common = { path = "../common" }
 ai-cluster-protocol = { path = "../protocol" }
 tokio = { version = "1", features = ["macros", "rt", "time", "io-util", "io-std", "sync"] }
 tonic = "0.14"

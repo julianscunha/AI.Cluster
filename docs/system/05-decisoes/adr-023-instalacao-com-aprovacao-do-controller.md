@@ -38,6 +38,8 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 
 - Cliente da etapa de espera: o binário `aic-wait` (`crates/wait`), estático e pequeno. Lê o resumo de `/proc` e `/sys`, gera o segredo na memória, mostra a tela e pergunta de novo até ser aprovado. Com `https://` exige a CA em `AI_CLUSTER_TLS_CA` (caminho ainda não exercitado).
 
+- Identidade: todo componente que fala com uma pessoa abre com o logotipo e o nome do produto (`ai_cluster_common::brand`: `banner`, `rule`, `dot`), inclusive a etapa de espera. Sem terminal (log, arquivo) a abertura vira uma linha só.
+
 ## Alternativas
 
 - **Lista de MACs obrigatória:** descartada. O usuário nem sempre sabe o MAC, e o MAC é falsificável.

@@ -20,28 +20,56 @@ fn size_text(bytes: u64) -> String {
 }
 
 fn screen(request: &AnnounceRequest, fingerprint: &str) {
-    print!("\x1b[2J\x1b[H");
-    println!("AI Cluster - instalação aguardando aprovação\n");
-    println!("  Impressão digital:  {fingerprint}");
-    println!("  MAC:                {}", request.mac);
+    use ai_cluster_common::brand::{self, Tone, paint, rule};
+    print!("[2J[H");
     println!(
-        "  Processador:        {} ({} núcleos, {})",
+        "{}
+",
+        brand::banner(
+            "instalador",
+            env!("CARGO_PKG_VERSION"),
+            "aguardando aprovação"
+        )
+    );
+    println!("{}", rule("Este aparelho", 60));
+    println!("  Impressão digital  {}", paint(fingerprint, Tone::Strong));
+    println!("  MAC                {}", request.mac);
+    println!(
+        "  Processador        {} ({} núcleos, {})",
         request.cpu_model, request.cpu_cores, request.arch
     );
-    println!("  Memória:            {}", size_text(request.ram_bytes));
-    println!("  Firmware:           {}", request.firmware);
+    println!("  Memória            {}", size_text(request.ram_bytes));
+    println!("  Firmware           {}", request.firmware);
     for disk in &request.disks {
         println!(
-            "  Disco {:<10}    {} {}",
+            "  Disco {:<10}   {} {}",
             disk.name,
             size_text(disk.size_bytes),
             disk.model
         );
     }
-    println!("\n  No controller:  ai-cluster installs");
-    println!("                  ai-cluster approve-install {fingerprint} --disk <disco>");
-    println!("\n  Aguardando a aprovação do operador...");
-    println!("  Nada foi instalado nem apagado. Enter pergunta de novo.");
+    println!(
+        "
+{}",
+        rule("No controller", 60)
+    );
+    println!("  ai-cluster installs");
+    println!(
+        "  ai-cluster approve-install {} --disk <disco>",
+        paint(fingerprint, Tone::Accent)
+    );
+    println!(
+        "
+{}",
+        brand::dot(Tone::Warn, "Aguardando a aprovação do operador")
+    );
+    println!(
+        "{}",
+        paint(
+            "  Nada foi instalado nem apagado. Enter pergunta de novo.",
+            Tone::Dim
+        )
+    );
 }
 
 fn connect(url: &str) -> Result<EnrollmentClient<Channel>, Box<dyn std::error::Error>> {
