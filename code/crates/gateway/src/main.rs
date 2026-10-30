@@ -1987,6 +1987,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Atenção: classifica pelo texto dos erros de `controller/src/shards.rs` e do `shard_matmul`; se
+/// aquelas mensagens mudarem, o teste abaixo (que usa os mesmos trechos) deve mudar junto.
+///
 /// O motivo que o cliente pode ver quando a geração falha, sem nomes de nós nem detalhes internos, e
 /// se vale tentar de novo (um worker que saiu ou ficou lento: sim; o resto: não se sabe).
 fn generation_failure(detail: &str) -> (&'static str, bool) {

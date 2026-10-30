@@ -1664,7 +1664,7 @@ impl ClusterControl for ClusterControlService {
         request: Request<ReportGatewayRequest>,
     ) -> Result<Response<ReportGatewayResponse>, Status> {
         require_inference(&request)?;
-        let host = request.remote_addr().map(|addr| addr.ip());
+        let host = request.remote_addr().map(|addr| addr.ip().to_canonical());
         let request = request.into_inner();
         if !valid_gateway(&request) {
             return Err(Status::invalid_argument("apresentação de gateway inválida"));

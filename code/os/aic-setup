@@ -503,7 +503,7 @@ command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl
 ( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -keyout /etc/ai-cluster/rpc-tls/worker.key -out "\$T/worker.csr" -subj "/CN=\$NAME" >/dev/null 2>&1 )
 curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME" -o /etc/ai-cluster/rpc-tls/worker.crt \
-  || { echo "o servidor não assinou o certificado do nó" >&2; exit 1; }
+  || { echo "o servidor não assinou o certificado do nó (o nome já foi usado neste convite? abra outro com aic-setup invite)" >&2; exit 1; }
 openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null \
   || { echo "certificado do nó não confere com a CA do cluster" >&2; exit 1; }
 chmod 644 /etc/ai-cluster/rpc-tls/worker.crt
@@ -518,12 +518,17 @@ JOIN_SCRIPT
   # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
   HD=$(mktemp -d)
   cat > "$HD/invite.py" <<'PYSERVER'
-import http.server, os, re, subprocess, sys, tempfile
+import http.server, os, re, subprocess, sys, tempfile, threading
 
 CA = os.environ["AIC_CA_DIR"]
+SIGNED = os.environ["AIC_SIGNED_LOG"]
+LOCK = threading.Lock()  # o ca.srl é lido e regravado pelo openssl: um pedido por vez
+done = set()  # nomes já assinados nesta janela
 
 
 class H(http.server.SimpleHTTPRequestHandler):
+    timeout = 10  # cliente que anuncia corpo e não envia não segura a thread
+
     def list_directory(self, path):
         self.send_error(404)
 
@@ -533,18 +538,27 @@ class H(http.server.SimpleHTTPRequestHandler):
         if not m or not 0 < size <= 8192:
             return self.send_error(400)
         name = m.group(1)
+        with LOCK:
+            if name in done:  # quem entra de novo com o mesmo nome precisa de outro convite
+                return self.send_error(409)
+            done.add(name)
         with tempfile.TemporaryDirectory() as d:
             csr, crt, ext = (os.path.join(d, n) for n in ("w.csr", "w.crt", "w.ext"))
             open(csr, "wb").write(self.rfile.read(size))
             with open(ext, "w") as f:
-                f.write("subjectAltName=DNS:aic-worker-%s\nbasicConstraints=CA:FALSE\n" % name)
-            ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and subprocess.run(
-                ["openssl", "x509", "-req", "-in", csr, "-CA", CA + "/ca.crt", "-CAkey", CA + "/ca.key",
-                 "-CAcreateserial", "-out", crt, "-days", "825", "-extfile", ext],
-                capture_output=True).returncode == 0
+                f.write("subjectAltName=DNS:aic-worker-%s\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n" % name)
+            with LOCK:
+                ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and subprocess.run(
+                    ["openssl", "x509", "-req", "-in", csr, "-CA", CA + "/ca.crt", "-CAkey", CA + "/ca.key",
+                     "-CAcreateserial", "-out", crt, "-days", "825", "-extfile", ext],
+                    capture_output=True).returncode == 0
             if not ok:
+                with LOCK:
+                    done.discard(name)
                 return self.send_error(400)
             body = open(crt, "rb").read()
+        with open(SIGNED, "a") as log:
+            log.write(name + "\n")
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -553,7 +567,8 @@ class H(http.server.SimpleHTTPRequestHandler):
 
 http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()
 PYSERVER
-  AIC_CA_DIR="$CONF/pki" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
+  : > "$HD/signed"
+  AIC_CA_DIR="$CONF/pki" AIC_SIGNED_LOG="$HD/signed" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
   SRV=$!
   # Qualquer saída (erro, Ctrl+C, fim do prazo) derruba o servidor e apaga o que ele servia.
   trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB" "$HD"' EXIT
@@ -566,8 +581,16 @@ PYSERVER
       "Gateway noutro computador: sudo aic-setup gateway --server $IP:$PORT --code $GCODE" "" \
       "Válido por $MIN min. Linux com systemd e, no x86_64, libgomp1."
   printf '\n  %sAguardando computadores… (Ctrl+C encerra o convite)%s\n\n' "$D" "$Z"
-  END=$(( $(date +%s) + MIN * 60 ))
+  END=$(( $(date +%s) + MIN * 60 )); SEEN=0
   while [ "$(date +%s)" -lt "$END" ]; do
+    # Cada certificado que o convite assina aparece aqui: um nome que você não reconhece é um intruso.
+    TOTAL_SIGNED=$(wc -l < "$HD/signed" | tr -d ' ')
+    if [ "$TOTAL_SIGNED" -gt "$SEEN" ]; then
+      tail -n +$((SEEN + 1)) "$HD/signed" | while read -r n; do
+        printf '  %s•%s certificado do túnel emitido para %s\n' "$C" "$Z" "$n"
+      done
+      SEEN=$TOTAL_SIGNED
+    fi
     # Nós pendentes enquanto o convite está aberto são aprovados: foi o operador quem os convidou.
     /usr/local/bin/ai-cluster nodes 2>/dev/null | awk '$0 ~ /pendente/ {print $1}' | while read -r n; do
       case "$n" in -*) continue ;; esac
