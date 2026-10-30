@@ -18,13 +18,16 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/w -v "$(pwd -W 2>/dev/null || p
 cp build/ggml-rpc-server-x86 ggml-rpc-server
 # AIC_WORKER_FILE troca o binário do worker (teste de rollback com um worker que nunca se registra)
 cp "${AIC_WORKER_FILE:-build/ai-cluster-worker-x86}" ai-cluster-worker
+MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
+  cp /t/x86_64-unknown-linux-musl/release/aic /out/aic-x86
+cp build/aic-x86 aic
 rm -rf aic-release.d; mkdir aic-release.d
 for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
   cp "$PUB" "aic-release.d/$(basename "$PUB")"
 done
 docker build --platform linux/amd64 -f x86/Dockerfile --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs-x86:dev .
-rm -rf ai-cluster-worker ggml-rpc-server aic-release.d
+rm -rf ai-cluster-worker ggml-rpc-server aic aic-release.d
 CID=$(docker create --platform linux/amd64 aic-os-rootfs-x86:dev)
 docker export "$CID" > build/rootfs-x86.tar
 docker rm "$CID" >/dev/null

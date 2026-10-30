@@ -4,7 +4,7 @@
 #
 # Sem redesenho periódico: a tela é montada em memória a cada 5 s e só vai ao terminal quando o
 # conteúdo mudou. A senha do console é opcional (/data/console-pass, definida por SSH com
-# `aic-passwd`); sem ela, F2 e F12 abrem direto e a tela avisa. Não há shell neste console:
+# `aic worker passwd`); sem ela, F2 e F12 abrem direto e a tela avisa. Não há shell neste console:
 # cada item do menu chama um comando fixo.
 
 usage() {
@@ -14,7 +14,7 @@ aic-console - console do monitor (tty1): tela de repouso, login e menu
 uso interno: iniciado pelo init no tty1 (respawn); nao e para rodar a mao.
   <F2>   login e menu "Personalizar o sistema" (registros, rede, worker, energia, atualizacao)
   <F12>  reiniciar ou desligar
-Variavel: AIC_CONSOLE_ASCII=1 desenha so em ASCII (serial). A senha vem do aic-passwd.
+Variavel: AIC_CONSOLE_ASCII=1 desenha so em ASCII (serial). A senha vem do aic worker passwd.
 USO
 }
 case "${1:-}" in -h | --help) usage; exit 0 ;; esac
@@ -98,8 +98,8 @@ draw() {
 	ip_short=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR == 1 { sub("/.*", "", $4); print $4 }')
 	node=$(env_value AI_CLUSTER_NODE_ID)
 	controller=$(env_value AI_CLUSTER_CONTROLLER)
-	role=$(/usr/sbin/aic-role --short)
-	registered=$(/usr/sbin/aic-role | sed -n 's/^Registrado: *//p')
+	role=$(/usr/libexec/aic/role --short)
+	registered=$(/usr/libexec/aic/role | sed -n 's/^Registrado: *//p')
 	if pidof ai-cluster-worker >/dev/null 2>&1; then
 		worker="em execucao"
 		dot_worker=$C_OK
@@ -141,12 +141,12 @@ draw() {
 
 	if [ "$LINES_N" -ge 22 ]; then
 		at $((b + 9)) "$pc"; printf '%sPara gerenciar este no use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
-		at $((b + 10)) $((pc + 2)); printf '%sai-cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
-		at $((b + 11)) "$pc"; printf '%sNeste no:%s  %saic help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
+		at $((b + 10)) $((pc + 2)); printf '%saic cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
+		at $((b + 11)) "$pc"; printf '%sNeste no:%s  %saic --help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
 	fi
 	if ! has_password; then
 		at $((LINES_N - 1)) "$pc"
-		printf '%sConsole sem senha: defina por SSH com  aic passwd%s' "$C_WARN" "$C_RESET"
+		printf '%sConsole sem senha: defina por SSH com  aic worker passwd%s' "$C_WARN" "$C_RESET"
 	fi
 	band "$LINES_N" "$C_FOOT" "<F2> Login / Personalizar" "<F12> Reiniciar / Desligar"
 }
@@ -205,7 +205,7 @@ login() {
 	*)
 		page "Autenticacao do console"
 		at 4 4; printf '%sO arquivo de senha do console esta invalido.%s' "$C_BAD" "$C_RESET"
-		at 5 4; printf '%sDefina de novo por SSH: aic passwd%s' "$C_TEXT" "$C_RESET"
+		at 5 4; printf '%sDefina de novo por SSH: aic worker passwd%s' "$C_TEXT" "$C_RESET"
 		sleep 4
 		return 1
 		;;

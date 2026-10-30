@@ -4,7 +4,7 @@
 #   bash code/scripts/dev-cluster.sh build        compila os binários no volume aic-target
 #   bash code/scripts/dev-cluster.sh up [N]       sobe o controller e N workers (padrão 2)
 #   bash code/scripts/dev-cluster.sh gateway      sobe a API em http://127.0.0.1:8080 (chave dev-key; pesos em code/models/smollm2)
-#   bash code/scripts/dev-cluster.sh cli <args>   roda `ai-cluster <args>` contra esse cluster
+#   bash code/scripts/dev-cluster.sh cli <args>   roda `aic cluster <args>` contra esse cluster
 #   bash code/scripts/dev-cluster.sh metrics      lê o /metrics do Prometheus (com o token)
 #   bash code/scripts/dev-cluster.sh down         derruba tudo
 #
@@ -59,7 +59,7 @@ gateway)
 cli)
   shift
   docker run --rm "${common[@]}" -e AI_CLUSTER_CONTROLLER=http://aic-controller:50051 \
-    "$IMG" sh -c "$R/ai-cluster $*"
+    "$IMG" sh -c "$R/aic cluster $*"
   ;;
 metrics)
   docker run --rm "${common[@]}" "$IMG" \

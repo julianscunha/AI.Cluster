@@ -8,7 +8,7 @@
 #
 # No destino (Debian/Ubuntu 12+ ou equivalente com glibc 2.36+; precisa de libgomp1):
 #   tar xzf ai-cluster-worker-x86_64.tar.gz && cd ai-cluster-worker-x86_64
-#   sudo ./install.sh --controller http://controller:50051 --join-token-file /raiz/token \
+#   sudo ./install.sh --controller http://controller:50051 --token-file /raiz/token \
 #        --rpc-tls-dir /etc/ai-cluster/rpc-tls [--node-id nome] [--insecure]
 set -euo pipefail
 IMAGE=${1:-ai-cluster:local}
@@ -32,7 +32,7 @@ chmod 755 "$STAGE/$NAME/"{ai-cluster-worker,ggml-rpc-server,bootstrap.sh}
 cat > "$STAGE/$NAME/install.sh" <<'EOF'
 #!/bin/sh
 # Instala o ggml-rpc-server em /usr/local/bin e roda o bootstrap com o worker deste pacote.
-# Os argumentos vão ao bootstrap.sh (veja o cabeçalho dele): --controller, --join-token-file,
+# Os argumentos vão ao bootstrap.sh (veja o cabeçalho dele): --controller, --token-file,
 # --rpc-tls-dir, --node-id, --insecure...
 set -eu
 cd "$(dirname "$0")"

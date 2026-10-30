@@ -33,7 +33,7 @@ PY=$(command -v python3 || command -v python)
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
     -e AI_CLUSTER_OPERATOR_TOKEN="$OPERATOR" -e AI_CLUSTER_CONTROLLER="$CONTROLLER" \
-    aic-rust:1 /t/release/ai-cluster "$@" 2>/dev/null
+    aic-rust:1 /t/release/aic cluster "$@" 2>/dev/null
 }
 fail() { echo "FALHA: $1"; kill "${TFTP:-0}" 2>/dev/null; exit 1; }
 ready() { cli nodes | grep -E "^$1 " | grep -q READY; }

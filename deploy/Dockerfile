@@ -27,7 +27,7 @@ RUN apt-get update -qq && apt-get install -y -qq libgomp1 ca-certificates curl o
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin aic \
  && mkdir /cache && chown aic /cache
-COPY --from=rust /src/code/target/release/ai-cluster /src/code/target/release/ai-cluster-controller \
+COPY --from=rust /src/code/target/release/aic /src/code/target/release/ai-cluster-controller \
      /src/code/target/release/ai-cluster-gateway /src/code/target/release/ai-cluster-worker /src/code/target/release/aic-wait /usr/local/bin/
 COPY --from=llama /llama/build/bin/llama-server /llama/build/bin/ggml-rpc-server /usr/local/bin/
 USER aic

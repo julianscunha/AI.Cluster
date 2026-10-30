@@ -17,7 +17,7 @@ chmod +x "$BAD"
 trap 'rm -f "$BAD"' EXIT
 
 fail() { echo "FALHA: $1"; exit 1; }
-args="--controller $CONTROLLER --join-token $TOKEN --node-id $NODE --insecure --health-timeout 40"
+args="--controller $CONTROLLER --token $TOKEN --node-id $NODE --insecure --health-timeout 40"
 
 echo "=== A) atualização com binário bom ==="
 sh "$BOOT" $args --binary "$GOOD" >/dev/null || fail "a atualização boa deveria sair com 0"

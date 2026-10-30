@@ -3,7 +3,7 @@
 #   .\code\scripts\dev-cluster.ps1 build        compila os binários no volume aic-target
 #   .\code\scripts\dev-cluster.ps1 up [N]       sobe o controller e N workers (padrão 2)
 #   .\code\scripts\dev-cluster.ps1 gateway    sobe a API em http://127.0.0.1:8080 (chave dev-key; pesos em code/models/smollm2)
-#   .\code\scripts\dev-cluster.ps1 cli <args>   roda `ai-cluster <args>` contra esse cluster
+#   .\code\scripts\dev-cluster.ps1 cli <args>   roda `aic cluster <args>` contra esse cluster
 #   .\code\scripts\dev-cluster.ps1 metrics      lê o /metrics do Prometheus (com o token)
 #   .\code\scripts\dev-cluster.ps1 down         derruba tudo
 #
@@ -57,7 +57,7 @@ switch ($Action) {
         Write-Host 'gateway em http://127.0.0.1:8080 (chave dev-key; o modelo leva ~30 s para carregar).'
     }
     'cli' {
-        docker run --rm @Common -e AI_CLUSTER_CONTROLLER=http://aic-controller:50051 $Img sh -c "$R/ai-cluster $($Rest -join ' ')"
+        docker run --rm @Common -e AI_CLUSTER_CONTROLLER=http://aic-controller:50051 $Img sh -c "$R/aic cluster $($Rest -join ' ')"
     }
     'metrics' {
         docker run --rm @Common $Img curl -s -H "Authorization: Bearer $Operator" http://aic-controller:9101/metrics

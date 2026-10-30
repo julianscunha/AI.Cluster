@@ -369,6 +369,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint =
         std::env::var("AI_CLUSTER_CONTROLLER").unwrap_or_else(|_| DEFAULT_CONTROLLER.to_string());
     let node_id = node_id();
+    println!(
+        "{}",
+        ai_cluster_common::brand::banner(
+            "worker",
+            env!("CARGO_PKG_VERSION"),
+            &format!("no {node_id}")
+        )
+    );
     let identity = NodeIdentity {
         node_id: node_id.clone(),
         device_id: device_id(),
@@ -420,14 +428,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_inner();
     credential.set(&registered.node_credential);
     store_credential(&registered.node_credential);
-    println!(
-        "{}",
-        ai_cluster_common::brand::banner(
-            "worker",
-            env!("CARGO_PKG_VERSION"),
-            &format!("no {node_id}")
-        )
-    );
     println!(
         "registrado node_id={node_id} aceito={} cluster_id={} controller={endpoint}",
         registered.accepted, registered.cluster_id

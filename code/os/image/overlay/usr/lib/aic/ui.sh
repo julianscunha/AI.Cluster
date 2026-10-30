@@ -103,6 +103,18 @@ box() {
 	printf '%s%s%s%s%s' "$C_HINT" "$G_BL" "$(rep "$G_H" $((w - 2)))" "$G_BR" "$C_RESET"
 }
 
+# Cabecalho do componente, igual ao brand::banner do Rust (e ao setup dos Linux): logotipo, nome, apoio,
+# versao e detalhe. Sem terminal (ou com NO_COLOR) vira uma linha so.
+banner() { # banner <componente> <versao> <detalhe>
+	if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then printf 'Real.AI.Cluster %s v%s - %s\n' "$1" "$2" "$3"; return; fi
+	local w="${ESC}[1;97m" a="${ESC}[36m" k="${ESC}[2;37m" z="${C_RESET}"
+	printf '\n   %s%s%s%s%s%s%s\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$z"
+	printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$a" "$z" "$w" "$1" "$z"
+	printf ' %s%s%s%s%s%s    %sIA distribuida em hardware comum%s\n' "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$z" "$k" "$z"
+	printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$a" "$z" "$k" "$2" "$z"
+	printf '   %s%s%s%s%s%s      %s%s%s\n\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$a" "$3" "$z"
+}
+
 # Barra de progresso de $1 por cento, com $2 colunas de largura.
 progress() {
 	local pct=$1 width=$2 filled i out=

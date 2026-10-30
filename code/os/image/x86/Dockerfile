@@ -11,6 +11,7 @@ RUN apk add --no-cache linux-firmware-none && apk add --no-cache openrc busybox-
 COPY overlay/ /
 COPY x86/overlay/ /
 COPY ai-cluster-worker /usr/bin/ai-cluster-worker
+COPY aic /usr/bin/aic
 COPY ggml-rpc-server /usr/bin/ggml-rpc-server
 COPY aic-release.d/ /etc/aic-release.d/
 ARG AIC_RELEASE=dev
@@ -31,7 +32,7 @@ RUN apk add --no-cache blkid \
  && rm -f /tmp/init-pre.sh /tmp/init-post.sh
 
 RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
- && chmod 755 /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/sbin/aic /usr/sbin/aic-console /usr/sbin/aic-role /usr/sbin/aic-change /usr/sbin/aic-welcome /usr/sbin/aic-passwd /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
+ && chmod 755 /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
  && sed -i 's|^tty1::.*|tty1::respawn:/usr/sbin/aic-console|; /^tty[2-6]::/d' /etc/inittab \

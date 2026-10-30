@@ -8,7 +8,7 @@ aic-updater - aplica a release pedida pelo controller (atualizacao A/B)
 
 uso interno: roda como servico (root); le /data/state/update-request, confere a assinatura e o
 SHA-256, grava o slot inativo, marca-o em teste e reinicia. Sem argumentos.
-Para ver o estado: aic update.
+Para ver o estado: aic update status.
 USO
 }
 case "${1:-}" in -h | --help) usage; exit 0 ;; esac

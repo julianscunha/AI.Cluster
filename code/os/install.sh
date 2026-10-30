@@ -11,9 +11,9 @@
 #        [--lang pt|en] --yes
 #
 # Papéis: server = controller + gateway no mesmo computador; controller; gateway; worker.
-# O worker entra pelo convite do servidor (`aic-setup invite` lá): --server aponta para ele.
+# O worker entra pelo convite do servidor (`aic cluster invite` lá): --server aponta para ele.
 # AIC_BASE troca a origem dos arquivos (espelho local ou teste).
-# Idioma: --lang pt|en (ou AIC_LANG=en no ambiente); padrão pt. Vale para o aic-setup e para o convite.
+# Idioma: --lang pt|en (ou AIC_LANG=en no ambiente); padrão pt. Vale para o setup e para o convite.
 set -eu
 
 REPO=julianscunha/Real.AI.Cluster
@@ -40,16 +40,22 @@ done
 case "$LANG_AIC" in pt|en) ;; *) echo "idioma inválido: $LANG_AIC (use pt ou en) / invalid language: $LANG_AIC (use pt or en)" >&2; exit 2 ;; esac
 export AIC_LANG=$LANG_AIC
 
-# ---------- apresentação (a mesma do aic-setup) ----------
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  B=$(printf '\033[1m'); D=$(printf '\033[2m'); G=$(printf '\033[32m'); R=$(printf '\033[31m')
-  C=$(printf '\033[36m'); Y=$(printf '\033[33m'); Z=$(printf '\033[0m')
+# ---------- apresentação (a mesma do setup) ----------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  B=$(printf '\033[1m'); D=$(printf '\033[2;37m'); G=$(printf '\033[32m'); R=$(printf '\033[31m')
+  C=$(printf '\033[36m'); Y=$(printf '\033[33m'); Z=$(printf '\033[0m'); W=$(printf '\033[1;97m'); TTY=1
 else
-  B=""; D=""; G=""; R=""; C=""; Y=""; Z=""
+  B=""; D=""; G=""; R=""; C=""; Y=""; Z=""; W=""; TTY=0
 fi
-banner() {
-  printf '\n%s  AI Cluster%s  %s%s%s\n' "$B$C" "$Z" "$D" "$1" "$Z"
-  printf '  %s────────────────────────────────────────────────────────%s\n\n' "$D" "$Z"
+# Cabeçalho igual ao do setup e ao brand::banner do Rust: sem cor vira uma linha só.
+banner() { # banner <componente> <versão, ou vazio> <detalhe>
+  if [ "$TTY" != 1 ]; then printf 'Real.AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
+  printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
+  printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
+  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
+  if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
+  else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
+  printf '   %s■%s───%s■%s      %s%s%s\n\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"
 }
 die() { printf '\n  %s✘ %s%s\n\n' "$R" "$1" "$Z" >&2; exit 1; }
 note() { printf '  %s%s%s\n' "$D" "$1" "$Z"; }
@@ -79,7 +85,7 @@ choose() {
 command -v curl >/dev/null || die "$(t 'precisa do curl (apt install curl)' 'needs curl (apt install curl)')"
 command -v sha256sum >/dev/null || die "$(t 'precisa do sha256sum (coreutils)' 'needs sha256sum (coreutils)')"
 
-banner "$(t Bem-vindo Welcome)"
+banner instalador "" "$(t Bem-vindo Welcome)"
 if [ -z "$ROLE" ] || [ -z "$MODE" ] || [ -z "$ARCH" ]; then
   if [ "$LANG_AIC" = en ]; then
     cat <<EOF
@@ -272,7 +278,7 @@ esac
 need_server() {
   [ -n "$SERVER" ] && return 0
   printf '\n'
-  note "$(t "No servidor, rode 'sudo aic-setup invite'. Ele mostra o endereço do convite." "On the server, run 'sudo aic-setup invite'. It shows the invitation address.")"
+  note "$(t "No servidor, rode 'sudo aic cluster invite'. Ele mostra o endereço do convite." "On the server, run 'sudo aic cluster invite'. It shows the invitation address.")"
   ask SERVER "$(t 'Endereço do servidor (IP ou IP:porta do convite)' 'Server address (IP or IP:port of the invitation)')" ""
   [ -n "$SERVER" ] || die "$(t 'sem o endereço do servidor não dá para entrar no cluster' 'without the server address you cannot join the cluster')"
 }
@@ -282,7 +288,7 @@ esac
 CODE=""
 if [ "$ROLE" = gateway ] || [ "$ROLE" = worker ]; then
   if [ -z "${AIC_CODE:-}" ]; then
-    note "$(t "O código de 8 caracteres aparece no convite do controller (sudo aic-setup invite)." "The 8-character code appears in the controller invitation (sudo aic-setup invite).")"
+    note "$(t "O código de 8 caracteres aparece no convite do controller (sudo aic cluster invite)." "The 8-character code appears in the controller invitation (sudo aic cluster invite).")"
     ask CODE "$(t 'Código do convite' 'Invitation code')" ""
   else CODE=$AIC_CODE; fi
   CODE=$(printf '%s' "$CODE" | tr a-z A-Z)
@@ -296,7 +302,7 @@ case "$ROLE" in
 esac
 case "$KIND" in fisico) KS=$(t fisico physical) ;; vm) KS=$(t vm 'virtual machine') ;; *) KS=$(t conteiner container) ;; esac
 printf '\n'
-banner "$(t Resumo Summary)"
+banner instalador "" "$(t Resumo Summary)"
 note "$(t "Este computador será: $WHAT" "This computer will be: $WHAT")"
 note "$(t "Processador: $ARCH · tipo: $KS · instalação: neste Linux" "Processor: $ARCH · type: $KS · installation: on this Linux")"
 [ -n "$SERVER" ] && note "$(t "Servidor: $SERVER" "Server: $SERVER")"
@@ -332,7 +338,7 @@ fetch() { # fetch <arquivo> : baixa para $STAGE e confere o SHA-256
 curl -fsSL $PROTO -o "$STAGE/SHA256SUMS" "$BASE/SHA256SUMS" || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
 curl -fsSL $PROTO -o "$STAGE/VERSION" "$BASE/VERSION" || die "$(t 'a release não tem VERSION' 'the release has no VERSION')"
 REL=$(cat "$STAGE/VERSION")
-printf '\n'; banner "$(t "Baixando a versão $REL" "Downloading version $REL")"
+printf '\n'; banner instalador "$REL" "$(t "Baixando a versão $REL" "Downloading version $REL")"
 
 mkdir -p "$STAGE/aic"
 need=""
@@ -355,12 +361,12 @@ export AIC_RELEASE_BASE="$BASE" AIC_RELEASE_VERSION="$REL" AIC_HW_KIND="$KIND" A
 set --
 [ -n "$IP" ] && set -- "$@" --ip "$IP"
 [ -n "$MODELS" ] && set -- "$@" --models-dir "$MODELS"
-SETUP="$STAGE/aic/aic-setup"
+SETUP="$STAGE/aic/setup"
 rc=0
 case "$ROLE" in
-  server) "$SETUP" server --role both --yes "$@" || rc=$? ;;
-  controller) "$SETUP" server --role controller --yes "$@" || rc=$? ;;
-  gateway) "$SETUP" gateway --server "$SERVER" --code "$CODE" ${MODELS:+--models-dir "$MODELS"} --yes || rc=$? ;;
-  worker) "$SETUP" worker --server "$SERVER" --code "$CODE" --yes || rc=$? ;;
+  server) "$SETUP" controller install --with-gateway --yes "$@" || rc=$? ;;
+  controller) "$SETUP" controller install --yes "$@" || rc=$? ;;
+  gateway) "$SETUP" gateway install --server "$SERVER" --code "$CODE" ${MODELS:+--models-dir "$MODELS"} --yes || rc=$? ;;
+  worker) "$SETUP" worker join --server "$SERVER" --code "$CODE" --yes || rc=$? ;;
 esac
 exit $rc

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Bootstrap de um Linux existente até virar worker do cluster (F15, J3).
 #
-#   sudo ./bootstrap.sh --controller https://controller:50051 --join-token-file /raiz/token \
+#   sudo ./bootstrap.sh --controller https://controller:50051 --token-file /raiz/token \
 #        [--binary ./ai-cluster-worker] [--node-id nome] [--prefix /opt/ai-cluster] \
 #        [--model-dir /var/lib/ai-cluster/models] [--insecure] [--force] [--health-timeout 90]
 #        [--rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls]
@@ -49,8 +49,8 @@ HEALTH_TIMEOUT=90
 while [ $# -gt 0 ]; do
   case "$1" in
     --controller) CONTROLLER=$2; shift 2 ;;
-    --join-token) JOIN_TOKEN=$2; shift 2 ;;
-    --join-token-file) TOKEN_FILE=$2; shift 2 ;;
+    --token) JOIN_TOKEN=$2; shift 2 ;;
+    --token-file) TOKEN_FILE=$2; shift 2 ;;
     --binary) BINARY=$2; shift 2 ;;
     --node-id) NODE_ID=$2; shift 2 ;;
     --prefix) PREFIX=$2; shift 2 ;;
@@ -73,7 +73,23 @@ if [ -n "$TOKEN_FILE" ]; then
 fi
 
 [ -n "$CONTROLLER" ] || die "$(t 'falta --controller' 'missing --controller')"
-[ -n "$JOIN_TOKEN" ] || die "$(t 'falta --join-token ou --join-token-file' 'missing --join-token or --join-token-file')"
+[ -n "$JOIN_TOKEN" ] || die "$(t 'falta --token ou --token-file' 'missing --token or --token-file')"
+# Cabeçalho igual ao do setup e ao brand::banner do Rust: sem cor, uma linha só.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  W=$(printf '\033[1;97m'); C=$(printf '\033[36m'); D=$(printf '\033[2;37m'); Z=$(printf '\033[0m'); BTTY=1
+else
+  W=""; C=""; D=""; Z=""; BTTY=0
+fi
+banner() { # banner <componente> <versão, ou vazio> <detalhe>
+  if [ "$BTTY" != 1 ]; then printf 'Real.AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
+  printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
+  printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
+  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
+  if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
+  else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
+  printf '   %s■%s───%s■%s      %s%s%s\n\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"
+}
+banner worker "" "$(t 'Instalação do worker' 'Worker installation')"
 [ -f "$BINARY" ] || die "$(t "binário não encontrado: $BINARY" "binary not found: $BINARY")"
 [ "$(id -u)" = 0 ] || { echo "$(t 'rode como root' 'run as root')" >&2; exit 1; }
 [ -n "$NODE_ID" ] || NODE_ID=$(hostname)
@@ -256,5 +272,6 @@ else
     setsid env "$@" "$bin" >> "$state/worker.log" 2>&1 < /dev/null & \
     echo $! > "$state/worker.pid"' sh "$PREFIX/state" "$PREFIX/bin/ai-cluster-worker" "$@"
   echo "$(t "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $PREFIX/state/worker.log" "worker $NODE_ID started in the background (no systemd); log in $PREFIX/state/worker.log")"
+  echo "$(t 'sem systemd: não volta sozinho depois de um reinício' 'without systemd: it does not come back on its own after a restart')" >&2
 fi
-[ "${AIC_INVITED:-0}" = 1 ] || echo "$(t "falta, se o controller exige aprovação: ai-cluster approve $NODE_ID --fingerprint <impressão que o worker imprime>" "missing, if the controller requires approval: ai-cluster approve $NODE_ID --fingerprint <fingerprint the worker prints>")"
+[ "${AIC_INVITED:-0}" = 1 ] || echo "$(t "falta, se o controller exige aprovação: aic cluster node approve $NODE_ID --fingerprint <impressão que o worker imprime>" "missing, if the controller requires approval: aic cluster node approve $NODE_ID --fingerprint <fingerprint the worker prints>")"

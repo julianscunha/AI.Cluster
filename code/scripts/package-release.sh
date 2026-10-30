@@ -34,9 +34,9 @@ pack() {
 CID=$(docker create "$IMAGE")
 x86() { mkdir -p "$STAGE/$1"; shift; for b in "$@"; do docker cp "$CID:/usr/local/bin/$b" "$STAGE/$name/$b"; done; }
 
-name=controller-linux-x86_64; x86 $name ai-cluster-controller ai-cluster; pack $name
-name=gateway-linux-x86_64;    x86 $name ai-cluster-gateway llama-server; pack $name
-name=worker-linux-x86_64;     x86 $name ai-cluster-worker ggml-rpc-server aic-wait; pack $name
+name=controller-linux-x86_64; x86 $name ai-cluster-controller aic; pack $name
+name=gateway-linux-x86_64;    x86 $name ai-cluster-gateway llama-server aic; pack $name
+name=worker-linux-x86_64;     x86 $name ai-cluster-worker ggml-rpc-server aic-wait aic; pack $name
 
 # armv7: binários do build-armv7.sh (volume aic-target-armv7) e o rpc-server do build.sh do llama.cpp.
 arm() { # arm <nome> <volume> <caminho dentro dele> <binário>...
@@ -46,17 +46,17 @@ arm() { # arm <nome> <volume> <caminho dentro dele> <binário>...
   done
 }
 name=controller-linux-armv7
-arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-controller ai-cluster; pack $name
+arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-controller aic; pack $name
 name=worker-linux-armv7
-arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-worker aic-wait
+arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-worker aic-wait aic
 docker run --rm -v aic-llama:/v:ro busybox cat /v/llama.cpp/build-armv7m/bin/ggml-rpc-server \
   > "$STAGE/$name/ggml-rpc-server"
 pack $name
 
 # O que não depende de arquitetura: o gerenciador pós-instalação e o bootstrap do worker.
 mkdir -p "$STAGE/tools"
-cp "$HERE/os/aic-setup" "$HERE/os/bootstrap.sh" "$STAGE/tools/"
-sed -i 's/\r$//' "$STAGE/tools/aic-setup" "$STAGE/tools/bootstrap.sh"
+cp "$HERE/os/setup" "$HERE/os/bootstrap.sh" "$STAGE/tools/"
+sed -i 's/\r$//' "$STAGE/tools/setup" "$STAGE/tools/bootstrap.sh"
 pack tools
 
 cp "$HERE/os/install.sh" "$OUT/install.sh"

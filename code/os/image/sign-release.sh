@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assina uma release (F19) e imprime os argumentos de `ai-cluster rollout`.
+# Assina uma release (F19) e imprime os argumentos de `aic cluster rollout`.
 #
 #   bash code/os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]
 #

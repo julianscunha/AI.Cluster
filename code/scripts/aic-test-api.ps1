@@ -9,7 +9,7 @@
     - com -Chat: abre uma conversa em que você e o modelo se alternam, com histórico, e cada resposta
       vem com as mesmas medidas.
   Sem -Model usa o primeiro modelo de linguagem da lista. A chave está em /etc/ai-cluster/gateway.env,
-  no servidor (AI_CLUSTER_API_KEY), ou é a que o `ai-cluster model start` mostrou.
+  no servidor (AI_CLUSTER_API_KEY), ou é a que o `aic cluster model start` mostrou.
   Os tokens são contados pelos pedaços que o gateway envia (cerca de um por token). -TimeoutSec (padrão
   900) é quanto o script espera por uma resposta; enquanto não chega a primeira palavra ele mostra pontos.
 
@@ -39,11 +39,20 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Net.Http
 
 function T([string]$pt, [string]$en) { if ($Lang -eq "en") { $en } else { $pt } }
-function Banner([string]$title) {
+# Pares de texto e cor, escritos na mesma linha (o cabeçalho tem várias cores).
+function Linha([object[]]$partes) {
+  for ($i = 0; $i -lt $partes.Count; $i += 2) { Write-Host $partes[$i] -NoNewline -ForegroundColor $partes[$i + 1] }
   Write-Host ""
-  Write-Host "  AI Cluster  " -NoNewline -ForegroundColor Cyan
-  Write-Host $title -ForegroundColor DarkGray
-  Write-Host ("  " + ("-" * 56)) -ForegroundColor DarkGray
+}
+# O mesmo cabeçalho do brand::banner do Rust (crates/common/src/brand.rs): logotipo de 5 linhas, nome do
+# componente, apoio e detalhe. Título em branco, logotipo em ciano, apoio em cinza.
+function Banner([string]$componente, [string]$detalhe = "") {
+  Write-Host ""
+  Linha @("   ", "White", "■", "White", "───", "Cyan", "■", "White")
+  Linha @("  / \ / \     ", "Cyan", "Real.AI.Cluster $componente", "White")
+  Linha @(" ", "White", "■", "White", "───", "Cyan", "■", "White", "───", "Cyan", "■", "White", "    IA distribuida em hardware comum", "DarkGray")
+  Linha @("  \ / \ /", "Cyan")
+  Linha @("   ", "White", "■", "White", "───", "Cyan", "■", "White", "      $detalhe", "Cyan")
   Write-Host ""
 }
 function Ok([string]$text) { Write-Host "  [ok] " -NoNewline -ForegroundColor Green; Write-Host $text }
@@ -61,7 +70,7 @@ function Rate([double]$r) { ([math]::Round($r, 1)).ToString([Globalization.Cultu
 $guided = [string]::IsNullOrWhiteSpace($Url) -and [string]::IsNullOrWhiteSpace($Key)
 function Wait-Close { if ($guided) { Write-Host ""; Read-Host (T "  Enter para fechar" "  Press Enter to close") | Out-Null } }
 if ($guided) {
-  Banner (T "Teste da API" "API test")
+  Banner (T "teste da API" "API test")
   Write-Host "  $(T 'Responda o que falta. Enter aceita o valor entre colchetes.' 'Answer what is missing. Enter accepts the value in brackets.')" -ForegroundColor DarkGray
   Write-Host ""
 }
@@ -158,8 +167,7 @@ function Stats($r) {
     " (" + (Rate $r.OverallRate) + " " + (T "no total" "overall") + ")"
 }
 
-Banner (T "Teste da API" "API test")
-Write-Host "  $Url" -ForegroundColor DarkGray
+Banner (T "teste da API" "API test") "$Url"
 Write-Host ""
 
 # 1) o gateway está de pé?
@@ -176,7 +184,7 @@ if ($m.Code -ne 200) { Fail (T "/v1/models respondeu $($m.Code)" "/v1/models ans
 $language = @(($m.Body | ConvertFrom-Json).data | Where-Object { $_.kind -eq "language-model" })
 if (-not $Model) { if ($language.Count -gt 0) { $Model = $language[0].id } }
 if (-not $Model) {
-  Fail (T "nenhum modelo de linguagem ativo. No servidor: ai-cluster model start <id>" "no language model is active. On the server: ai-cluster model start <id>")
+  Fail (T "nenhum modelo de linguagem ativo. No servidor: aic cluster model start <id>" "no language model is active. On the server: aic cluster model start <id>")
 }
 Ok (T "modelo: $Model" "model: $Model")
 
