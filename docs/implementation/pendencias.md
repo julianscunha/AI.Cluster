@@ -104,6 +104,11 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | J1, x86 real | Firmware de rede e vídeo, watchdog, redimensionar o ext4 num disco real, Secure Boot, PXE. | hardware |
 | J2 a J4 | Imagem de SO além do contêiner, `bootstrap.sh` em VM com systemd, reimage automático pelo controller. | código, hardware |
 | J5, J6, assinatura de boot | A/B em mais placas, ARM64, u-boot que verifique a imagem (TPM/secure boot). | hardware |
+| Modo dedicado no instalador | Controller e gateway dentro do AI Cluster OS (hoje só o worker tem imagem). O papel vira configuração em `/data`. O slot do controller não pode ser confirmado por "registrou no controller": falta o critério (por exemplo, o serviço respondeu na porta). Validar a imagem x86 em hardware real. | código, decisão, hardware |
+| Boot de rede restrito | A instalação pela rede só entrega a imagem aos MACs que o usuário informar (hoje o TFTP filtra por IP). | código |
+| Instalador em pendrive | Sem DHCP ou sem visibilidade na rede, o instalador guiado gera o pendrive de instalação do worker (e do controller, quando houver imagem). | código |
+| Certificado por nó | O `aic-setup` gera um certificado de worker para todos; um worker comprometido se passa por qualquer outro perante o gateway. Emitir um por nó no convite (o `{node_id}` do nome já é suportado). | código |
+| Release em mais processadores | ARM de 64 bits e, depois, celular e desktop: o `install.sh` já recusa com mensagem clara. Gateway em ARM exige compilar o `llama-server`. | código, hardware |
 | Base Linux | Escolher a base específica. | decisão |
 | Aceleradores | ARM64, GPU NVIDIA/AMD/Intel, NPU (abstração e móvel); o worker não preenche o campo de aceleradores; scores por workload (M6). | código, hardware |
 

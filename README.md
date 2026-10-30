@@ -84,17 +84,13 @@ Depois é só chamar `POST http://localhost:8080/v1/chat/completions` com `Autho
 Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras máquinas,
 [a instalação](docs/guia/instalacao.md).
 
-## Instalação em 3 comandos (Linux x86_64)
-
-Baixe `ai-cluster-v0.2.0-linux-x86_64-completo.tar.gz` e o `SHA256SUMS` da [release](https://github.com/julianscunha/Real.AI.Cluster/releases/latest), confira com `sha256sum -c SHA256SUMS`, extraia (`tar xzf`) e entre na pasta `ai-cluster-x86_64`. Depois:
+## Instalação guiada (Linux)
 
 ```bash
-sudo ./aic-setup server        # no servidor: controller + gateway + CLI, credenciais e certificados
-sudo aic-setup invite          # imprime a linha para os outros PCs entrarem (e aprova sozinho)
-curl -fsSL http://<ip>:8099/join | sudo sh     # em cada outro PC
+curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
 ```
 
-Depois, `ai-cluster model start <arquivo.gguf>` e a API está em `http://<ip>:8080`. O pacote vem de `code/scripts/package-cluster.sh`; detalhes e limites em [a instalação](docs/guia/instalacao.md). O passo a passo manual abaixo continua valendo para ARM e para quem quer controlar cada peça.
+O script explica os 3 componentes (controller, gateway e worker), pergunta o que cada computador será e qual é o processador (x86_64 ou ARM de 32 bits), e baixa da última release só o que esse papel precisa. Comece pelo controller; depois `sudo aic-setup invite` mostra a linha para os outros computadores entrarem. Depois, `ai-cluster model start <arquivo.gguf>` e a API está em `http://<ip>:8080`. Detalhes, limites e o modo dedicado (o computador só para o cluster) em [a instalação](docs/guia/instalacao.md). O passo a passo manual abaixo continua valendo para quem quer controlar cada peça.
 
 ## Instalação passo a passo
 

@@ -15,22 +15,55 @@ Volte ao [[guia]] para o índice. Valores de configuração estão em [[configur
 - Docker, para o cluster de desenvolvimento, os testes E2E e o build cruzado para armv7.
 - `openssl`, para gerar certificados e chaves de release.
 
-## Instalador automático (recomendado, Linux x86_64)
+## Instalador guiado (recomendado)
 
-Três comandos levam um conjunto de PCs ao ponto de uso, sem gerar token, certificado ou unit à mão:
+Um script só pergunta o que este computador será e baixa da **última release** apenas o que esse papel precisa:
 
 ```bash
-# 1. no servidor (o PC sempre ligado): controller + gateway + CLI
-tar xzf ai-cluster-x86_64.tar.gz && cd ai-cluster-x86_64 && sudo ./aic-setup server
-# 2. ainda no servidor: abre um convite de 15 min e imprime a linha para os outros PCs
+curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
+```
+
+Ele não detecta o hardware: quem dita é você. Só confere se o processador informado é o da máquina, para não instalar um binário que não roda. As perguntas:
+
+1. **Como instalar:** neste Linux, como serviço, ou dedicando o computador ao cluster (veja "Instalação dedicada").
+2. **Este computador será:** controller (e, junto, o gateway ou não), gateway noutro computador, ou worker.
+3. **Processador:** x86_64, ARM de 32 bits (armv7) ou ARM de 64 bits (ainda sem pacote). E se é físico, máquina virtual ou contêiner.
+
+Os componentes do cluster:
+
+| Componente | Para que serve | Onde roda |
+|---|---|---|
+| Controller | Registra os computadores, decide onde cada tarefa roda, guarda chaves e modelos. Um por cluster. | x86_64 e armv7 |
+| Gateway | Recebe os pedidos de chat (API compatível com a da OpenAI) e divide o modelo entre os workers. Um por cluster. | x86_64 (o `llama-server` só existe para x86_64) |
+| Worker | Empresta processador e memória. Quantos quiser. | x86_64 e armv7 |
+
+A ordem é sempre: **primeiro o controller**, depois os outros.
+
+```bash
+# 1. no primeiro computador: escolha "Controller" (com o gateway junto, o mais simples)
+# 2. ainda nele: abre um convite de 15 min e mostra as linhas de entrada
 sudo aic-setup invite
-# 3. em cada outro PC, a linha impressa:
+# 3. em cada outro computador, o mesmo instalador, escolhendo "Worker" (ou a linha curta do convite)
 curl -fsSL http://<ip-do-servidor>:8099/join | sudo sh
 ```
 
-O `server` instala em `/opt/ai-cluster`, grava as credenciais em `/etc/ai-cluster` (só root), gera uma CA e os certificados do túnel RPC (CA 10 anos, certificados 825 dias), cria as units do systemd (ou sobe em segundo plano sem systemd) e deixa o comando `ai-cluster` pronto, sem exportar nada. O `invite` serve, por HTTP e só durante a janela, o script `join` e o pacote do worker (conferido por SHA-256); cada nó que entra enquanto o convite está aberto é aprovado sozinho. Depois: copie um `.gguf` para `/var/lib/ai-cluster/models` e rode `ai-cluster model start <arquivo>`. `aic-setup status` mostra os nós e o modelo.
+O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. O gateway em outro computador entra pelo mesmo convite (`sudo aic-setup gateway --server <ip>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
 
-O pacote sai de `bash code/scripts/package-cluster.sh` (imagem `ai-cluster:local`). Limites: x86_64 com glibc 2.36+ (`libgomp1`, `openssl`, `iproute2` e `python3` no servidor); o gRPC fica sem TLS (rede local confiável) e o convite trafega o token de join em HTTP na janela aberta, então use só em casa. Teste: `code/tests/phase-u-setup.sh` (dois contêineres, sem systemd; as units do systemd não foram exercitadas num sistema real).
+Sem perguntas (automação): `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.
+
+O `install.sh` baixa `VERSION`, `SHA256SUMS` e os pacotes `tools`, `controller-linux-<arq>`, `gateway-linux-x86_64` e `worker-linux-<arq>`, e confere o SHA-256 de cada um. `bash code/scripts/package-release.sh` gera esses arquivos (nomes sem versão, para `releases/latest/download/`). Sobre um Linux existente o desempenho é compartilhado com o que já roda nele e o cluster confia no sistema operacional da máquina; o modo dedicado existe para evitar os dois problemas.
+
+## Instalação dedicada
+
+Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o cluster, imutável, com slots A/B, volta automática e release assinada ([[adr-017-instalacao-a-b-e-boot-de-rede]], [[adr-019-imagem-x86-uefi-com-grub]]). É o equivalente ao ESXi: desempenho previsível, sem outros serviços competindo.
+
+**Hoje:** só o **worker** tem imagem (armv7 e x86_64 UEFI). Controller e gateway dedicados ainda não estão nas imagens ([[pendencias]]). O instalador guiado já oferece a opção e explica isso.
+
+**Ordem de deploy:** o controller vem primeiro. O worker só confirma o slot novo depois de se registrar no controller, e a imagem já leva o endereço dele e o join token.
+
+**Como a imagem chega ao computador (previsto para o instalador guiado):**
+- **Pela rede (boot de rede):** restrito. O usuário informa o **MAC** de cada worker e só esses endereços recebem a imagem; o boot de rede é só instalador e recuperação, nunca modo de operação. Hoje o servidor TFTP já limita as origens por IP (`--allow`), com limite de boots; falta o filtro por MAC.
+- **Por pendrive:** quando a rede não tem DHCP ou o computador não é visível nela, o instalador gera o pendrive de instalação, guiado por perguntas.
 
 ## Em um computador só, com Docker
 

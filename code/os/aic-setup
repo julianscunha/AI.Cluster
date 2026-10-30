@@ -1,18 +1,22 @@
 #!/bin/sh
-# AI Cluster — instalador do servidor e convite de workers.
+# AI Cluster — gerenciador do cluster neste Linux. Quem costuma chamá-lo é o install.sh, que baixa
+# da última release só o que o papel precisa; ele também roda direto, com o pacote ao lado:
 #
-#   sudo ./aic-setup server  [--ip 192.168.1.10] [--models-dir /var/lib/ai-cluster/models] [--yes]
+#   sudo ./aic-setup server  [--role both|controller] [--ip 192.168.1.10] [--models-dir DIR] [--yes]
+#   sudo ./aic-setup gateway --server IP[:8099] [--models-dir DIR] [--yes]   # gateway noutro computador
+#   sudo ./aic-setup worker  --server IP[:8099] [--yes]                      # entra como worker
 #   sudo aic-setup invite    [--minutes 15] [--port 8099]
 #   aic-setup status
 #
-# `server` instala controller e gateway neste Linux (systemd, ou segundo plano se não houver),
-# gera tokens, a CA do túnel RPC e os certificados, e deixa o `ai-cluster` pronto para uso.
-# `invite` abre uma janela curta em que outra máquina entra no cluster com UMA linha:
-#     curl -fsSL http://<ip>:8099/join | sudo sh
-# e aprova sozinho os nós que entram enquanto o convite está aberto.
+# `server` instala o controller (e, com --role both, o gateway) neste Linux (systemd, ou segundo
+# plano se não houver), gera tokens, a CA do túnel RPC e os certificados, e deixa o `ai-cluster`
+# pronto. `invite` abre uma janela curta em que outros computadores entram no cluster:
+#     curl -fsSL http://<ip>:8099/join | sudo sh          # worker (x86_64 ou armv7)
+# e aprova sozinho os nós que entram enquanto o convite está aberto. O pacote do worker de cada
+# processador vem da release do servidor (a mesma versão do cluster) e fica em cache.
 #
-# O pacote (package-cluster.sh) traz, ao lado deste script: ai-cluster-controller, ai-cluster-gateway,
-# ai-cluster-worker, ai-cluster, llama-server, ggml-rpc-server e bootstrap.sh.
+# Ao lado deste script: ai-cluster-controller e ai-cluster (controller), ai-cluster-gateway e
+# llama-server (gateway) e bootstrap.sh. O worker e o ggml-rpc-server não vêm: o convite os busca.
 set -eu
 
 PREFIX=/opt/ai-cluster
@@ -87,22 +91,34 @@ get() { sed -n "s/^$2=//p" "$1" | head -n 1; }   # get <arquivo-env> <CHAVE>
 # ---------- servidor ----------
 check_system() {
   [ "$(uname -s)" = Linux ] || { echo "só Linux"; return 1; }
-  [ "$(uname -m)" = x86_64 ] || { echo "este pacote é x86_64 (aqui: $(uname -m))"; return 1; }
-  for b in ai-cluster-controller ai-cluster-gateway ai-cluster-worker ai-cluster llama-server ggml-rpc-server bootstrap.sh; do
+  case "$(uname -m)" in
+    x86_64) ;;
+    armv7l|armv7) [ "$ROLE" = controller ] || { echo "o gateway (llama-server) só existe para x86_64; neste processador instale só o controller"; return 1; } ;;
+    *) echo "processador sem pacote: $(uname -m)"; return 1 ;;
+  esac
+  need="bootstrap.sh"
+  case "$ROLE" in
+    both) need="$need ai-cluster-controller ai-cluster ai-cluster-gateway llama-server" ;;
+    controller) need="$need ai-cluster-controller ai-cluster" ;;
+    gateway) need="ai-cluster-gateway llama-server" ;;
+  esac
+  for b in $need; do
     [ -f "$HERE/$b" ] || { echo "falta $b ao lado do aic-setup"; return 1; }
   done
-  command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)"; return 1; }
-  ldconfig -p 2>/dev/null | grep -q libgomp.so.1 || { echo "precisa do libgomp1 (apt install libgomp1)"; return 1; }
+  [ "$ROLE" = gateway ] || command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)"; return 1; }
+  case "$ROLE" in both|gateway)
+    ldconfig -p 2>/dev/null | grep -q libgomp.so.1 || { echo "precisa do libgomp1 (apt install libgomp1)"; return 1; } ;;
+  esac
 }
 
 install_files() {
   id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir "$DATA" \
     --shell /usr/sbin/nologin ai-cluster
   mkdir -p "$PREFIX/bin" "$CONF/pki" "$DATA/state" "$MODELS" "$LOGDIR" "$PREFIX/kit"
-  for b in ai-cluster-controller ai-cluster-gateway ai-cluster-worker ai-cluster llama-server ggml-rpc-server; do
-    install -m 755 "$HERE/$b" "$PREFIX/bin/$b"
+  for b in ai-cluster-controller ai-cluster-gateway ai-cluster llama-server; do
+    [ ! -f "$HERE/$b" ] || install -m 755 "$HERE/$b" "$PREFIX/bin/$b"
   done
-  install -m 755 "$HERE/bootstrap.sh" "$PREFIX/bootstrap.sh"
+  [ ! -f "$HERE/bootstrap.sh" ] || install -m 755 "$HERE/bootstrap.sh" "$PREFIX/bootstrap.sh"
   install -m 755 "$HERE/aic-setup" "$PREFIX/aic-setup" 2>/dev/null || install -m 755 "$0" "$PREFIX/aic-setup"
   ln -sf "$PREFIX/aic-setup" /usr/local/bin/aic-setup
   chown -R ai-cluster:ai-cluster "$DATA" "$LOGDIR"
@@ -181,8 +197,9 @@ make_pki() {
 
 write_units() {
   if have_systemd; then
-    for svc in controller gateway; do
-      after="network-online.target"; [ "$svc" = gateway ] && after="network-online.target ai-cluster-controller.service"
+    for svc in $SERVICES; do
+      after="network-online.target"
+      [ "$svc" = gateway ] && [ "$ROLE" = both ] && after="network-online.target ai-cluster-controller.service"
       cat > "/etc/systemd/system/ai-cluster-$svc.service" <<UNIT
 [Unit]
 Description=AI Cluster $svc
@@ -227,44 +244,54 @@ svc_start() { # svc_start controller|gateway
 
 wait_ready() {
   i=0
-  until /usr/local/bin/ai-cluster nodes >/dev/null 2>&1; do
-    i=$((i + 1)); [ $i -gt 30 ] && { echo "o controller não respondeu em 30 s"; return 1; }
-    sleep 1
-  done
+  if [ "$ROLE" != gateway ]; then
+    until /usr/local/bin/ai-cluster nodes >/dev/null 2>&1; do
+      i=$((i + 1)); [ $i -gt 30 ] && { echo "o controller não respondeu em 30 s"; return 1; }
+      sleep 1
+    done
+  fi
   i=0
-  until ss -ltn 2>/dev/null | grep -q ":$HTTP_PORT "; do
-    i=$((i + 1)); [ $i -gt 30 ] && { echo "o gateway não respondeu em 30 s"; return 1; }
-    sleep 1
-  done
+  case "$ROLE" in both|gateway)
+    until ss -ltn 2>/dev/null | grep -q ":$HTTP_PORT "; do
+      i=$((i + 1)); [ $i -gt 30 ] && { echo "o gateway não respondeu em 30 s"; return 1; }
+      sleep 1
+    done ;;
+  esac
 }
 
-build_kit() {
-  stage=$(mktemp -d)
-  mkdir -p "$stage/aic-worker/pki"
-  cp "$PREFIX/bin/ai-cluster-worker" "$PREFIX/bin/ggml-rpc-server" "$PREFIX/bootstrap.sh" "$stage/aic-worker/"
-  cp "$CONF/pki/ca.crt" "$CONF/pki/worker.crt" "$CONF/pki/worker.key" "$stage/aic-worker/pki/"
-  tar -C "$stage" -czf "$PREFIX/kit/worker.tar.gz" aic-worker
-  rm -rf "$stage"
+# Guarda de onde veio esta versão: o convite busca daí o pacote do worker de cada processador.
+save_release() {
+  {
+    echo "BASE=${AIC_RELEASE_BASE:-}"
+    echo "VERSION=${AIC_RELEASE_VERSION:-}"
+    echo "ROLE=$ROLE"
+    echo "KIND=${AIC_HW_KIND:-}"
+  } > "$CONF/release"
+  chmod 644 "$CONF/release"
 }
 
 cmd_server() {
-  MODELS=$DATA/models; IP=""; YES=0
+  MODELS=$DATA/models; IP=""; YES=0; ROLE=both
   while [ $# -gt 0 ]; do
     case "$1" in
       --ip) [ $# -ge 2 ] || die "--ip pede um valor"; IP=$2; shift 2 ;;
       --models-dir) [ $# -ge 2 ] || die "--models-dir pede um valor"; MODELS=$2; shift 2 ;;
+      --role) [ $# -ge 2 ] || die "--role pede um valor"; ROLE=$2; shift 2 ;;
       --yes|-y) YES=1; shift ;;
       *) die "argumento desconhecido: $1" ;;
     esac
   done
+  case "$ROLE" in both|controller) ;; *) die "--role deve ser both ou controller" ;; esac
   need_root server
   [ -n "$IP" ] || IP=$(lan_ip)
   [ -n "$IP" ] || die "não achei o IP da rede; informe com --ip"
   case "$IP$MODELS" in *[!A-Za-z0-9._/-]*) die "--ip e --models-dir só aceitam letras, dígitos e . _ / -" ;; esac
-  case "$MODELS" in /home*) die "--models-dir em /home fica inacessível ao serviço (ProtectHome); use outro caminho" ;; /*) ;; *) die "--models-dir deve ser um caminho absoluto" ;; esac
+  case "$MODELS" in /home*) die "--models-dir em /home fica inacessível ao serviço (ProtectHome); use outro caminho" ;; /|/etc*|/usr*|/bin*|/sbin*|/lib*|/boot*|/proc*|/sys*|/dev*|*..*) die "--models-dir não pode ser um diretório do sistema nem conter .." ;; /*) ;; *) die "--models-dir deve ser um caminho absoluto" ;; esac
   banner "Instalação do servidor"
   [ ! -f "$CONF/.installed" ] || die "já instalado. Para um novo convite: sudo aic-setup invite"
-  note "Controller + gateway serão instalados neste computador ($IP)."
+  if [ "$ROLE" = both ]; then SERVICES="controller gateway"; WHAT="Controller + gateway"; TOTAL=8
+  else SERVICES=controller; WHAT="Controller"; TOTAL=6; fi
+  note "$WHAT serão instalados neste computador ($IP)."
   note "Modelos GGUF: $MODELS"
   printf '\n'
   if [ "$YES" != 1 ] && [ -t 0 ]; then
@@ -273,29 +300,127 @@ cmd_server() {
     printf '\n'
   fi
   : > "$SETUP_LOG"; chmod 600 "$SETUP_LOG"
-  TOTAL=9
   step "Verificando o sistema" check_system
   step "Instalando os programas" install_files
   step "Gerando credenciais e o comando ai-cluster" make_credentials
   step "Criando a CA e os certificados do túnel RPC" make_pki
   step "Configurando os serviços" write_units
   step "Subindo o controller" svc_start controller
-  sleep 2
-  step "Subindo o gateway" svc_start gateway
+  if [ "$ROLE" = both ]; then
+    sleep 2
+    step "Subindo o gateway" svc_start gateway
+  fi
   step "Verificando que respondem" wait_ready
-  step "Preparando o pacote dos workers" build_kit
+  save_release
   touch "$CONF/.installed"
   printf '\n'
-  box "Servidor pronto" "" \
-      "API (gateway)   http://$IP:$HTTP_PORT/v1/chat/completions" \
-      "Controller      http://$IP:$GRPC_PORT" \
-      "Modelos         $MODELS" \
-      "Administrar     ai-cluster nodes | model list | model start" \
-      "Credenciais     $CONF  (somente root)"
+  if [ "$ROLE" = both ]; then
+    box "Servidor pronto" "" \
+        "API (gateway)   http://$IP:$HTTP_PORT/v1/chat/completions" \
+        "Controller      http://$IP:$GRPC_PORT" \
+        "Modelos         $MODELS" \
+        "Administrar     ai-cluster nodes | model list | model start" \
+        "Credenciais     $CONF  (somente root)"
+  else
+    box "Controller pronto" "" \
+        "Controller      http://$IP:$GRPC_PORT" \
+        "Modelos         $MODELS" \
+        "Administrar     ai-cluster nodes | model list" \
+        "Credenciais     $CONF  (somente root)"
+  fi
   printf '\n  %sPróximos passos%s\n' "$B" "$Z"
   printf '   1. Convide cada outro computador:  %ssudo aic-setup invite%s\n' "$C" "$Z"
   printf '   2. Copie um modelo .gguf para %s\n' "$MODELS"
-  printf '   3. Carregue:                      %sai-cluster model start <arquivo.gguf>%s\n\n' "$C" "$Z"
+  [ "$ROLE" != both ] || printf '   3. Carregue:                      %sai-cluster model start <arquivo.gguf>%s\n' "$C" "$Z"
+  printf '\n'
+}
+
+# ---------- gateway noutro computador ----------
+fetch_gateway_kit() {
+  t=$(mktemp -d)
+  curl -fsS "http://$SERVER/gw-$CODE.tar.gz" -o "$t/k.tgz" \
+    || { echo "o convite em $SERVER não respondeu; rode 'sudo aic-setup invite' no controller"; rm -rf "$t"; return 1; }
+  tar -C "$t" --no-same-owner -xzf "$t/k.tgz"
+  # O env vira EnvironmentFile do serviço: só entram chaves AI_CLUSTER_* com valores simples.
+  if grep -qvE '^AI_CLUSTER_[A-Z_]+=[A-Za-z0-9._:/@-]*$' "$t/gateway.env"; then
+    echo "gateway.env recebido tem linhas inesperadas; recusado"; rm -rf "$t"; return 1
+  fi
+  cp "$t/ca.crt" "$t/gateway.crt" "$t/gateway.key" "$CONF/pki/"
+  cp "$t/gateway.env" "$CONF/gateway.env"
+  sed -i "s#^AI_CLUSTER_MODELS_DIR=.*#AI_CLUSTER_MODELS_DIR=$MODELS#" "$CONF/gateway.env"
+  rm -rf "$t"
+  chown ai-cluster:ai-cluster "$CONF/pki/gateway.key" "$CONF/pki/gateway.crt" "$CONF/pki/ca.crt"
+  chown root:ai-cluster "$CONF" "$CONF/pki"; chmod 750 "$CONF" "$CONF/pki"
+  chmod 644 "$CONF/pki/ca.crt" "$CONF/pki/gateway.crt"; chmod 600 "$CONF/pki/gateway.key"
+  chown root:ai-cluster "$CONF/gateway.env"; chmod 640 "$CONF/gateway.env"
+}
+
+server_arg() { # normaliza IP -> IP:8099
+  case "$1" in *:*) printf '%s' "$1" ;; *) printf '%s:8099' "$1" ;; esac
+}
+
+cmd_gateway() {
+  MODELS=$DATA/models; SERVER=""; CODE=""; YES=0; ROLE=gateway; SERVICES=gateway; TOTAL=6
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --server) [ $# -ge 2 ] || die "--server pede um valor"; SERVER=$2; shift 2 ;;
+      --code) [ $# -ge 2 ] || die "--code pede um valor"; CODE=$2; shift 2 ;;
+      --models-dir) [ $# -ge 2 ] || die "--models-dir pede um valor"; MODELS=$2; shift 2 ;;
+      --yes|-y) YES=1; shift ;;
+      *) die "argumento desconhecido: $1" ;;
+    esac
+  done
+  need_root gateway
+  case "$CODE" in ""|*[!A-Za-z0-9]*) die "informe o código do convite: --code (aparece no 'aic-setup invite' do controller)" ;; esac
+  [ -n "$SERVER" ] || die "informe o controller: --server IP[:porta do convite]"
+  case "$SERVER$MODELS" in *[!A-Za-z0-9._/:-]*) die "--server e --models-dir têm caracteres inválidos" ;; esac
+  SERVER=$(server_arg "$SERVER")
+  case "$MODELS" in /home*) die "--models-dir em /home fica inacessível ao serviço (ProtectHome)" ;; /*) ;; *) die "--models-dir deve ser um caminho absoluto" ;; esac
+  banner "Instalação do gateway"
+  [ ! -f "$CONF/.installed" ] || die "já instalado neste computador"
+  command -v curl >/dev/null || die "precisa do curl"
+  note "O gateway será instalado aqui e ligado ao controller em ${SERVER%%:*}."
+  warn "A pasta de modelos ($MODELS) precisa ser a mesma que o controller enxerga (por exemplo, compartilhada por NFS)."
+  printf '\n'
+  : > "$SETUP_LOG"; chmod 600 "$SETUP_LOG"
+  step "Verificando o sistema" check_system
+  step "Instalando os programas" install_files
+  step "Recebendo as credenciais do controller" fetch_gateway_kit
+  step "Configurando o serviço" write_units
+  step "Subindo o gateway" svc_start gateway
+  step "Verificando que responde" wait_ready
+  save_release
+  touch "$CONF/.installed"
+  printf '\n'
+  box "Gateway pronto" "" \
+      "API (gateway)   http://$(lan_ip):$HTTP_PORT/v1/chat/completions" \
+      "Controller      http://${SERVER%%:*}:$GRPC_PORT" \
+      "Modelos         $MODELS"
+  printf '\n'
+}
+
+# ---------- worker ----------
+cmd_worker() {
+  SERVER=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --server) [ $# -ge 2 ] || die "--server pede um valor"; SERVER=$2; shift 2 ;;
+      --yes|-y) shift ;;
+      *) die "argumento desconhecido: $1" ;;
+    esac
+  done
+  need_root worker
+  [ -n "$SERVER" ] || die "informe o servidor: --server IP[:porta do convite]"
+  case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "--server com caracteres inválidos" ;; esac
+  SERVER=$(server_arg "$SERVER")
+  banner "Entrar no cluster como worker"
+  note "Buscando o pacote do worker em ${SERVER%%:*}…"
+  jd=$(mktemp -d)
+  curl -fsS "http://$SERVER/join" -o "$jd/join" \
+    || { rm -rf "$jd"; die "o convite em $SERVER não respondeu; rode 'sudo aic-setup invite' no servidor"; }
+  rc=0; AIC_ARCH="${AIC_HW_ARCH:-}" sh "$jd/join" || rc=$?
+  rm -rf "$jd"
+  exit $rc
 }
 
 # ---------- convite ----------
@@ -316,52 +441,91 @@ cmd_invite() {
   command -v python3 >/dev/null || die "precisa do python3 para servir o convite (apt install python3)"
   IP=$(cat "$CONF/server-ip")
   JOIN=$(get "$CONF/controller.env" AI_CLUSTER_JOIN_TOKEN)
-  [ -f "$PREFIX/kit/worker.tar.gz" ] || build_kit
-  SUM=$(sha256sum "$PREFIX/kit/worker.tar.gz" | cut -d' ' -f1)
-  WEB=$(mktemp -d); chmod 755 "$WEB"
-  cp "$PREFIX/kit/worker.tar.gz" "$WEB/worker.tar.gz"
-  # O script que a outra máquina baixa: confere o pacote, instala o worker e confirma o registro.
+  mkdir -p "$PREFIX/kit"
+  # O pacote do worker de cada processador vem da release desta versão e fica em cache no servidor.
+  AVAILABLE=""
+  for a in x86_64 armv7; do
+    if fetch_worker_pack "$a"; then AVAILABLE="$AVAILABLE $a"
+    else warn "sem pacote de worker para $a (sem internet ou a release não o traz)"; fi
+  done
+  [ -n "$AVAILABLE" ] || die "nenhum pacote de worker disponível; confira a internet do servidor"
+  WEB=$(mktemp -d); GCODE=$(rand | cut -c1-16)
+  SUMS=""
+  for a in $AVAILABLE; do
+    cp "$PREFIX/kit/$(get "$CONF/release" VERSION)-worker-linux-$a.tar.gz" "$WEB/worker-linux-$a.tar.gz"
+    SUMS="$SUMS
+  $a) SUM=$(sha256sum "$WEB/worker-linux-$a.tar.gz" | cut -d' ' -f1) ;;"
+  done
+  cp "$PREFIX/bootstrap.sh" "$WEB/bootstrap.sh"
+  # Credenciais do túnel RPC dos workers e o kit do gateway (só dentro da janela do convite).
+  tar -C "$CONF/pki" -czf "$WEB/pki-worker.tar.gz" ca.crt worker.crt worker.key
+  g=$(mktemp -d)
+  cp "$CONF/pki/ca.crt" "$CONF/pki/gateway.crt" "$CONF/pki/gateway.key" "$g/"
+  sed "s#^AI_CLUSTER_CONTROLLER=.*#AI_CLUSTER_CONTROLLER=http://$IP:$GRPC_PORT#" "$CONF/gateway.env" > "$g/gateway.env"
+  tar -C "$g" -czf "$WEB/gw-$GCODE.tar.gz" .
+  rm -rf "$g"
+  BSUM=$(sha256sum "$WEB/bootstrap.sh" | cut -d' ' -f1); PSUM=$(sha256sum "$WEB/pki-worker.tar.gz" | cut -d' ' -f1)
+  # O script que a outra máquina baixa: escolhe o pacote pelo processador, confere e instala.
   cat > "$WEB/join" <<JOIN_SCRIPT
 #!/bin/sh
 # AI Cluster — entra neste cluster como worker.  Uso: curl -fsSL http://$IP:$PORT/join | sudo sh
 set -eu
 [ "\$(id -u)" = 0 ] || { echo "rode com sudo: curl -fsSL http://$IP:$PORT/join | sudo sh" >&2; exit 1; }
-[ "\$(uname -m)" = x86_64 ] || { echo "este convite é para x86_64 (aqui: \$(uname -m))" >&2; exit 1; }
-ldconfig -p 2>/dev/null | grep -q libgomp.so.1 || echo "aviso: falta libgomp1 (apt install libgomp1)" >&2
+case "\$(uname -m)" in
+  x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
+  *) echo "este computador é \$(uname -m): ainda não há pacote de worker para ele" >&2; exit 1 ;;
+esac
+[ -z "\${AIC_ARCH:-}" ] || [ "\$AIC_ARCH" = "\$A" ] || { echo "você informou \$AIC_ARCH, mas este computador é \$A" >&2; exit 1; }
+case "\$A" in $SUMS
+  *) echo "o servidor não tem pacote de worker para \$A" >&2; exit 1 ;;
+esac
+[ "\$A" != x86_64 ] || ldconfig -p 2>/dev/null | grep -q libgomp.so.1 || echo "aviso: falta libgomp1 (apt install libgomp1)" >&2
 T=\$(mktemp -d); trap 'rm -rf "\$T"' EXIT
-echo "AI Cluster: baixando o pacote do worker de $IP…"
-curl -fsS http://$IP:$PORT/worker.tar.gz -o "\$T/w.tgz"
-echo "$SUM  \$T/w.tgz" | sha256sum -c - >/dev/null || { echo "pacote corrompido ou adulterado" >&2; exit 1; }
-tar -C "\$T" -xzf "\$T/w.tgz"
+echo "AI Cluster: baixando o pacote do worker (\$A) de $IP…"
+curl -fsS http://$IP:$PORT/worker-linux-\$A.tar.gz -o "\$T/w.tgz"
+echo "\$SUM  \$T/w.tgz" | sha256sum -c - >/dev/null || { echo "pacote corrompido ou adulterado" >&2; exit 1; }
+mkdir "\$T/w"; tar -C "\$T/w" -xzf "\$T/w.tgz"
+curl -fsS http://$IP:$PORT/bootstrap.sh -o "\$T/bootstrap.sh"
+curl -fsS http://$IP:$PORT/pki-worker.tar.gz -o "\$T/pki.tgz"
+echo "$BSUM  \$T/bootstrap.sh" | sha256sum -c - >/dev/null || { echo "bootstrap.sh adulterado" >&2; exit 1; }
+echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificados adulterados" >&2; exit 1; }
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
 mkdir -p /etc/ai-cluster/rpc-tls
-install -m 644 "\$T/aic-worker/pki/ca.crt" "\$T/aic-worker/pki/worker.crt" /etc/ai-cluster/rpc-tls/
-install -o root -g ai-cluster -m 640 "\$T/aic-worker/pki/worker.key" /etc/ai-cluster/rpc-tls/worker.key
-install -m 755 "\$T/aic-worker/ggml-rpc-server" /usr/local/bin/ggml-rpc-server
+tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
+chmod 644 /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt
+chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
+install -m 755 "\$T/w/ggml-rpc-server" /usr/local/bin/ggml-rpc-server
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
 NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g')
-AIC_INVITED=1 sh "\$T/aic-worker/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
-  --join-token-file "\$T/join-token" --binary "\$T/aic-worker/ai-cluster-worker" --node-id "\$NAME" \
+AIC_INVITED=1 sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
+  --join-token-file "\$T/join-token" --binary "\$T/w/ai-cluster-worker" --node-id "\$NAME" \
   --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls </dev/null
 echo "Pronto: \$NAME entrou no cluster. O servidor aprova o nó em instantes."
 JOIN_SCRIPT
   cd "$WEB"
-  python3 -m http.server "$PORT" --bind "$IP" >/dev/null 2>&1 &
+  # Sem listagem de diretório: o código do gateway não pode ser descoberto olhando a raiz.
+  python3 -c 'import http.server, sys
+class H(http.server.SimpleHTTPRequestHandler):
+    def list_directory(self, path):
+        self.send_error(404)
+http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()' "$IP" "$PORT" >/dev/null 2>&1 &
   SRV=$!
   # Qualquer saída (erro, Ctrl+C, fim do prazo) derruba o servidor e apaga o que ele servia.
   trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB"' EXIT
   trap 'printf "\n  Convite encerrado.\n\n"; exit 0' INT TERM
   sleep 1
   kill -0 "$SRV" 2>/dev/null || die "não consegui abrir a porta $PORT em $IP (em uso?)"
-  banner "Convite de workers"
-  box "Em cada computador que vai entrar, rode:" "" \
+  banner "Convite de computadores"
+  box "Worker (qualquer computador x86_64 ou ARM de 32 bits), rode:" "" \
       "curl -fsSL http://$IP:$PORT/join | sudo sh" "" \
-      "Válido por $MIN min. Linux x86_64, com systemd e libgomp1."
+      "Gateway noutro computador: sudo aic-setup gateway --server $IP:$PORT --code $GCODE" "" \
+      "Válido por $MIN min. Linux com systemd e, no x86_64, libgomp1."
   printf '\n  %sAguardando computadores… (Ctrl+C encerra o convite)%s\n\n' "$D" "$Z"
   END=$(( $(date +%s) + MIN * 60 ))
   while [ "$(date +%s)" -lt "$END" ]; do
     # Nós pendentes enquanto o convite está aberto são aprovados: foi o operador quem os convidou.
     /usr/local/bin/ai-cluster nodes 2>/dev/null | awk '$0 ~ /pendente/ {print $1}' | while read -r n; do
+      case "$n" in -*) continue ;; esac
       /usr/local/bin/ai-cluster approve "$n" --trust-listed >/dev/null 2>&1 \
         && printf '  %s✔%s %s entrou e foi aprovado\n' "$G" "$Z" "$n"
       true
@@ -369,6 +533,21 @@ JOIN_SCRIPT
     sleep 3
   done
   printf '\n  Convite expirou. Para outro: sudo aic-setup invite\n\n'
+}
+
+# Baixa o pacote do worker de um processador para o cache, conferindo o SHA-256 da release.
+fetch_worker_pack() {
+  f="worker-linux-$1.tar.gz"
+  [ -f "$CONF/release" ] || return 1
+  base=$(get "$CONF/release" BASE)
+  dest="$PREFIX/kit/$(get "$CONF/release" VERSION)-$f"   # o cache é por versão
+  [ -f "$dest" ] && return 0
+  [ -n "$base" ] || return 1
+  t=$(mktemp -d)
+  curl -fsSL "$base/SHA256SUMS" -o "$t/S" && curl -fsSL "$base/$f" -o "$t/f" || { rm -rf "$t"; return 1; }
+  want=$(awk -v f="$f" '$2==f {print $1}' "$t/S"); have=$(sha256sum "$t/f" | cut -d' ' -f1)
+  [ -n "$want" ] && [ "$want" = "$have" ] || { rm -rf "$t"; return 1; }
+  mv "$t/f" "$dest"; rm -rf "$t"
 }
 
 cmd_status() {
@@ -381,7 +560,9 @@ cmd_status() {
 
 case "${1:-}" in
   server) shift; cmd_server "$@" ;;
+  gateway) shift; cmd_gateway "$@" ;;
+  worker) shift; cmd_worker "$@" ;;
   invite) shift; cmd_invite "$@" ;;
   status) shift; cmd_status ;;
-  *) echo "uso: aic-setup server|invite|status  (veja o cabeçalho do script)" >&2; exit 2 ;;
+  *) echo "uso: aic-setup server|gateway|worker|invite|status  (veja o cabeçalho do script)" >&2; exit 2 ;;
 esac

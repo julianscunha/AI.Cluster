@@ -22,4 +22,4 @@ fi
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd):/w" -v aic-target-armv7:/t \
   -e CARGO_TARGET_DIR=/t -w /w/code aic-rust-zig:1 sh -c "
     rustup target add armv7-unknown-linux-musleabihf >/dev/null 2>&1 || true
-    cargo zigbuild --release --target $TARGET -j2 -p ai-cluster-worker -p ai-cluster-cli"
+    cargo zigbuild --release --target $TARGET -j2 -p ai-cluster-worker -p ai-cluster-cli -p ai-cluster-controller"
