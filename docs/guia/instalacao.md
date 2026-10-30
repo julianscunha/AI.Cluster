@@ -23,6 +23,8 @@ Um script só pergunta o que este computador será e baixa da **última release*
 curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
 ```
 
+Em inglês: acrescente `-s -- --lang en` ao `sh` (ou `AIC_LANG=en`). O idioma vale para o instalador, o `aic-setup` e os scripts do convite, e fica gravado em `/etc/ai-cluster/lang`. Sem isso tudo sai em português. Em modo inglês, `--mode dedicated`, `--kind physical` e `--kind container` também são aceitos.
+
 Ele não detecta o hardware: quem dita é você. Só confere se o processador informado é o da máquina, para não instalar um binário que não roda. As perguntas:
 
 1. **Como instalar:** neste Linux, como serviço, ou dedicando o computador ao cluster (veja "Instalação dedicada").

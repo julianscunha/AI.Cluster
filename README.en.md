@@ -68,8 +68,10 @@ Docker is **not** required to use AI Cluster. It only appears for people develop
 ## Guided install (Linux)
 
 ```bash
-curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
+curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh -s -- --lang en
 ```
+
+`--lang en` makes the installer, `aic-setup` and the invite scripts speak English (it is remembered on the server, so `aic-setup invite` later stays in English). Without it everything is in Portuguese. The `ai-cluster` command line is in Portuguese for now.
 
 One script asks what each computer will be and downloads only what that role needs from the **latest release**. It does not auto-detect your hardware: you tell it, and it only checks that the processor you named is the real one. It explains the three components and asks:
 

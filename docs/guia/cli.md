@@ -7,7 +7,7 @@ type: guia
 
 # CLI `ai-cluster`
 
-A CLI é o painel do operador. Volte ao [[guia]] para o índice; variáveis em [[configuracao]].
+A CLI é o painel do operador. Volte ao [[guia]] para o índice; variáveis em [[configuracao]]. A ajuda (`ai-cluster --help`, `<comando> --help`) e os erros de uso saem em português (`crates/cli/src/ptbr.rs` troca os títulos e as mensagens do clap); uma versão em inglês da CLI ainda não existe.
 
 ```
 ai-cluster [--controller <endpoint>] <comando>

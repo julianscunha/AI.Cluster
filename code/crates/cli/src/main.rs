@@ -10,12 +10,17 @@ use ai_cluster_protocol::cluster::{
     WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
-use clap::{Parser, Subcommand};
+mod ptbr;
+
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "ai-cluster")]
+#[command(
+    name = "ai-cluster",
+    about = "Controle do AI Cluster: nós, modelos, trabalho e instalação."
+)]
 struct Cli {
-    /// Controller gRPC endpoint.
+    /// Endereço gRPC do controller.
     #[arg(
         long,
         global = true,
@@ -42,7 +47,9 @@ enum EnrollmentAction {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Estado do cluster em uma linha: nós, fila e release.
     Status,
+    /// Lista os nós com estado, recursos, saúde e confiança.
     Nodes,
     /// A estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel.
     Topology,
@@ -51,57 +58,57 @@ enum Command {
         #[command(subcommand)]
         action: NodeAction,
     },
-    /// Cluster-wide roll-up: node counts, queue depth and completed-unit timings.
+    /// Resumo do cluster: nós por estado, fila de trabalho e tempos das unidades concluídas.
     Metrics,
-    /// Recent lifecycle events, oldest first: joins, departures, offline reaps,
-    /// work enqueued and work completed.
+    /// Eventos recentes, do mais antigo ao mais novo: entradas, saídas, nós dados como offline,
+    /// trabalho enfileirado e concluído.
     Events {
-        /// Most recent N events. 0 means everything the controller still holds.
+        /// Os N eventos mais recentes. 0 mostra tudo o que o controller ainda guarda.
         #[arg(long, default_value_t = 20)]
         limit: u32,
         /// Depois de listar, continua mostrando os eventos novos à medida que acontecem.
         #[arg(long)]
         follow: bool,
     },
-    /// Model files: manifest with version and checksums, and its verification (F12). Local.
+    /// Arquivos de modelo: manifesto com versão e somas de verificação, e a conferência dele (F12). Local.
     Model {
         #[command(subcommand)]
         action: ModelAction,
     },
-    /// Follow a client request through the cluster (H3).
+    /// Acompanha o caminho de uma requisição de cliente pelo cluster (H3).
     Request {
         #[command(subcommand)]
         action: RequestAction,
     },
-    /// Dispatch matrix work units and compare compute against transfer cost.
+    /// Despacha unidades de trabalho de matriz e compara o custo de cálculo com o de transferência.
     Benchmark {
-        /// Square matrix edge length.
+        /// Lado da matriz quadrada.
         #[arg(long, default_value_t = 256)]
         size: u32,
-        /// Number of work units to dispatch.
+        /// Quantas unidades de trabalho despachar.
         #[arg(long, default_value_t = 1)]
         repetitions: u32,
-        /// Compute the same workload in-process instead of dispatching it.
+        /// Calcula a mesma carga no próprio processo, sem despachar.
         #[arg(long)]
         local: bool,
-        /// Refuse to hand a unit to a node reporting fewer cpu threads than this.
-        /// 0 means no requirement.
+        /// Não entrega a unidade a um nó que informe menos threads de CPU que isto.
+        /// 0 não exige nada.
         #[arg(long, default_value_t = 0)]
         min_threads: u32,
-        /// Enqueue under this request id instead of letting the controller mint one.
-        /// Pass a reservation's request id so its units land on the held node (G6).
+        /// Enfileira com este id de requisição, em vez de o controller criar um.
+        /// Passe o id de uma reserva para as unidades irem ao nó retido (G6).
         #[arg(long, default_value = "")]
         request_id: String,
-        /// Priority class of the enqueued units: higher dispatches first, 0 is the default (G4).
+        /// Classe de prioridade das unidades: maior despacha primeiro, 0 é o padrão (G4).
         #[arg(long, default_value_t = 0)]
         priority: u32,
-        /// Only attested nodes (desired release, signed slot measure) may run the units.
+        /// Só nós atestados (release desejada, medida do slot assinada) podem rodar as unidades.
         #[arg(long)]
         require_attested: bool,
     },
-    /// Dispatch a dependency graph (diamond) and watch the branches gate.
+    /// Despacha um grafo de dependências (losango) e mostra os ramos esperando uns pelos outros.
     Graph {
-        /// Square matrix edge length for every unit in the graph.
+        /// Lado da matriz quadrada de cada unidade do grafo.
         #[arg(long, default_value_t = 128)]
         size: u32,
     },
@@ -195,16 +202,16 @@ enum Command {
 /// The `request` subcommands, matching the `request trace <id>` surface in the spec.
 #[derive(Subcommand, Debug)]
 enum ModelAction {
-    /// Writes `manifest.json` in a model directory: name, version and the SHA-256 of each file (F12).
+    /// Grava o `manifest.json` numa pasta de modelo: nome, versão e o SHA-256 de cada arquivo (F12).
     Manifest {
-        /// Model directory (the one the gateway and the workers read).
+        /// Pasta do modelo (a que o gateway e os workers leem).
         dir: std::path::PathBuf,
         #[arg(long)]
         name: String,
         #[arg(long)]
         version: String,
     },
-    /// Checks the files of a model directory against its `manifest.json`.
+    /// Confere os arquivos de uma pasta de modelo com o `manifest.json` dela.
     Verify { dir: std::path::PathBuf },
     /// Diz se o cluster comporta um modelo da pasta: OK, ou NOK com o motivo e quanto falta (ADR-022, E2).
     Check {
@@ -262,14 +269,14 @@ enum KeyAction {
 
 #[derive(Subcommand, Debug)]
 enum RequestAction {
-    /// The units a request produced, where each is in its life, and what it cost.
+    /// As unidades que uma requisição gerou, em que ponto cada uma está e quanto custou.
     Trace {
-        /// Request id, as printed by `benchmark` or `graph`.
+        /// Id da requisição, como `benchmark` ou `graph` o imprimem.
         request_id: String,
     },
-    /// Takes a request's units out of the queue. Units already on a worker finish (F11).
+    /// Tira da fila as unidades de uma requisição. As que já estão num worker terminam (F11).
     Cancel {
-        /// Request id, as printed by `benchmark` or `graph`.
+        /// Id da requisição, como `benchmark` ou `graph` o imprimem.
         request_id: String,
     },
 }
@@ -279,14 +286,18 @@ enum RequestAction {
 enum NodeAction {
     /// Um nó pelo id, com tudo que o controller sabe sobre ele.
     Show {
-        /// Node id, as printed by `nodes`.
+        /// Id do nó, como `nodes` o imprime.
         id: String,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let matches = match ptbr::localize(Cli::command()).try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => ptbr::show(&error),
+    };
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     ai_cluster_protocol::metadata::check_secret_files()?;
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,

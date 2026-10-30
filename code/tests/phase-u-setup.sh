@@ -9,7 +9,10 @@
 #   B) o convite entrega o pacote do worker pelo processador e o nó fica READY e aprovado;
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
-#   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem.
+#   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem;
+#      --lang fr é recusado e --mode dedicated (alias em inglês) funciona;
+#   E) em inglês (--lang en): banner e recusa do install.sh, idioma salvo lido pelo aic-setup e o
+#      convite gera join e wait em inglês.
 set -uo pipefail
 export MSYS_NO_PATHCONV=1
 DIST=$(cd "${1:-dist/release}" && pwd -W 2>/dev/null || pwd)
@@ -85,5 +88,33 @@ refused() { out=$(inst aic-ctl "$@"); case "$out" in *"$MSG"*) ;; *) fail "esper
 MSG="só existe para x86_64" refused --role server --arch armv7
 MSG="ARM de 64 bits ainda não" refused --role worker --arch aarch64 --server 1.2.3.4
 MSG="este computador é x86_64" refused --role worker --arch armv7 --server 1.2.3.4
+MSG="idioma inválido" refused --lang fr
 echo "OK: recusas com mensagem"
+out=$(inst aic-ctl --mode dedicated --lang en)
+echo "$out" | grep -qF "Dedicated mode writes" || fail "--mode dedicated (alias) deveria mostrar o modo dedicado em inglês"
+echo "OK: --mode dedicated (alias de dedicado)"
+
+echo "=== E) em inglês: install.sh, aic-setup e convite ==="
+# O controller (C) já está instalado: o install.sh roda inteiro em inglês e o aic-setup recusa em inglês.
+OUT=$(inst aic-ctl --role controller --arch x86_64 --kind container --lang en)
+for p in "Welcome" "Summary" "Downloading version" "Container:" "already installed"; do
+  echo "$OUT" | grep -qF "$p" || fail "saída em inglês sem \"$p\""
+done
+for p in "Bem-vindo" "Resumo" "Baixando a versão" "Contêiner:" "já instalado"; do
+  echo "$OUT" | grep -qF "$p" && fail "saída em inglês traz \"$p\""
+done
+echo "OK E1) install.sh em inglês: banner, resumo e recusa traduzidos"
+# O idioma fica gravado na instalação e o aic-setup o lê sem AIC_LANG.
+[ "$(docker exec aic-ctl cat /etc/ai-cluster/lang)" = pt ] || fail "a instalação deveria gravar /etc/ai-cluster/lang"
+docker exec aic-ctl sh -c "echo en > /etc/ai-cluster/lang"
+ST=$(docker exec aic-ctl aic-setup status 2>&1)
+echo "$ST" | grep -qF "Cluster status" || { echo "$ST" | head -5; fail "aic-setup status deveria seguir o idioma salvo (en)"; }
+docker exec aic-ctl sh -c "echo pt > /etc/ai-cluster/lang"
+echo "OK E2) aic-setup lê o idioma salvo em /etc/ai-cluster/lang"
+# Um convite com AIC_LANG=en gera join e wait em inglês (porta 8098, para não colidir com o convite da C).
+docker exec -d aic-ctl sh -c "AIC_LANG=en aic-setup invite --minutes 1 --port 8098 > /tmp/invite-en.log 2>&1"
+for _ in $(seq 10); do docker exec aic-ctl curl -fsS "http://$CIP:8098/join" -o /tmp/join-en.sh 2>/dev/null && break; sleep 1; done
+docker exec aic-ctl sh -c "curl -fsS http://$CIP:8098/wait -o /tmp/wait-en.sh && sh -n /tmp/join-en.sh && sh -n /tmp/wait-en.sh && grep -q 'joins this cluster' /tmp/join-en.sh && grep -q 'dedicated mode' /tmp/wait-en.sh" \
+  || fail "o convite em inglês deveria gerar join e wait em inglês"
+echo "OK E3) convite em inglês gera join e wait em inglês"
 echo "=== instalador guiado OK ==="

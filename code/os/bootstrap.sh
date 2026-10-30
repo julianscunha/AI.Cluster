@@ -25,7 +25,13 @@
 # Todos os valores são validados contra uma lista de caracteres permitidos antes de qualquer
 # escrita: eles entram em um arquivo de ambiente, numa unit systemd e num comando, e um
 # caractere de shell ou uma quebra de linha ali viraria comando.
+# Idioma das mensagens: AIC_LANG=pt|en (padrão pt). O convite já o fixa ao entrar como worker.
 set -eu
+
+LANG_AIC=${AIC_LANG:-pt}
+case "$LANG_AIC" in pt|en) ;; *) echo "AIC_LANG deve ser pt ou en / AIC_LANG must be pt or en" >&2; exit 2 ;; esac
+# t <pt> <en>: a frase no idioma escolhido.
+t() { if [ "$LANG_AIC" = en ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 CONTROLLER=""
 JOIN_TOKEN=""
@@ -54,7 +60,7 @@ while [ $# -gt 0 ]; do
     --insecure) INSECURE=1; shift ;;
     --force) FORCE=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT=$2; shift 2 ;;
-    *) echo "argumento desconhecido: $1" >&2; exit 2 ;;
+    *) echo "$(t "argumento desconhecido: $1" "unknown argument: $1")" >&2; exit 2 ;;
   esac
 done
 
@@ -62,26 +68,26 @@ die() { echo "$1" >&2; exit 2; }
 
 # O token por arquivo evita pô-lo na linha de comando (visível em `ps` e no histórico).
 if [ -n "$TOKEN_FILE" ]; then
-  [ -f "$TOKEN_FILE" ] || die "arquivo de token não encontrado: $TOKEN_FILE"
+  [ -f "$TOKEN_FILE" ] || die "$(t "arquivo de token não encontrado: $TOKEN_FILE" "token file not found: $TOKEN_FILE")"
   JOIN_TOKEN=$(head -n 1 "$TOKEN_FILE")
 fi
 
-[ -n "$CONTROLLER" ] || die "falta --controller"
-[ -n "$JOIN_TOKEN" ] || die "falta --join-token ou --join-token-file"
-[ -f "$BINARY" ] || die "binário não encontrado: $BINARY"
-[ "$(id -u)" = 0 ] || { echo "rode como root" >&2; exit 1; }
+[ -n "$CONTROLLER" ] || die "$(t 'falta --controller' 'missing --controller')"
+[ -n "$JOIN_TOKEN" ] || die "$(t 'falta --join-token ou --join-token-file' 'missing --join-token or --join-token-file')"
+[ -f "$BINARY" ] || die "$(t "binário não encontrado: $BINARY" "binary not found: $BINARY")"
+[ "$(id -u)" = 0 ] || { echo "$(t 'rode como root' 'run as root')" >&2; exit 1; }
 [ -n "$NODE_ID" ] || NODE_ID=$(hostname)
-case "$HEALTH_TIMEOUT" in ''|*[!0-9]*) die "--health-timeout deve ser um número de segundos" ;; esac
+case "$HEALTH_TIMEOUT" in ''|*[!0-9]*) die "$(t '--health-timeout deve ser um número de segundos' '--health-timeout must be a number of seconds')" ;; esac
 
 # Lista de permitidos: letras, dígitos e . _ : / @ = + - (sem espaço, aspas, $, `, \, # ou ;).
 # `case` com um conjunto negado recusa qualquer caractere de fora, quebra de linha incluída.
 allowed() { # allowed <nome> <valor>
   case "$2" in
-    *[!A-Za-z0-9._:/@=+-]*) die "$1 tem caractere não permitido (use letras, dígitos e . _ : / @ = + -)" ;;
+    *[!A-Za-z0-9._:/@=+-]*) die "$(t "$1 tem caractere não permitido (use letras, dígitos e . _ : / @ = + -)" "$1 has a character not allowed (use letters, digits and . _ : / @ = + -)")" ;;
   esac
 }
 allowed --controller "$CONTROLLER"
-allowed "o token" "$JOIN_TOKEN"
+allowed "$(t 'o token' 'the token')" "$JOIN_TOKEN"
 allowed --node-id "$NODE_ID"
 allowed --prefix "$PREFIX"
 [ -z "$MODEL_DIR" ] || allowed --model-dir "$MODEL_DIR"
@@ -89,27 +95,27 @@ allowed --prefix "$PREFIX"
 [ -z "$RPC_TLS_DIR" ] || allowed --rpc-tls-dir "$RPC_TLS_DIR"
 # RPC é tudo ou nada: o binário e a pasta de TLS vêm juntos, com os três arquivos.
 if [ -n "$RPC_BIN" ] || [ -n "$RPC_TLS_DIR" ]; then
-  [ -n "$RPC_BIN" ] && [ -n "$RPC_TLS_DIR" ] || die "--rpc-server-bin e --rpc-tls-dir vêm juntos"
-  case "$RPC_BIN" in /*) ;; *) die "--rpc-server-bin deve ser um caminho absoluto" ;; esac
-  case "$RPC_TLS_DIR" in /*) ;; *) die "--rpc-tls-dir deve ser um caminho absoluto" ;; esac
-  [ -x "$RPC_BIN" ] || die "--rpc-server-bin não é um executável: $RPC_BIN"
+  [ -n "$RPC_BIN" ] && [ -n "$RPC_TLS_DIR" ] || die "$(t '--rpc-server-bin e --rpc-tls-dir vêm juntos' '--rpc-server-bin and --rpc-tls-dir come together')"
+  case "$RPC_BIN" in /*) ;; *) die "$(t '--rpc-server-bin deve ser um caminho absoluto' '--rpc-server-bin must be an absolute path')" ;; esac
+  case "$RPC_TLS_DIR" in /*) ;; *) die "$(t '--rpc-tls-dir deve ser um caminho absoluto' '--rpc-tls-dir must be an absolute path')" ;; esac
+  [ -x "$RPC_BIN" ] || die "$(t "--rpc-server-bin não é um executável: $RPC_BIN" "--rpc-server-bin is not an executable: $RPC_BIN")"
   for f in worker.crt worker.key ca.crt; do
-    [ -r "$RPC_TLS_DIR/$f" ] || die "falta $RPC_TLS_DIR/$f (o RPC não vai em texto puro)"
+    [ -r "$RPC_TLS_DIR/$f" ] || die "$(t "falta $RPC_TLS_DIR/$f (o RPC não vai em texto puro)" "missing $RPC_TLS_DIR/$f (the RPC does not go in plain text)")"
   done
 fi
-case "$PREFIX" in /*) ;; *) die "--prefix deve ser um caminho absoluto" ;; esac
-[ -z "$MODEL_DIR" ] || case "$MODEL_DIR" in /*) ;; *) die "--model-dir deve ser um caminho absoluto" ;; esac
+case "$PREFIX" in /*) ;; *) die "$(t '--prefix deve ser um caminho absoluto' '--prefix must be an absolute path')" ;; esac
+[ -z "$MODEL_DIR" ] || case "$MODEL_DIR" in /*) ;; *) die "$(t '--model-dir deve ser um caminho absoluto' '--model-dir must be an absolute path')" ;; esac
 case "$CONTROLLER" in
   https://*) ;;
-  http://*) [ "$INSECURE" = 1 ] || die "http:// exige --insecure (rede fechada; o token trafega em claro)" ;;
-  *) die "--controller deve começar com https:// ou http://" ;;
+  http://*) [ "$INSECURE" = 1 ] || die "$(t 'http:// exige --insecure (rede fechada; o token trafega em claro)' 'http:// requires --insecure (closed network; the token travels in clear text)')" ;;
+  *) die "$(t '--controller deve começar com https:// ou http://' '--controller must start with https:// or http://')" ;;
 esac
 
 ENV_FILE="$PREFIX/worker.env"
 if [ -f "$ENV_FILE" ] && [ "$FORCE" != 1 ]; then
   OLD_ID=$(sed -n 's/^AI_CLUSTER_NODE_ID=//p' "$ENV_FILE" | head -n 1)
   if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "$NODE_ID" ]; then
-    die "esta máquina já é o nó '$OLD_ID'; trocar para '$NODE_ID' deixa o antigo órfão no controller (use --force)"
+    die "$(t "esta máquina já é o nó '$OLD_ID'; trocar para '$NODE_ID' deixa o antigo órfão no controller (use --force)" "this machine is already node '$OLD_ID'; switching to '$NODE_ID' leaves the old one orphaned on the controller (use --force)")"
   fi
 fi
 
@@ -124,8 +130,8 @@ umask 022
 # Um prefixo que já existe como link, ou que não é do root, não é aceito: o root escreveria onde
 # o dono do link quisesse.
 if [ -e "$PREFIX" ]; then
-  { [ -d "$PREFIX" ] && [ ! -L "$PREFIX" ]; } || die "$PREFIX existe e não é um diretório comum"
-  [ "$(stat -c %u "$PREFIX")" = 0 ] || die "$PREFIX não pertence ao root"
+  { [ -d "$PREFIX" ] && [ ! -L "$PREFIX" ]; } || die "$(t "$PREFIX existe e não é um diretório comum" "$PREFIX exists and is not a regular directory")"
+  [ "$(stat -c %u "$PREFIX")" = 0 ] || die "$(t "$PREFIX não pertence ao root" "$PREFIX does not belong to root")"
 fi
 mkdir -p "$PREFIX/bin" "$PREFIX/state"
 chown root:root "$PREFIX" "$PREFIX/bin"
@@ -198,7 +204,7 @@ UNIT
   systemctl enable ai-cluster-worker
   SINCE=$(date '+%Y-%m-%d %H:%M:%S')
   systemctl restart ai-cluster-worker
-  echo "worker $NODE_ID instalado e iniciado pelo systemd"
+  echo "$(t "worker $NODE_ID instalado e iniciado pelo systemd" "worker $NODE_ID installed and started by systemd")"
   # Saudável é: ativo e registrado no controller depois deste restart. Um binário que cai em
   # laço de reinício nunca chega ao registro.
   healthy() {
@@ -209,20 +215,20 @@ UNIT
     until healthy; do
       if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
         if [ "$HAS_PREV" = 1 ]; then
-          echo "a versão nova não ficou saudável em ${HEALTH_TIMEOUT}s; voltando à anterior" >&2
+          echo "$(t "a versão nova não ficou saudável em ${HEALTH_TIMEOUT}s; voltando à anterior" "the new version was not healthy in ${HEALTH_TIMEOUT}s; rolling back to the previous one")" >&2
           install -o root -g root -m 0755 "$PREFIX/bin/ai-cluster-worker.prev" "$PREFIX/bin/ai-cluster-worker.new"
           mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
           systemctl restart ai-cluster-worker
-          echo "rollback feito" >&2
+          echo "$(t 'rollback feito' 'rollback done')" >&2
         else
-          echo "o worker não ficou saudável em ${HEALTH_TIMEOUT}s e não há versão anterior para voltar" >&2
+          echo "$(t "o worker não ficou saudável em ${HEALTH_TIMEOUT}s e não há versão anterior para voltar" "the worker was not healthy in ${HEALTH_TIMEOUT}s and there is no previous version to roll back to")" >&2
         fi
         exit 3
       fi
       sleep 2
       waited=$((waited + 2))
     done
-    echo "worker saudável (registrado no controller)"
+    echo "$(t 'worker saudável (registrado no controller)' 'worker healthy (registered with the controller)')"
   fi
 else
   # Sem systemd (contêiner, sistema mínimo): sobe em segundo plano, com o mesmo ambiente. Log e
@@ -249,6 +255,6 @@ else
   su -s /bin/sh ai-cluster -c 'state=$1; bin=$2; shift 2; cd "$state"; \
     setsid env "$@" "$bin" >> "$state/worker.log" 2>&1 < /dev/null & \
     echo $! > "$state/worker.pid"' sh "$PREFIX/state" "$PREFIX/bin/ai-cluster-worker" "$@"
-  echo "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $PREFIX/state/worker.log"
+  echo "$(t "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $PREFIX/state/worker.log" "worker $NODE_ID started in the background (no systemd); log in $PREFIX/state/worker.log")"
 fi
-[ "${AIC_INVITED:-0}" = 1 ] || echo "falta, se o controller exige aprovação: ai-cluster approve $NODE_ID --fingerprint <impressão que o worker imprime>"
+[ "${AIC_INVITED:-0}" = 1 ] || echo "$(t "falta, se o controller exige aprovação: ai-cluster approve $NODE_ID --fingerprint <impressão que o worker imprime>" "missing, if the controller requires approval: ai-cluster approve $NODE_ID --fingerprint <fingerprint the worker prints>")"
