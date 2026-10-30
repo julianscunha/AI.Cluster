@@ -1521,13 +1521,21 @@ async fn complete_chat(mut prepared: Prepared) -> Response {
             );
         }
         Ok(failed) => {
-            eprintln!("geração falhou: {failed:?}");
+            let detail = format!("{failed:?}");
+            eprintln!("geração falhou: {detail}");
             log_remote(&llm, 0);
-            return error(
+            let (message, transient) = generation_failure(&detail);
+            let mut response = error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "MODEL_UNAVAILABLE",
-                "a geração falhou",
+                message,
             );
+            if transient {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, "2".parse().expect("ascii"));
+            }
+            return response;
         }
     };
     let mut choices = Vec::with_capacity(all.len());
@@ -1960,8 +1968,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// O motivo que o cliente pode ver quando a geração falha, sem nomes de nós nem detalhes internos, e
+/// se vale tentar de novo (um worker que saiu ou ficou lento: sim; o resto: não se sabe).
+fn generation_failure(detail: &str) -> (&'static str, bool) {
+    if detail.contains("indisponível")
+        || detail.contains("sem canal")
+        || detail.contains("canal do nó fechado")
+        || detail.contains("o canal do worker caiu")
+    {
+        (
+            "a geração falhou: um worker do modelo saiu do cluster (indisponível ou em quarentena); tente de novo em instantes",
+            true,
+        )
+    } else if detail.contains("não respondeu a tempo") {
+        (
+            "a geração falhou: um worker não respondeu a tempo; tente de novo em instantes",
+            true,
+        )
+    } else {
+        ("a geração falhou", false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::generation_failure;
+
+    #[test]
+    fn the_client_learns_why_a_generation_failed_without_node_names() {
+        let gone = generation_failure("Ok(Err(\"fatias: o canal do worker caiu\"))");
+        assert!(gone.0.contains("saiu do cluster") && gone.1);
+        let slow = generation_failure("Ok(Err(\"fatias: o worker não respondeu a tempo\"))");
+        assert!(slow.0.contains("não respondeu") && slow.1);
+        let other = generation_failure("Ok(Err(\"fatias: saída com forma inesperada\"))");
+        assert_eq!(other, ("a geração falhou", false));
+        // Nunca repete o texto do erro (que pode trazer ids de nós).
+        assert!(!gone.0.contains("fatias:"));
+    }
+
     #[test]
     fn meminfo_gives_mem_available_in_bytes_and_zero_when_missing() {
         assert_eq!(
