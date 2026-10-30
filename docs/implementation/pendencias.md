@@ -25,7 +25,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Item | O que falta | Dependência |
 |---|---|---|
 | Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock. Sem medição de gargalo: com 2 a 4 nós é desprezível, e a gravação do snapshot já espera um intervalo adaptativo. Só mexer com perfil em mãos (dezenas de nós). | dados |
-| Níveis de confiança | Enrollment (token de uso único, aprovação por regra) sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
+| Níveis de confiança | O token de uso único por nó e a aprovação por regra entram com a etapa de espera ([[adr-023-instalacao-com-aprovacao-do-controller]]), sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler por GPU/NPU | Filas por recurso; hoje só CPU. | hardware |
 | Localidade | Entra no custo só quando as saídas ficarem residentes no worker (F12). | código |
 
@@ -99,8 +99,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | J2 a J4 | Imagem de SO além do contêiner, `bootstrap.sh` em VM com systemd, reimage automático pelo controller. | código, hardware |
 | J5, J6, assinatura de boot | A/B em mais placas, ARM64, u-boot que verifique a imagem (TPM/secure boot). | hardware |
 | Modo dedicado no instalador | Controller e gateway dentro do AI Cluster OS (hoje só o worker tem imagem). O papel vira configuração em `/data`. O slot do controller não pode ser confirmado por "registrou no controller": falta o critério (por exemplo, o serviço respondeu na porta). Validar a imagem x86 em hardware real. | código, decisão, hardware |
-| Boot de rede restrito | A instalação pela rede só entrega a imagem aos MACs que o usuário informar (hoje o TFTP filtra por IP). | código |
-| Instalador em pendrive | Sem DHCP ou sem visibilidade na rede, o instalador guiado gera o pendrive de instalação do worker (e do controller, quando houver imagem). | código |
+| Instalação com aprovação do controller | Implementar o [[adr-023-instalacao-com-aprovacao-do-controller]]: imagem mínima de espera (resumo, impressão digital, rechecagem), registro de pendentes com teto e expiração, aprovação com o disco a apagar, token de uso único, comando gerado pelo controller para quem já tem Linux, pendrive e netboot sem lista de MACs obrigatória (MAC como pré-aprovação opcional). Substitui "Boot de rede restrito" e "Instalador em pendrive". | código |
 | Release em mais processadores | ARM de 64 bits e, depois, celular e desktop: o `install.sh` já recusa com mensagem clara. Gateway em ARM exige compilar o `llama-server`. | código, hardware |
 | Base Linux | Escolher a base específica. | decisão |
 | Aceleradores | ARM64, GPU NVIDIA/AMD/Intel, NPU (abstração e móvel); o worker não preenche o campo de aceleradores; scores por workload (M6). | código, hardware |
