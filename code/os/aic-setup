@@ -151,6 +151,7 @@ make_credentials() {
     echo "AI_CLUSTER_LLAMA_TLS_CA=$CONF/pki/ca.crt"
     echo "AI_CLUSTER_LLAMA_TLS_CERT=$CONF/pki/gateway.crt"
     echo "AI_CLUSTER_LLAMA_TLS_KEY=$CONF/pki/gateway.key"
+    echo "AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}"
     echo "AI_CLUSTER_LLAMA_CTX=2048"
     echo "AI_CLUSTER_LLAMA_SLOTS=1"
   } > "$CONF/gateway.env"
@@ -180,7 +181,7 @@ make_pki() {
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -out ca.crt \
     -subj "/CN=ai-cluster-ca" -days 3650 -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign"
-  for pair in worker:aic-worker gateway:aic-gateway; do
+  for pair in gateway:aic-gateway; do
     name=${pair%%:*}; san=${pair#*:}
     openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$name.key" \
       -out "$name.csr" -subj "/CN=$name"
@@ -192,7 +193,7 @@ make_pki() {
   # O gateway (usuário ai-cluster) lê a própria chave; a CA e a chave do worker só o root.
   chown ai-cluster:ai-cluster gateway.key gateway.crt ca.crt
   chown root:ai-cluster "$CONF" "$CONF/pki"; chmod 750 "$CONF" "$CONF/pki"
-  chmod 644 ca.crt gateway.crt worker.crt; chmod 600 ca.key worker.key gateway.key
+  chmod 644 ca.crt gateway.crt; chmod 600 ca.key gateway.key
 }
 
 write_units() {
@@ -342,7 +343,7 @@ fetch_gateway_kit() {
     || { echo "o convite em $SERVER não respondeu; rode 'sudo aic-setup invite' no controller"; rm -rf "$t"; return 1; }
   tar -C "$t" --no-same-owner -xzf "$t/k.tgz"
   # O env vira EnvironmentFile do serviço: só entram chaves AI_CLUSTER_* com valores simples.
-  if grep -qvE '^AI_CLUSTER_[A-Z_]+=[A-Za-z0-9._:/@-]*$' "$t/gateway.env"; then
+  if grep -qvE '^AI_CLUSTER_[A-Z_]+=[A-Za-z0-9._:/@{}-]*$' "$t/gateway.env"; then
     echo "gateway.env recebido tem linhas inesperadas; recusado"; rm -rf "$t"; return 1
   fi
   cp "$t/ca.crt" "$t/gateway.crt" "$t/gateway.key" "$CONF/pki/"
@@ -458,7 +459,7 @@ cmd_invite() {
   done
   cp "$PREFIX/bootstrap.sh" "$WEB/bootstrap.sh"
   # Credenciais do túnel RPC dos workers e o kit do gateway (só dentro da janela do convite).
-  tar -C "$CONF/pki" -czf "$WEB/pki-worker.tar.gz" ca.crt worker.crt worker.key
+  tar -C "$CONF/pki" -czf "$WEB/pki-worker.tar.gz" ca.crt
   g=$(mktemp -d)
   cp "$CONF/pki/ca.crt" "$CONF/pki/gateway.crt" "$CONF/pki/gateway.key" "$g/"
   sed "s#^AI_CLUSTER_CONTROLLER=.*#AI_CLUSTER_CONTROLLER=http://$IP:$GRPC_PORT#" "$CONF/gateway.env" > "$g/gateway.env"
@@ -492,26 +493,70 @@ echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificados ad
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
 mkdir -p /etc/ai-cluster/rpc-tls
 tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
-chmod 644 /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt
-chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
+chmod 644 /etc/ai-cluster/rpc-tls/ca.crt
 install -m 755 "\$T/w/ggml-rpc-server" /usr/local/bin/ggml-rpc-server
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
-NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g')
+NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
+# Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do nó
+# no certificado, então um worker comprometido não se passa por outro.
+command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)" >&2; exit 1; }
+( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+    -keyout /etc/ai-cluster/rpc-tls/worker.key -out "\$T/worker.csr" -subj "/CN=\$NAME" >/dev/null 2>&1 )
+curl -fsS --data-binary @"\$T/worker.csr" "http://$IP:$PORT/sign?name=\$NAME" -o /etc/ai-cluster/rpc-tls/worker.crt \
+  || { echo "o servidor não assinou o certificado do nó" >&2; exit 1; }
+openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null \
+  || { echo "certificado do nó não confere com a CA do cluster" >&2; exit 1; }
+chmod 644 /etc/ai-cluster/rpc-tls/worker.crt
+chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
 AIC_INVITED=1 sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
   --join-token-file "\$T/join-token" --binary "\$T/w/ai-cluster-worker" --node-id "\$NAME" \
   --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls </dev/null
 echo "Pronto: \$NAME entrou no cluster. O servidor aprova o nó em instantes."
 JOIN_SCRIPT
   cd "$WEB"
-  # Sem listagem de diretório: o código do gateway não pode ser descoberto olhando a raiz.
-  python3 -c 'import http.server, sys
+  # Servidor do convite: arquivos sem listagem de diretório (o código do gateway não pode ser
+  # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
+  HD=$(mktemp -d)
+  cat > "$HD/invite.py" <<'PYSERVER'
+import http.server, os, re, subprocess, sys, tempfile
+
+CA = os.environ["AIC_CA_DIR"]
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     def list_directory(self, path):
         self.send_error(404)
-http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()' "$IP" "$PORT" >/dev/null 2>&1 &
+
+    def do_POST(self):
+        m = re.fullmatch(r"/sign\?name=([A-Za-z0-9.-]{1,40})", self.path)
+        size = int(self.headers.get("Content-Length") or 0)
+        if not m or not 0 < size <= 8192:
+            return self.send_error(400)
+        name = m.group(1)
+        with tempfile.TemporaryDirectory() as d:
+            csr, crt, ext = (os.path.join(d, n) for n in ("w.csr", "w.crt", "w.ext"))
+            open(csr, "wb").write(self.rfile.read(size))
+            with open(ext, "w") as f:
+                f.write("subjectAltName=DNS:aic-worker-%s\nbasicConstraints=CA:FALSE\n" % name)
+            ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and subprocess.run(
+                ["openssl", "x509", "-req", "-in", csr, "-CA", CA + "/ca.crt", "-CAkey", CA + "/ca.key",
+                 "-CAcreateserial", "-out", crt, "-days", "825", "-extfile", ext],
+                capture_output=True).returncode == 0
+            if not ok:
+                return self.send_error(400)
+            body = open(crt, "rb").read()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()
+PYSERVER
+  AIC_CA_DIR="$CONF/pki" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
   SRV=$!
   # Qualquer saída (erro, Ctrl+C, fim do prazo) derruba o servidor e apaga o que ele servia.
-  trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB"' EXIT
+  trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB" "$HD"' EXIT
   trap 'printf "\n  Convite encerrado.\n\n"; exit 0' INT TERM
   sleep 1
   kill -0 "$SRV" 2>/dev/null || die "não consegui abrir a porta $PORT em $IP (em uso?)"

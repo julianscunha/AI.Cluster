@@ -47,7 +47,7 @@ sudo aic-setup invite
 curl -fsSL http://<ip-do-servidor>:8099/join | sudo sh
 ```
 
-O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. O gateway em outro computador entra pelo mesmo convite (`sudo aic-setup gateway --server <ip>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
+O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. Cada worker gera a própria chave do túnel RPC; o servidor só assina o pedido de certificado (SAN `aic-worker-<nome do nó>`), e a chave nunca sai do worker. O gateway em outro computador entra pelo mesmo convite (`sudo aic-setup gateway --server <ip> --code <código>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
 
 Sem perguntas (automação): `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.
 

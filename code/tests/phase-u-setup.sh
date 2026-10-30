@@ -46,6 +46,12 @@ for _ in $(seq 20); do
 done
 docker exec aic-srv ai-cluster nodes 2>/dev/null | grep -E "READY.*aprovado" >/dev/null || fail "o nó não ficou READY e aprovado"
 echo "OK: worker READY e aprovado"
+# Certificado por nó: a chave nasceu no worker (o servidor não tem chave de worker) e o SAN leva o nome do nó.
+docker exec aic-srv test ! -e /etc/ai-cluster/pki/worker.key || fail "o servidor não deveria guardar chave de worker"
+WNAME=$(docker exec aic-wk hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
+docker exec aic-wk sh -c "openssl x509 -in /etc/ai-cluster/rpc-tls/worker.crt -noout -ext subjectAltName | grep -q 'DNS:aic-worker-$WNAME' && openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null"   || fail "o certificado do worker deveria ter o SAN aic-worker-$WNAME e conferir com a CA"
+docker exec aic-srv grep -q 'AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}' /etc/ai-cluster/gateway.env || fail "o gateway deveria esperar o nome por nó"
+echo "OK: certificado por nó"
 
 echo "=== C) controller sozinho e gateway noutro computador ==="
 inst aic-ctl --role controller --arch x86_64 >/dev/null || fail "install.sh controller"
