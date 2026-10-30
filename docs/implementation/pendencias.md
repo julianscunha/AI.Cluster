@@ -24,7 +24,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock; `reserve`/`release` gravam o snapshot sob o lock. | código |
+| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock. Sem medição de gargalo: com 2 a 4 nós é desprezível, e a gravação do snapshot já espera um intervalo adaptativo. Só mexer com perfil em mãos (dezenas de nós). | dados |
 | Níveis de confiança | Enrollment (token de uso único, aprovação por regra) sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler por GPU/NPU | Filas por recurso; hoje só CPU. | hardware |
 | Localidade | Entra no custo só quando as saídas ficarem residentes no worker (F12). | código |
@@ -54,7 +54,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; mais de 64 operações em voo por nó dão 503. | código |
 | Quarentena | Derruba a sessão de inferência (contenção de segurança, por desenho); falta devolver ao cliente um erro limpo (503 com motivo). | código |
-| Engine fora do scheduler | O canal de fatias ainda passa pelo controller. | código |
+| Engine fora do scheduler | O canal de fatias ainda passa pelo controller. Tirá-lo exige porta de entrada no worker (revisa o [[adr-009-canal-residente-de-fatias]]) para um motor que só serve à paridade e à pesquisa; reabrir se o motor próprio voltar a ser caminho de uso. | decisão |
 
 ## F09 e F10 — Transporte e storage
 
@@ -63,7 +63,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Cluster sobre o `Transport` | O cluster chama o gRPC direto; TCP e Unix existem fora do caminho. | código |
 | E3, E5 | Memória compartilhada sem implementação; perda e congestionamento contínuo (`TCP_INFO`/netlink). | código |
 | E4, USB | Vai para F18. | hardware |
-| Storage | Leitura sem cache de página; alocação dinâmica por classe (swap, cache de modelo e tensor, checkpoint); dashboard; adaptação por desgaste. | código |
+| Storage | Alocação dinâmica por classe (swap, cache de modelo e tensor, checkpoint); dashboard; adaptação por desgaste. (A sonda de disco lê com `O_DIRECT` de propósito, para medir o disco e não a RAM; isso não é pendência de desempenho.) | código |
 | Imagem do Orange Pi | A imagem 11.8 tem o worker antigo, cuja sonda de disco mede `/var/tmp` em RAM (SD com score 0,80 em vez de 0,01). O conserto está no código; falta gerar e gravar uma imagem nova. | código, hardware |
 | Disco real | SMART/NVMe, políticas HDD × NVMe, SSD como cache ou swap. | hardware |
 
@@ -85,7 +85,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta manifesto assinado. O motor próprio segue só em fp32. | código, decisão |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
-| N5 a N9 | Pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. (A pré-carga N4 existe: o gateway carrega o modelo assim que o controller o planeja, aquece com o benchmark e o `rpc-server` guarda os tensores no cache em disco.) | código |
+| N5 a N9 | Pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. Vários pedidos já rodam em paralelo (`-np`). Só vale construir depois de medir, com 2 ou mais workers, quanto o pipeline do llama.cpp perde. (A pré-carga N4 existe: o gateway carrega o modelo ao ser planejado, aquece com o benchmark e o `rpc-server` guarda os tensores no cache em disco.) | dados, código |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
