@@ -10,57 +10,81 @@ use ai_cluster_protocol::cluster::{
     WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
+mod delegados;
 mod ptbr;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ai-cluster",
-    about = "Controle do AI Cluster: nós, modelos, trabalho e instalação."
+    name = "aic",
+    about = "Um comando para todo o AI Cluster: cluster, controller, gateway, worker e atualização."
 )]
 struct Cli {
-    /// Endereço gRPC do controller.
-    #[arg(
-        long,
-        global = true,
-        env = "AI_CLUSTER_CONTROLLER",
-        default_value = "http://127.0.0.1:50051"
-    )]
-    controller: String,
-
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand, Debug)]
-enum EnrollmentAction {
-    /// Aceita aparelhos por um tempo; depois fecha sozinha.
-    Open {
-        /// Minutos (1 a 120).
-        #[arg(long, default_value_t = 15)]
-        minutes: u32,
+enum Command {
+    /// Operação do cluster visto do controller: nós, instalação, reservas, modelos e diagnósticos.
+    Cluster {
+        /// Endereço gRPC do controller.
+        #[arg(
+            long,
+            global = true,
+            env = "AI_CLUSTER_CONTROLLER",
+            default_value = "http://127.0.0.1:50051"
+        )]
+        controller: String,
+        #[command(subcommand)]
+        action: ClusterAction,
     },
-    /// Fecha agora.
-    Close,
+    /// Controller deste Linux: instalação, estado e registros.
+    Controller {
+        #[command(subcommand)]
+        action: delegados::Controller,
+    },
+    /// Gateway de inferência deste Linux: instalação, estado e registros.
+    Gateway {
+        #[command(subcommand)]
+        action: delegados::Gateway,
+    },
+    /// Worker deste Linux ou do AI Cluster OS.
+    Worker {
+        #[command(subcommand)]
+        action: delegados::Worker,
+    },
+    /// Atualização deste computador: consultar ou aplicar.
+    Update {
+        #[command(subcommand)]
+        action: delegados::Update,
+    },
+    /// Versão do aic e do sistema.
+    Version,
 }
 
 #[derive(Subcommand, Debug)]
-enum Command {
-    /// Estado do cluster em uma linha: nós, fila e release.
-    Status,
-    /// Lista os nós com estado, recursos, saúde e confiança.
+enum ClusterAction {
+    /// Tabela dos nós: estado, recursos, saúde, confiança e a versão de cada um.
     Nodes,
+    /// Um nó: `show` mostra tudo; `approve`, `retire`, `revoke` e `remove` mudam o estado dele.
+    Node {
+        #[command(subcommand)]
+        action: NodeAction,
+    },
+    /// Aparelhos em espera de instalação (ADR-023) e a porta em que eles se apresentam.
+    Install {
+        #[command(subcommand)]
+        action: InstallAction,
+    },
+    /// Reservas: um nó retido para uma requisição futura (G6).
+    Reservation {
+        #[command(subcommand)]
+        action: ReservationAction,
+    },
     /// A estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel.
     Topology,
-    /// Um nó só, com a capability e a saúde completas (B4): `node <id>` ou `node show <id>`.
-    #[command(args_conflicts_with_subcommands = true)]
-    Node {
-        /// Id do nó (atalho de `node show <id>`), como `nodes` o imprime.
-        id: Option<String>,
-        #[command(subcommand)]
-        action: Option<NodeAction>,
-    },
     /// Resumo do cluster: nós por estado, fila de trabalho e tempos das unidades concluídas.
     Metrics,
     /// Eventos recentes, do mais antigo ao mais novo: entradas, saídas, nós dados como offline,
@@ -115,69 +139,6 @@ enum Command {
         #[arg(long, default_value_t = 128)]
         size: u32,
     },
-    /// Retém um nó para uma requisição futura (G6).
-    Reserve {
-        /// Nó a reter.
-        node: String,
-        /// Requisição para quem o nó fica retido.
-        request_id: String,
-        /// Quanto tempo a reserva vale, em ms. 0 usa o padrão do controller.
-        #[arg(long, default_value_t = 0)]
-        ttl_ms: u64,
-        /// Quantos slots de trabalho do nó guardar para a requisição. 0 retém o nó inteiro.
-        #[arg(long, default_value_t = 0)]
-        slots: u32,
-    },
-    /// Reservas ativas: nó, requisição dona e vencimento.
-    Reservations,
-    /// Aprova um nó novo para que ele receba trabalho (S2).
-    Approve {
-        /// Nó a aprovar.
-        node: String,
-        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Obrigatória, salvo
-        /// `--trust-listed`.
-        #[arg(long)]
-        fingerprint: Option<String>,
-        /// Aceita a impressão que o controller mostra agora, sem conferi-la com a do nó. Anula a proteção
-        /// contra um id tomado por outro registro.
-        #[arg(long, conflicts_with = "fingerprint")]
-        trust_listed: bool,
-    },
-    /// Aparelhos na etapa de espera, aguardando aprovação para instalar (ADR-023).
-    Installs,
-    /// Abre ou fecha a porta em que os aparelhos se apresentam para instalar (ADR-023).
-    Enrollment {
-        #[command(subcommand)]
-        action: EnrollmentAction,
-    },
-    /// Aprova a instalação de um aparelho da lista, apagando o disco informado.
-    ApproveInstall {
-        /// Impressão digital que o aparelho mostra na tela (e `installs` lista).
-        fingerprint: String,
-        /// Disco que será apagado (`sda`, `mmcblk0`); precisa ser um dos que o aparelho informou.
-        #[arg(long)]
-        disk: String,
-    },
-    /// Tira um aparelho da lista de espera.
-    RejectInstall {
-        /// Impressão digital do aparelho.
-        fingerprint: String,
-    },
-    /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
-    Retire {
-        /// Nó a retirar.
-        node: String,
-    },
-    /// Revoga a credencial do worker: ele fica offline e só volta com um novo join (S5).
-    Revoke {
-        /// Nó a revogar.
-        node: String,
-    },
-    /// Remove o worker do cluster: o controller o esquece por inteiro.
-    Remove {
-        /// Nó a remover.
-        node: String,
-    },
     /// Define a release que os nós devem rodar: um canário primeiro, os demais depois (F19).
     Rollout {
         /// Versão (ex.: 1.2.0). Vazia, com --cancel, encerra o rollout.
@@ -199,20 +160,105 @@ enum Command {
         #[arg(long)]
         cancel: bool,
     },
-    /// Libera a reserva de um nó antes do vencimento.
-    Release {
-        /// Nó a liberar.
-        node: String,
-    },
     /// Painel de uma tela: nós, fila de trabalho e reservas (H4).
     Dashboard {
         /// Atualiza a cada N segundos até Ctrl-C. 0 imprime uma vez e sai.
         #[arg(long, default_value_t = 0)]
         watch: u64,
     },
+    /// Abre o convite para computadores novos entrarem no cluster (instalador).
+    Invite(delegados::Convite),
 }
 
-/// The `request` subcommands, matching the `request trace <id>` surface in the spec.
+#[derive(Subcommand, Debug)]
+enum NodeAction {
+    /// Um nó pelo id, com tudo que o controller sabe sobre ele.
+    Show {
+        /// Id do nó, como `aic cluster nodes` o imprime.
+        id: String,
+    },
+    /// Aprova um nó novo para que ele receba trabalho (S2).
+    Approve {
+        /// Nó a aprovar.
+        id: String,
+        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Obrigatória, salvo
+        /// `--trust-listed`.
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Aceita a impressão que o controller mostra agora, sem conferi-la com a do nó. Anula a proteção
+        /// contra um id tomado por outro registro.
+        #[arg(long, conflicts_with = "fingerprint")]
+        trust_listed: bool,
+    },
+    /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
+    Retire {
+        /// Nó a retirar.
+        id: String,
+    },
+    /// Revoga a credencial do worker: ele fica offline e só volta com um novo join (S5).
+    Revoke {
+        /// Nó a revogar.
+        id: String,
+    },
+    /// Remove o worker do cluster: o controller o esquece por inteiro.
+    Remove {
+        /// Nó a remover.
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum InstallAction {
+    /// Aparelhos em espera, aguardando aprovação para instalar (ADR-023).
+    List,
+    /// Aprova a instalação de um aparelho da lista, apagando o disco informado.
+    Approve {
+        /// Impressão digital que o aparelho mostra na tela (e `install list` lista).
+        fingerprint: String,
+        /// Disco que será apagado (`sda`, `mmcblk0`); precisa ser um dos que o aparelho informou.
+        #[arg(long)]
+        disk: String,
+    },
+    /// Tira um aparelho da lista de espera.
+    Reject {
+        /// Impressão digital do aparelho.
+        fingerprint: String,
+    },
+    /// Abre a porta em que os aparelhos se apresentam para instalar. Depois fecha sozinha.
+    Open {
+        /// Minutos (1 a 120).
+        #[arg(long, default_value_t = 15)]
+        minutes: u32,
+    },
+    /// Fecha a porta agora.
+    Close,
+}
+
+#[derive(Subcommand, Debug)]
+enum ReservationAction {
+    /// Reservas ativas: nó, requisição dona e vencimento.
+    List,
+    /// Retém um nó para uma requisição futura (G6).
+    Add {
+        /// Nó a reter.
+        node: String,
+        /// Requisição para quem o nó fica retido.
+        request_id: String,
+        /// Minutos que a reserva vale. 0 usa o padrão do controller.
+        #[arg(long, default_value_t = 0)]
+        minutes: u32,
+        /// Quantos slots de trabalho do nó guardar para a requisição. 0 retém o nó inteiro.
+        #[arg(long, default_value_t = 0)]
+        slots: u32,
+    },
+    /// Libera a reserva de um nó antes do vencimento.
+    Remove {
+        /// Nó a liberar.
+        node: String,
+    },
+}
+
+/// The `model` subcommands: arquivos, conferência, subida e chaves.
 #[derive(Subcommand, Debug)]
 enum ModelAction {
     /// Grava o `manifest.json` numa pasta de modelo: nome, versão e o SHA-256 de cada arquivo (F12).
@@ -294,16 +340,6 @@ enum RequestAction {
     },
 }
 
-/// The `node` subcommands, matching the `node show <id>` surface in the spec (B4).
-#[derive(Subcommand, Debug)]
-enum NodeAction {
-    /// Um nó pelo id, com tudo que o controller sabe sobre ele.
-    Show {
-        /// Id do nó, como `nodes` o imprime.
-        id: String,
-    },
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = match ptbr::localize(Cli::command()).try_get_matches() {
@@ -311,23 +347,137 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => ptbr::show(&error),
     };
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
-    ai_cluster_protocol::metadata::check_secret_files()?;
     match cli.command {
-        Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
-        Command::Topology => print_topology(&cli.controller).await?,
-        Command::Node { id, action } => match (action, id) {
-            (Some(NodeAction::Show { id }), _) | (None, Some(id)) => {
-                print_node(&cli.controller, &id).await?
+        Command::Cluster { controller, action } => {
+            ai_cluster_protocol::metadata::check_secret_files()?;
+            run_cluster(&controller, action).await?
+        }
+        Command::Controller { action } => delegados::encaminha("controller", action.args()),
+        Command::Gateway { action } => delegados::encaminha("gateway", action.args()),
+        Command::Worker { action } => delegados::encaminha("worker", action.args()),
+        Command::Update { action } => delegados::encaminha("update", action.args()),
+        Command::Version => versao(),
+    }
+    Ok(())
+}
+
+/// `aic version`: a versão deste comando e, se o computador grava uma release, a do sistema.
+fn versao() {
+    println!(
+        "{}",
+        ai_cluster_common::brand::banner(
+            "aic",
+            env!("CARGO_PKG_VERSION"),
+            "um comando para todo o AI Cluster"
+        )
+    );
+    if let Ok(release) = std::fs::read_to_string("/etc/aic-release") {
+        let release = release.trim();
+        if !release.is_empty() {
+            println!("sistema {release}");
+        }
+    }
+}
+
+async fn run_cluster(
+    controller: &str,
+    action: ClusterAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        ClusterAction::Nodes => print_nodes(controller).await?,
+        ClusterAction::Topology => print_topology(controller).await?,
+        ClusterAction::Node { action } => match action {
+            NodeAction::Show { id } => print_node(controller, &id).await?,
+            NodeAction::Approve {
+                id,
+                fingerprint,
+                trust_listed,
+            } => approve_node(controller, &id, fingerprint, trust_listed).await?,
+            NodeAction::Retire { id } => {
+                let mut client = connect_operator(controller.to_string()).await?;
+                let reply = client
+                    .retire_node(ai_cluster_protocol::cluster::RetireNodeRequest {
+                        node_id: id.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                if reply.retired {
+                    println!(
+                        "NÓ retirado no={id} reenfileiradas={}; para devolvê-lo: aic cluster node approve {id} --fingerprint <a impressão de antes>",
+                        reply.requeued
+                    );
+                } else {
+                    println!("NÓ não encontrado no={id}");
+                }
             }
-            (None, None) => {
-                eprintln!(
-                    "erro: informe o id do nó: ai-cluster node <id> (os ids estão em `ai-cluster nodes`)"
-                );
-                std::process::exit(2);
+            NodeAction::Revoke { id } => revoke_node(controller, &id).await?,
+            NodeAction::Remove { id } => {
+                let mut client = connect_operator(controller.to_string()).await?;
+                let reply = client
+                    .remove_node(ai_cluster_protocol::cluster::RemoveNodeRequest {
+                        node_id: id.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                if reply.removed {
+                    println!("NÓ removido no={id} reenfileiradas={}", reply.requeued);
+                } else {
+                    println!("NÓ não encontrado no={id}");
+                }
             }
         },
-        Command::Metrics => print_metrics(&cli.controller).await?,
-        Command::Model { action } => match action {
+        ClusterAction::Install { action } => match action {
+            InstallAction::List => print_installs(controller).await?,
+            InstallAction::Approve { fingerprint, disk } => {
+                let mut client = connect_operator(controller.to_string()).await?;
+                let approved = client
+                    .approve_install(ai_cluster_protocol::cluster::ApproveInstallRequest {
+                        fingerprint: fingerprint.clone(),
+                        disk: disk.clone(),
+                    })
+                    .await?
+                    .into_inner()
+                    .approved;
+                if approved {
+                    println!("INSTALAÇÃO aprovada fingerprint={fingerprint} apaga={disk}");
+                } else {
+                    println!("INSTALAÇÃO não encontrada fingerprint={fingerprint}");
+                }
+            }
+            InstallAction::Reject { fingerprint } => {
+                let mut client = connect_operator(controller.to_string()).await?;
+                let rejected = client
+                    .reject_install(ai_cluster_protocol::cluster::RejectInstallRequest {
+                        fingerprint: fingerprint.clone(),
+                    })
+                    .await?
+                    .into_inner()
+                    .rejected;
+                let what = if rejected {
+                    "recusada"
+                } else {
+                    "não encontrada"
+                };
+                println!("INSTALAÇÃO {what} fingerprint={fingerprint}");
+            }
+            InstallAction::Open { minutes } => set_enrollment(controller, minutes).await?,
+            InstallAction::Close => set_enrollment(controller, 0).await?,
+        },
+        ClusterAction::Reservation { action } => match action {
+            ReservationAction::List => print_reservations(controller).await?,
+            ReservationAction::Add {
+                node,
+                request_id,
+                minutes,
+                slots,
+            } => {
+                let ttl_ms = u64::from(minutes) * 60_000;
+                run_reserve(controller, &node, &request_id, ttl_ms, slots).await?
+            }
+            ReservationAction::Remove { node } => release_reservation(controller, &node).await?,
+        },
+        ClusterAction::Metrics => print_metrics(controller).await?,
+        ClusterAction::Model { action } => match action {
             ModelAction::Manifest { dir, name, version } => {
                 let manifest = ai_cluster_engine::manifest::Manifest::build(&dir, &name, &version)?;
                 std::fs::write(
@@ -342,12 +492,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     manifest.files.len()
                 );
             }
-            ModelAction::List => print_models(&cli.controller).await?,
-            ModelAction::Start { id, ctx } => start_model(&cli.controller, &id, ctx).await?,
-            ModelAction::Stop => stop_model(&cli.controller).await?,
-            ModelAction::Status => model_status(&cli.controller).await?,
-            ModelAction::Key { action } => model_key(&cli.controller, action).await?,
-            ModelAction::Check { id, ctx } => check_model(&cli.controller, &id, ctx).await?,
+            ModelAction::List => print_models(controller).await?,
+            ModelAction::Start { id, ctx } => start_model(controller, &id, ctx).await?,
+            ModelAction::Stop => stop_model(controller).await?,
+            ModelAction::Status => model_status(controller).await?,
+            ModelAction::Key { action } => model_key(controller, action).await?,
+            ModelAction::Check { id, ctx } => check_model(controller, &id, ctx).await?,
             ModelAction::Verify { dir } => {
                 match ai_cluster_engine::manifest::Manifest::load(&dir)? {
                     Some(manifest) => {
@@ -363,13 +513,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
-        Command::Events { limit, follow } => print_events(&cli.controller, limit, follow).await?,
-        Command::Request { action } => match action {
-            RequestAction::Trace { request_id } => {
-                print_trace(&cli.controller, &request_id).await?
-            }
+        ClusterAction::Events { limit, follow } => print_events(controller, limit, follow).await?,
+        ClusterAction::Request { action } => match action {
+            RequestAction::Trace { request_id } => print_trace(controller, &request_id).await?,
             RequestAction::Cancel { request_id } => {
-                let mut client = connect_operator(cli.controller.clone()).await?;
+                let mut client = connect_operator(controller.to_string()).await?;
                 let reply = client
                     .cancel_request(CancelRequestRequest {
                         request_id: request_id.clone(),
@@ -382,7 +530,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         },
-        Command::Benchmark {
+        ClusterAction::Benchmark {
             size,
             repetitions,
             local,
@@ -392,7 +540,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_attested,
         } => {
             run_benchmark(
-                &cli.controller,
+                controller,
                 size,
                 repetitions,
                 local,
@@ -403,102 +551,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?
         }
-        Command::Graph { size } => run_graph(&cli.controller, size).await?,
-        Command::Reserve {
-            node,
-            request_id,
-            ttl_ms,
-            slots,
-        } => run_reserve(&cli.controller, &node, &request_id, ttl_ms, slots).await?,
-        Command::Reservations => print_reservations(&cli.controller).await?,
-        Command::Approve {
-            node,
-            fingerprint,
-            trust_listed,
-        } => approve_node(&cli.controller, &node, fingerprint, trust_listed).await?,
-        Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
-        Command::Retire { node } => {
-            let mut client = connect_operator(cli.controller.clone()).await?;
-            let reply = client
-                .retire_node(ai_cluster_protocol::cluster::RetireNodeRequest {
-                    node_id: node.clone(),
-                })
-                .await?
-                .into_inner();
-            if reply.retired {
-                println!(
-                    "NÓ retirado no={node} reenfileiradas={}; para devolvê-lo: ai-cluster approve {node} --fingerprint <a impressão de antes>",
-                    reply.requeued
-                );
-            } else {
-                println!("NÓ não encontrado no={node}");
-            }
-        }
-        Command::Remove { node } => {
-            let mut client = connect_operator(cli.controller.clone()).await?;
-            let reply = client
-                .remove_node(ai_cluster_protocol::cluster::RemoveNodeRequest {
-                    node_id: node.clone(),
-                })
-                .await?
-                .into_inner();
-            if reply.removed {
-                println!("NÓ removido no={node} reenfileiradas={}", reply.requeued);
-            } else {
-                println!("NÓ não encontrado no={node}");
-            }
-        }
-        Command::Installs => print_installs(&cli.controller).await?,
-        Command::Enrollment { action } => {
-            let minutes = match action {
-                EnrollmentAction::Open { minutes } => minutes,
-                EnrollmentAction::Close => 0,
-            };
-            let mut client = connect_operator(cli.controller.clone()).await?;
-            let until = client
-                .set_enrollment(ai_cluster_protocol::cluster::SetEnrollmentRequest { minutes })
-                .await?
-                .into_inner()
-                .open_until_unix_ms;
-            if until == 0 {
-                println!("INSTALAÇÃO porta fechada");
-            } else {
-                println!("INSTALAÇÃO porta aberta minutos={minutes}");
-            }
-        }
-        Command::ApproveInstall { fingerprint, disk } => {
-            let mut client = connect_operator(cli.controller.clone()).await?;
-            let approved = client
-                .approve_install(ai_cluster_protocol::cluster::ApproveInstallRequest {
-                    fingerprint: fingerprint.clone(),
-                    disk: disk.clone(),
-                })
-                .await?
-                .into_inner()
-                .approved;
-            if approved {
-                println!("INSTALAÇÃO aprovada fingerprint={fingerprint} apaga={disk}");
-            } else {
-                println!("INSTALAÇÃO não encontrada fingerprint={fingerprint}");
-            }
-        }
-        Command::RejectInstall { fingerprint } => {
-            let mut client = connect_operator(cli.controller.clone()).await?;
-            let rejected = client
-                .reject_install(ai_cluster_protocol::cluster::RejectInstallRequest {
-                    fingerprint: fingerprint.clone(),
-                })
-                .await?
-                .into_inner()
-                .rejected;
-            let what = if rejected {
-                "recusada"
-            } else {
-                "não encontrada"
-            };
-            println!("INSTALAÇÃO {what} fingerprint={fingerprint}");
-        }
-        Command::Rollout {
+        ClusterAction::Graph { size } => run_graph(controller, size).await?,
+        ClusterAction::Rollout {
             version,
             url,
             sha256,
@@ -506,7 +560,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             signature,
             cancel,
         } => {
-            let mut client = connect_operator(cli.controller.clone()).await?;
+            let mut client = connect_operator(controller.to_string()).await?;
             let release = (!cancel).then_some(Release {
                 version: version.clone(),
                 url,
@@ -524,8 +578,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             );
         }
-        Command::Release { node } => release_reservation(&cli.controller, &node).await?,
-        Command::Dashboard { watch } => print_dashboard(&cli.controller, watch).await?,
+        ClusterAction::Dashboard { watch } => print_dashboard(controller, watch).await?,
+        ClusterAction::Invite(convite) => delegados::encaminha("cluster", convite.args()),
+    }
+    Ok(())
+}
+
+/// Abre (`minutes` > 0) ou fecha (0) a porta de instalação do controller.
+async fn set_enrollment(endpoint: &str, minutes: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect_operator(endpoint.to_string()).await?;
+    let until = client
+        .set_enrollment(ai_cluster_protocol::cluster::SetEnrollmentRequest { minutes })
+        .await?
+        .into_inner()
+        .open_until_unix_ms;
+    if until == 0 {
+        println!("INSTALAÇÃO porta fechada");
+    } else {
+        println!("INSTALAÇÃO porta aberta minutos={minutes}");
     }
     Ok(())
 }
@@ -1980,7 +2050,7 @@ fn active_model(
     let Some(desired) = model.desired.as_ref().filter(|d| !d.model_id.is_empty()) else {
         return (
             "NENHUM",
-            "sem modelo ativo: ai-cluster model start <id>".into(),
+            "sem modelo ativo: aic cluster model start <id>".into(),
             Tone::Warn,
         );
     };
@@ -2341,6 +2411,189 @@ mod tests {
     use super::*;
     use ai_cluster_protocol::cluster::{CapabilityReport, NodeIdentity, NodeSnapshot};
 
+    /// O mesmo caminho que o `main` percorre, sem executar nada.
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        let matches = ptbr::localize(Cli::command()).try_get_matches_from(args)?;
+        Cli::from_arg_matches(&matches)
+    }
+
+    #[test]
+    fn os_grupos_novos_aceitam_os_verbos_da_adr() {
+        let aceitos: &[&[&str]] = &[
+            &["aic", "cluster", "nodes"],
+            &["aic", "cluster", "node", "show", "n1"],
+            &[
+                "aic",
+                "cluster",
+                "node",
+                "approve",
+                "n1",
+                "--fingerprint",
+                "ab",
+            ],
+            &["aic", "cluster", "node", "approve", "n1", "--trust-listed"],
+            &["aic", "cluster", "node", "retire", "n1"],
+            &["aic", "cluster", "node", "revoke", "n1"],
+            &["aic", "cluster", "node", "remove", "n1"],
+            &["aic", "cluster", "install", "list"],
+            &[
+                "aic", "cluster", "install", "approve", "ab", "--disk", "sda",
+            ],
+            &["aic", "cluster", "install", "reject", "ab"],
+            &["aic", "cluster", "install", "open", "--minutes", "5"],
+            &["aic", "cluster", "install", "close"],
+            &["aic", "cluster", "reservation", "list"],
+            &[
+                "aic",
+                "cluster",
+                "reservation",
+                "add",
+                "n1",
+                "req",
+                "--minutes",
+                "10",
+                "--slots",
+                "2",
+            ],
+            &["aic", "cluster", "reservation", "remove", "n1"],
+            &["aic", "cluster", "model", "list"],
+            &["aic", "cluster", "request", "trace", "r1"],
+            &["aic", "cluster", "topology"],
+            &["aic", "cluster", "metrics"],
+            &["aic", "cluster", "events"],
+            &["aic", "cluster", "benchmark"],
+            &["aic", "cluster", "graph"],
+            &["aic", "cluster", "rollout", "1.2.0", "--cancel"],
+            &["aic", "cluster", "dashboard"],
+            &[
+                "aic",
+                "cluster",
+                "invite",
+                "--minutes",
+                "15",
+                "--port",
+                "8099",
+            ],
+            &[
+                "aic",
+                "controller",
+                "install",
+                "--with-gateway",
+                "--yes",
+                "--lang",
+                "en",
+            ],
+            &["aic", "controller", "logs", "-f", "-n", "50"],
+            &[
+                "aic", "gateway", "install", "--server", "10.0.0.5", "--code", "123",
+            ],
+            &[
+                "aic", "worker", "join", "--server", "10.0.0.5", "--code", "123",
+            ],
+            &["aic", "worker", "role", "--short"],
+            &["aic", "worker", "passwd", "--remove"],
+            &["aic", "update", "apply", "--version", "1.2.0", "--force"],
+            &["aic", "update", "status"],
+            &["aic", "version"],
+        ];
+        for args in aceitos {
+            assert!(
+                parse(args).is_ok(),
+                "deveria aceitar {args:?}: {:?}",
+                parse(args).err()
+            );
+        }
+    }
+
+    #[test]
+    fn nomes_antigos_sao_recusados_sem_apelido() {
+        let recusados: &[&[&str]] = &[
+            &["aic", "status"],
+            &["aic", "nodes"],
+            &["aic", "approve", "n1"],
+            &["aic", "installs"],
+            &["aic", "reserve", "n1", "req"],
+            &["aic", "reservations"],
+            &["aic", "release", "n1"],
+            &["aic", "enrollment", "open"],
+            &["aic", "approve-install", "ab", "--disk", "sda"],
+            &["aic", "reject-install", "ab"],
+            &["aic", "cluster", "status"],
+            &["aic", "cluster", "approve", "n1"],
+            &["aic", "cluster", "node", "n1"],
+            &["aic", "cluster", "retire", "n1"],
+            &["aic", "cluster", "installs"],
+            &["aic", "cluster", "enrollment", "open"],
+            &["aic", "cluster", "reserve", "n1", "req"],
+            &["aic", "cluster", "reservations"],
+            &["aic", "cluster", "release", "n1"],
+            &[
+                "aic",
+                "cluster",
+                "reservation",
+                "add",
+                "n1",
+                "req",
+                "--ttl-ms",
+                "5",
+            ],
+            &["aic", "role"],
+            &["aic", "change"],
+            &["aic", "passwd"],
+            &["aic", "logs"],
+            &[
+                "aic",
+                "cluster",
+                "nodes",
+                "--controller",
+                "http://x:1",
+                "extra",
+            ],
+            &["aic", "update", "apply", "--lang", "fr"],
+            &["aic", "worker", "change", "--server", "10.0.0.5"],
+            &["aic", "worker", "change", "--token", "t"],
+        ];
+        for args in recusados {
+            assert!(parse(args).is_err(), "deveria recusar {args:?}");
+        }
+        let antigo = parse(&["aic", "cluster", "approve", "n1"]).unwrap_err();
+        assert!(
+            ptbr::message(&antigo).contains("subcomando desconhecido: approve"),
+            "{}",
+            ptbr::message(&antigo)
+        );
+    }
+
+    #[test]
+    fn worker_change_aceita_so_as_duas_formas_da_adr() {
+        assert!(
+            parse(&[
+                "aic",
+                "worker",
+                "change",
+                "--server",
+                "s",
+                "--code",
+                "c",
+                "--controller",
+                "u"
+            ])
+            .is_ok()
+        );
+        assert!(
+            parse(&[
+                "aic",
+                "worker",
+                "change",
+                "--controller",
+                "u",
+                "--token",
+                "t"
+            ])
+            .is_ok()
+        );
+    }
+
     fn node(id: &str, shard_cache_bytes: u64, trusted: bool) -> NodeSnapshot {
         NodeSnapshot {
             identity: Some(NodeIdentity {
@@ -2529,7 +2782,7 @@ mod tests {
             "{lines}"
         );
         assert!(
-            lines.contains("NENHUM") && lines.contains("ai-cluster model start"),
+            lines.contains("NENHUM") && lines.contains("aic cluster model start"),
             "{lines}"
         );
         assert!(lines.contains("/v1/chat/completions"), "{lines}");

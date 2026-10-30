@@ -681,7 +681,7 @@ impl ClusterControl for ClusterControlService {
             &presented,
         ) else {
             return Err(Status::failed_precondition(
-                "nó já registrado com outra credencial; se aprovado, o operador precisa rodar `ai-cluster revoke` antes (um nó pendente fica livre quando para de responder)",
+                "nó já registrado com outra credencial; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um nó pendente fica livre quando para de responder)",
             ));
         };
         // S2: an unapproved node must not be able to write controller state, so its copy is
@@ -733,7 +733,7 @@ impl ClusterControl for ClusterControlService {
         }
         if request.fingerprint.trim().is_empty() {
             return Err(Status::invalid_argument(
-                "fingerprint é obrigatória: use a que `ai-cluster nodes` mostra e o nó imprime ao registrar-se",
+                "fingerprint é obrigatória: use a que `aic cluster nodes` mostra e o nó imprime ao registrar-se",
             ));
         }
         self.audit(&peer, "approve", &node_id);
@@ -1489,7 +1489,7 @@ impl ClusterControl for ClusterControlService {
         // Sem release publicada ninguém é atestado: a unidade esperaria para sempre sem aviso.
         if request.require_attested && self.rollout.desired().is_none() {
             return Err(Status::failed_precondition(
-                "require_attested exige uma release publicada (ai-cluster rollout): sem ela nenhum nó é atestado",
+                "require_attested exige uma release publicada (aic cluster rollout): sem ela nenhum nó é atestado",
             ));
         }
         self.audit(

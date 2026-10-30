@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gate = inference.clone().unwrap_or_default();
     let recovery_scope = recovery.clone().unwrap_or_default();
 
-    // S2: a new node waits for `ai-cluster approve` unless the operator opts out, which is
+    // S2: a new node waits for `aic cluster node approve` unless the operator opts out, which is
     // what a closed lab network or the E2E scripts do.
     let auto_approve = std::env::var("AI_CLUSTER_AUTO_APPROVE")
         .is_ok_and(|value| matches!(value.trim(), "1" | "true"));

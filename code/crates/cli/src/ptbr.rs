@@ -1,4 +1,4 @@
-//! A ajuda e os erros de uso do `ai-cluster` em português. O clap só fala inglês nos títulos
+//! A ajuda e os erros de uso do `aic` em português. O clap só fala inglês nos títulos
 //! ("Usage", "Commands", "Options"), no subcomando `help` e nas mensagens de erro; aqui os
 //! títulos vêm de um modelo próprio e os erros são reescritos. O texto de cada comando e opção
 //! já é português nos comentários de `main.rs`.
@@ -165,7 +165,7 @@ pub fn message(err: &clap::Error) -> String {
     }
     out.push_str(
         "
-Para saber mais: ai-cluster --help (ou <comando> --help)
+Para saber mais: aic --help (ou <comando> --help)
 ",
     );
     out
@@ -245,8 +245,8 @@ mod tests {
     #[test]
     fn a_dica_de_uso_nao_mostra_o_controller_como_obrigatorio() {
         assert_eq!(
-            super::words("Usage: ai-cluster node show --controller <CONTROLLER> <ID>"),
-            "Uso: ai-cluster node show <ID>"
+            super::words("Usage: aic cluster node show --controller <CONTROLLER> <ID>"),
+            "Uso: aic cluster node show <ID>"
         );
     }
 }

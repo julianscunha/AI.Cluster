@@ -53,9 +53,9 @@ fn screen(request: &AnnounceRequest, fingerprint: &str) {
 {}",
         rule("No controller", 60)
     );
-    println!("  ai-cluster installs");
+    println!("  aic cluster install list");
     println!(
-        "  ai-cluster approve-install {} --disk <disco>",
+        "  aic cluster install approve {} --disk <disco>",
         paint(fingerprint, Tone::Accent)
     );
     println!(

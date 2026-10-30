@@ -6,7 +6,7 @@
 //! anyone writing a bridge.
 //!
 //! Names are prefixed `ai_cluster_` and otherwise match the `MetricsResponse` field names,
-//! so a number read here and the same number read from `ai-cluster metrics` are recognisably
+//! so a number read here and the same number read from `aic cluster metrics` are recognisably
 //! the same thing.
 
 use std::sync::Arc;

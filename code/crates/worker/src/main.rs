@@ -434,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     if !registered.node_credential.is_empty() {
         println!(
-            "impressão da credencial: {} (confira no `ai-cluster approve --fingerprint`)",
+            "impressão da credencial: {} (confira no `aic cluster node approve --fingerprint`)",
             ai_cluster_protocol::metadata::credential_fingerprint(&registered.node_credential)
         );
     }

@@ -299,7 +299,7 @@ impl Enrollment for EnrollmentService {
         let now = crate::registry::unix_ms();
         if !self.enrollments.is_open(now) {
             return Err(Status::unavailable(
-                "instalação fechada: o operador abre com `ai-cluster enrollment open`",
+                "instalação fechada: o operador abre com `aic cluster install open`",
             ));
         }
         let response = self.enrollments.announce(request.into_inner(), host, now)?;
