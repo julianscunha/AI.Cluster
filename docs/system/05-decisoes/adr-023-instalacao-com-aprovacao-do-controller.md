@@ -32,7 +32,8 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 ## Implementação (primeira etapa)
 
 - Serviço `Enrollment` (`Announce`) em porta própria e sem interceptor, ligada por `AI_CLUSTER_ENROLL_ADDR`: ligar o anônimo no `ClusterControl` abriria os handlers que dependem do interceptor para exigir o token de join.
-- A impressão digital é o início do SHA-256 de um segredo aleatório que o aparelho guarda só na memória. Quem repete o segredo recebe o token, uma vez; o MAC aprovado não é derrubado por quem copia o MAC.
+- A impressão digital é o início do SHA-256 de um segredo aleatório que o aparelho guarda só na memória. A lista é indexada pelo hash inteiro (a impressão mostrada é só o prefixo; prefixo repetido é recusado). Quem repete o segredo recebe o token até a entrada vencer, para que uma resposta perdida não prenda o aparelho; o "uso único" é do consumo, na etapa futura. Quem copia o MAC não derruba a aprovação de um MAC aprovado nem despeja a entrada de outro endereço.
+- A porta anônima tem teto de 64 conexões (a excedente é fechada), vida máxima de 120 s por conexão, timeout de 10 s por chamada e mensagens de até 16 KiB, para não gastar os descritores do plano de controle. A cota por origem vale por IPv4 ou por /64 de IPv6, e endereço desconhecido divide um balde só. Os textos do aparelho entram só em ASCII imprimível.
 - Limite conhecido: sem TLS (certificado do controller ainda não fixado na etapa de espera) o segredo e o token trafegam em claro na rede local; quem espiona a rede pode disputar o token com o aparelho. O desenho completo deve fixar a CA do controller na imagem de espera.
 
 ## Alternativas

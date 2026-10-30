@@ -2097,11 +2097,6 @@ impl ClusterControl for ClusterControlService {
         }))
     }
 
-    /// Retém um nó para uma requisição futura (G6).
-    ///
-    /// O nó precisa existir e estar disponível: reservar um nó que o controller não
-    /// entregaria trabalho nenhum não protege nada, então isso é recusado em vez de
-    /// aceito e ignorado. Uma reserva nova sobre o mesmo nó substitui a anterior.
     async fn list_pending_installs(
         &self,
         request: Request<ListPendingInstallsRequest>,
@@ -2132,7 +2127,7 @@ impl ClusterControl for ClusterControlService {
             self.audit(
                 &peer,
                 "approve-install",
-                &format!("{} disco {}", request.fingerprint, request.disk),
+                &format!("{} disco {}", request.fingerprint, request.disk.trim()),
             );
         }
         Ok(Response::new(ApproveInstallResponse { approved }))
@@ -2151,6 +2146,11 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RejectInstallResponse { rejected }))
     }
 
+    /// Retém um nó para uma requisição futura (G6).
+    ///
+    /// O nó precisa existir e estar disponível: reservar um nó que o controller não
+    /// entregaria trabalho nenhum não protege nada, então isso é recusado em vez de
+    /// aceito e ignorado. Uma reserva nova sobre o mesmo nó substitui a anterior.
     async fn reserve(
         &self,
         request: Request<ReserveRequest>,

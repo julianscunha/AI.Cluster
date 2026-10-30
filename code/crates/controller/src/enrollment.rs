@@ -13,7 +13,6 @@ use ai_cluster_protocol::cluster::enrollment_server::Enrollment;
 use ai_cluster_protocol::cluster::{
     AnnounceRequest, AnnounceResponse, InstallDisk, PendingInstall,
 };
-use ai_cluster_protocol::metadata::same_token;
 use sha2::{Digest, Sha256};
 use tonic::{Request, Response, Status};
 
@@ -30,8 +29,9 @@ const MAX_DISKS: usize = 16;
 #[derive(Clone, Debug)]
 struct Candidate {
     info: PendingInstall,
-    host: Option<IpAddr>,
-    secret_hash: [u8; 32],
+    /// A cota é por balde: o IPv4 inteiro, ou o /64 de um IPv6 (quem tem uma sub-rede dessas tem
+    /// bilhões de endereços). Endereço desconhecido cai num balde só, em vez de escapar da cota.
+    bucket: Option<IpAddr>,
     /// Token já gerado e ainda não entregue.
     token: Option<String>,
 }
@@ -45,17 +45,34 @@ fn hash(secret: &[u8]) -> [u8; 32] {
     Sha256::digest(secret).into()
 }
 
-/// Seis grupos de 4 hex (`a1b2-c3d4-…`): curto para conferir a olho, 48 bits do hash do segredo.
-fn fingerprint_of(secret_hash: &[u8; 32]) -> String {
-    let hex: String = secret_hash[..6]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    hex.as_bytes()
+/// O hash inteiro em hex: é a chave da lista, então dois segredos nunca dividem uma entrada.
+fn key_of(secret_hash: &[u8; 32]) -> String {
+    secret_hash.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// O que se mostra e se digita: três grupos de 4 hex (`a1b2-c3d4-e5f6`, 48 bits do hash). Curto para
+/// conferir a olho; uma colisão com outra entrada é recusada.
+fn fingerprint_of(key: &str) -> String {
+    key.as_bytes()[..12]
         .chunks(4)
         .map(|c| std::str::from_utf8(c).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn bucket_of(host: Option<IpAddr>) -> Option<IpAddr> {
+    match host? {
+        IpAddr::V6(v6) if v6.to_ipv4_mapped().is_none() => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            Some(IpAddr::V6(octets.into()))
+        }
+        other => Some(other),
+    }
+}
+
+fn normalize(fingerprint: &str) -> String {
+    fingerprint.trim().to_ascii_lowercase()
 }
 
 fn new_token() -> String {
@@ -64,10 +81,11 @@ fn new_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Texto que vem do aparelho: sem controle (falsificaria linhas no terminal do operador) e curto.
+/// Texto que vem do aparelho: só ASCII imprimível e curto. Controle falsificaria linhas no terminal
+/// do operador, e os invisíveis do Unicode (inversão de direção, separadores) esconderiam trechos.
 fn clean(text: &str, max: usize) -> String {
     text.chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| c.is_ascii() && !c.is_control())
         .take(max)
         .collect::<String>()
         .trim()
@@ -125,55 +143,51 @@ impl Enrollments {
             })
             .collect();
         let secret_hash = hash(&request.secret);
-        let fingerprint = fingerprint_of(&secret_hash);
+        let key = key_of(&secret_hash);
+        let fingerprint = fingerprint_of(&key);
+        let bucket = bucket_of(host);
         let mut waiting = self.lock();
         waiting.retain(|_, c| now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS);
 
-        if let Some(known) = waiting.get_mut(&fingerprint) {
-            // Quem repete o segredo é o mesmo aparelho. Compara de novo em tempo constante: a
-            // chave do mapa já é derivada do segredo, mas o token só sai para o dono dele.
-            if same_token(&known.secret_hash, &secret_hash) {
-                known.info.last_seen_unix_ms = now;
-                known.host = host;
-                return Ok(match known.token.take() {
-                    Some(install_token) => AnnounceResponse {
-                        fingerprint,
-                        approved: true,
-                        install_token,
-                        disk: known.info.approved_disk.clone(),
-                        retry_after_secs: 0,
-                    },
-                    None => AnnounceResponse {
-                        fingerprint,
-                        approved: !known.info.approved_disk.is_empty(),
-                        retry_after_secs: RETRY_SECS,
-                        ..Default::default()
-                    },
-                });
-            }
+        if let Some(known) = waiting.get_mut(&key) {
+            // A chave é o hash inteiro: quem chega aqui repetiu o segredo, é o mesmo aparelho.
+            known.info.last_seen_unix_ms = now;
+            known.bucket = bucket;
+            // O token fica disponível ao dono do segredo até a entrada vencer: se a resposta se
+            // perder, a próxima pergunta o traz de novo. Quem o consumir o invalida (etapa futura).
+            return Ok(AnnounceResponse {
+                fingerprint,
+                approved: !known.info.approved_disk.is_empty(),
+                install_token: known.token.clone().unwrap_or_default(),
+                disk: known.info.approved_disk.clone(),
+                retry_after_secs: if known.token.is_some() { 0 } else { RETRY_SECS },
+            });
         }
 
-        // Aparelho novo. Um reboot gera outro segredo para o mesmo MAC: a entrada velha sai. A já
-        // aprovada fica (vence em 15 min): senão quem copia o MAC derrubaria a aprovação.
+        // Dois hashes com o mesmo prefixo mostrado seriam indistinguíveis na tela do operador.
+        if waiting.values().any(|c| c.info.fingerprint == fingerprint) {
+            return Err(Status::already_exists("impressão digital em uso; reinicie"));
+        }
+        // Um MAC já aprovado não perde a vaga para quem o copia (vence em 15 min).
         if waiting
             .values()
             .any(|c| c.info.mac == mac && !c.info.approved_disk.is_empty())
         {
             return Err(Status::already_exists("este MAC já foi aprovado"));
         }
-        waiting.retain(|_, c| c.info.mac != mac);
+        // Reboot do mesmo aparelho: outro segredo, mesmo MAC e mesmo balde. A entrada velha sai. De
+        // outro endereço ninguém despeja a entrada alheia só por saber o MAC, que é público na rede.
+        waiting.retain(|_, c| !(c.info.mac == mac && c.bucket == bucket));
         if waiting.len() >= MAX_PENDING {
             return Err(Status::resource_exhausted("lista de aprovação cheia"));
         }
-        if let Some(host) = host
-            && waiting.values().filter(|c| c.host == Some(host)).count() >= MAX_PER_HOST
-        {
+        if waiting.values().filter(|c| c.bucket == bucket).count() >= MAX_PER_HOST {
             return Err(Status::resource_exhausted(
                 "aparelhos demais neste endereço",
             ));
         }
         waiting.insert(
-            fingerprint.clone(),
+            key,
             Candidate {
                 info: PendingInstall {
                     fingerprint: fingerprint.clone(),
@@ -189,8 +203,7 @@ impl Enrollments {
                     last_seen_unix_ms: now,
                     approved_disk: String::new(),
                 },
-                host,
-                secret_hash,
+                bucket,
                 token: None,
             },
         );
@@ -216,8 +229,10 @@ impl Enrollments {
     /// `Ok(false)`: a impressão digital não está (mais) na lista.
     pub fn approve(&self, fingerprint: &str, disk: &str, now: u64) -> Result<bool, Status> {
         let mut waiting = self.lock();
+        let wanted = normalize(fingerprint);
         let Some(candidate) = waiting
-            .get_mut(&fingerprint.trim().to_ascii_lowercase())
+            .values_mut()
+            .find(|c| c.info.fingerprint == wanted)
             .filter(|c| now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS)
         else {
             return Ok(false);
@@ -233,9 +248,11 @@ impl Enrollments {
     }
 
     pub fn reject(&self, fingerprint: &str) -> bool {
-        self.lock()
-            .remove(&fingerprint.trim().to_ascii_lowercase())
-            .is_some()
+        let mut waiting = self.lock();
+        let wanted = normalize(fingerprint);
+        let before = waiting.len();
+        waiting.retain(|_, c| c.info.fingerprint != wanted);
+        waiting.len() != before
     }
 }
 
@@ -263,6 +280,89 @@ impl Enrollment for EnrollmentService {
                 .announce(request.into_inner(), host, crate::registry::unix_ms())?;
         Ok(Response::new(response))
     }
+}
+
+/// Conexões abertas ao mesmo tempo na porta anônima. Passando disso a nova é fechada na hora: o
+/// descritor de arquivo é do processo todo, e esta porta não pode tirá-los do plano de controle.
+pub const MAX_CONNECTIONS: usize = 64;
+/// Vida máxima de uma conexão: quem conecta e cala, ou fica lendo devagar, não segura a vaga.
+const CONNECTION_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Uma conexão que segura uma vaga do teto e morre depois de `CONNECTION_LIFETIME`.
+pub struct Limited<IO> {
+    io: IO,
+    deadline: std::pin::Pin<Box<tokio::time::Sleep>>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+fn expired() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::TimedOut, "conexão passou do prazo")
+}
+
+impl<IO: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Limited<IO> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        // Consultar o prazo aqui também registra o waker: a leitura acorda quando ele vence.
+        if std::future::Future::poll(self.deadline.as_mut(), cx).is_ready() {
+            return std::task::Poll::Ready(Err(expired()));
+        }
+        std::pin::Pin::new(&mut self.io).poll_read(cx, buf)
+    }
+}
+
+impl<IO: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Limited<IO> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.io).poll_write(cx, data)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+}
+
+impl<IO: tonic::transport::server::Connected> tonic::transport::server::Connected for Limited<IO> {
+    type ConnectInfo = IO::ConnectInfo;
+
+    fn connect_info(&self) -> Self::ConnectInfo {
+        self.io.connect_info()
+    }
+}
+
+/// As conexões do `listener`, no máximo `MAX_CONNECTIONS` vivas, cada uma com prazo de vida.
+pub fn limited_incoming(
+    listener: tokio::net::TcpListener,
+) -> impl tokio_stream::Stream<Item = std::io::Result<Limited<tokio::net::TcpStream>>> {
+    use tokio_stream::StreamExt;
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    tokio_stream::wrappers::TcpListenerStream::new(listener).filter_map(move |accepted| {
+        match accepted {
+            Ok(io) => slots.clone().try_acquire_owned().ok().map(|permit| {
+                Ok(Limited {
+                    io,
+                    deadline: Box::pin(tokio::time::sleep(CONNECTION_LIFETIME)),
+                    _permit: permit,
+                })
+            }),
+            Err(error) => Some(Err(error)),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -309,16 +409,23 @@ mod tests {
     }
 
     #[test]
-    fn o_dono_do_segredo_recebe_o_token_uma_vez() {
+    fn o_dono_do_segredo_recebe_o_token_e_pode_pedir_de_novo() {
         let e = Enrollments::default();
         let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
         assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
         let got = e.announce(hello(1, MAC), None, 2).unwrap();
         assert!(got.approved && got.disk == "mmcblk0");
         assert_eq!(got.install_token.len(), 32);
-        let second = e.announce(hello(1, MAC), None, 3).unwrap();
-        assert!(second.install_token.is_empty(), "o token sai uma vez só");
-        assert!(second.approved);
+        // Resposta perdida: o dono do segredo recebe o mesmo token de novo.
+        let again = e.announce(hello(1, MAC), None, 3).unwrap();
+        assert_eq!(again.install_token, got.install_token);
+        // Outro segredo nunca o recebe.
+        assert!(
+            e.announce(hello(2, "aa:bb:cc:dd:ee:02"), None, 4)
+                .unwrap()
+                .install_token
+                .is_empty()
+        );
     }
 
     #[test]
@@ -340,21 +447,56 @@ mod tests {
         let blocked = e.announce(hello(99, "aa:bb:cc:dd:ee:99"), Some(host), 0);
         assert_eq!(blocked.unwrap_err().code(), tonic::Code::ResourceExhausted);
 
+        // Sem endereço conhecido todos dividem um balde só: não escapam da cota.
         let e = Enrollments::default();
-        for i in 0..MAX_PENDING as u8 {
+        for i in 0..MAX_PER_HOST as u8 {
             e.announce(hello(i, &format!("aa:bb:cc:dd:ee:{i:02x}")), None, 0)
                 .unwrap();
         }
+        assert!(e.announce(hello(50, "aa:bb:cc:dd:ee:50"), None, 0).is_err());
+
+        // Um /64 inteiro é um balde só.
+        let e = Enrollments::default();
+        for i in 0..MAX_PER_HOST as u8 {
+            let host: IpAddr = format!("2001:db8:0:1::{:x}", i + 1).parse().unwrap();
+            e.announce(hello(i, &format!("aa:bb:cc:dd:ee:{i:02x}")), Some(host), 0)
+                .unwrap();
+        }
+        let sibling: IpAddr = "2001:db8:0:1::ffff".parse().unwrap();
         assert!(
-            e.announce(hello(200, "aa:bb:cc:dd:ff:00"), None, 1)
+            e.announce(hello(60, "aa:bb:cc:dd:ee:60"), Some(sibling), 0)
                 .is_err()
         );
-        // Passado o prazo as entradas somem e a vaga volta.
+
+        // Lista cheia de IPs diferentes: recusa, e a vaga volta quando as entradas vencem.
+        let e = Enrollments::default();
+        for i in 0..MAX_PENDING as u8 {
+            let host: IpAddr = format!("10.0.0.{}", i + 1).parse().unwrap();
+            e.announce(hello(i, &format!("aa:bb:cc:dd:ee:{i:02x}")), Some(host), 0)
+                .unwrap();
+        }
+        let other: IpAddr = "10.0.1.1".parse().unwrap();
         assert!(
-            e.announce(hello(200, "aa:bb:cc:dd:ff:00"), None, TTL_MS + 1)
+            e.announce(hello(200, "aa:bb:cc:dd:ff:00"), Some(other), 1)
+                .is_err()
+        );
+        assert!(
+            e.announce(hello(200, "aa:bb:cc:dd:ff:00"), Some(other), TTL_MS + 1)
                 .is_ok()
         );
         assert_eq!(e.list(TTL_MS + 1).len(), 1);
+    }
+
+    #[test]
+    fn outro_endereco_nao_despeja_a_entrada_so_por_saber_o_mac() {
+        let e = Enrollments::default();
+        let (a, b): (IpAddr, IpAddr) = ("10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap());
+        e.announce(hello(1, MAC), Some(a), 0).unwrap();
+        e.announce(hello(2, MAC), Some(b), 1).unwrap();
+        assert_eq!(e.list(1).len(), 2, "o intruso não apaga a entrada do dono");
+        // O reboot do dono, do mesmo endereço, troca a entrada dele.
+        e.announce(hello(3, MAC), Some(a), 2).unwrap();
+        assert_eq!(e.list(2).len(), 2);
     }
 
     #[test]
@@ -373,11 +515,11 @@ mod tests {
         short.secret = vec![1; 4];
         assert!(e.announce(short, None, 0).is_err());
         let mut dirty = hello(1, MAC);
-        dirty.cpu_model = "A\u{1b}[31mB\nC".into();
+        dirty.cpu_model = "A\u{1b}[31mB\nC\u{202e}D".into();
         dirty.disks.push(disk("../etc"));
         e.announce(dirty, None, 0).unwrap();
         let listed = e.list(0);
-        assert_eq!(listed[0].cpu_model, "A[31mBC");
+        assert_eq!(listed[0].cpu_model, "A[31mBCD");
         assert_eq!(
             listed[0].disks.len(),
             1,
@@ -392,5 +534,28 @@ mod tests {
         assert!(e.reject(&fp));
         assert!(!e.reject(&fp));
         assert!(e.list(0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_porta_anonima_atende_o_announce_e_enxerga_o_endereco_do_cliente() {
+        use ai_cluster_protocol::cluster::enrollment_client::EnrollmentClient;
+        use ai_cluster_protocol::cluster::enrollment_server::EnrollmentServer;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let enrollments = Arc::new(Enrollments::default());
+        let service = EnrollmentServer::new(EnrollmentService::new(enrollments.clone()));
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(service)
+                .serve_with_incoming(limited_incoming(listener)),
+        );
+        let mut client = EnrollmentClient::connect(format!("http://{addr}"))
+            .await
+            .unwrap();
+        let reply = client.announce(hello(1, MAC)).await.unwrap().into_inner();
+        assert!(!reply.approved);
+        let listed = enrollments.list(crate::registry::unix_ms());
+        assert_eq!(listed[0].fingerprint, reply.fingerprint);
+        assert_eq!(listed[0].host, "127.0.0.1");
     }
 }

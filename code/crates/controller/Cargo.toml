@@ -10,6 +10,8 @@ ai-cluster-catalog = { path = "../catalog" }
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tonic = "0.14"
+# Porta anônima com teto de conexões; já está na árvore pelo tonic.
+tokio-stream = { version = "0.1", features = ["net"] }
 # Per-node credentials (S3b) need real entropy; already in the tree through another crate.
 getrandom = "0.4"
 # Reuses the generated message types for the on-disk snapshot; already in the

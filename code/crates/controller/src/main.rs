@@ -278,7 +278,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|addr| !addr.trim().is_empty())
     {
         let enroll_addr: std::net::SocketAddr = enroll_addr.parse()?;
-        let mut enroll_server = Server::builder();
+        let listener = tokio::net::TcpListener::bind(enroll_addr).await?;
+        let mut enroll_server = Server::builder()
+            .timeout(Duration::from_secs(10))
+            .concurrency_limit_per_connection(4)
+            .http2_keepalive_interval(Some(Duration::from_secs(10)))
+            .http2_keepalive_timeout(Some(Duration::from_secs(10)));
         if let Some(identity) = identity.clone() {
             enroll_server = enroll_server.tls_config(ServerTlsConfig::new().identity(identity))?;
         }
@@ -286,7 +291,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max_decoding_message_size(16 * 1024);
         println!("etapa de espera de instalação em {enroll_addr} (sem token)");
         tokio::spawn(async move {
-            if let Err(err) = enroll_server.add_service(service).serve(enroll_addr).await {
+            let incoming = ai_cluster_controller::enrollment::limited_incoming(listener);
+            if let Err(err) = enroll_server
+                .add_service(service)
+                .serve_with_incoming(incoming)
+                .await
+            {
                 println!("servidor de instalação parou: {err}");
             }
         });

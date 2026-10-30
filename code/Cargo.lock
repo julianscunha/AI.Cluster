@@ -51,6 +51,7 @@ dependencies = [
  "prost",
  "sha2",
  "tokio",
+ "tokio-stream",
  "tonic",
 ]
 
