@@ -65,6 +65,26 @@ Usage flow:
 
 Docker is **not** required to use AI Cluster. It only appears for people developing the project (see the end of this README).
 
+## Guided install (Linux)
+
+```bash
+curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
+```
+
+One script asks what each computer will be and downloads only what that role needs from the **latest release**. It does not auto-detect your hardware: you tell it, and it only checks that the processor you named is the real one. It explains the three components and asks:
+
+| Component | What it does | Runs on |
+|---|---|---|
+| **Controller** | The brain: registers the computers, decides where each task runs, keeps keys and models. One per cluster. | x86_64, ARMv7 |
+| **Gateway** | The front door: serves the chat API (OpenAI-compatible) and splits the model among the workers. One per cluster. | x86_64 (`llama-server` is not built for ARM yet) |
+| **Worker** | Lends CPU and memory. As many as you like. | x86_64, ARMv7 |
+
+Start with the controller (with the gateway on the same computer, or on another one: the script asks), then run `sudo aic-setup invite` on it. The invite prints how the other computers join: the same installer choosing "Worker", or the short `curl .../join | sudo sh` line. Each worker generates its own tunnel key; the server only signs the certificate request. A worker's package comes from your own server, in the cluster's version, so the workers do not need internet access. Then `ai-cluster model start <file.gguf>` puts the model online at `http://<ip>:8080`.
+
+The script can also install on a **Linux you already have** (shared with whatever else runs on it) or, for the worker, point you to the **dedicated AI Cluster OS** image (the machine only runs the cluster; the disk is rewritten). Details, limits and the dedicated-install order (controller first) are in [the installation guide](docs/guia/instalacao.md). ARM 64-bit and phones do not have packages yet; the script says so instead of installing anything.
+
+Without prompts: `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.
+
 ## Quick start on one computer (Docker)
 
 To try the whole flow without setting anything up by hand (needs Docker, bash and openssl):
@@ -179,6 +199,7 @@ Building the image, flashing the card and publishing releases: [`docs/guia/insta
 
 ## What you get
 
+- **A guided installer:** one script asks the role of each computer (controller, gateway or worker) and downloads only what it needs for x86_64 or ARMv7, with SHA-256 checks.
 - **One command puts the model online:** `model start` checks the RAM, picks the workers, splits the layers, loads and hands out the API key. No per-model variables, no copying weights to every node.
 - **Says "it does not fit" before trying:** `model check` sums worker RAM and answers OK or NOK with what is missing and how many nodes to add. More machines, more model: no size ceiling beyond the combined memory.
 - **Picks the right workers:** fast first, slow only when RAM requires; the layer split follows each node's speed and memory limit.
@@ -187,7 +208,7 @@ Building the image, flashing the card and publishing releases: [`docs/guia/insta
 - **More requests at once:** several slots per model, with a queue by priority class.
 - **Per-tenant API keys:** models, quota and class per key; rotation and removal; only the hash is stored.
 - **Nodes come and go:** token join, approval checked against the credential fingerprint, drain, clean leave, automatic quarantine of misbehaving nodes.
-- **Role-based security:** separate credentials to join, operate and infer; TLS and mTLS; the gateway runs without the operator token. llama.cpp's `rpc-server`, which has no password, is only served through an mTLS tunnel with a gateway role.
+- **Role-based security:** separate credentials to join, operate and infer; TLS and mTLS; the gateway runs without the operator token; each worker holds its own tunnel key. llama.cpp's `rpc-server`, which has no password, is only served through an mTLS tunnel with a gateway role.
 - **Safe system updates:** signed release (Ed25519), canary, waves and automatic rollback.
 - **Observable:** Prometheus metrics on `:9101`, events, request traces and a terminal dashboard.
 
