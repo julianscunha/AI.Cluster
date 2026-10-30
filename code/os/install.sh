@@ -349,6 +349,8 @@ for f in $need; do
 done
 
 # ---------- instalação ----------
+AIC_RELEASE_SUMS=$(sha256sum "$STAGE/SHA256SUMS" | cut -d' ' -f1)
+export AIC_RELEASE_SUMS
 export AIC_RELEASE_BASE="$BASE" AIC_RELEASE_VERSION="$REL" AIC_HW_KIND="$KIND" AIC_HW_ARCH="$ARCH"
 set --
 [ -n "$IP" ] && set -- "$@" --ip "$IP"

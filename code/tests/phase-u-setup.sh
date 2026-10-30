@@ -10,6 +10,7 @@
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
 #   B2b) `aic change` muda um nó de controller pelo convite (token, CA, certificado novo; falha não altera nada);
 #   B3) o worker exige o código do convite (8 caracteres) e o convite trava com chutes demais;
+#   C2) aic-setup update atualiza os binários e mantém token, certificados e config (acrescenta a que faltava);
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
 #   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem;
 #      --lang fr é recusado e --mode dedicated (alias em inglês) funciona;
@@ -118,6 +119,21 @@ docker exec aic-gw sh -c "ss -ltn | grep -q ':8080 '" || fail "o gateway não ab
 docker exec aic-gw grep -q "controller http://$CIP:50051" /var/log/ai-cluster/gateway.log || fail "o gateway deveria apontar para o controller"
 docker exec aic-gw sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(hostname -i | cut -d" " -f1):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway noutro computador deveria anunciar o IP dele"
 echo "OK: controller e gateway em computadores separados"
+
+echo "=== C2) aic-setup update: atualiza os binários e mantém tokens, certificados e config ==="
+TOK=$(docker exec aic-ctl sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)
+OUT=$(docker exec -e AIC_LANG=pt aic-ctl aic-setup update --yes 2>&1)
+echo "$OUT" | grep -q "já está na versão mais recente" || { echo "$OUT" | tail -5; fail "sem novidade, o update deveria dizer que já está na versão mais recente"; }
+# Simula uma instalação antiga (sem o resumo da release) e uma config de antes das portas novas.
+docker exec aic-ctl sh -c "sed -i '/^SUMS=/d' /etc/ai-cluster/release; sed -i '/^AI_CLUSTER_ENROLL_ADDR=/d' /etc/ai-cluster/controller.env"
+OUT=$(docker exec aic-ctl aic-setup update --yes 2>&1) || { echo "$OUT" | tail -8; fail "aic-setup update"; }
+echo "$OUT" | grep -q "Atualizado para" || { echo "$OUT" | tail -8; fail "o update deveria terminar com 'Atualizado para'"; }
+docker exec aic-ctl ai-cluster nodes >/dev/null 2>&1 || fail "o controller deveria responder depois do update"
+[ "$(docker exec aic-ctl sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)" = "$TOK" ] || fail "o update não pode trocar o token de join"
+docker exec aic-ctl grep -q '^AI_CLUSTER_ENROLL_ADDR=' /etc/ai-cluster/controller.env || fail "o update deveria acrescentar a config nova que faltava"
+docker exec aic-ctl test -x /opt/ai-cluster/bin/.prev/ai-cluster-controller || fail "o update deveria guardar os binários anteriores"
+docker exec aic-ctl grep -q '^SUMS=' /etc/ai-cluster/release || fail "o update deveria gravar o resumo da release"
+echo "OK: aic-setup update"
 
 echo "=== D) combinações recusadas ==="
 # Capturar a saída antes do grep: `grep -q` fecha o pipe cedo e o pipefail contaria como falha.

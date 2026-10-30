@@ -67,6 +67,25 @@ curl -fsSL http://<ip-do-servidor>:8099/wait | sudo sh
 
 O script confere o processador, o firmware e o espaço, baixa só o `aic-wait` do servidor (SHA-256 conferido) e o roda. A tela mostra a **impressão digital**, o MAC, a CPU, a RAM e os discos. No servidor: `ai-cluster installs` lista os aparelhos; confira a impressão digital com a da tela e aprove com `ai-cluster approve-install <impressão> --disk <disco>` (a aprovação apaga o disco informado). `ai-cluster reject-install` tira da lista. A porta de espera só aceita aparelhos enquanto o convite está aberto (ou `ai-cluster enrollment open`). O reinício para a imagem de espera e a instalação em si ainda não existem ([ADR-023](../system/05-decisoes/adr-023-instalacao-com-aprovacao-do-controller.md)).
 
+### Atualizar o controller (e o gateway) deste Linux
+
+```bash
+sudo aic-setup update            # pergunta antes; --yes não pergunta
+sudo aic-setup update --force    # reinstala a versão atual (mesmo sem novidade)
+sudo aic-setup update --version 0.2.1
+```
+
+O comando lê a release de onde o servidor foi instalado (`/etc/ai-cluster/release`), baixa só os pacotes do papel dele (confere o SHA-256 de cada um), guarda os binários de agora em `/opt/ai-cluster/bin/.prev`, troca os binários e o próprio `aic-setup`, acrescenta ao `controller.env` e ao `gateway.env` a configuração que a versão nova passou a esperar (só o que falta; nada é sobrescrito), reinicia os serviços e espera responderem. Se a versão nova não subir, volta para a anterior sozinho. **Tokens, certificados, workers aprovados e modelos continuam como estavam**, e os workers se reconectam sozinhos em alguns segundos. Sem novidade na release ele diz que já está na versão mais recente.
+
+Um servidor instalado **antes** de existir o `update` ainda não tem esse subcomando. Baixe o `aic-setup` novo uma vez e rode-o:
+
+```bash
+curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/tools.tar.gz | tar -xz -C /tmp ./aic-setup
+sudo sh /tmp/aic-setup update --force
+```
+
+O pacote do worker que o convite entrega é o da versão do servidor: depois de atualizar, o próximo `aic-setup invite` baixa o novo. Os workers que já estão no cluster não precisam de nada. Um worker em AI Cluster OS é atualizado pela atualização assinada (`ai-cluster rollout`), não por este comando.
+
 ### Mudar um worker (AI Cluster OS) de controller
 
 Num worker que já roda o AI Cluster OS (placa ou PC dedicado) a identidade fica em `/data/worker.env`, gravada na imagem. Para apontá-lo para outro controller sem regravar a imagem, rode **no worker**, com o convite do novo controller aberto (`sudo aic-setup invite` lá):

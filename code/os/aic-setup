@@ -6,6 +6,7 @@
 #   sudo ./aic-setup gateway --server IP[:8099] [--models-dir DIR] [--yes]   # gateway noutro computador
 #   sudo ./aic-setup worker  --server IP[:8099] --code CÓDIGO [--yes]        # entra como worker
 #   sudo aic-setup invite    [--minutes 15] [--port 8099]
+#   sudo aic-setup update    [--version X.Y.Z] [--force] [--yes]       # atualiza controller/gateway deste Linux
 #   aic-setup status
 #
 # `server` instala o controller (e, com --role both, o gateway) neste Linux (systemd, ou segundo
@@ -288,6 +289,7 @@ save_release() {
     echo "VERSION=${AIC_RELEASE_VERSION:-}"
     echo "ROLE=$ROLE"
     echo "KIND=${AIC_HW_KIND:-}"
+    echo "SUMS=${AIC_RELEASE_SUMS:-}"
   } > "$CONF/release"
   chmod 644 "$CONF/release"
   echo "$LANG_AIC" > "$CONF/lang"
@@ -859,6 +861,121 @@ fetch_worker_pack() {
   mv "$t/f" "$dest"; rm -rf "$t"
 }
 
+# ---------- atualização ----------
+# Acrescenta KEY=VALOR a um arquivo de ambiente se a chave ainda não existe (config nova de uma versão nova).
+ensure_env() { # ensure_env <arquivo> <CHAVE> <VALOR>
+  grep -q "^$2=" "$1" 2>/dev/null || echo "$2=$3" >> "$1"
+}
+
+cmd_update() {
+  FORCE=0; YES=0; WANT=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) FORCE=1; shift ;;
+      --yes|-y) YES=1; shift ;;
+      --version) [ $# -ge 2 ] || die "$(t '--version pede um valor' '--version needs a value')"; WANT=$2; shift 2 ;;
+      *) die "$(t "argumento desconhecido: $1" "unknown argument: $1")" ;;
+    esac
+  done
+  need_root update
+  [ -f "$CONF/.installed" ] || die "$(t 'nada instalado aqui: use o install.sh' 'nothing installed here: use install.sh')"
+  ROLE=$(get "$CONF/release" ROLE); [ -n "$ROLE" ] || ROLE=both
+  case "$ROLE" in both|controller|gateway) ;; *) die "$(t "papel desconhecido em $CONF/release: $ROLE" "unknown role in $CONF/release: $ROLE")" ;; esac
+  BASE=$(get "$CONF/release" BASE)
+  [ -n "$BASE" ] || BASE="https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download"
+  [ -z "$WANT" ] || BASE="https://github.com/julianscunha/Real.AI.Cluster/releases/download/v$WANT"
+  case "$(uname -m)" in
+    x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
+    *) die "$(t "processador sem pacote: $(uname -m)" "no package for this processor: $(uname -m)")" ;;
+  esac
+  PROTO=""; case "$BASE" in https://*) PROTO="--proto =https --tlsv1.2" ;; esac
+  banner "$(t 'Atualização' 'Update')"
+  U=$(mktemp -d); trap 'rm -rf "$U"' EXIT
+  curl -fsSL $PROTO -o "$U/SHA256SUMS" "$BASE/SHA256SUMS" && curl -fsSL $PROTO -o "$U/VERSION" "$BASE/VERSION" \
+    || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
+  NEWV=$(cat "$U/VERSION"); OLDV=$(get "$CONF/release" VERSION)
+  NEWSUM=$(sha256sum "$U/SHA256SUMS" | cut -d' ' -f1)
+  if [ "$FORCE" != 1 ] && [ "$NEWSUM" = "$(get "$CONF/release" SUMS)" ]; then
+    printf '  %s✔%s %s\n\n' "$G" "$Z" "$(t "já está na versão mais recente (${NEWV})" "already on the latest version (${NEWV})")"
+    return 0
+  fi
+  note "$(t "Versão instalada: ${OLDV:-?}  ->  disponível: $NEWV" "Installed version: ${OLDV:-?}  ->  available: $NEWV")"
+  case "$ROLE" in
+    both) NEED="tools controller-linux-$A gateway-linux-$A"; SERVICES="controller gateway" ;;
+    controller) NEED="tools controller-linux-$A"; SERVICES="controller" ;;
+    gateway) NEED="tools gateway-linux-$A"; SERVICES="gateway" ;;
+  esac
+  if [ "$YES" != 1 ] && [ -t 0 ]; then
+    if [ "$LANG_AIC" = en ]; then
+      printf '  Update now? Workers, tokens and certificates stay. [Y/n] '; read -r a || a=n
+      case "$a" in n|N|no|No|NO) die "cancelled" ;; esac
+    else
+      printf '  Atualizar agora? Workers, tokens e certificados continuam. [S/n] '; read -r a || a=n
+      case "$a" in n|N|nao|não) die "cancelado" ;; esac
+    fi
+  fi
+  mkdir -p "$U/new"
+  for f in $NEED; do
+    curl -fL $PROTO --progress-bar -o "$U/$f.tar.gz" "$BASE/$f.tar.gz" || die "$(t "não consegui baixar $f" "could not download $f")"
+    want=$(awk -v f="$f.tar.gz" '$2==f {print $1}' "$U/SHA256SUMS")
+    [ -n "$want" ] && [ "$want" = "$(sha256sum "$U/$f.tar.gz" | cut -d' ' -f1)" ] \
+      || die "$(t "$f não confere com o SHA256SUMS (corrompido ou adulterado)" "$f does not match SHA256SUMS (corrupted or tampered)")"
+    tar -C "$U/new" -xzf "$U/$f.tar.gz"
+    printf '  %s✔%s %s\n' "$G" "$Z" "$f"
+  done
+  # Guarda os binários de agora: se o novo não subir, volta.
+  PREV="$PREFIX/bin/.prev"; rm -rf "$PREV"; mkdir -p "$PREV"
+  for b in ai-cluster-controller ai-cluster-gateway ai-cluster llama-server; do
+    [ ! -f "$PREFIX/bin/$b" ] || cp -p "$PREFIX/bin/$b" "$PREV/$b"
+  done
+  for b in ai-cluster-controller ai-cluster-gateway ai-cluster llama-server; do
+    [ ! -f "$U/new/$b" ] || { install -m 755 "$U/new/$b" "$PREFIX/bin/$b.new" && mv "$PREFIX/bin/$b.new" "$PREFIX/bin/$b"; }
+  done
+  # O próprio aic-setup: instala ao lado e troca por rename, para não alterar o arquivo que está rodando.
+  for f in aic-setup bootstrap.sh; do
+    [ ! -f "$U/new/$f" ] || { install -m 755 "$U/new/$f" "$PREFIX/$f.new" && mv "$PREFIX/$f.new" "$PREFIX/$f"; }
+  done
+  # Configuração que versões novas passaram a esperar: só entra o que ainda não existe.
+  if [ "$ROLE" != gateway ]; then
+    [ ! -f "$CONF/server-ip" ] || ensure_env "$CONF/controller.env" AI_CLUSTER_ENROLL_ADDR "$(cat "$CONF/server-ip"):$ENROLL_PORT"
+  fi
+  if [ "$ROLE" != controller ]; then
+    gw_ip=$(cat "$CONF/server-ip" 2>/dev/null); [ "$ROLE" = both ] || gw_ip=$(lan_ip)
+    [ -z "$gw_ip" ] || ensure_env "$CONF/gateway.env" AI_CLUSTER_GATEWAY_URL "http://$gw_ip:$HTTP_PORT"
+  fi
+  : > "$SETUP_LOG"; chmod 600 "$SETUP_LOG"
+  fail=0
+  for svc in $SERVICES; do
+    step "$(t "Reiniciando o $svc" "Restarting the $svc")" svc_start "$svc" || fail=1
+    [ "$svc" != controller ] || sleep 2
+  done
+  if ! wait_ready >>"$SETUP_LOG" 2>&1; then
+    warn "$(t 'a versão nova não subiu; voltando para a anterior' 'the new version did not start; going back to the previous one')"
+    for b in ai-cluster-controller ai-cluster-gateway ai-cluster llama-server; do
+      [ ! -f "$PREV/$b" ] || cp -p "$PREV/$b" "$PREFIX/bin/$b"
+    done
+    for svc in $SERVICES; do svc_start "$svc" >>"$SETUP_LOG" 2>&1 || true; done
+    die "$(t "atualização desfeita (log em $SETUP_LOG)" "update rolled back (log in $SETUP_LOG)")"
+  fi
+  sed -i "s|^VERSION=.*|VERSION=$NEWV|; /^SUMS=/d" "$CONF/release"
+  echo "SUMS=$NEWSUM" >> "$CONF/release"
+  printf '\n'
+  if [ "$LANG_AIC" = en ]; then
+    box "Updated to $NEWV" "" \
+        "Workers, tokens and certificates were kept." \
+        "Workers reconnect on their own in a few seconds." \
+        "A new invitation downloads the new worker package." \
+        "Previous binaries: $PREV"
+  else
+    box "Atualizado para $NEWV" "" \
+        "Workers, tokens e certificados continuam como estavam." \
+        "Os workers se reconectam sozinhos em alguns segundos." \
+        "Um novo convite baixa o pacote novo do worker." \
+        "Binários anteriores: $PREV"
+  fi
+  printf '\n'
+}
+
 cmd_status() {
   banner "$(t 'Estado do cluster' 'Cluster status')"
   [ -f "$CONF/cli.env" ] || die "$(t 'não instalado neste computador' 'not installed on this computer')"
@@ -872,6 +989,7 @@ case "${1:-}" in
   gateway) shift; cmd_gateway "$@" ;;
   worker) shift; cmd_worker "$@" ;;
   invite) shift; cmd_invite "$@" ;;
+  update) shift; cmd_update "$@" ;;
   status) shift; cmd_status ;;
-  *) echo "$(t 'uso: aic-setup server|gateway|worker|invite|status  (veja o cabeçalho do script)' 'usage: aic-setup server|gateway|worker|invite|status  (see the script header)')" >&2; exit 2 ;;
+  *) echo "$(t 'uso: aic-setup server|gateway|worker|invite|update|status  (veja o cabeçalho do script)' 'usage: aic-setup server|gateway|worker|invite|update|status  (see the script header)')" >&2; exit 2 ;;
 esac

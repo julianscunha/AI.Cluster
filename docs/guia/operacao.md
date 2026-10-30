@@ -142,6 +142,8 @@ Limites:
 
 ## Atualização
 
+O controller e o gateway de um Linux comum se atualizam com `sudo aic-setup update` (veja o [[instalacao]]); o que segue é a atualização assinada dos nós com o AI Cluster OS.
+
 ### Worker em Linux com systemd
 
 Rode `os/bootstrap.sh` de novo com o binário novo (veja [[instalacao]]). O binário anterior fica em `bin/ai-cluster-worker.prev`. A versão nova só fica se o worker se registrar dentro de `--health-timeout` segundos (90 por padrão). Senão o anterior volta e o script sai com código 3. Só há uma versão de volta.
