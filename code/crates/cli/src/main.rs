@@ -53,10 +53,13 @@ enum Command {
     Nodes,
     /// A estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel.
     Topology,
-    /// Um nó só, com a capability e a saúde completas (B4).
+    /// Um nó só, com a capability e a saúde completas (B4): `node <id>` ou `node show <id>`.
+    #[command(args_conflicts_with_subcommands = true)]
     Node {
+        /// Id do nó (atalho de `node show <id>`), como `nodes` o imprime.
+        id: Option<String>,
         #[command(subcommand)]
-        action: NodeAction,
+        action: Option<NodeAction>,
     },
     /// Resumo do cluster: nós por estado, fila de trabalho e tempos das unidades concluídas.
     Metrics,
@@ -312,8 +315,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
         Command::Topology => print_topology(&cli.controller).await?,
-        Command::Node { action } => match action {
-            NodeAction::Show { id } => print_node(&cli.controller, &id).await?,
+        Command::Node { id, action } => match (action, id) {
+            (Some(NodeAction::Show { id }), _) | (None, Some(id)) => {
+                print_node(&cli.controller, &id).await?
+            }
+            (None, None) => {
+                eprintln!(
+                    "erro: informe o id do nó: ai-cluster node <id> (os ids estão em `ai-cluster nodes`)"
+                );
+                std::process::exit(2);
+            }
         },
         Command::Metrics => print_metrics(&cli.controller).await?,
         Command::Model { action } => match action {

@@ -65,9 +65,22 @@ fn values(err: &clap::Error, kind: ContextKind) -> Vec<String> {
 
 /// As palavras fixas do clap que sobram no texto de uso.
 fn words(text: &str) -> String {
-    text.replace("[OPTIONS]", "[OPÇÕES]")
+    // `--controller` é global, com padrão e variável de ambiente: o clap o põe na dica de uso como se
+    // fosse obrigatório, e não é. Só as linhas de uso mudam; a lista de opções fica como está.
+    text.lines()
+        .map(|line| {
+            if line.trim_start().starts_with("--") {
+                line.to_string()
+            } else {
+                line.replace("--controller <CONTROLLER> ", "")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("[OPTIONS]", "[OPÇÕES]")
         .replace("<COMMAND>", "<COMANDO>")
         .replace("Usage:", "Uso:")
+        + if text.ends_with('\n') { "\n" } else { "" }
 }
 
 /// Mostra ajuda (saída 0) ou erro de uso (saída 2) em português e encerra.
@@ -227,5 +240,13 @@ mod tests {
             "{help}"
         );
         assert!(!help.contains("Usage") && !help.contains("Print"), "{help}");
+    }
+
+    #[test]
+    fn a_dica_de_uso_nao_mostra_o_controller_como_obrigatorio() {
+        assert_eq!(
+            super::words("Usage: ai-cluster node show --controller <CONTROLLER> <ID>"),
+            "Uso: ai-cluster node show <ID>"
+        );
     }
 }

@@ -12,7 +12,7 @@ comandos:
   status            resumo do no: papel, estado do worker, controller, registro, versao e slot
   role [--short]    o papel do no no cluster (so a configuracao local)
   version           versao do sistema, placa e slot em uso
-  logs [-f]         ultimos registros do worker (-f acompanha)
+  logs [-f] [-n N]  registros do worker e do tunel do modelo (-f acompanha, -n N mostra N linhas)
   update            estado da ultima atualizacao (somente leitura)
   change            muda este no para outro controller (pelo convite dele, sem regravar a imagem)
   passwd [--remove] define ou remove a senha do console do monitor (root)
@@ -44,11 +44,23 @@ version)
 	echo "AI Cluster OS $(cat /etc/aic-release 2>/dev/null || echo dev)  placa ${board:-?}  slot ${slot:-?}"
 	;;
 logs)
-	case "${1:-}" in
-	-h | --help) echo "uso: aic logs [-f]   (registros do worker; -f acompanha)"; exit 0 ;;
-	-f) exec tail -f /var/log/ai-cluster-worker.log ;;
-	*) exec tail -n 50 /var/log/ai-cluster-worker.log ;;
-	esac
+	n=50; follow=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		-h | --help)
+			echo "uso: aic logs [-f] [-n N]   (worker e tunel do modelo; -f acompanha, -n N mostra N linhas)"
+			echo "linhas 'tunel HH:MM:SS' (UTC) mostram o gateway falando com este no; as do rpc-server do llama.cpp"
+			echo "chegam em blocos (ele guarda a saida em buffer), entao podem atrasar"
+			exit 0 ;;
+		-f) follow=1; shift ;;
+		-n) [ $# -ge 2 ] || { echo "aic logs: -n pede um numero" >&2; exit 2; }
+			case "$2" in '' | *[!0-9]*) echo "aic logs: -n pede um numero" >&2; exit 2 ;; esac
+			n=$2; shift 2 ;;
+		*) echo "aic logs: opcao desconhecida: $1" >&2; exit 2 ;;
+		esac
+	done
+	if [ "$follow" = 1 ]; then exec tail -n "$n" -f /var/log/ai-cluster-worker.log; fi
+	exec tail -n "$n" /var/log/ai-cluster-worker.log
 	;;
 update)
 	case "${1:-}" in -h | --help) echo "uso: aic update   (estado da ultima atualizacao; somente leitura)"; exit 0 ;; esac

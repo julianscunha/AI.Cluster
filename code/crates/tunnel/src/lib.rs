@@ -10,7 +10,10 @@
 //! Preferência por ChaCha20-Poly1305: o Cortex-A7 não tem instruções de AES e gastaria a CPU da
 //! inferência na criptografia. `TCP_NODELAY` nas duas pontas: o RPC troca muitas mensagens pequenas.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use rustls::client::verify_server_name;
@@ -22,7 +25,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use tokio::io::copy_bidirectional;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, copy_bidirectional};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -169,6 +172,103 @@ fn nodelay(stream: &TcpStream) {
     let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&keepalive);
 }
 
+/// Tráfego do servidor do túnel, para o log: bytes que chegaram do gateway (`IN`) e que voltaram a ele
+/// (`OUT`), e as sessões abertas agora. O `rpc-server` do llama.cpp só escreve no log em blocos, então é
+/// por aqui que se vê, com horário, que o gateway está falando com este nó.
+static BYTES_IN: AtomicU64 = AtomicU64::new(0);
+static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
+static SESSIONS: AtomicUsize = AtomicUsize::new(0);
+const REPORT_EVERY: Duration = Duration::from_secs(10);
+
+/// Hora do dia em UTC (`HH:MM:SS`), para as linhas de log.
+fn clock() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600 % 24,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+fn kib(bytes: u64) -> String {
+    if bytes >= 1 << 20 {
+        format!("{:.1} MiB", bytes as f64 / (1u64 << 20) as f64)
+    } else {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    }
+}
+
+/// Conta os bytes que passam: o que se lê vai para `read`, o que se escreve para `written`.
+struct Counted<T> {
+    inner: T,
+    read: &'static AtomicU64,
+    written: &'static AtomicU64,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for Counted<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let Poll::Ready(Ok(())) = &poll {
+            self.read
+                .fetch_add((buf.filled().len() - before) as u64, Ordering::Relaxed);
+        }
+        poll
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for Counted<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let poll = Pin::new(&mut self.inner).poll_write(cx, data);
+        if let Poll::Ready(Ok(n)) = &poll {
+            self.written.fetch_add(*n as u64, Ordering::Relaxed);
+        }
+        poll
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// A cada `REPORT_EVERY`, uma linha se houve tráfego: nada de ruído com o modelo parado.
+async fn report_traffic() {
+    let mut last = (0u64, 0u64);
+    loop {
+        tokio::time::sleep(REPORT_EVERY).await;
+        let now = (
+            BYTES_IN.load(Ordering::Relaxed),
+            BYTES_OUT.load(Ordering::Relaxed),
+        );
+        if now != last {
+            eprintln!(
+                "túnel {}: gateway enviou {} e recebeu {} em {}s (sessões abertas: {})",
+                clock(),
+                kib(now.0 - last.0),
+                kib(now.1 - last.1),
+                REPORT_EVERY.as_secs(),
+                SESSIONS.load(Ordering::Relaxed)
+            );
+            last = now;
+        }
+    }
+}
+
 /// Servidor: aceita TLS em `listener` e repassa cada conexão a `upstream` (o `rpc-server` local).
 /// Não retorna.
 pub async fn serve(
@@ -179,8 +279,9 @@ pub async fn serve(
     let acceptor = TlsAcceptor::from(config);
     let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     let handshakes = Arc::new(tokio::sync::Semaphore::new(MAX_HANDSHAKES));
+    tokio::spawn(report_traffic());
     loop {
-        let (tcp, _) = match listener.accept().await {
+        let (tcp, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(error) => {
                 eprintln!("túnel: aceitar conexão falhou: {error}");
@@ -203,13 +304,27 @@ pub async fn serve(
             let Ok(_permit) = open.try_acquire_owned() else {
                 return;
             };
-            let Ok(Ok(mut local)) =
-                tokio::time::timeout(SETUP, TcpStream::connect(&upstream)).await
+            let Ok(Ok(local)) = tokio::time::timeout(SETUP, TcpStream::connect(&upstream)).await
             else {
                 return;
             };
             nodelay(&local);
+            let mut local = Counted {
+                inner: local,
+                read: &BYTES_OUT,
+                written: &BYTES_IN,
+            };
+            let started = std::time::Instant::now();
+            SESSIONS.fetch_add(1, Ordering::Relaxed);
+            eprintln!("túnel {}: gateway {} conectou", clock(), peer.ip());
             let _ = copy_bidirectional(&mut tls, &mut local).await;
+            SESSIONS.fetch_sub(1, Ordering::Relaxed);
+            eprintln!(
+                "túnel {}: gateway {} desconectou depois de {}s",
+                clock(),
+                peer.ip(),
+                started.elapsed().as_secs()
+            );
         });
     }
 }
@@ -381,7 +496,16 @@ mod tests {
         let pki = pki("ok");
         let server = start_server(&pki, echo().await).await;
         let client = start_client(&pki, server, "gateway").await;
+        let (before_in, before_out) = (
+            BYTES_IN.load(Ordering::Relaxed),
+            BYTES_OUT.load(Ordering::Relaxed),
+        );
         assert_eq!(roundtrip(client).await.as_deref(), Some(&b"ola rpc"[..]));
+        // O eco passou 7 bytes para dentro e 7 de volta: o log do nó vê o tráfego.
+        assert!(BYTES_IN.load(Ordering::Relaxed) >= before_in + 7);
+        assert!(BYTES_OUT.load(Ordering::Relaxed) >= before_out + 7);
+        assert_eq!(clock().len(), 8);
+        assert_eq!(kib(2048), "2.0 KiB");
     }
 
     #[tokio::test]
