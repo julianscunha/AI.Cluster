@@ -50,7 +50,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Item | O que falta | Dependência |
 |---|---|---|
 | Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
-| Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; mais de 64 operações em voo por nó dão 503. | código |
+| Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; o teto de operações em voo por nó (64, `AI_CLUSTER_SHARD_MAX_PENDING`) dá 503 ao passar. | código |
 | Engine fora do scheduler | O canal de fatias ainda passa pelo controller. Tirá-lo exige porta de entrada no worker (revisa o [[adr-009-canal-residente-de-fatias]]) para um motor que só serve à paridade e à pesquisa; reabrir se o motor próprio voltar a ser caminho de uso. | decisão |
 
 ## F09 e F10 — Transporte e storage
@@ -69,7 +69,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Item | O que falta | Dependência |
 |---|---|---|
 | Estados, idempotência, orçamento | Não existem. | código |
-| Equidade e backpressure | Hoje há tetos fixos de admissão. | código |
+| Equidade e backpressure | Os tetos de admissão são configuráveis (`AI_CLUSTER_MAX_IN_FLIGHT`, `AI_CLUSTER_QUEUE_MAX`, `AI_CLUSTER_QUEUE_WAIT_SECS`), mas fixos por processo e iguais para todos os tenants. Falta equidade entre tenants sob carga. | código |
 | Deadlines | Os do `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`) e do gateway (`AI_CLUSTER_GATEWAY_DEADLINE_MS`) são configuráveis, mas fixos por processo. Falta derivar do tempo medido de cada nó. | código |
 | Entrada arbitrária no grafo | Hoje só o grafo sintético e os modelos fixos. | código |
 | Fora do gateway | O Request Manager ainda mora no gateway. | código, decisão |

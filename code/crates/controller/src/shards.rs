@@ -14,8 +14,15 @@ use tonic::Status;
 
 /// Frames queued toward one worker. Past it `submit` fails at once instead of waiting.
 const CHANNEL_DEPTH: usize = 64;
-/// Operations in flight to one worker.
-const MAX_PENDING_PER_NODE: usize = 64;
+/// Operações em voo para um worker (`AI_CLUSTER_SHARD_MAX_PENDING`, 1 a 1024, padrão 64): acima
+/// disso `ShardMatmul` responde 503 (`ResourceExhausted`).
+fn max_pending_per_node() -> usize {
+    std::env::var("AI_CLUSTER_SHARD_MAX_PENDING")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(64)
+        .clamp(1, 1024)
+}
 
 #[derive(Debug)]
 struct Session {
@@ -91,7 +98,7 @@ impl ShardHub {
                 "nó {node} sem canal de fatias aberto"
             )));
         };
-        if state.pending.values().filter(|p| p.node == node).count() >= MAX_PENDING_PER_NODE {
+        if state.pending.values().filter(|p| p.node == node).count() >= max_pending_per_node() {
             return Err(Status::resource_exhausted(
                 "operações demais em voo neste nó",
             ));

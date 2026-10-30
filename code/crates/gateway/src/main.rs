@@ -70,8 +70,15 @@ fn parse_deadline(value: Option<String>) -> Duration {
     Duration::from_millis(ms.clamp(1_000, 3_600_000))
 }
 const POLL: Duration = Duration::from_millis(50);
-/// Requests running at once. Past it the gateway answers 429 instead of queueing without bound.
-const MAX_IN_FLIGHT: usize = 4;
+/// Requests do motor próprio rodando ao mesmo tempo (`AI_CLUSTER_MAX_IN_FLIGHT`, 1 a 64, padrão 4).
+/// Acima disso o gateway responde 429 em vez de enfileirar sem limite.
+fn max_in_flight() -> usize {
+    std::env::var("AI_CLUSTER_MAX_IN_FLIGHT")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(4)
+        .clamp(1, 64)
+}
 
 const DEFAULT_NEW_TOKENS: u32 = 16;
 const MAX_NEW_TOKENS: u32 = 64;
@@ -1942,7 +1949,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client: operator_client,
         tenants,
         cache: response_cache,
-        slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
+        slots: Arc::new(Semaphore::new(max_in_flight())),
         llms: Arc::new(llms),
         llama,
         llama_admission,

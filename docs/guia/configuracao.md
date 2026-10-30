@@ -43,6 +43,8 @@ Convenções:
 | `AI_CLUSTER_PLAN_STABLE_MS` | `30000` | Quanto a lista de workers com RPC precisa ficar igual antes de o plano do modelo mudar (e a geração subir). |
 | `AI_CLUSTER_ROLLOUT_WAVE` | `0` (todos) | Quantos nós atualizam ao mesmo tempo depois do canário. |
 | `AI_CLUSTER_PLACEMENT` | ligado | `off`, `0` ou `false` desliga o placement por custo e despacha na ordem de chegada. Serve para comparação. |
+| `AI_CLUSTER_MAX_IN_FLIGHT` | `4` | Requisições do motor próprio rodando ao mesmo tempo no gateway (1 a 64); acima disso, `429`. |
+| `AI_CLUSTER_SHARD_MAX_PENDING` | `64` | Operações de `ShardMatmul` em voo para um worker no controller (1 a 1024); acima disso, `503`. |
 | `AI_CLUSTER_MAX_GATEWAYS_PER_HOST` | `16` | Gateways vivos que o controller aceita de um mesmo endereço IP (de 1 a 64). Atrás de NAT todos parecem um endereço só: quem tem mais gateways ali sobe o limite. |
 | `AI_CLUSTER_GATEWAY_DEADLINE_MS` | `30000` | Prazo de uma requisição inteira no gateway, de 1000 a 3600000. Estourado, a resposta é `504 TIMEOUT`. |
 | `AI_CLUSTER_SHARD_TIMEOUT_MS` | `8000` | Prazo de uma chamada `ShardMatmul` (motor próprio), de 1000 a 300000. Nós lentos pedem mais. |
