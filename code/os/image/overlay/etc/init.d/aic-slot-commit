@@ -44,6 +44,7 @@ start() {
 		# Estado do A/B: camada da plataforma (usr/lib/aic/ab.sh)
 		. /usr/lib/aic/ab.sh
 		state_confirm "$slot" || exit 1
+		update_record "$slot"
 		logger -t aic-slot-commit "slot $slot confirmado"
 	) &
 }

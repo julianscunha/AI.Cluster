@@ -142,7 +142,7 @@ Limites:
 
 ## Atualização
 
-`aic update status` mostra a versão instalada e a disponível (no AI Cluster OS, o resultado da última atualização assinada). `aic update apply` atualiza este computador; `--version`, `--force` e `--yes` funcionam como no instalador. Os comandos de instalação estão em [[instalacao]].
+`aic update status` mostra a versão instalada e a disponível (no AI Cluster OS, a última atualização assinada que trouxe a versão atual, registrada quando o slot é confirmado, e a última recusa, se houve). `aic update apply` atualiza este computador; `--version`, `--force` e `--yes` funcionam como no instalador. Os comandos de instalação estão em [[instalacao]].
 
 ### Atualização de cada componente
 

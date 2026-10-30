@@ -87,6 +87,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-s4-tls.sh` | gRPC com TLS e CA; `http://` e CA errada são recusados; sem certificado, só com `INSECURE`. |
 | `phase-s5-persist.sh` | Aprovação sobrevive a reinício de worker e de controller; `revoke` derruba o worker revogado. |
 | `phase-u-wait.sh` | Instalação com aprovação (ADR-023): `aic-wait` aparece em `aic cluster install list`, disco inexistente é recusado, o aparelho aprovado recebe o token e o disco, o MAC aprovado não é tomado e `aic cluster install reject` remove da lista. Controller, `aic-wait` e CLI no mesmo contêiner, sem TLS. |
+| `phase-j-update-status.sh` | `aic update status` no AI Cluster OS (shell da imagem, num Alpine): `update_record` só grava quando a versão que o worker tentou é a que roda, grava uma vez por versão, e o status mostra a última atualização e a última recusa. |
 | `phase-t-mtls.sh` | Com CA de cliente, só entra quem tem certificado dessa CA; sem certificado, com outra CA ou com meio par, é recusado. |
 | `phase-1-leave.sh` | Saída por SIGTERM: o sobrevivente termina cada unidade, sem nada encalhado. |
 | `phase-2-failure.sh` | Worker morto com unidade em voo: a unidade volta à fila e o grafo termina. |

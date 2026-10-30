@@ -11,3 +11,16 @@ state_set() { printf 'aic_slot=%s\naic_try=%s\naic_tries=\naic_boots=\n' "$1" "$
 cur_slot() { sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline | grep .; }
 # no armv7 o commit sempre regrava (zera também a contagem de boots da recuperação por rede)
 state_confirm() { state_set "$1" ""; }
+
+# Registra a atualização que trouxe o slot confirmado, para o `aic update status` mostrar. O worker grava a
+# versão que tentou em update-tried; se ela é a que roda agora, a atualização deu certo. Uma vez por versão:
+# um boot comum não reescreve a data.
+update_record() { # update_record <slot>
+	_dir=${AIC_STATE_DIR:-/data/state}
+	_tried=$(cat "$_dir/update-tried" 2>/dev/null)
+	_rel=$(cat "${AIC_RELEASE_FILE:-/etc/aic-release}" 2>/dev/null)
+	[ -n "$_tried" ] && [ "$_tried" = "$_rel" ] || return 0
+	grep -q "versao=$_rel " "$_dir/update-last" 2>/dev/null && return 0
+	printf 'ok versao=%s slot=%s em=%s
+' "$_rel" "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_dir/update-last"
+}

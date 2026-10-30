@@ -35,12 +35,17 @@ mostra_logs() {
 atualizacao_status() {
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
 	echo "versao $VER  slot ${slot:-?}"
-	if [ -r /data/state/update-result ]; then
-		echo "ultimo resultado:"
-		sed 's/^/  /' /data/state/update-result
-	else
-		echo "sem registro de atualizacao neste no"
+	registro=0
+	if [ -r /data/state/update-last ]; then
+		echo "ultima atualizacao: $(cat /data/state/update-last)"
+		registro=1
 	fi
+	if [ -r /data/state/update-result ]; then
+		echo "ultima recusa:"
+		sed 's/^/  /' /data/state/update-result
+		registro=1
+	fi
+	[ "$registro" = 1 ] || echo "sem registro de atualizacao neste no"
 }
 
 sub=${1:-}; verbo=${2:-}

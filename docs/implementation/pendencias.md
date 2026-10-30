@@ -130,7 +130,6 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | `aic update apply` no AI Cluster OS | Só explica que a atualização é empurrada pelo controller e pede ao `aic-updater` que cheque. Falta uma checagem local sob demanda. | código |
 | Rollback do worker Linux | O `aic update apply` guarda o binário anterior em `/opt/ai-cluster/bin/.prev`, mas o caminho de volta não foi testado. | código |
 | Imagem x86 do SO com o `aic` | O rootfs ARM com o `aic` foi construído, assinado e empurrado pelo controller até o Orange Pi (release 12.0, MEDIDA confere, A/B sem rollback). A imagem x86 (UEFI) não foi reconstruída com o `aic` nem testada em hardware. | código, hardware |
-| `aic update status` após o rollout | No Pi atualizado para a 12.0 pelo rollout ele diz “sem registro de atualização”: o nó novo não guarda o resultado da atualização que o trouxe. | código |
 | `aic worker role` repete o `status` | Os dois mostram o mesmo bloco; `role` devia ser só o papel (o `--short` já é). | código |
 | Caixa do convite desalinhada | As linhas longas (`curl …/join-CÓDIGO`) passam da borda direita da caixa. | código |
 | Ajuda do clap em inglês | A ajuda do `aic` ainda mostra `[possible values: pt, en]` em inglês, na opção `--lang`. | código |
