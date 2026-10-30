@@ -11,7 +11,22 @@ fn pasta(nome: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("aic-teste-{}-{nome}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
+    // Aberta para o `nobody` que roda o `aic` quando estes testes são root (ver `aic`).
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
     dir
+}
+
+/// Como root o `aic` ignora `AIC_LIBEXEC` (quem roda `sudo -E` não escolhe o instalador). Então o
+/// processo filho roda como `nobody`, e o contrato é testado do mesmo jeito.
+fn roda_sem_root(cmd: &mut Command) {
+    let raiz = fs::read_to_string("/proc/self/status").is_ok_and(|s| {
+        s.lines()
+            .any(|l| l.starts_with("Uid:") && l.split_whitespace().nth(1) == Some("0"))
+    });
+    if raiz {
+        use std::os::unix::process::CommandExt;
+        cmd.uid(65534).gid(65534);
+    }
 }
 
 /// Grava um `setup` executável em `dir` com o corpo de shell dado.
@@ -22,11 +37,10 @@ fn instala_setup(dir: &Path, corpo: &str) {
 }
 
 fn aic(libexec: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_aic"))
-        .args(args)
-        .env("AIC_LIBEXEC", libexec)
-        .output()
-        .unwrap()
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aic"));
+    cmd.args(args).env("AIC_LIBEXEC", libexec);
+    roda_sem_root(&mut cmd);
+    cmd.output().unwrap()
 }
 
 #[test]
@@ -111,26 +125,8 @@ fn cada_comando_delegado_repassa_a_linha_ao_setup() {
             &["worker", "role", "--short"],
         ),
         (
-            &[
-                "worker",
-                "change",
-                "--server",
-                "10.0.0.5",
-                "--code",
-                "9",
-                "--controller",
-                "http://10.0.0.5:50051",
-            ],
-            &[
-                "worker",
-                "change",
-                "--server",
-                "10.0.0.5",
-                "--code",
-                "9",
-                "--controller",
-                "http://10.0.0.5:50051",
-            ],
+            &["worker", "change", "--server", "10.0.0.5", "--code", "9"],
+            &["worker", "change", "--server", "10.0.0.5", "--code", "9"],
         ),
         (
             &[

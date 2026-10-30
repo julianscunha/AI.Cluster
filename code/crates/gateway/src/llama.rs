@@ -464,6 +464,7 @@ impl Llama {
             started,
             first: None,
             ok: parts.status.is_success(),
+            done: false,
             streamed: streaming,
             _permit: permit,
         };
@@ -519,10 +520,13 @@ struct Tap {
     tenant: Arc<Tenant>,
     charged: bool,
     /// Quando o gateway recebeu o pedido, e quando saiu o primeiro pedaço da resposta: as medidas do
-    /// painel (TTFT, ritmo de geração) de uma requisição que só passa por aqui.
+    /// painel (TTFT, ritmo de geração) de uma requisição que só passa por aqui. `started` inclui as
+    /// retentativas e a espera do CRASH_GRACE: o TTFT de quem esperou o modelo reiniciar.
     started: Instant,
     first: Option<Instant>,
     ok: bool,
+    /// Chegou ao fim do corpo. Quem desiste antes (ou recebe erro) não termina a geração.
+    done: bool,
     streamed: bool,
     _permit: Permit,
 }
@@ -537,15 +541,25 @@ impl Tap {
             return;
         }
         self.charged = true;
+        // Sem o `usage` (o stream foi cortado): a mesma estimativa da cota, e o prompt fica 0.
+        let usage = total_tokens(&self.tail);
+        let (prompt, generated) = if usage.is_some() {
+            (
+                usage_field(&self.tail, "prompt_tokens").unwrap_or(0),
+                usage_field(&self.tail, "completion_tokens").unwrap_or(0),
+            )
+        } else {
+            (0, self.seen.div_ceil(4))
+        };
         crate::metrics::record_proxied(
-            self.ok,
-            usage_field(&self.tail, "prompt_tokens").unwrap_or(0),
-            usage_field(&self.tail, "completion_tokens").unwrap_or(0),
+            self.ok && self.done,
+            prompt,
+            generated,
             self.first.map(|first| first.duration_since(self.started)),
             self.started.elapsed(),
             self.streamed,
         );
-        let tokens = total_tokens(&self.tail).unwrap_or(self.seen.div_ceil(4));
+        let tokens = usage.unwrap_or(self.seen.div_ceil(4));
         if tokens > 0 {
             self.tenant.charge(tokens);
         }
@@ -574,7 +588,12 @@ impl Stream for Tap {
                 this.seen += chunk.len() as u64;
                 Poll::Ready(Some(Ok(chunk)))
             }
+            Poll::Ready(Some(Err(error))) => {
+                this.ok = false;
+                Poll::Ready(Some(Err(error)))
+            }
             Poll::Ready(None) => {
+                this.done = true;
                 this.charge();
                 Poll::Ready(None)
             }
@@ -1233,35 +1252,206 @@ data: [DONE]
 
     #[tokio::test]
     async fn a_client_that_leaves_early_still_pays_an_estimate() {
-        use crate::request_manager::{Admission, Class};
-        let tenant = Arc::new(Tenant::new("t", "k"));
-        let admission = Admission::new(1, Duration::from_secs(1));
-        let permit = admission.acquire(Class::Normal).await.unwrap();
+        let _g = crate::metrics::TEST_LOCK.lock().await;
         let chunks: Vec<Result<Bytes, axum::Error>> = vec![
             Ok(Bytes::from(vec![b'x'; 400])),
             Ok(Bytes::from(vec![b'y'; 400])),
         ];
-        let mut tap = Tap {
+        let (mut tap, tenant) = tap_with(chunks, true, true, ms_of(0), ms_of(0)).await;
+        // Lê só o primeiro pedaço e desiste.
+        assert!(poll_once(&mut tap).await.is_some());
+        drop(tap);
+        assert_eq!(tenant.charged_total(), 100, "400 bytes ≈ 100 tokens");
+    }
+
+    /// Um `Tap` sobre pedaços prontos, com o relógio fixado: `started` fica `total` no passado e o
+    /// primeiro pedaço sai `ttft` depois dele, então as medidas do painel têm tamanho conhecido.
+    async fn tap_with(
+        chunks: Vec<Result<Bytes, axum::Error>>,
+        ok: bool,
+        streamed: bool,
+        ttft: Duration,
+        total: Duration,
+    ) -> (Tap, Arc<Tenant>) {
+        use crate::request_manager::{Admission, Class};
+        let tenant = Arc::new(Tenant::new("t", "k"));
+        let admission = Admission::new(1, Duration::from_secs(1));
+        let permit = admission.acquire(Class::Normal).await.unwrap();
+        let started = Instant::now() - total;
+        let tap = Tap {
             inner: Box::pin(futures_core_stream(chunks)),
             tail: Vec::new(),
             seen: 0,
             tenant: tenant.clone(),
             charged: false,
-            started: Instant::now(),
-            first: None,
-            ok: true,
-            streamed: true,
+            started,
+            first: (!ttft.is_zero()).then(|| started + ttft),
+            ok,
+            done: false,
+            streamed,
             _permit: permit,
         };
-        // Lê só o primeiro pedaço e desiste.
-        let first = std::future::poll_fn(|cx| Pin::new(&mut tap).poll_next(cx)).await;
-        assert!(first.is_some());
+        (tap, tenant)
+    }
+
+    fn ms_of(millis: u64) -> Duration {
+        Duration::from_millis(millis)
+    }
+
+    async fn poll_once(tap: &mut Tap) -> Option<Result<Bytes, axum::Error>> {
+        std::future::poll_fn(|cx| Pin::new(&mut *tap).poll_next(cx)).await
+    }
+
+    async fn drain(mut tap: Tap) {
+        while poll_once(&mut tap).await.is_some() {}
+    }
+
+    fn body_with_usage(prompt: u64, completion: u64) -> Bytes {
+        Bytes::from(format!(
+            "data: {{\"usage\":{{\"prompt_tokens\":{prompt},\"completion_tokens\":{completion},\"total_tokens\":{}}}}}\n\n",
+            prompt + completion
+        ))
+    }
+
+    #[tokio::test]
+    async fn resposta_sem_stream_nao_entra_no_ttft() {
+        let _g = crate::metrics::TEST_LOCK.lock().await;
+        let before = crate::metrics::counts();
+        let body = vec![Ok(body_with_usage(3, 5))];
+        let (tap, _) = tap_with(body, true, false, ms_of(200), ms_of(900)).await;
+        drain(tap).await;
+        let after = crate::metrics::counts();
+        assert_eq!(after.0 - before.0, 1, "a requisição conta");
+        assert_eq!(after.3 - before.3, 5, "os tokens do usage contam");
+        assert_eq!(
+            after.4 - before.4,
+            0,
+            "sem stream o primeiro pedaço é o fim: sem TTFT"
+        );
+        assert_eq!(after.5 - before.5, 0);
+    }
+
+    #[tokio::test]
+    async fn erro_nao_entra_no_ttft_nem_no_ritmo() {
+        let _g = crate::metrics::TEST_LOCK.lock().await;
+        let before = crate::metrics::counts();
+        let (tap, _) = tap_with(
+            vec![Ok(body_with_usage(3, 5))],
+            false,
+            true,
+            ms_of(200),
+            ms_of(900),
+        )
+        .await;
+        drain(tap).await;
+        let after = crate::metrics::counts();
+        assert_eq!(after.1 - before.1, 1, "status de erro é falha");
+        assert_eq!(after.4 - before.4, 0);
+        assert_eq!(after.5 - before.5, 0);
+    }
+
+    #[tokio::test]
+    async fn ritmo_so_com_ao_menos_50_ms_de_geracao() {
+        let _g = crate::metrics::TEST_LOCK.lock().await;
+        let before = crate::metrics::counts();
+        // 80 ms de TTFT e 100 ms no total: 20 ms de geração, pouco demais para uma taxa.
+        let (tap, _) = tap_with(
+            vec![Ok(body_with_usage(3, 5))],
+            true,
+            true,
+            ms_of(80),
+            ms_of(100),
+        )
+        .await;
+        drain(tap).await;
+        let short = crate::metrics::counts();
+        assert_eq!(short.4 - before.4, 1, "o TTFT entra");
+        assert_eq!(short.5 - before.5, 0, "20 ms não geram taxa");
+        // 10 ms de TTFT e 2 s no total: a taxa entra.
+        let (tap, _) = tap_with(
+            vec![Ok(body_with_usage(3, 5))],
+            true,
+            true,
+            ms_of(10),
+            ms_of(2_000),
+        )
+        .await;
+        drain(tap).await;
+        let long = crate::metrics::counts();
+        assert_eq!(long.5 - short.5, 1);
+    }
+
+    #[tokio::test]
+    async fn ok_so_fica_verdadeiro_com_o_fim_do_stream() {
+        let _g = crate::metrics::TEST_LOCK.lock().await;
+        // Erro no meio do corpo: falha.
+        let before = crate::metrics::counts();
+        let chunks = vec![
+            Ok(Bytes::from(vec![b'x'; 40])),
+            Err(axum::Error::new(std::io::Error::other("corte"))),
+        ];
+        let (tap, _) = tap_with(chunks, true, true, ms_of(0), ms_of(0)).await;
+        drain(tap).await;
+        let after = crate::metrics::counts();
+        assert_eq!(after.0 - before.0, 1);
+        assert_eq!(after.1 - before.1, 1, "erro no corpo é falha");
+
+        // Cliente que desiste antes do fim: falha, mesmo com status 200.
+        let (mut tap, _) = tap_with(
+            vec![Ok(body_with_usage(3, 5))],
+            true,
+            true,
+            ms_of(0),
+            ms_of(0),
+        )
+        .await;
+        assert!(poll_once(&mut tap).await.is_some());
         drop(tap);
-        assert_eq!(tenant.charged_total(), 100, "400 bytes ≈ 100 tokens");
+        let desistiu = crate::metrics::counts();
+        assert_eq!(desistiu.1 - after.1, 1, "desistir no meio conta como falha");
+
+        // Fim limpo: não é falha.
+        let (tap, _) = tap_with(
+            vec![Ok(body_with_usage(3, 5))],
+            true,
+            true,
+            ms_of(0),
+            ms_of(0),
+        )
+        .await;
+        drain(tap).await;
+        assert_eq!(crate::metrics::counts().1 - desistiu.1, 0);
+    }
+
+    #[tokio::test]
+    async fn stream_cortado_sem_usage_estima_os_tokens_como_a_cota() {
+        let _g = crate::metrics::TEST_LOCK.lock().await;
+        let before = crate::metrics::counts();
+        let chunks: Vec<Result<Bytes, axum::Error>> = vec![
+            Ok(Bytes::from(vec![b'x'; 400])),
+            Ok(Bytes::from(vec![b'y'; 400])),
+        ];
+        let (mut tap, tenant) = tap_with(chunks, true, true, ms_of(0), ms_of(0)).await;
+        poll_once(&mut tap).await;
+        poll_once(&mut tap).await;
+        drop(tap);
+        let after = crate::metrics::counts();
+        assert_eq!(
+            after.3 - before.3,
+            200,
+            "800 bytes vistos ≈ 200 tokens gerados"
+        );
+        assert_eq!(after.2 - before.2, 0, "sem usage o prompt fica 0");
+        assert_eq!(
+            tenant.charged_total(),
+            200,
+            "a cota cobra a mesma estimativa"
+        );
     }
 
     #[test]
     fn o_repasse_le_os_tokens_do_usage_e_entra_nas_medidas_do_painel() {
+        let _g = crate::metrics::TEST_LOCK.blocking_lock();
         let fim =
             br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}"#;
         assert_eq!(usage_field(fim, "prompt_tokens"), Some(12));

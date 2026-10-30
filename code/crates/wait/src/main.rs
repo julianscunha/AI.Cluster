@@ -89,6 +89,30 @@ fn connect(url: &str) -> Result<EnrollmentClient<Channel>, Box<dyn std::error::E
     Ok(EnrollmentClient::new(endpoint.connect_lazy()))
 }
 
+/// O token é segredo: o arquivo nasce 0600 (no unix) e o conteúdo não passa por aqui em claro.
+fn write_install(path: &str, token: &str, disk: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    writeln!(file, "{{\"token\":\"{token}\",\"disk\":\"{disk}\"}}")
+}
+
+/// Motivo de uma falha do controller, em português. Porta fechada pede ação do operador, não espera.
+fn failure_text(status: &tonic::Status) -> String {
+    if status.code() == tonic::Code::Unavailable && status.message().contains("instalação fechada")
+    {
+        "Instalação fechada: o operador precisa abrir a porta com `aic cluster install open`".into()
+    } else {
+        format!("Sem resposta do controller: {}", status.message())
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -120,13 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if reply.approved && !reply.install_token.is_empty() {
                     let out = std::env::var("AIC_INSTALL_OUT")
                         .unwrap_or_else(|_| "/run/aic-install.json".into());
-                    std::fs::write(
-                        &out,
-                        format!(
-                            "{{\"token\":\"{}\",\"disk\":\"{}\"}}\n",
-                            reply.install_token, reply.disk
-                        ),
-                    )?;
+                    write_install(&out, &reply.install_token, &reply.disk)?;
                     println!("\n  APROVADO. Disco a apagar: {}.", reply.disk);
                     return Ok(());
                 }
@@ -140,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 u64::from(reply.retry_after_secs.max(1))
             }
             Err(error) => {
-                let message = format!("Sem resposta do controller: {}", error.message());
+                let message = failure_text(&error);
                 println!("{message}. Tentando de novo...");
                 if once {
                     return Err(message.into());
@@ -152,5 +170,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
             _ = pressed.recv() => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn porta_fechada_pede_ao_operador_e_o_resto_segue_como_antes() {
+        let closed = tonic::Status::unavailable("instalação fechada: o operador abre com `x`");
+        assert!(failure_text(&closed).contains("o operador precisa abrir a porta"));
+        let other = tonic::Status::unavailable("conexão recusada");
+        assert_eq!(
+            failure_text(&other),
+            "Sem resposta do controller: conexão recusada"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn o_arquivo_do_token_nasce_so_para_o_dono() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aic-wait-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("install.json");
+        let _ = std::fs::remove_file(&path);
+        write_install(path.to_str().unwrap(), "abc123", "mmcblk0").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "{\"token\":\"abc123\",\"disk\":\"mmcblk0\"}\n");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

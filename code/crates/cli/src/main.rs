@@ -227,7 +227,7 @@ enum InstallAction {
     /// Abre a porta em que os aparelhos se apresentam para instalar. Depois fecha sozinha.
     Open {
         /// Minutos (1 a 120).
-        #[arg(long, default_value_t = 15)]
+        #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u32).range(1..=120))]
         minutes: u32,
     },
     /// Fecha a porta agora.
@@ -603,7 +603,8 @@ async fn set_enrollment(endpoint: &str, minutes: u32) -> Result<(), Box<dyn std:
     if until == 0 {
         println!("INSTALAÇÃO porta fechada");
     } else {
-        println!("INSTALAÇÃO porta aberta minutos={minutes}");
+        // O controller limita a janela a 120 minutos: mostra o efetivo, não o pedido.
+        println!("INSTALAÇÃO porta aberta minutos={}", minutes.min(120));
     }
     Ok(())
 }
@@ -2573,7 +2574,15 @@ mod tests {
     }
 
     #[test]
-    fn worker_change_aceita_so_as_duas_formas_da_adr() {
+    fn worker_change_exige_uma_das_duas_formas() {
+        assert!(
+            parse(&["aic", "worker", "change"]).is_err(),
+            "sem argumento"
+        );
+        assert!(
+            parse(&["aic", "worker", "change", "--controller", "u"]).is_err(),
+            "controller sem token"
+        );
         assert!(
             parse(&[
                 "aic",
@@ -2586,8 +2595,68 @@ mod tests {
                 "--controller",
                 "u"
             ])
-            .is_ok()
+            .is_err(),
+            "servidor+código e controller não são uma forma só"
         );
+    }
+
+    #[test]
+    fn erros_de_uso_dos_exemplos_saem_em_portugues() {
+        let casos: [(&[&str], &str); 5] = [
+            (
+                &[
+                    "aic", "worker", "join", "--server", "x", "--code", "y", "--lang", "xx",
+                ],
+                "valor inválido \"xx\" para --lang; use: pt, en",
+            ),
+            (
+                &["aic", "cluster", "install", "open", "--minutes", "abc"],
+                "valor inválido \"abc\" para --minutes",
+            ),
+            (
+                &["aic", "cluster", "install", "open", "--minutes", "999"],
+                "valor inválido \"999\" para --minutes",
+            ),
+            (
+                &[
+                    "aic",
+                    "worker",
+                    "change",
+                    "--controller",
+                    "u",
+                    "--token",
+                    "t",
+                    "--server",
+                    "s",
+                ],
+                "não podem ser usados juntos",
+            ),
+            (
+                &["aic", "update", "apply", "--version"],
+                "--version pede um valor",
+            ),
+        ];
+        for (args, esperado) in casos {
+            let text = ptbr::message(&parse(args).unwrap_err());
+            assert!(text.contains(esperado), "{args:?}: {text}");
+            for ingles in [
+                "invalid",
+                "cannot",
+                "required",
+                "error:",
+                "Usage",
+                "possible values",
+                "For more",
+                "not allowed",
+                "conflict",
+            ] {
+                assert!(!text.contains(ingles), "vazou {ingles:?} em {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn worker_change_aceita_a_forma_do_controller_com_token() {
         assert!(
             parse(&[
                 "aic",
@@ -2600,6 +2669,7 @@ mod tests {
             ])
             .is_ok()
         );
+        assert!(parse(&["aic", "worker", "change", "--server", "s", "--code", "c"]).is_ok());
     }
 
     fn node(id: &str, shard_cache_bytes: u64, trusted: bool) -> NodeSnapshot {

@@ -279,11 +279,11 @@ impl Registry {
     /// conectado, como pendente; `approve` com a impressão digital de antes o põe de volta. False se o
     /// nó é desconhecido.
     pub fn retire(&self, node_id: &str) -> bool {
-        let live = self.lock().get_mut(node_id).map(|record| {
+        // Ordem nós → known (a de `register_as`): o `approve` concorrente não vê vivo sem persistir.
+        let mut nodes = self.lock();
+        if let Some(record) = nodes.get_mut(node_id) {
             record.trusted = false;
-            record.credential.clone()
-        });
-        if let Some(credential) = live {
+            let credential = record.credential.clone();
             self.remember(node_id, &credential, false);
             return true;
         }

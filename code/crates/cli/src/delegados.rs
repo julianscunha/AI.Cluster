@@ -3,7 +3,7 @@
 //! `<libexec>/setup <substantivo> <verbo> [argumentos…]`. Quem faz o trabalho é o `setup` (ADR-024).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 
 use clap::{Args, Subcommand};
@@ -179,15 +179,16 @@ pub enum Worker {
         short: bool,
     },
     /// Troca o convite ou só o controller do worker (só no AI Cluster OS).
+    #[command(group(clap::ArgGroup::new("forma").required(true).args(["server", "controller"])))]
     Change {
         /// Endereço do convite do novo controller (com `--code`).
-        #[arg(long, requires = "code", conflicts_with = "token")]
+        #[arg(long, requires = "code", conflicts_with_all = ["token", "controller"])]
         server: Option<String>,
         /// Código do convite (com `--server`).
         #[arg(long, requires = "server", conflicts_with = "token")]
         code: Option<String>,
-        /// Endereço gRPC do controller (ex.: `http://IP:50051`).
-        #[arg(long)]
+        /// Endereço gRPC do controller (ex.: `http://IP:50051`), com `--token`.
+        #[arg(long, requires = "token")]
         controller: Option<String>,
         /// Token de join, para trocar só o controller (com `--controller`).
         #[arg(long, requires = "controller", conflicts_with_all = ["server", "code"])]
@@ -250,7 +251,8 @@ impl Worker {
 pub enum Update {
     /// Versão instalada × disponível, ou o resultado da última atualização assinada.
     Status,
-    /// Atualiza este computador (no AI Cluster OS, pede ao `aic-updater` que cheque agora).
+    /// Atualiza este Linux pelo instalador. No AI Cluster OS a atualização assinada é empurrada pelo
+    /// controller (`aic cluster rollout`).
     Apply {
         /// Versão específica (padrão: a mais nova da origem).
         #[arg(long)]
@@ -301,8 +303,10 @@ fn valor(out: &mut Vec<String>, flag: &str, value: Option<impl ToString>) {
     }
 }
 
-/// Pasta do instalador: `AIC_LIBEXEC`, depois as padrões; a primeira que contém `setup`.
-fn procura(env: Option<OsString>, padroes: &[PathBuf]) -> Option<PathBuf> {
+/// Pasta do instalador: `AIC_LIBEXEC`, depois as padrões; a primeira que contém `setup`. Como root a
+/// variável é ignorada: quem roda `sudo -E aic` não escolhe o script que roda como root.
+fn procura(env: Option<OsString>, padroes: &[PathBuf], raiz: bool) -> Option<PathBuf> {
+    let env = if raiz { None } else { env };
     env.filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
         .into_iter()
@@ -310,14 +314,50 @@ fn procura(env: Option<OsString>, padroes: &[PathBuf]) -> Option<PathBuf> {
         .find(|dir| dir.join("setup").is_file())
 }
 
+/// Uid efetivo é zero? No Linux, o terceiro campo de `Uid:` em `/proc/self/status` (real, efetivo…).
+fn raiz() -> bool {
+    std::fs::read_to_string("/proc/self/status").is_ok_and(|status| {
+        status
+            .lines()
+            .any(|line| line.starts_with("Uid:") && line.split_whitespace().nth(2) == Some("0"))
+    })
+}
+
+/// Dono root e sem escrita para grupo ou outros: quem pode trocar o arquivo teria root.
+fn dono_seguro(uid: u32, mode: u32) -> bool {
+    uid == 0 && mode & 0o022 == 0
+}
+
+/// O instalador padrão (e a pasta que o contém) passa em `dono_seguro`.
+#[cfg(unix)]
+fn confiavel(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    [dir.to_path_buf(), dir.join("setup")]
+        .iter()
+        .all(|path| std::fs::metadata(path).is_ok_and(|meta| dono_seguro(meta.uid(), meta.mode())))
+}
+
+#[cfg(not(unix))]
+fn confiavel(_dir: &Path) -> bool {
+    true
+}
+
 /// Roda `<libexec>/setup <substantivo> <argumentos…>` e encerra com o código dele.
 /// Em unix o processo é trocado pelo `setup` (exec); nos demais, o `setup` roda como filho.
 pub fn encaminha(substantivo: &str, args: Vec<String>) -> ! {
     let padroes = PADROES.map(PathBuf::from);
-    let Some(dir) = procura(std::env::var_os("AIC_LIBEXEC"), &padroes) else {
+    let raiz = raiz();
+    let Some(dir) = procura(std::env::var_os("AIC_LIBEXEC"), &padroes, raiz) else {
         eprintln!("erro: este computador não tem o instalador do AI Cluster; use o install.sh");
         exit(1);
     };
+    if raiz && !confiavel(&dir) {
+        eprintln!(
+            "erro: o instalador em {} não é de root ou é gravável por grupo ou outros; recuso rodá-lo como root",
+            dir.display()
+        );
+        exit(1);
+    }
     let setup = dir.join("setup");
     let mut cmd = Command::new(&setup);
     cmd.arg(substantivo).args(&args);
@@ -333,4 +373,53 @@ pub fn encaminha(substantivo: &str, args: Vec<String>) -> ! {
     };
     eprintln!("erro: não foi possível rodar {}: {falha}", setup.display());
     exit(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pasta(nome: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aic-libexec-{}-{nome}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("setup"), "#!/bin/sh\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn como_root_a_variavel_e_ignorada_e_fora_de_root_vale() {
+        let env = pasta("env");
+        let padrao = pasta("padrao");
+        let via_env = Some(env.clone().into_os_string());
+        assert_eq!(
+            procura(via_env.clone(), std::slice::from_ref(&padrao), true),
+            Some(padrao.clone())
+        );
+        assert_eq!(
+            procura(via_env, std::slice::from_ref(&padrao), false),
+            Some(env)
+        );
+        // Como root, a variável não leva a um setup que não está nos padrões.
+        let sem_padrao = [PathBuf::from("/nao/existe/aic")];
+        let so_env = Some(pasta("so-env").into_os_string());
+        assert_eq!(procura(so_env, &sem_padrao, true), None);
+    }
+
+    #[test]
+    fn so_dono_root_e_sem_escrita_alheia_e_confiavel() {
+        assert!(dono_seguro(0, 0o755));
+        assert!(!dono_seguro(1000, 0o755), "dono comum");
+        assert!(!dono_seguro(0, 0o775), "gravável pelo grupo");
+        assert!(!dono_seguro(0, 0o757), "gravável por outros");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instalador_gravavel_por_outros_e_recusado_como_root() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = pasta("gravavel");
+        std::fs::set_permissions(dir.join("setup"), std::fs::Permissions::from_mode(0o777))
+            .unwrap();
+        assert!(!confiavel(&dir));
+    }
 }

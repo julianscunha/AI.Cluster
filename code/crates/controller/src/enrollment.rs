@@ -127,6 +127,18 @@ impl Enrollments {
         host: Option<IpAddr>,
         now: u64,
     ) -> Result<AnnounceResponse, Status> {
+        self.announce_if(request, host, now, true)
+    }
+
+    /// Como `announce`, mas com `allow_new` falso um aparelho que ainda não está na lista é recusado:
+    /// a janela fecha só as entradas novas; quem já está na lista continua recebendo a resposta.
+    pub fn announce_if(
+        &self,
+        request: AnnounceRequest,
+        host: Option<IpAddr>,
+        now: u64,
+        allow_new: bool,
+    ) -> Result<AnnounceResponse, Status> {
         if !(16..=64).contains(&request.secret.len()) {
             return Err(Status::invalid_argument(
                 "segredo deve ter de 16 a 64 bytes",
@@ -169,6 +181,11 @@ impl Enrollments {
             });
         }
 
+        if !allow_new {
+            return Err(Status::unavailable(
+                "instalação fechada: o operador abre com `aic cluster install open`",
+            ));
+        }
         // Dois hashes com o mesmo prefixo mostrado seriam indistinguíveis na tela do operador.
         if waiting.values().any(|c| c.info.fingerprint == fingerprint) {
             return Err(Status::already_exists("impressão digital em uso; reinicie"));
@@ -263,6 +280,12 @@ impl Enrollments {
                 "o disco não é um dos que o aparelho informou",
             ));
         }
+        if !candidate.info.approved_disk.is_empty() && candidate.info.approved_disk != disk {
+            return Err(Status::already_exists(format!(
+                "já aprovado com o disco {}; recuse e aprove de novo",
+                candidate.info.approved_disk
+            )));
+        }
         candidate.info.approved_disk = disk.to_string();
         candidate.token.get_or_insert_with(new_token);
         Ok(true)
@@ -297,12 +320,10 @@ impl Enrollment for EnrollmentService {
     ) -> Result<Response<AnnounceResponse>, Status> {
         let host = request.remote_addr().map(|addr| addr.ip().to_canonical());
         let now = crate::registry::unix_ms();
-        if !self.enrollments.is_open(now) {
-            return Err(Status::unavailable(
-                "instalação fechada: o operador abre com `aic cluster install open`",
-            ));
-        }
-        let response = self.enrollments.announce(request.into_inner(), host, now)?;
+        let open = self.enrollments.is_open(now);
+        let response = self
+            .enrollments
+            .announce_if(request.into_inner(), host, now, open)?;
         Ok(Response::new(response))
     }
 }
@@ -376,8 +397,15 @@ pub fn limited_incoming(
 ) -> impl tokio_stream::Stream<Item = std::io::Result<Limited<tokio::net::TcpStream>>> {
     use tokio_stream::StreamExt;
     let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
-    tokio_stream::wrappers::TcpListenerStream::new(listener).filter_map(move |accepted| {
-        match accepted {
+    tokio_stream::wrappers::TcpListenerStream::new(listener)
+        // Erro de accept (ex.: EMFILE) não pode virar laço quente: espera antes de tentar de novo.
+        .then(|accepted| async move {
+            if accepted.is_err() {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            accepted
+        })
+        .filter_map(move |accepted| match accepted {
             Ok(io) => slots.clone().try_acquire_owned().ok().map(|permit| {
                 Ok(Limited {
                     io,
@@ -386,8 +414,7 @@ pub fn limited_incoming(
                 })
             }),
             Err(error) => Some(Err(error)),
-        }
-    })
+        })
 }
 
 #[cfg(test)]
@@ -459,6 +486,38 @@ mod tests {
         let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
         assert!(e.approve(&fp, "sda", 1).is_err());
         assert!(!e.approve("0000-0000-0000", "mmcblk0", 1).unwrap());
+    }
+
+    #[test]
+    fn aprovar_de_novo_com_outro_disco_e_recusado_e_com_o_mesmo_e_idempotente() {
+        let e = Enrollments::default();
+        let mut two = hello(1, MAC);
+        two.disks.push(disk("sda"));
+        let fp = e.announce(two, None, 0).unwrap().fingerprint;
+        assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
+        let token = e.announce(hello(1, MAC), None, 2).unwrap().install_token;
+        let err = e.approve(&fp, "sda", 3).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+        assert!(err.message().contains("já aprovado com o disco mmcblk0"));
+        assert!(e.approve(&fp, "mmcblk0", 4).unwrap());
+        assert_eq!(
+            e.announce(hello(1, MAC), None, 5).unwrap().install_token,
+            token
+        );
+    }
+
+    #[test]
+    fn com_a_porta_fechada_o_aprovado_recebe_o_token_e_o_novo_e_recusado() {
+        let e = Enrollments::default();
+        let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
+        assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
+        // Operador aprovou e fechou (ou a janela venceu): o aparelho aprovado ainda recebe o token.
+        let got = e.announce_if(hello(1, MAC), None, 2, false).unwrap();
+        assert!(got.approved && got.install_token.len() == 32);
+        // Aparelho novo, com a porta fechada, não entra na lista.
+        let novo = e.announce_if(hello(2, "aa:bb:cc:dd:ee:02"), None, 3, false);
+        assert_eq!(novo.unwrap_err().code(), tonic::Code::Unavailable);
+        assert_eq!(e.list(3).len(), 1);
     }
 
     #[test]

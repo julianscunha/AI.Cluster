@@ -178,6 +178,23 @@ fn nodelay(stream: &TcpStream) {
 static BYTES_IN: AtomicU64 = AtomicU64::new(0);
 static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
 static SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Conta uma sessão aberta; a contagem volta quando o guarda sai de escopo, mesmo se a tarefa for
+/// abortada no meio (sem isso a conta ficaria errada para sempre).
+struct SessionGuard(&'static AtomicUsize);
+
+impl SessionGuard {
+    fn open(counter: &'static AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 const REPORT_EVERY: Duration = Duration::from_secs(10);
 
 /// Hora do dia em UTC (`HH:MM:SS`), para as linhas de log.
@@ -304,9 +321,25 @@ pub async fn serve(
             let Ok(_permit) = open.try_acquire_owned() else {
                 return;
             };
-            let Ok(Ok(local)) = tokio::time::timeout(SETUP, TcpStream::connect(&upstream)).await
-            else {
-                return;
+            let local = match tokio::time::timeout(SETUP, TcpStream::connect(&upstream)).await {
+                Ok(Ok(local)) => local,
+                Ok(Err(error)) => {
+                    eprintln!(
+                        "túnel {}: gateway {} não alcançou o rpc-server: {error}",
+                        clock(),
+                        peer.ip()
+                    );
+                    return;
+                }
+                Err(_) => {
+                    eprintln!(
+                        "túnel {}: gateway {} não alcançou o rpc-server em {}s",
+                        clock(),
+                        peer.ip(),
+                        SETUP.as_secs()
+                    );
+                    return;
+                }
             };
             nodelay(&local);
             let mut local = Counted {
@@ -315,16 +348,24 @@ pub async fn serve(
                 written: &BYTES_IN,
             };
             let started = std::time::Instant::now();
-            SESSIONS.fetch_add(1, Ordering::Relaxed);
+            let _session = SessionGuard::open(&SESSIONS);
             eprintln!("túnel {}: gateway {} conectou", clock(), peer.ip());
-            let _ = copy_bidirectional(&mut tls, &mut local).await;
-            SESSIONS.fetch_sub(1, Ordering::Relaxed);
-            eprintln!(
-                "túnel {}: gateway {} desconectou depois de {}s",
-                clock(),
-                peer.ip(),
-                started.elapsed().as_secs()
-            );
+            let outcome = copy_bidirectional(&mut tls, &mut local).await;
+            let secs = started.elapsed().as_secs();
+            match outcome {
+                Ok((to_rpc, to_gateway)) => eprintln!(
+                    "túnel {}: gateway {} desconectou depois de {secs}s ({} de ida, {} de volta)",
+                    clock(),
+                    peer.ip(),
+                    kib(to_rpc),
+                    kib(to_gateway)
+                ),
+                Err(error) => eprintln!(
+                    "túnel {}: gateway {} caiu depois de {secs}s: {error}",
+                    clock(),
+                    peer.ip()
+                ),
+            }
         });
     }
 }
@@ -562,5 +603,33 @@ mod tests {
             roundtrip(as_gateway).await.as_deref(),
             Some(&b"ola rpc"[..])
         );
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn o_guarda_devolve_a_conta_ao_sair_de_escopo() {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        let guard = SessionGuard::open(&COUNT);
+        assert_eq!(COUNT.load(Ordering::Relaxed), 1);
+        drop(guard);
+        assert_eq!(COUNT.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn a_tarefa_abortada_no_meio_tambem_devolve_a_conta() {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        let task = tokio::spawn(async {
+            let _session = SessionGuard::open(&COUNT);
+            std::future::pending::<()>().await;
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(COUNT.load(Ordering::Relaxed), 1);
+        task.abort();
+        let _ = task.await;
+        assert_eq!(COUNT.load(Ordering::Relaxed), 0);
     }
 }

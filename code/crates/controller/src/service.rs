@@ -755,7 +755,6 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(ApproveNodeResponse { approved }))
     }
 
-    /// Strips a node of trust and its credential, and hands its in-flight units back (S5).
     /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
     async fn retire_node(
         &self,
@@ -813,6 +812,7 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RemoveNodeResponse { removed, requeued }))
     }
 
+    /// Strips a node of trust and its credential, and hands its in-flight units back (S5).
     async fn revoke_node(
         &self,
         request: Request<RevokeNodeRequest>,

@@ -26,6 +26,10 @@ struct Inner {
     tokens_per_second: VecDeque<f64>,
     kv_bytes_last: u64,
     kv_bytes_max: u64,
+    /// Medidas de TTFT e de ritmo que já entraram (total, não o tamanho da janela): os testes medem
+    /// por delta e a janela de `KEEP` pode estar cheia.
+    ttft_seen: u64,
+    rate_seen: u64,
 }
 
 static METRICS: Mutex<Inner> = Mutex::new(Inner {
@@ -38,7 +42,28 @@ static METRICS: Mutex<Inner> = Mutex::new(Inner {
     tokens_per_second: VecDeque::new(),
     kv_bytes_last: 0,
     kv_bytes_max: 0,
+    ttft_seen: 0,
+    rate_seen: 0,
 });
+
+/// Os testes que medem o painel (ou que passam por ele) seguram isto: o estado é global ao processo.
+/// `tokio` porque há testes assíncronos que o seguram através de `.await`.
+#[cfg(test)]
+pub static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// (requisições, falhas, tokens de prompt, tokens gerados, medidas de TTFT, medidas de ritmo).
+#[cfg(test)]
+pub fn counts() -> (u64, u64, u64, u64, u64, u64) {
+    let inner = lock();
+    (
+        inner.requests,
+        inner.failed,
+        inner.prompt_tokens,
+        inner.generated_tokens,
+        inner.ttft_seen,
+        inner.rate_seen,
+    )
+}
 
 fn lock() -> std::sync::MutexGuard<'static, Inner> {
     METRICS
@@ -66,8 +91,9 @@ pub struct Sampler {
 
 /// Registra uma requisição que o gateway apenas repassou ao `llama-server` (ADR-022): sem o laço de
 /// geração própria não há um `Sampler`, então as medidas vêm do que o repasse viu. `ttft` é o tempo
-/// até o primeiro pedaço da resposta; o ritmo de geração só existe quando a resposta veio em
-/// pedaços (stream) e teve mais de um token. O intervalo entre tokens (ITL) não é medido aqui.
+/// até o primeiro pedaço da resposta; só conta com stream que deu certo (sem stream o primeiro
+/// pedaço é o fim; erro não é geração). O ritmo exige ao menos 50 ms de geração e mais de um token.
+/// O intervalo entre tokens (ITL) não é medido aqui.
 pub fn record_proxied(
     ok: bool,
     prompt_tokens: u64,
@@ -83,13 +109,17 @@ pub fn record_proxied(
     }
     inner.prompt_tokens += prompt_tokens;
     inner.generated_tokens += generated_tokens;
-    if let Some(ttft) = ttft {
+    if let Some(ttft) = ttft.filter(|_| streamed && ok) {
         push(&mut inner.ttft_us, ttft.as_micros() as u64);
-        if streamed && generated_tokens > 1 && total > ttft {
+        inner.ttft_seen += 1;
+        // Abaixo de 50 ms o relógio e o ruído dominam a taxa.
+        let decode = total.saturating_sub(ttft);
+        if generated_tokens > 1 && decode >= std::time::Duration::from_millis(50) {
             push(
                 &mut inner.tokens_per_second,
-                (generated_tokens - 1) as f64 / (total - ttft).as_secs_f64(),
+                (generated_tokens - 1) as f64 / decode.as_secs_f64(),
             );
+            inner.rate_seen += 1;
         }
     }
 }

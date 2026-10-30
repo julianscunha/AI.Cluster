@@ -102,8 +102,41 @@ fn quoted(first_line: &str) -> String {
         .to_string()
 }
 
+/// Nome de um argumento como o clap o escreve (`--lang <LANG>`) sem o marcador de valor.
+fn nome(text: &str) -> String {
+    text.split(" <")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn numero(err: &clap::Error, kind: ContextKind) -> String {
+    match err.get(kind) {
+        Some(ContextValue::Number(n)) => n.to_string(),
+        _ => String::from("?"),
+    }
+}
+
+/// Valor recusado (`valor inválido "xx" para --lang; use: pt, en`) ou valor que falta (`--version pede
+/// um valor`). Quando falta, o clap deixa `InvalidValue` vazio.
+fn valor_invalido(err: &clap::Error, arg: &str) -> String {
+    let validos = values(err, ContextKind::ValidValue);
+    let dica = if validos.is_empty() {
+        String::new()
+    } else {
+        format!("; use: {}", validos.join(", "))
+    };
+    let valor = values(err, ContextKind::InvalidValue).join(", ");
+    if valor.is_empty() {
+        return format!("{arg} pede um valor{dica}");
+    }
+    format!("valor inválido \"{valor}\" para {arg}{dica}")
+}
+
 /// A mensagem de um erro de uso, em português. Ajuda e versão não passam por aqui. O clap guarda
 /// pouco do erro no contexto, então o que falta (subcomandos, uso) vem do texto que ele renderiza.
+/// Nenhum texto em inglês do clap sai aqui: o que não tem frase própria cai em "uso inválido".
 pub fn message(err: &clap::Error) -> String {
     let rendered = err.render().to_string();
     let first = rendered.lines().next().unwrap_or_default().to_string();
@@ -118,12 +151,8 @@ pub fn message(err: &clap::Error) -> String {
         )
         .replacen("Usage:", "Uso:", 1);
     let usage = words(&usage);
-    let invalid = values(err, ContextKind::InvalidArg).join(", ");
-    let invalid = if invalid.is_empty() {
-        quoted(&first)
-    } else {
-        invalid
-    };
+    let arg = nome(&values(err, ContextKind::InvalidArg).join(", "));
+    let arg = if arg.is_empty() { quoted(&first) } else { arg };
     let head = match err.kind() {
         ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
             // O clap já renderiza a ajuda do grupo (com a lista de subcomandos): vem logo após o erro.
@@ -135,7 +164,7 @@ pub fn message(err: &clap::Error) -> String {
             );
         }
         ErrorKind::InvalidSubcommand => format!("subcomando desconhecido: {}", quoted(&first)),
-        ErrorKind::UnknownArgument => format!("argumento desconhecido: {invalid}"),
+        ErrorKind::UnknownArgument => format!("argumento desconhecido: {arg}"),
         ErrorKind::MissingRequiredArgument => {
             let missing: Vec<&str> = rendered
                 .lines()
@@ -145,12 +174,26 @@ pub fn message(err: &clap::Error) -> String {
                 .collect();
             format!("faltam argumentos obrigatórios: {}", missing.join(" "))
         }
-        ErrorKind::InvalidValue | ErrorKind::ValueValidation => {
-            format!("valor inválido para {invalid}: {first}")
+        ErrorKind::InvalidValue | ErrorKind::ValueValidation => valor_invalido(err, &arg),
+        ErrorKind::ArgumentConflict => {
+            let outros: Vec<String> = values(err, ContextKind::PriorArg)
+                .iter()
+                .map(|text| nome(text))
+                .collect();
+            format!("{} e {arg} não podem ser usados juntos", outros.join(", "))
         }
-        ErrorKind::ArgumentConflict => format!("opções que não combinam: {first}"),
-        // O que não tem texto próprio sai como o clap o escreveu.
-        _ => first.trim_start_matches("error: ").to_string(),
+        ErrorKind::TooFewValues => format!(
+            "{arg} pede pelo menos {} valores",
+            numero(err, ContextKind::MinValues)
+        ),
+        ErrorKind::TooManyValues => format!("{arg} recebeu valores demais"),
+        ErrorKind::WrongNumberOfValues => format!(
+            "{arg} pede {} valores, e vieram {}",
+            numero(err, ContextKind::ExpectedNumValues),
+            numero(err, ContextKind::ActualNumValues)
+        ),
+        ErrorKind::NoEquals => format!("{arg} não aceita valor"),
+        _ => String::from("uso inválido (veja --help)"),
     };
     let mut out = format!(
         "erro: {head}
