@@ -125,6 +125,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-cluster-wait"
+version = "0.2.0"
+dependencies = [
+ "ai-cluster-protocol",
+ "getrandom 0.4.3",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "ai-cluster-worker"
 version = "0.2.0"
 dependencies = [

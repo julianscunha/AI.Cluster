@@ -86,6 +86,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-s3-roles.sh` | Token de join e de inferência não administram; operador administra; ações de operador entram na auditoria. |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; `http://` e CA errada são recusados; sem certificado, só com `INSECURE`. |
 | `phase-s5-persist.sh` | Aprovação sobrevive a reinício de worker e de controller; `revoke` derruba o worker revogado. |
+| `phase-u-wait.sh` | Instalação com aprovação (ADR-023): `aic-wait` aparece em `installs`, disco inexistente é recusado, o aparelho aprovado recebe o token e o disco, o MAC aprovado não é tomado e `reject-install` remove da lista. Controller, `aic-wait` e CLI no mesmo contêiner, sem TLS. |
 | `phase-t-mtls.sh` | Com CA de cliente, só entra quem tem certificado dessa CA; sem certificado, com outra CA ou com meio par, é recusado. |
 | `phase-1-leave.sh` | Saída por SIGTERM: o sobrevivente termina cada unidade, sem nada encalhado. |
 | `phase-2-failure.sh` | Worker morto com unidade em voo: a unidade volta à fila e o grafo termina. |

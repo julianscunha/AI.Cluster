@@ -1,0 +1,14 @@
+[package]
+name = "ai-cluster-wait"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+ai-cluster-protocol = { path = "../protocol" }
+tokio = { version = "1", features = ["macros", "rt", "time", "io-util", "io-std", "sync"] }
+tonic = "0.14"
+getrandom = "0.4"
+
+[[bin]]
+name = "aic-wait"
+path = "src/main.rs"
