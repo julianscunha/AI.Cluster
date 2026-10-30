@@ -2,7 +2,7 @@
 # `aic update status` no AI Cluster OS mostra a atualização que trouxe a versão atual.
 #
 # Critérios verificados (shell da imagem = busybox, num contêiner Alpine, sem hardware):
-#   A) update_record (usr/lib/aic/ab.sh) só grava quando a versão que o worker tentou é a que roda;
+#   A) update_record (usr/lib/aic/update.sh, comum ao ARM e ao x86) só grava quando a versão que o worker tentou é a que roda;
 #   B) grava uma vez por versão: um boot comum não reescreve a data;
 #   C) `aic update status` mostra a última atualização e, à parte, a última recusa;
 #   D) sem registro, diz que não há.
@@ -14,7 +14,7 @@ out=$(docker run --rm -v "$IMG:/ov:ro" alpine:3.20 sh -c '
 set -u
 mkdir -p /usr/lib/aic /usr/libexec/aic /data/state /etc
 cp /ov/usr/lib/aic/*.sh /usr/lib/aic/; cp /ov/usr/libexec/aic/* /usr/libexec/aic/
-. /usr/lib/aic/ab.sh
+. /usr/lib/aic/update.sh
 echo 12.0 > /etc/aic-release
 
 # D) sem registro nenhum
