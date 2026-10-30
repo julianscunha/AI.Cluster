@@ -92,7 +92,7 @@ aic worker change --server <ip-do-novo-controller>:8099 --code <CÓDIGO>
 aic worker change --server <ip>:8099 --code <CÓDIGO> --controller http://<ip-que-o-worker-alcança>:50051
 ```
 
-O comando mostra o controller de destino e pede confirmação (`S/n`; `--yes`/`AIC_ASSUME_YES=1` dispensa). Depois baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`.
+O comando mostra o controller de destino e pede confirmação (`S/n`; `--yes`/`AIC_ASSUME_YES=1` dispensa). Depois baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`. Para o token não aparecer no `ps`, use `--token-file <arquivo>` (arquivo só do dono, `chmod 600`).
 
 ## Instalação dedicada
 

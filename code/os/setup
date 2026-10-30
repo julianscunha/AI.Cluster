@@ -219,10 +219,8 @@ instala_setup() {
   troca "$HERE/setup" "$PREFIX/libexec/setup"
 }
 
-# O comando do usuário é só `aic`: carrega cli.env (se existir) e roda o binário do cluster. Apaga os nomes
-# antigos, para não sobrar dois jeitos de chamar.
+# O comando do usuário é só `aic`: carrega cli.env (se existir) e roda o binário do cluster.
 instala_comando() {
-  rm -f /usr/local/bin/ai-cluster /usr/local/bin/aic-setup "$PREFIX/bin/ai-cluster" "$PREFIX/aic-setup"
   cat > /usr/local/bin/aic.new <<EOF
 #!/bin/sh
 if [ -e $CONF/cli.env ]; then
@@ -232,6 +230,11 @@ fi
 exec $PREFIX/bin/aic "\$@"
 EOF
   chmod 755 /usr/local/bin/aic.new && mv -f /usr/local/bin/aic.new /usr/local/bin/aic
+}
+# Os nomes antigos (ai-cluster, aic-setup) saem só depois que o serviço novo subiu: se a atualização for
+# desfeita, o layout antigo fica como estava, com os comandos antigos funcionando.
+retira_nomes_antigos() {
+  rm -f /usr/local/bin/ai-cluster /usr/local/bin/aic-setup "$PREFIX/bin/ai-cluster" "$PREFIX/aic-setup"
 }
 
 # A pasta de modelos é validada igual no controller e no gateway: nunca um diretório do sistema.
@@ -267,6 +270,7 @@ install_files() {
   [ ! -f "$HERE/bootstrap.sh" ] || install -m 755 "$HERE/bootstrap.sh" "$PREFIX/bootstrap.sh"
   instala_setup
   instala_comando
+  retira_nomes_antigos
   chown -R ai-cluster:ai-cluster "$DATA" "$LOGDIR"
 }
 
@@ -408,7 +412,10 @@ svc_start_worker() {
 # Controller: responde ao `aic` (com o token de operador). Gateway: responde ao /health. Duas vezes seguidas.
 wait_ready() {
   if [ "$ROLE" != gateway ]; then
-    espera_ok 40 /usr/local/bin/aic cluster nodes || { echo "$(t 'o controller não respondeu em 40 s' 'the controller did not respond in 40 s')"; return 1; }
+    # Com o aic instalado, ele confere o controller de ponta a ponta. Sem ele (rollback para o layout antigo,
+    # que não tinha o aic), basta a porta do gRPC estar aberta.
+    if [ -x /usr/local/bin/aic ]; then espera_ok 40 /usr/local/bin/aic cluster nodes
+    else espera_ok 40 sh -c "ss -ltn | grep -q ':$GRPC_PORT '"; fi || { echo "$(t 'o controller não respondeu em 40 s' 'the controller did not respond in 40 s')"; return 1; }
   fi
   if [ "$ROLE" = both ] || [ "$ROLE" = gateway ]; then
     espera_ok 40 curl -fsS --max-time 3 "http://127.0.0.1:$HTTP_PORT/health" || { echo "$(t 'o gateway não respondeu em 40 s' 'the gateway did not respond in 40 s')"; return 1; }
@@ -1268,7 +1275,8 @@ aplica_nova() {
     if [ "$ROLE" = both ]; then gw_ip=$(cat "$CONF/server-ip" 2>/dev/null || true); else gw_ip=$(lan_ip); fi
     if [ -n "$gw_ip" ]; then ensure_env "$CONF/gateway.env" AI_CLUSTER_GATEWAY_URL "http://$gw_ip:$HTTP_PORT" || return 1; fi
   fi
-  reinicia_e_espera
+  reinicia_e_espera || return 1
+  retira_nomes_antigos
 }
 
 # Volta tudo o que a atualização trocou (programas, configuração e o próprio instalador) e reinicia com a

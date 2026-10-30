@@ -144,6 +144,24 @@ fn cada_comando_delegado_repassa_a_linha_ao_setup() {
             ],
         ),
         (
+            &[
+                "worker",
+                "change",
+                "--controller",
+                "http://10.0.0.5:50051",
+                "--token-file",
+                "/root/tok",
+            ],
+            &[
+                "worker",
+                "change",
+                "--controller",
+                "http://10.0.0.5:50051",
+                "--token-file",
+                "/root/tok",
+            ],
+        ),
+        (
             &["worker", "passwd", "--remove"],
             &["worker", "passwd", "--remove"],
         ),

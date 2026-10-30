@@ -2561,6 +2561,29 @@ mod tests {
             &["aic", "update", "apply", "--lang", "fr"],
             &["aic", "worker", "change", "--server", "10.0.0.5"],
             &["aic", "worker", "change", "--token", "t"],
+            &["aic", "worker", "change", "--token-file", "f"],
+            &[
+                "aic",
+                "worker",
+                "change",
+                "--controller",
+                "u",
+                "--token",
+                "t",
+                "--token-file",
+                "f",
+            ],
+            &[
+                "aic",
+                "worker",
+                "change",
+                "--server",
+                "s",
+                "--code",
+                "c",
+                "--token-file",
+                "f",
+            ],
         ];
         for args in recusados {
             assert!(parse(args).is_err(), "deveria recusar {args:?}");
@@ -2670,6 +2693,18 @@ mod tests {
             .is_ok()
         );
         assert!(parse(&["aic", "worker", "change", "--server", "s", "--code", "c"]).is_ok());
+        assert!(
+            parse(&[
+                "aic",
+                "worker",
+                "change",
+                "--controller",
+                "u",
+                "--token-file",
+                "f"
+            ])
+            .is_ok()
+        );
     }
 
     fn node(id: &str, shard_cache_bytes: u64, trusted: bool) -> NodeSnapshot {

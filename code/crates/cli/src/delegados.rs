@@ -175,20 +175,26 @@ pub enum Worker {
     /// O papel deste computador no cluster, em uma linha (só no AI Cluster OS). O detalhe é `worker status`.
     Role,
     /// Troca o convite ou só o controller do worker (só no AI Cluster OS).
-    #[command(group(clap::ArgGroup::new("forma").required(true).args(["server", "controller"])))]
+    #[command(
+        group(clap::ArgGroup::new("forma").required(true).args(["server", "controller"])),
+        group(clap::ArgGroup::new("token_join").args(["token", "token_file"]))
+    )]
     Change {
         /// Endereço do convite do novo controller (com `--code`).
-        #[arg(long, requires = "code", conflicts_with_all = ["token", "controller"])]
+        #[arg(long, requires = "code", conflicts_with_all = ["token", "token_file", "controller"])]
         server: Option<String>,
         /// Código do convite (com `--server`).
-        #[arg(long, requires = "server", conflicts_with = "token")]
+        #[arg(long, requires = "server", conflicts_with_all = ["token", "token_file"])]
         code: Option<String>,
-        /// Endereço gRPC do controller (ex.: `http://IP:50051`), com `--token`.
-        #[arg(long, requires = "token")]
+        /// Endereço gRPC do controller (ex.: `http://IP:50051`), com `--token` ou `--token-file`.
+        #[arg(long, requires = "token_join")]
         controller: Option<String>,
         /// Token de join, para trocar só o controller (com `--controller`).
         #[arg(long, requires = "controller", conflicts_with_all = ["server", "code"])]
         token: Option<String>,
+        /// Arquivo com o token de join (alternativa a `--token`, que aparece no `ps`).
+        #[arg(long, value_name = "ARQUIVO", requires = "controller", conflicts_with_all = ["server", "code"])]
+        token_file: Option<String>,
     },
     /// Senha do console do AI Cluster OS (só no AI Cluster OS).
     Passwd {
@@ -222,12 +228,14 @@ impl Worker {
                 code,
                 controller,
                 token,
+                token_file,
             } => {
                 let mut out = vec!["change".to_string()];
                 valor(&mut out, "--server", server.as_ref());
                 valor(&mut out, "--code", code.as_ref());
                 valor(&mut out, "--controller", controller.as_ref());
                 valor(&mut out, "--token", token.as_ref());
+                valor(&mut out, "--token-file", token_file.as_ref());
                 out
             }
             Self::Passwd { remove } => {

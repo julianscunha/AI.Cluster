@@ -5,7 +5,8 @@
 #       usa o convite do novo controller (sudo aic cluster invite la): baixa o token e a CA, pede um
 #       certificado novo do tunel com a chave que nasce aqui e troca tudo de uma vez
 #   aic worker change --controller URL --token TOKEN [--yes]
-#       so o endereco e o token (nao mexe no certificado do tunel)
+#   aic worker change --controller URL --token-file ARQUIVO [--yes]
+#       so o endereco e o token (nao mexe no certificado do tunel); o token por arquivo nao aparece no ps
 #
 # Antes de trocar, mostra o controller de destino e pede confirmacao (--yes ou AIC_ASSUME_YES=1 pula).
 # Nada e trocado antes de tudo ter sido baixado e conferido. Depois de trocar, so se da por feito quando o
@@ -30,7 +31,8 @@ uso:
       certificado do tunel. --controller sobrepoe o endereco que o convite informa (use se o
       controller aparece com outro IP para este no, por exemplo atras de NAT)
   aic worker change --controller URL --token TOKEN [--yes]
-      so o endereco do controller e o token de join
+  aic worker change --controller URL --token-file ARQUIVO [--yes]
+      so o endereco do controller e o token de join (o arquivo tem o token; o token nao aparece no ps)
   aic worker change --help
 
 --yes pula a pergunta de confirmacao (AIC_ASSUME_YES=1 faz o mesmo).
@@ -40,16 +42,16 @@ USO
 
 die() { echo "aic worker change: $1" >&2; exit 1; }
 
-SERVER=""; CODE=""; CONTROLLER=""; TOKEN=""; YES=0
+SERVER=""; CODE=""; CONTROLLER=""; TOKEN=""; TOKEN_FILE=""; YES=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--yes | -y) YES=1; shift ;;
-	--server | --code | --controller | --token)
+	--server | --code | --controller | --token | --token-file)
 		[ $# -ge 2 ] || die "$1 pede um valor"
 		case "$1" in
 		--server) SERVER=$2 ;; --code) CODE=$(printf '%s' "$2" | tr a-z A-Z) ;;
-		--controller) CONTROLLER=$2 ;; --token) TOKEN=$2 ;;
+		--controller) CONTROLLER=$2 ;; --token) TOKEN=$2 ;; --token-file) TOKEN_FILE=$2 ;;
 		esac
 		shift 2 ;;
 	*) die "argumento desconhecido: $1 (aic worker change --help)" ;;
@@ -60,6 +62,16 @@ done
 [ -r "$ENV_FILE" ] || die "falta $ENV_FILE: este no nao tem identidade"
 NODE=$(sed -n 's/^AI_CLUSTER_NODE_ID=//p' "$ENV_FILE" | head -n 1 | tr -d "\"'")
 [ -n "$NODE" ] || die "o worker.env nao tem AI_CLUSTER_NODE_ID"
+
+# Token por arquivo: sem espaco nem quebra de linha; recusa arquivo ausente, vazio ou legivel por outros.
+if [ -n "$TOKEN_FILE" ]; then
+	[ -z "$TOKEN" ] || die "use --token ou --token-file, nao os dois"
+	[ -z "$SERVER" ] || die "--token-file nao combina com --server (o convite traz o token)"
+	[ -f "$TOKEN_FILE" ] && [ -r "$TOKEN_FILE" ] || die "arquivo de token ausente ou sem leitura: $TOKEN_FILE"
+	[ -z "$(find "$TOKEN_FILE" -perm -004 2>/dev/null)" ] || die "$TOKEN_FILE e legivel por outros (chmod 600)"
+	TOKEN=$(tr -d ' \t\r\n' < "$TOKEN_FILE")
+	[ -n "$TOKEN" ] || die "$TOKEN_FILE esta vazio"
+fi
 
 if [ -n "$SERVER" ]; then
 	[ -n "$CODE" ] || die "com --server informe tambem --code (aparece no 'sudo aic cluster invite' do controller)"

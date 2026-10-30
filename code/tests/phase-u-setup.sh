@@ -13,6 +13,8 @@
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
 #   B2b) `aic worker change` muda um nó de controller pelo convite (token, CA, certificado novo; a troca só
 #        se dá por feita com o registro novo no log; falha, ou worker que não registra, volta tudo);
+#        `--token-file` troca controller e token (espaços e quebras saem; arquivo ausente, vazio ou legível
+#        por outros é recusado sem mexer no nó);
 #   B3) o worker exige o código do convite (8 caracteres) e o convite trava com chutes demais, inclusive com
 #        HEAD e com caminho codificado (/%6Aoin-X); quem não chutou continua sendo atendido;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
@@ -28,6 +30,10 @@
 #   G2) rollback: (a) o restart falha uma vez: binários, config e release voltam, e o serviço antigo sobe;
 #        (b) o binário novo sai na hora: o update desfaz tudo, volta ao antigo e sai com erro;
 #   H) aic update no worker Linux (--force): o pid muda, o registro novo aparece no log e os anteriores ficam guardados;
+#   H1) rollback do worker: o worker novo sai na hora (release ruim): o update sai com erro, volta o binário, a
+#        release e o .prev, e o worker ANTIGO roda de novo e registra (pid e registro conferidos);
+#   C3) servidor no layout antigo (ai-cluster, aic-setup, sem /opt/ai-cluster/libexec nem aic): o setup do
+#        tools.tar.gz atualiza; aic funciona, os nomes antigos somem, token e certificados ficam, config nova entra;
 #   I) cabeçalho com o nome do componente, cor num terminal, comandos antigos inexistentes e
 #      `aic worker role` recusado no Linux comum.
 set -uo pipefail
@@ -39,7 +45,7 @@ BASE=http://aic-mirror:9000
 BASE_BAD=http://aic-mirror-bad:9001
 TMPD=$(mktemp -d "${AIC_TMP:-/d/temp}/aic-setup.XXXXXX")   # caminho ASCII: o Docker não aceita acento no -v
 BADDIST=$TMPD/bad; mkdir -p "$BADDIST"; cp -r "$DISTU"/. "$BADDIST"/
-teardown() { docker rm -f aic-mirror aic-mirror-bad aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; }
+teardown() { docker rm -f aic-mirror aic-mirror-bad aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw aic-old >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; }
 fail() { echo "FALHA: $1"; docker exec aic-srv tail -5 /tmp/invite.log 2>&1; teardown; exit 1; }
 trap 'teardown; rm -rf "$TMPD"' EXIT
 teardown; docker network create $NET >/dev/null
@@ -59,12 +65,14 @@ docker build -q -t aic-test-base - >/dev/null <<'DOCKERFILE' || { echo "FALHA: i
 FROM debian:12
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl libgomp1 iproute2 python3 curl wget procps >/dev/null && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
-# Release "ruim" para o teste de rollback: o controller que sai na hora (o resto é igual). Feita num contêiner
-# Linux, para o modo de execução do binário e o SHA-256 saírem certos.
+# Release "ruim" para os testes de rollback: o controller e o worker que saem na hora (o resto é igual). Feita
+# num contêiner Linux, para o modo de execução do binário e o SHA-256 saírem certos.
 docker run --rm -v "$(cd "$BADDIST" && pwd -W):/b" aic-test-base sh -c '
-  cd /b && rm -rf /w && mkdir /w && tar -xzf controller-linux-x86_64.tar.gz -C /w &&
-  printf "#!/bin/sh\nexit 1\n" > /w/ai-cluster-controller && chmod 755 /w/ai-cluster-controller &&
-  tar --owner=0 --group=0 -C /w -czf controller-linux-x86_64.tar.gz . && rm -rf /w && rm -f SHA256SUMS &&
+  cd /b && for p in controller:ai-cluster-controller worker:ai-cluster-worker; do
+    a=${p%%:*}-linux-x86_64.tar.gz; bin=${p#*:}; rm -rf /w && mkdir /w && tar -xzf "$a" -C /w &&
+    printf "#!/bin/sh\nexit 1\n" > /w/$bin && chmod 755 /w/$bin &&
+    tar --owner=0 --group=0 -C /w -czf "$a" . || exit 1
+  done && rm -rf /w && rm -f SHA256SUMS &&
   for f in install.sh VERSION *.tar.gz; do printf "%s  %s\n" "$(sha256sum $f | cut -d" " -f1)" "$f"; done > SHA256SUMS' \
   || { echo "FALHA: não consegui montar a release ruim"; exit 1; }
 docker run -d --name aic-mirror --network $NET -v "$DIST:/r:ro" -w /r aic-test-base python3 -m http.server 9000 >/dev/null
@@ -191,6 +199,20 @@ docker exec aic-wk grep -q 'AI_CLUSTER_INSECURE=1' /tmp/fd/worker.env || fail "o
 docker exec aic-wk sh -c "test ! -e /tmp/fd/state/credential && openssl verify -CAfile /tmp/fd/rpc-tls/ca.crt /tmp/fd/rpc-tls/worker.crt && openssl x509 -in /tmp/fd/rpc-tls/worker.crt -noout -ext subjectAltName | grep -q 'aic-worker-nodechange' && grep -q stop /tmp/fd/rc.log && grep -q start /tmp/fd/rc.log" >/dev/null || fail "aic change deveria trocar credencial e certificado e reiniciar o worker"
 [ "$(docker exec aic-wk stat -c %a /tmp/fd/.change-backup)" = 700 ] || fail "o backup do change deveria ser 700"
 docker exec aic-wk sh -c 'test -z "$(find /tmp/fd/.change-backup -perm /077)"' || fail "os arquivos do backup deveriam ser só do root"
+# Token por arquivo: espaços e quebras saem; a recusa (ausente, vazio, legível por outros, junto de --token)
+# não mexe no nó; o arquivo certo troca controller e token, e o token nunca aparece na saída.
+docker exec aic-wk sh -c "printf '  tokenDoArquivo1 \n\n' > /tmp/fd/tok-ok && chmod 600 /tmp/fd/tok-ok && printf 'outro\n' > /tmp/fd/tok-aberto && chmod 644 /tmp/fd/tok-aberto && : > /tmp/fd/tok-vazio && chmod 600 /tmp/fd/tok-vazio" || fail "não preparei os arquivos de token"
+ANTES_ARQ=$(docker exec aic-wk cat /tmp/fd/worker.env)
+falha_com "ausente ou sem leitura" docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/nao-existe"
+falha_com "legivel por outros" docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/tok-aberto"
+falha_com "esta vazio" docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/tok-vazio"
+falha_com "nao os dois" docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/tok-ok --token x"
+[ "$(docker exec aic-wk cat /tmp/fd/worker.env)" = "$ANTES_ARQ" ] || fail "token por arquivo recusado não pode mexer no worker.env"
+OUT_ARQ=$(docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/tok-ok" 2>&1) || { echo "$OUT_ARQ" | tail -4; fail "aic change com --token-file"; }
+docker exec aic-wk grep -qx 'AI_CLUSTER_JOIN_TOKEN=tokenDoArquivo1' /tmp/fd/worker.env || fail "o token do arquivo deveria entrar no worker.env, sem espaços nem quebra"
+docker exec aic-wk grep -qx 'AI_CLUSTER_CONTROLLER=http://192.168.1.28:50051' /tmp/fd/worker.env || fail "--controller com --token-file deveria valer"
+echo "$OUT_ARQ" | grep -q tokenDoArquivo1 && fail "o token não pode aparecer na saída do aic worker change"
+echo "OK: --token-file troca controller e token; recusas não mexem no nó e o token não aparece"
 BEFORE=$(docker exec aic-wk cat /tmp/fd/worker.env)
 # Worker que não sobe: volta o que estava (token, CA e certificado) e sai com erro.
 docker exec aic-wk touch /tmp/fd/fail-start
@@ -261,6 +283,49 @@ GPID1=$(pid_de aic-gw /var/lib/ai-cluster/state/gateway.pid)
 docker exec aic-gw sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(hostname -i | cut -d" " -f1):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway deveria voltar com o endereço dele (lan_ip)"
 espera_ate 40 docker exec aic-gw curl -fsS http://127.0.0.1:8080/health || fail "o gateway deveria responder depois do update"
 echo "OK: update do gateway sozinho"
+
+echo "=== C3) servidor com o layout antigo (ai-cluster, aic-setup): o setup do tools.tar.gz migra e atualiza ==="
+docker run -d --name aic-old --network $NET aic-test-base sleep 900 >/dev/null
+espera_ate 60 docker exec aic-old curl -fsS $BASE/install.sh -o /tmp/install.sh || fail "sem install.sh no espelho (aic-old)"
+inst aic-old --role controller --arch x86_64 >/dev/null || fail "install.sh controller (layout antigo)"
+JOIN_C3=$(docker exec aic-old sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)
+PKI_C3=$(docker exec aic-old sh -c 'sha256sum /etc/ai-cluster/pki/* | sort')
+# O layout antigo: sem libexec/setup, sem o wrapper `aic` e sem o binário `aic`; os nomes ai-cluster e
+# aic-setup como arquivos simples; o release sem o resumo SUMS e sem a porta de espera (config antiga).
+docker exec aic-old sh -c '
+  rm -rf /opt/ai-cluster/libexec && rm -f /usr/local/bin/aic /opt/ai-cluster/bin/aic &&
+  printf "#!/bin/sh\necho ai-cluster antigo\n" > /usr/local/bin/ai-cluster && cp /usr/local/bin/ai-cluster /usr/local/bin/aic-setup &&
+  cp /usr/local/bin/ai-cluster /opt/ai-cluster/bin/ai-cluster && chmod 755 /usr/local/bin/ai-cluster /usr/local/bin/aic-setup /opt/ai-cluster/bin/ai-cluster &&
+  sed -i "/^SUMS=/d" /etc/ai-cluster/release && sed -i "/^AI_CLUSTER_ENROLL_ADDR=/d" /etc/ai-cluster/controller.env' \
+  || fail "não consegui montar o layout antigo"
+docker exec aic-old sh -c "! command -v aic >/dev/null 2>&1 && test -x /usr/local/bin/ai-cluster && test -x /usr/local/bin/aic-setup" || fail "o layout antigo deveria estar montado"
+docker exec aic-old sh -c "mkdir -p /tmp/tools && curl -fsS $BASE/tools.tar.gz -o /tmp/tools.tgz && tar -C /tmp/tools -xzf /tmp/tools.tgz && cp /tmp/tools/setup /tmp/setup" \
+  || fail "não consegui o setup do tools.tar.gz"
+# Antes, uma atualização que falha (release ruim: o controller sai na hora): volta tudo, e o layout antigo
+# continua como estava, com ai-cluster e aic-setup funcionando (os nomes só saem depois que o novo sobe).
+docker exec aic-old sed -i "s|^BASE=.*|BASE=$BASE_BAD|" /etc/ai-cluster/release || fail "não apontei o servidor antigo para a release ruim"
+OUT=$(docker exec aic-old sh /tmp/setup update apply --force --yes 2>&1); RC=$?
+[ "$RC" != 0 ] || { echo "$OUT" | tail -8; fail "a migração com release ruim deveria sair com erro"; }
+echo "$OUT" | grep -q "voltou a rodar" || { echo "$OUT" | tail -8; fail "a migração desfeita deveria dizer que a versão anterior voltou"; }
+docker exec aic-old sh -c 'test -x /usr/local/bin/ai-cluster && test -x /usr/local/bin/aic-setup && test -x /opt/ai-cluster/bin/ai-cluster' \
+  || fail "a migração desfeita não pode tirar os nomes antigos"
+docker exec aic-old sh -c '/usr/local/bin/ai-cluster >/dev/null && /usr/local/bin/aic-setup >/dev/null' || fail "os comandos antigos deveriam funcionar depois do rollback"
+docker exec aic-old sh -c 'test ! -e /usr/local/bin/aic && test ! -e /opt/ai-cluster/libexec/setup' || fail "o rollback deveria tirar o aic novo (layout antigo)"
+espera_ate 40 docker exec aic-old sh -c 'kill -0 $(cat /var/lib/ai-cluster/state/controller.pid)' || fail "o controller antigo deveria estar rodando depois do rollback"
+[ "$(docker exec aic-old sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)" = "$JOIN_C3" ] || fail "o rollback não pode trocar o token"
+docker exec aic-old sed -i "s|^BASE=.*|BASE=$BASE|" /etc/ai-cluster/release || fail "não voltei o servidor antigo para a release boa"
+echo "OK C3a) migração com release ruim: volta ao layout antigo, ai-cluster e aic-setup funcionam"
+OUT=$(docker exec aic-old sh /tmp/setup update apply --force --yes 2>&1) || { echo "$OUT" | tail -12; fail "o setup do tools.tar.gz deveria atualizar o servidor antigo"; }
+echo "$OUT" | grep -q "Atualizado para" || { echo "$OUT" | tail -8; fail "a migração deveria terminar com 'Atualizado para'"; }
+docker exec aic-old sh -c 'test -x /usr/local/bin/aic && test -x /opt/ai-cluster/bin/aic && test -x /opt/ai-cluster/libexec/setup' || fail "a migração deveria pôr o aic e o setup novos"
+docker exec aic-old aic version >/dev/null 2>&1 || fail "o aic deveria funcionar depois da migração"
+docker exec aic-old sh -c 'test ! -e /usr/local/bin/ai-cluster && test ! -e /usr/local/bin/aic-setup && test ! -e /opt/ai-cluster/bin/ai-cluster' || fail "os nomes antigos (ai-cluster, aic-setup) deveriam sumir"
+[ "$(docker exec aic-old sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)" = "$JOIN_C3" ] || fail "a migração não pode trocar o token de join"
+[ "$(docker exec aic-old sh -c 'sha256sum /etc/ai-cluster/pki/* | sort')" = "$PKI_C3" ] || fail "a migração não pode trocar os certificados"
+docker exec aic-old grep -qx '^AI_CLUSTER_ENROLL_ADDR=.*:50052$' /etc/ai-cluster/controller.env || fail "a migração deveria acrescentar a config nova"
+docker exec aic-old test -x /opt/ai-cluster/bin/.prev/ai-cluster-controller || fail "a migração deveria guardar o binário anterior em .prev"
+espera_ate 40 docker exec aic-old aic cluster nodes || fail "o controller deveria responder depois da migração"
+echo "OK C3) servidor antigo migrado pelo setup do tools.tar.gz: aic funciona, nomes antigos somem, token e certificados ficam"
 
 echo "=== D) combinações recusadas ==="
 # Capturar a saída antes do grep: `grep -q` fecha o pipe cedo e o pipefail contaria como falha.
@@ -358,6 +423,31 @@ docker exec aic-wk kill -0 "$WPID1" || fail "o worker novo deveria estar rodando
 espera_ate 60 docker exec aic-wk sh -c "[ \$(grep -c 'registrado node_id=.* aceito=true' /opt/ai-cluster/state/worker.log) -gt $REG0 ]" \
   || fail "o worker deveria registrar uma linha nova depois do update"
 echo "OK H) update do worker: pid novo, registro novo e anteriores guardados"
+
+echo "=== H1) rollback do worker: o worker novo sai na hora; volta o antigo, que roda e registra ==="
+# A release ruim traz um ai-cluster-worker que sai com erro; o aic-wk passa a apontar para ela.
+docker exec aic-wk sed -i "s|^BASE=.*|BASE=$BASE_BAD|" /etc/ai-cluster/release || fail "não apontei o worker para a release ruim"
+BIN_H1=$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)
+PREV_H1=$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/.prev/ai-cluster-worker | cut -d' ' -f1)
+RELV_H1=$(docker exec aic-wk sed -n 's/^\(VERSION\|SUMS\)=//p' /etc/ai-cluster/release)
+ENV_H1=$(docker exec aic-wk sha256sum /opt/ai-cluster/worker.env | cut -d' ' -f1)
+WPID_H1=$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)
+REG_H1=$(docker exec aic-wk sh -c 'grep -c "registrado node_id=.* aceito=true" /opt/ai-cluster/state/worker.log; true')
+OUT=$(docker exec aic-wk aic update apply --yes 2>&1); RC=$?
+[ "$RC" != 0 ] || { echo "$OUT" | tail -8; fail "um worker que sai na hora deveria fazer o update sair com erro"; }
+echo "$OUT" | grep -q "voltou a rodar" || { echo "$OUT" | tail -8; fail "o update do worker desfeito deveria dizer que a versão anterior voltou"; }
+[ "$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)" = "$BIN_H1" ] || fail "o binário do worker deveria ser o de antes do update"
+[ "$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/.prev/ai-cluster-worker | cut -d' ' -f1)" = "$PREV_H1" ] || fail "o .prev deveria continuar guardando o anterior"
+docker exec aic-wk test ! -e /opt/ai-cluster/bin/.prev.novo || fail "o rollback não deixa .prev.novo para trás"
+[ "$(docker exec aic-wk sed -n 's/^\(VERSION\|SUMS\)=//p' /etc/ai-cluster/release)" = "$RELV_H1" ] || fail "a release gravada deveria ter ficado como estava"
+[ "$(docker exec aic-wk sha256sum /opt/ai-cluster/worker.env | cut -d' ' -f1)" = "$ENV_H1" ] || fail "o worker.env deveria ficar como estava"
+WPID_H1B=$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)
+[ -n "$WPID_H1B" ] && [ "$WPID_H1B" != "$WPID_H1" ] || fail "o worker antigo deveria ter sido religado (pid antes=$WPID_H1 depois=$WPID_H1B)"
+docker exec aic-wk sh -c "kill -0 $WPID_H1B && grep -q '^ai-cluster-wor' /proc/$WPID_H1B/comm" || fail "o pid guardado deveria ser do worker rodando"
+espera_ate 60 docker exec aic-wk sh -c "[ \$(grep -c 'registrado node_id=.* aceito=true' /opt/ai-cluster/state/worker.log) -gt $REG_H1 ]" \
+  || fail "o worker antigo deveria registrar de novo no controller depois do rollback"
+docker exec aic-wk sed -i "s|^BASE=.*|BASE=$BASE|" /etc/ai-cluster/release || fail "não voltei o worker para a release boa"
+echo "OK H1) worker que sai na hora: o update desfaz, o antigo roda e registra, .prev fica"
 
 echo "=== H2) bootstrap sem systemd: binário que sai na hora é desfeito e o worker volta ==="
 docker exec aic-wk sh -c "mkdir -p /tmp/tools && curl -fsS $BASE/tools.tar.gz -o /tmp/tools.tgz && tar -C /tmp/tools -xzf /tmp/tools.tgz" || fail "não consegui o pacote tools"
