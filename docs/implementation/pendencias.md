@@ -85,7 +85,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta manifesto assinado. O motor próprio segue só em fp32. | código, decisão |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
-| N5 a N9 | Pipeline com porta de entrada própria entre workers, tensor com all-reduce e planejador híbrido não existem: o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. Vários pedidos já rodam em paralelo (`-np`). Medido em 2026-10-29 ([[adr-022-fluxo-de-modelos-e-motor-hibrido]]): o salto para o nó lento domina a latência (10% das camadas no Pi derrubam 11 para 2 tokens/s), então um pipeline próprio só poderia ganhar vazão com vários pedidos; falta medir isso com um `llama-server` sob carga de pedidos concorrentes. (A pré-carga N4 existe: o gateway carrega o modelo ao ser planejado, aquece com o benchmark e o `rpc-server` guarda os tensores no cache em disco.) | dados, código |
+| Tensor com all-reduce e planejador híbrido | Não existem. O pipeline próprio foi descartado por medição ([[adr-022-fluxo-de-modelos-e-motor-hibrido]]); o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. Só reabrir com nós de velocidade parecida em cabo. | dados |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
