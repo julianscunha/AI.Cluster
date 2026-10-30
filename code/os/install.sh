@@ -66,7 +66,8 @@ ok() { printf '  %s✔%s %s\n' "$G" "$Z" "$1"; }
 # ask <variável> <pergunta> <padrão> : lê do terminal (o script pode vir por pipe do curl).
 TTY=/dev/tty
 # [ -r /dev/tty ] vale mesmo sem terminal de controle (ssh -T, cron): abrir de verdade é o teste.
-have_tty() { : <"$TTY" 2>/dev/null; }
+# Num subshell: em dash, um erro de redirecionamento em `:` (builtin) encerraria o script sem mensagem.
+have_tty() { ( : <"$TTY" ) 2>/dev/null; }
 ask() {
   have_tty || die "$(t 'sem terminal para perguntar; use as opções (--role, --arch, ...) e --yes' 'no terminal to ask on; use the options (--role, --arch, ...) and --yes')"
   printf '  %s%s%s [%s] ' "$B" "$2" "$Z" "$3" >&2

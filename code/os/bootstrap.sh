@@ -196,7 +196,8 @@ RE="registrado node_id=.* aceito=true"
 PIDFILE="$PREFIX/state/worker.pid"
 LOGFILE="$PREFIX/state/worker.log"
 # Registros de entrada no log de arquivo (sem systemd, ou quando o journal não responde).
-conta_log() { grep -c "$RE" "$LOGFILE" 2>/dev/null || true; }
+# grep -c sai com 1 quando não acha nada (ou não há arquivo): com set -e isso não pode matar o script.
+conta_log() { n=$(grep -c "$RE" "$LOGFILE" 2>/dev/null) || n=0; echo "${n:-0}"; }
 
 # Sobe o worker: com systemd pela unit; sem, em segundo plano com o mesmo ambiente (log e pid em state/).
 sobe() {
@@ -255,7 +256,9 @@ desfaz() {
   SINCE=$(date '+%Y-%m-%d %H:%M:%S'); N0=$(conta_log)
   sobe
   waited=0
-  until saudavel || [ "$waited" -ge "$HEALTH_TIMEOUT" ]; do sleep 2; waited=$((waited + 2)); done
+  # O registro leva ~20 s (o worker mede a máquina antes): o rollback espera ao menos 60 s por ele.
+  limite=$HEALTH_TIMEOUT; [ "$limite" -ge 60 ] || limite=60
+  until saudavel || [ "$waited" -ge "$limite" ]; do sleep 2; waited=$((waited + 2)); done
   if saudavel; then
     echo "$(t 'rollback feito: a versão anterior está de volta' 'rollback done: the previous version is back')" >&2
   else

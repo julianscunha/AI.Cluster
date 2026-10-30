@@ -37,11 +37,11 @@ DIST=$(cd "${1:-dist/release}" && pwd -W 2>/dev/null || pwd)
 NET=aic-st
 BASE=http://aic-mirror:9000
 BASE_BAD=http://aic-mirror-bad:9001
-TMPD=$(mktemp -d "${TMPDIR:-/d/temp}/aic-setup.XXXXXX" 2>/dev/null || mktemp -d)
+TMPD=$(mktemp -d "${AIC_TMP:-/d/temp}/aic-setup.XXXXXX")   # caminho ASCII: o Docker não aceita acento no -v
 BADDIST=$TMPD/bad; mkdir -p "$BADDIST"; cp -r "$DISTU"/. "$BADDIST"/
-teardown() { docker rm -f aic-mirror aic-mirror-bad aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$TMPD"; }
+teardown() { docker rm -f aic-mirror aic-mirror-bad aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; }
 fail() { echo "FALHA: $1"; docker exec aic-srv tail -5 /tmp/invite.log 2>&1; teardown; exit 1; }
-trap teardown EXIT
+trap 'teardown; rm -rf "$TMPD"' EXIT
 teardown; docker network create $NET >/dev/null
 
 # espera_ate <segundos> <comando...>: repete até dar certo (ou estoura o prazo). Substitui os `sleep` fixos.
@@ -82,11 +82,12 @@ fake_systemd() {
 #!/bin/sh
 echo "$*" >> /var/log/fake-systemctl.log
 mkdir -p /run/fake-units /var/log/fake-units
+for svc in "$@"; do :; done
 case "$1" in
-is-active) pid=$(cat /run/fake-units/$2.pid 2>/dev/null); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; exit $? ;;
+is-active) pid=$(cat /run/fake-units/$svc.pid 2>/dev/null); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; exit $? ;;
 start|restart)
   if [ -f /run/fake-fail-restart ]; then rm -f /run/fake-fail-restart; exit 1; fi
-  svc=$2; f=/etc/systemd/system/$svc.service
+  f=/etc/systemd/system/$svc.service
   pid=$(cat /run/fake-units/$svc.pid 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 1
   envf=$(sed -n 's/^EnvironmentFile=//p' "$f"); exe=$(sed -n 's/^ExecStart=//p' "$f")
   ( set -a; . "$envf"; set +a; nohup "$exe" >> /var/log/fake-units/$svc.log 2>&1 </dev/null & echo $! > /run/fake-units/$svc.pid ) ;;
@@ -159,7 +160,7 @@ echo "OK: aparelho aguardando aprovação"
 # `aic worker change` (AI Cluster OS): muda um nó de controller pelo convite, sem regravar a imagem. O nó de
 # mentira usa pastas e um rc-service de mentira (que registra no log do worker quando sobe); o resto
 # (wget, openssl, convite) é de verdade. AIC_TESTING=1 libera os caminhos de teste; AIC_ASSUME_YES=1 pula a pergunta.
-AICDIR=$(cd "$(dirname "$0")/../os/image/overlay/usr/libexec/aic" && pwd)
+AICDIR=$(cd "$(dirname "$0")/../os/image/overlay/usr/libexec/aic" && pwd -W 2>/dev/null || pwd)
 docker cp "$AICDIR/change" aic-wk:/tmp/aic-change >/dev/null || fail "docker cp do change"
 cat > "$TMPD/rc" <<'RC'
 #!/bin/sh
@@ -167,13 +168,14 @@ cat > "$TMPD/rc" <<'RC'
 # /tmp/fd/no-register, grava o registro do worker no log de teste (como o worker de verdade faz).
 echo "$@" >> /tmp/fd/rc.log
 if [ "$1 $2" = "ai-cluster-worker start" ]; then
-  [ ! -f /tmp/fd/fail-start ] || exit 1
+  if [ -f /tmp/fd/fail-start ]; then rm -f /tmp/fd/fail-start; exit 1; fi
   [ -f /tmp/fd/no-register ] || echo "registrado node_id=nodechange aceito=true cluster_id=x controller=y" >> /tmp/fd/worker.log
 fi
 exit 0
 RC
 docker exec aic-wk sh -c "mkdir -p /tmp/fd/state /tmp/fd/rpc-tls && printf 'AI_CLUSTER_CONTROLLER=http://velho:50051\nAI_CLUSTER_JOIN_TOKEN=velho\nAI_CLUSTER_NODE_ID=nodechange\nAI_CLUSTER_INSECURE=1\n' > /tmp/fd/worker.env && echo cred > /tmp/fd/state/credential && touch /tmp/fd/worker.log"
-docker cp "$TMPD/rc" aic-wk:/tmp/fd/rc >/dev/null && docker exec aic-wk chmod +x /tmp/fd/rc
+docker cp "$(cd "$TMPD" && pwd -W)/rc" aic-wk:/tmp/fd/rc >/dev/null || fail "docker cp do rc de mentira"
+docker exec aic-wk chmod +x /tmp/fd/rc || fail "chmod do rc de mentira"
 CH="AIC_TESTING=1 AIC_ASSUME_YES=1 AIC_DATA=/tmp/fd AIC_RC=/tmp/fd/rc AIC_WORKER_LOG=/tmp/fd/worker.log sh /tmp/aic-change"
 # Sem terminal e sem --yes, nada muda: a pergunta é obrigatória.
 falha_com "sem terminal para confirmar" docker exec aic-wk sh -c "AIC_TESTING=1 AIC_DATA=/tmp/fd AIC_RC=/tmp/fd/rc sh /tmp/aic-change --controller http://192.168.1.25:50051 --token novo"
@@ -197,7 +199,7 @@ docker exec aic-wk rm -f /tmp/fd/fail-start
 [ "$(docker exec aic-wk cat /tmp/fd/worker.env)" = "$BEFORE" ] || fail "com o worker que não subiu, o worker.env deveria voltar ao que era"
 # Worker que sobe mas não se registra no novo controller em 30 s: também não se dá por feito.
 docker exec aic-wk touch /tmp/fd/no-register
-falha_com "não se registrou" docker exec aic-wk sh -c "$CH --controller http://192.168.1.27:50051 --token outro"
+falha_com "nao se registrou" docker exec aic-wk sh -c "$CH --controller http://192.168.1.27:50051 --token outro"
 docker exec aic-wk rm -f /tmp/fd/no-register
 [ "$(docker exec aic-wk cat /tmp/fd/worker.env)" = "$BEFORE" ] || fail "sem o registro, o worker.env deveria voltar ao que era"
 echo "OK: aic worker change troca de controller pelo convite, pede confirmação e desfaz se o worker não sobe ou não registra"
@@ -256,7 +258,7 @@ OUT=$(docker exec aic-gw aic update apply --force --yes 2>&1) || { echo "$OUT" |
 echo "$OUT" | grep -q "Atualizado para" || { echo "$OUT" | tail -8; fail "o update do gateway deveria terminar com 'Atualizado para'"; }
 GPID1=$(pid_de aic-gw /var/lib/ai-cluster/state/gateway.pid)
 [ -n "$GPID1" ] && [ "$GPID1" != "$GPID0" ] || fail "o update deveria reiniciar o gateway (pid antes=$GPID0 depois=$GPID1)"
-docker exec aic-gw sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(hostname -i | cut -d\" \" -f1):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway deveria voltar com o endereço dele (lan_ip)"
+docker exec aic-gw sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(hostname -i | cut -d" " -f1):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway deveria voltar com o endereço dele (lan_ip)"
 espera_ate 40 docker exec aic-gw curl -fsS http://127.0.0.1:8080/health || fail "o gateway deveria responder depois do update"
 echo "OK: update do gateway sozinho"
 
@@ -267,6 +269,8 @@ MSG="só existe para x86_64" refused --role server --arch armv7
 MSG="ARM de 64 bits ainda não" refused --role worker --arch aarch64 --server 1.2.3.4
 MSG="este computador é x86_64" refused --role worker --arch armv7 --server 1.2.3.4
 MSG="idioma inválido" refused --lang fr
+MSG="não pode ser um diretório do sistema" refused --role server --arch x86_64 --models-dir /etc/modelos
+MSG="--version aceita só letras" refused --role controller --arch x86_64 --version 1/2
 echo "OK: recusas com mensagem"
 out=$(inst aic-ctl --mode dedicated --lang en)
 echo "$out" | grep -qF "Dedicated mode writes" || fail "--mode dedicated (alias) deveria mostrar o modo dedicado em inglês"
@@ -343,7 +347,7 @@ echo "OK G2b) binário que sai na hora: o update desfaz, volta ao antigo e sai c
 echo "=== H) aic update no worker Linux (--force): pid novo, registro novo, anteriores guardados ==="
 docker exec aic-wk aic update status | grep -q "já está na versão mais recente" || fail "aic update status do worker deveria comparar com a origem"
 WPID0=$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)
-REG0=$(docker exec aic-wk sh -c 'grep -c "registrado node_id=.* aceito=true" /opt/ai-cluster/state/worker.log' 2>/dev/null || echo 0)
+REG0=$(docker exec aic-wk sh -c 'grep -c "registrado node_id=.* aceito=true" /opt/ai-cluster/state/worker.log; true')
 OUT=$(docker exec aic-wk aic update apply --force --yes 2>&1) || { echo "$OUT" | tail -8; fail "aic update apply do worker"; }
 echo "$OUT" | grep -q "Atualizado para" || { echo "$OUT" | tail -8; fail "o update do worker deveria terminar com 'Atualizado para'"; }
 docker exec aic-wk test -x /opt/ai-cluster/bin/.prev/ai-cluster-worker || fail "o update do worker deveria guardar o binário anterior"
@@ -354,6 +358,23 @@ docker exec aic-wk kill -0 "$WPID1" || fail "o worker novo deveria estar rodando
 espera_ate 60 docker exec aic-wk sh -c "[ \$(grep -c 'registrado node_id=.* aceito=true' /opt/ai-cluster/state/worker.log) -gt $REG0 ]" \
   || fail "o worker deveria registrar uma linha nova depois do update"
 echo "OK H) update do worker: pid novo, registro novo e anteriores guardados"
+
+echo "=== H2) bootstrap sem systemd: binário que sai na hora é desfeito e o worker volta ==="
+docker exec aic-wk sh -c "mkdir -p /tmp/tools && curl -fsS $BASE/tools.tar.gz -o /tmp/tools.tgz && tar -C /tmp/tools -xzf /tmp/tools.tgz" || fail "não consegui o pacote tools"
+falha_com "--controller pede um valor" docker exec aic-wk sh /tmp/tools/bootstrap.sh --controller
+TOKW=$(docker exec aic-wk sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /opt/ai-cluster/worker.env)
+WNODE=$(docker exec aic-wk sed -n 's/^AI_CLUSTER_NODE_ID=//p' /opt/ai-cluster/worker.env)
+docker exec aic-wk sh -c "printf '#!/bin/sh
+exit 1
+' > /tmp/bad-worker && chmod 755 /tmp/bad-worker" || fail "não consegui o binário ruim"
+BINSUM0=$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)
+OUT=$(docker exec aic-wk sh /tmp/tools/bootstrap.sh --controller "http://$SIP:50051" --insecure --token "$TOKW" --node-id "$WNODE" --binary /tmp/bad-worker --health-timeout 10 2>&1); RC=$?
+[ "$RC" = 3 ] || { echo "$OUT" | tail -5; fail "bootstrap com binário ruim deveria sair com 3 (saiu $RC)"; }
+echo "$OUT" | grep -q "rollback feito: a versão anterior está de volta" || { echo "$OUT" | tail -5; fail "o bootstrap deveria dizer que a versão anterior voltou"; }
+[ "$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)" = "$BINSUM0" ] || fail "o binário anterior deveria estar em uso de novo"
+docker exec aic-wk sh -c 'kill -0 $(cat /opt/ai-cluster/state/worker.pid)' || fail "o worker deveria estar rodando depois do rollback"
+docker exec aic-wk test ! -e /opt/ai-cluster/worker.env.prev || fail "o rollback não deixa worker.env.prev para trás"
+echo "OK H2: binário ruim desfeito pela saúde real (sem systemd), e --controller sem valor tem mensagem"
 
 echo "=== I) cabeçalho com o nome do componente, comandos antigos inexistentes ==="
 S=$(docker exec aic-srv aic controller status 2>&1); echo "$S" | head -n 1 | grep -q "^Real.AI.Cluster controller v" || fail "o controller deveria abrir com o cabeçalho dele"
