@@ -43,6 +43,7 @@ Convenções:
 | `AI_CLUSTER_PLAN_STABLE_MS` | `30000` | Quanto a lista de workers com RPC precisa ficar igual antes de o plano do modelo mudar (e a geração subir). |
 | `AI_CLUSTER_ROLLOUT_WAVE` | `0` (todos) | Quantos nós atualizam ao mesmo tempo depois do canário. |
 | `AI_CLUSTER_PLACEMENT` | ligado | `off`, `0` ou `false` desliga o placement por custo e despacha na ordem de chegada. Serve para comparação. |
+| `AI_CLUSTER_SHARD_TIMEOUT_MS` | `8000` | Prazo de uma chamada `ShardMatmul` (motor próprio), de 1000 a 300000. Nós lentos pedem mais. |
 | `AI_CLUSTER_PLACEMENT_TOLERANCE` | `0.10` | Faixa de histerese do custo, como fração do custo do nó mais barato. Negativo vira `0`. |
 | `AI_CLUSTER_UNIT_SETUP_US` | `600` | Custo fixo por unidade, em microssegundos, usado na previsão e no custo. Negativo vira `0`. |
 

@@ -50,7 +50,15 @@ const MAX_SHARD_OUT: usize = 8 * 1024 * 1024;
 /// `ShardMatmul` calls running at once. A generation makes one at a time, so this only bounds a
 /// token that is used by more callers than the gateway's single slot allows.
 const MAX_SHARD_CALLS: usize = 8;
-const SHARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+/// Prazo de uma chamada `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`, 1 s a 5 min, padrão 8 s): um
+/// nó lento, como um Pi, pede mais que um PC.
+fn shard_timeout() -> std::time::Duration {
+    let ms = std::env::var("AI_CLUSTER_SHARD_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(8_000);
+    std::time::Duration::from_millis(ms.clamp(1_000, 300_000))
+}
 
 use crate::events::EventLog;
 use crate::metrics;
@@ -1838,6 +1846,7 @@ impl ClusterControl for ClusterControlService {
                 rows: request.rows,
                 k: request.k,
                 x: request.x.clone(),
+                cancel: false,
             };
             let (op_id, answer) = self
                 .shards
@@ -1847,7 +1856,7 @@ impl ClusterControl for ClusterControlService {
             waiting.push(answer);
         }
 
-        let deadline = tokio::time::Instant::now() + SHARD_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + shard_timeout();
         let mut outputs = Vec::with_capacity(waiting.len());
         for (spec, answer) in request.ops.iter().zip(waiting) {
             let result = match tokio::time::timeout_at(deadline, answer).await {

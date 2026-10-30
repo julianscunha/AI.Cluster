@@ -718,6 +718,8 @@ message ShardCompute {
   uint32 k = 7;
   repeated double x = 8;
   bool by_columns = 9;
+  // Só `op_id` vale: o chamador desistiu da operação; o worker a pula se ainda não começou.
+  bool cancel = 10;
 }
 
 /// Worker -> controller pelo canal residente.

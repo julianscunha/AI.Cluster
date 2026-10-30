@@ -132,8 +132,19 @@ impl ShardHub {
     }
 
     /// Forgets an operation nobody is waiting for any more (timeout or failed sibling).
+    /// O worker é avisado para pular a operação que ainda espera na fila dele.
     pub fn cancel(&self, op: u64) {
-        self.lock().pending.remove(&op);
+        let mut state = self.lock();
+        if let Some(pending) = state.pending.remove(&op)
+            && let Some(session) = state.sessions.get(&pending.node)
+        {
+            // Fila cheia ou canal fechado: o aviso é só uma economia, nada depende dele.
+            let _ = session.frames.try_send(Ok(ShardCompute {
+                op_id: op,
+                cancel: true,
+                ..Default::default()
+            }));
+        }
     }
 
     #[cfg(test)]
@@ -216,5 +227,16 @@ mod tests {
         let (op, _answer) = hub.submit("a", frame()).unwrap();
         hub.cancel(op);
         assert_eq!(hub.pending(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_tells_the_worker_to_skip_the_operation() {
+        let hub = ShardHub::default();
+        let (_session, mut frames) = hub.attach("a");
+        let (op, _answer) = hub.submit("a", frame()).unwrap();
+        assert!(!frames.recv().await.unwrap().unwrap().cancel);
+        hub.cancel(op);
+        let told = frames.recv().await.unwrap().unwrap();
+        assert!(told.cancel && told.op_id == op);
     }
 }

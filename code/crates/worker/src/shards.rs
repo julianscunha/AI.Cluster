@@ -6,7 +6,8 @@ use ai_cluster_common::matrix::Matrix;
 use ai_cluster_engine::ShardStore;
 use ai_cluster_protocol::cluster::{ShardCompute, ShardResult};
 use ai_cluster_protocol::metadata::{MetadataClient, NODE_ID_HEADER};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
@@ -18,12 +19,15 @@ const OUTBOX: usize = 64;
 const CONCURRENT_COMPUTES: usize = 2;
 /// Largest activation a frame may carry, in f64 values; the controller enforces the same cap.
 const MAX_X: usize = 2 * 1024 * 1024;
+/// Cancelamentos guardados; passado o teto a lista recomeça (um aviso perdido só custa um cálculo).
+const MAX_CANCELLED: usize = 4096;
 
 /// Keeps the channel open until the task is aborted. A refusal (not approved yet, controller
 /// down) is retried quietly: the message is printed once per distinct reason.
 pub async fn run(mut client: MetadataClient, node_id: String, store: Arc<ShardStore>) {
     let mut last_error = String::new();
     let permits = Arc::new(tokio::sync::Semaphore::new(CONCURRENT_COMPUTES));
+    let cancelled = Arc::new(Mutex::new(HashSet::<u64>::new()));
     loop {
         let (outbox, answers) = mpsc::channel::<ShardResult>(OUTBOX);
         let mut request = tonic::Request::new(ReceiverStream::new(answers));
@@ -42,9 +46,22 @@ pub async fn run(mut client: MetadataClient, node_id: String, store: Arc<ShardSt
                 last_error.clear();
                 let mut frames = response.into_inner();
                 while let Ok(Some(frame)) = frames.message().await {
+                    if frame.cancel {
+                        let mut set = lock(&cancelled);
+                        if set.len() >= MAX_CANCELLED {
+                            set.clear();
+                        }
+                        set.insert(frame.op_id);
+                        continue;
+                    }
                     let (store, outbox, permits) = (store.clone(), outbox.clone(), permits.clone());
+                    let cancelled = cancelled.clone();
                     tokio::spawn(async move {
                         let _permit = permits.acquire_owned().await;
+                        // Quem pediu desistiu enquanto a operação esperava a vez.
+                        if lock(&cancelled).remove(&frame.op_id) {
+                            return;
+                        }
                         let answer = tokio::task::spawn_blocking(move || answer(&store, frame))
                             .await
                             .unwrap_or_else(|_| ShardResult {
@@ -67,6 +84,12 @@ pub async fn run(mut client: MetadataClient, node_id: String, store: Arc<ShardSt
         }
         tokio::time::sleep(RECONNECT).await;
     }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Computes one frame. An error is reported to the caller, never a panic or a silent drop.

@@ -92,12 +92,12 @@ Ao subir, o gateway confere se os nós do modelo comportam as fatias, em vez de 
 | chamadas `ShardMatmul` simultâneas | 8 | `ResourceExhausted` |
 | quadros na fila de um nó | 64 | `ResourceExhausted` ("fila do canal cheia") |
 | operações em voo por nó | 64 | `ResourceExhausted` |
-| prazo de uma chamada inteira | 8 s | `DeadlineExceeded` |
+| prazo de uma chamada inteira | 8 s (`AI_CLUSTER_SHARD_TIMEOUT_MS`, 1 s a 5 min) | `DeadlineExceeded` |
 
 Regras de relay:
 
 - O controller atribui um `op_id` próprio. Uma resposta só vale se chegar do nó para o qual a operação foi enviada.
-- Qualquer término da chamada (resposta, erro, prazo ou cliente que sai) esquece as operações ainda pendentes. Se o gateway cancelar, a chamada em voo é abortada.
+- Qualquer término da chamada (resposta, erro, prazo ou cliente que sai) esquece as operações ainda pendentes e manda ao worker um quadro `ShardCompute` com `cancel = true` e o `op_id`: o worker pula a operação que ainda espera vaga de cálculo. Um cálculo já em curso termina e a resposta é descartada. Se o gateway cancelar, a chamada em voo é abortada.
 - `ShardMatmul` não entra em `GetMetrics` nem em `GetTrace`, que contam unidades de trabalho. A visibilidade é o evento `shard_channel_opened` em `ListEvents` e o log do gateway.
 - O prazo de 30 s do gateway vale para a requisição inteira. Cada nova tentativa do gateway recebe seu próprio prazo de 8 s.
 
