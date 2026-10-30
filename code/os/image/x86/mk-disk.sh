@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Monta a imagem de disco x86_64 UEFI do AI Cluster OS (GPT, A/B) a partir de build/rootfs-x86.ext4.
 #
-#   bash code/os/image/x86/mk-disk.sh --controller URL --join-token T --node-id ID [--insecure] [--ssh-key arq.pub]
+#   bash code/os/image/x86/mk-disk.sh --controller URL --token T --node-id ID [--insecure] [--ssh-key arq.pub]
 #
 # Layout (GPT): p1 ESP FAT32 64 MiB (BOOTX64.EFI + EFI/aic/grubenv) | p2 slot A 1 GiB | p3 slot B 1 GiB |
 # p4 `aic-data` o resto (identidade do nó, sobrevive à troca de slot). A identidade do slot é o número
@@ -12,11 +12,11 @@ cd "$(dirname "$0")/.."
 CONTROLLER=; TOKEN=; NODE=; INSECURE=0; SSHKEY=; DISK_MIB=${DISK_MIB:-3072}
 while [ $# -gt 0 ]; do
   case $1 in
-    --controller) CONTROLLER=$2; shift 2;; --join-token) TOKEN=$2; shift 2;; --node-id) NODE=$2; shift 2;;
+    --controller) CONTROLLER=$2; shift 2;; --token) TOKEN=$2; shift 2;; --node-id) NODE=$2; shift 2;;
     --insecure) INSECURE=1; shift;; --ssh-key) SSHKEY=$2; shift 2;; *) echo "argumento desconhecido: $1" >&2; exit 2;;
   esac
 done
-[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] && [ -n "$NODE" ] || { echo "falta --controller, --join-token ou --node-id" >&2; exit 2; }
+[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] && [ -n "$NODE" ] || { echo "falta --controller, --token ou --node-id" >&2; exit 2; }
 # os valores entram num arquivo que o root carrega no boot: só caracteres seguros
 for v in "$CONTROLLER" "$TOKEN" "$NODE"; do case "$v" in *[!A-Za-z0-9._:/@%+=-]*) echo "valor com caractere não permitido: $v" >&2; exit 2;; esac; done
 umask 077   # o .env temporário e a imagem carregam o token de join

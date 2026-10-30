@@ -4,7 +4,7 @@ em RAM (boot de rede) e escreve a identidade dele na partição de dados.
 
     AIC_SSH_PASSWORD=... python3 install-disk.py --host 192.168.1.24 --yes \\
         --image build/disk.img.gz --controller http://192.168.1.25:50051 \\
-        --join-token TOKEN --node-id orangepi-1 --ssh-key ~/.ssh/aic_pi.pub \\
+        --token TOKEN --node-id orangepi-1 --ssh-key ~/.ssh/aic_pi.pub \\
         --recovery-server 192.168.1.25
 
 Trava de segurança: só age num nó cujo cartão está DESMONTADO e que roda do initramfs (raiz `rootfs`),
@@ -37,7 +37,7 @@ def main():
     ap.add_argument('--user', default='root')
     ap.add_argument('--image', required=True, help='disk.img.gz')
     ap.add_argument('--controller', required=True)
-    ap.add_argument('--join-token', required=True)
+    ap.add_argument('--token', required=True)
     ap.add_argument('--node-id', required=True)
     ap.add_argument('--ssh-key', help='chave pública que poderá entrar por SSH no nó instalado')
     ap.add_argument('--recovery-server', help='IP do servidor TFTP da recuperação pela rede')
@@ -49,12 +49,12 @@ def main():
 
     if args.recovery_server:
         ipaddress.ip_address(args.recovery_server)  # sem isto, uma quebra de linha injetaria comandos no boot.scr
-        if not args.recovery_token or args.recovery_token == args.join_token:
+        if not args.recovery_token or args.recovery_token == args.token:
             sys.exit('a recuperação exige --recovery-token, diferente do token de join')
     password = os.environ.get('AIC_SSH_PASSWORD')
     if not password:
         sys.exit('defina AIC_SSH_PASSWORD (a senha não vai na linha de comando)')
-    for value in (args.controller, args.join_token, args.node_id, args.recovery_token or 'x'):
+    for value in (args.controller, args.token, args.node_id, args.recovery_token or 'x'):
         if not value or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/@=+-' for c in value):
             sys.exit(f'caractere não permitido em: {value!r}')
 
@@ -113,7 +113,7 @@ def main():
     # 3) Identidade do nó na partição de dados e a recuperação na de boot.
     worker_env = (
         f'AI_CLUSTER_CONTROLLER={args.controller}\n'
-        f'AI_CLUSTER_JOIN_TOKEN={args.join_token}\n'
+        f'AI_CLUSTER_JOIN_TOKEN={args.token}\n'
         f'AI_CLUSTER_NODE_ID={args.node_id}\n'
         'AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\n'
         'AI_CLUSTER_MODEL_DIR=/data/models\n'

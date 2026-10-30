@@ -341,7 +341,15 @@ enum RequestAction {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    // O `Error: …` do Rust sairia em inglês: toda falha do aic aparece como `erro: …`.
+    if let Err(error) = run().await {
+        eprintln!("erro: {error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let matches = match ptbr::localize(Cli::command()).try_get_matches() {
         Ok(matches) => matches,
         Err(error) => ptbr::show(&error),

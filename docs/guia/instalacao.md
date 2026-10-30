@@ -230,8 +230,7 @@ Sequência de build, a partir de `code/`:
    ```bash
    AIC_SSH_PASSWORD=... python3 os/image/install-disk.py --host <ip-do-no> --yes \
      --image os/image/build/disk.img.gz --controller https://controller.exemplo:50051 \
-     --join-token <token> --node-id no-1 --ssh-key ~/.ssh/id.pub
-   # `install-disk.py` ainda usa --join-token (ver pendências); o bootstrap.sh já usa --token
+     --token <token> --node-id no-1 --ssh-key ~/.ssh/id.pub
    ```
 
    O instalador só age num nó com o cartão desmontado e rodando do initramfs (raiz `rootfs`). Ele apaga o cartão inteiro e exige `--yes`. Precisa do `paramiko`.
@@ -266,7 +265,7 @@ bash scripts/build-armv7.sh            # só na primeira vez: cria a imagem de b
 bash scripts/build-x86.sh              # worker musl x86_64
 AIC_RELEASE=1.0 bash os/image/x86/build-rootfs.sh        # build/rootfs-x86.ext4 (kernel, initramfs e worker)
 bash os/image/x86/mk-disk.sh --controller https://controller.exemplo:50051 \
-  --join-token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img (ainda --join-token; ver pendências)
+  --token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img
 ```
 
 A imagem leva a identidade do nó (`worker.env`), então é uma por nó. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:

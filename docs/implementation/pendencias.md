@@ -133,7 +133,6 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Ajuda do clap em inglês | A ajuda do `aic` ainda mostra `[possible values: pt, en]` em inglês, na opção `--lang`. | código |
 | `aic worker change` sem `--token-file` | Só aceita `--token` na linha de comando, sem o token por arquivo que o `bootstrap.sh` tem. | código |
 | Empurrão só para AI Cluster OS | O controller empurra só a release assinada, e só para nós com AI Cluster OS. Workers e gateways em Linux comum não recebem empurrão: cada máquina roda `aic update apply`. | decisão |
-| Scripts com `--join-token` | `install-disk.py` e `mk-disk.sh` ainda aceitam `--join-token`, e `phase-p-bootstrap.sh` ainda o passa ao `bootstrap.sh`, que hoje só aceita `--token`. Trocar junto com o código e os testes. | código |
 | Migração de servidor antigo | A atualização de um servidor instalado com a ferramenta de nome antigo (`setup update apply --force`, vindo do `tools.tar.gz`) não foi testada. | código |
 
 ## Marcos

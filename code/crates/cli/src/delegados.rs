@@ -67,8 +67,8 @@ pub enum Controller {
         /// Não pergunta nada: aceita os padrões.
         #[arg(long)]
         yes: bool,
-        /// Idioma do instalador.
-        #[arg(long, value_parser = ["pt", "en"])]
+        /// Idioma do instalador: pt (padrão) ou en.
+        #[arg(long, value_parser = ["pt", "en"], hide_possible_values = true)]
         lang: Option<String>,
     },
     /// Estado do controller deste Linux.
@@ -117,8 +117,8 @@ pub enum Gateway {
         /// Não pergunta nada: aceita os padrões.
         #[arg(long)]
         yes: bool,
-        /// Idioma do instalador.
-        #[arg(long, value_parser = ["pt", "en"])]
+        /// Idioma do instalador: pt (padrão) ou en.
+        #[arg(long, value_parser = ["pt", "en"], hide_possible_values = true)]
         lang: Option<String>,
     },
     /// Estado do gateway deste Linux.
@@ -164,8 +164,8 @@ pub enum Worker {
         /// Não pergunta nada: aceita os padrões.
         #[arg(long)]
         yes: bool,
-        /// Idioma do instalador.
-        #[arg(long, value_parser = ["pt", "en"])]
+        /// Idioma do instalador: pt (padrão) ou en.
+        #[arg(long, value_parser = ["pt", "en"], hide_possible_values = true)]
         lang: Option<String>,
     },
     /// Estado do worker deste computador.
@@ -261,8 +261,8 @@ pub enum Update {
         /// Não pergunta nada: aceita os padrões.
         #[arg(long)]
         yes: bool,
-        /// Idioma do instalador.
-        #[arg(long, value_parser = ["pt", "en"])]
+        /// Idioma do instalador: pt (padrão) ou en.
+        #[arg(long, value_parser = ["pt", "en"], hide_possible_values = true)]
         lang: Option<String>,
     },
 }
