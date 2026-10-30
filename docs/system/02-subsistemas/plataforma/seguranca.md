@@ -145,7 +145,7 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 - **Versão:** o controller deixa fora do plano o worker cuja versão do `rpc-server` difere da do `llama-server` do gateway, porque o protocolo do RPC muda entre commits.
 - **Hora do nó:** o worker só abre o túnel depois que o relógio passa de 2026-01-01; antes disso um certificado válido hoje seria recusado como "ainda não válido".
 
-**Limite:** o certificado ainda não é emitido pelo controller por nó (a CA e os certificados são do operador). O nome por nó exige um certificado por worker.
+**Certificado por nó:** o `aic-setup` não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. **Limite:** a assinatura acontece enquanto o convite está aberto, e não há renovação nem revogação do certificado (825 dias).
 
 ## Chaves de API do controller
 
@@ -180,7 +180,7 @@ O estado de quarentena existe no modelo, e o placement não escolhe nó em quare
 
 - Os tokens são variáveis de ambiente. Ficam visíveis no ambiente do processo e em ferramentas de inspeção de contêiner.
 - A credencial do nó fica em claro no controller (arquivo de `AI_CLUSTER_NODES`, modo 0600) e no worker (arquivo de `AI_CLUSTER_NODE_CREDENTIAL_FILE`).
-- A chave de API do gateway é variável de ambiente, lida na subida.
+- A chave de API do gateway é variável de ambiente, lida na subida. Um `<NOME>_FILE` configurado e ilegível faz o controller, o gateway, o worker e a CLI recusarem subir; nunca vira "sem segredo" em silêncio.
 - Não há rotação periódica. Rotação é manual: revogar o nó, ou reiniciar o controller com tokens novos.
 - As estruturas de credencial imprimem o segredo se formatadas com `Debug`. Nada no código faz isso hoje.
 
@@ -219,4 +219,6 @@ Hoje o controle é por nó e por papel, não por unidade. Qualquer nó aprovado 
 - **Segredos em claro** em variáveis de ambiente e em arquivos.
 - **Atestação só de software.** Um nó comprometido pode mentir sobre a medida.
 - **Sem rotação de chave de release por revogação.** Só por substituição de imagem.
-- **Gateways sem dono.** O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada de outro (inclusive a URL que o operador vê). O controller limita a 64 entradas e troca a mais antiga sem sinal por uma nova. Ids e URLs aceitam só ASCII gráfico, e a CLI troca controle e caracteres invisíveis por `?` em todo texto vindo do controller (nós e gateways).
+- **Nó desconhecido passa pela checagem de credencial, por desenho.** Um `node_id` que o controller nunca viu (ou perdeu com o estado) não tem segredo a proteger, então `authorize_node` o deixa passar e o RPC responde "nó desconhecido" (`FailedPrecondition`). Responder `Unauthenticated` faria o worker legítimo sair para sempre depois de um controller que perdeu o estado, em vez de se registrar de novo. O custo é que quem tem o token de join descobre quais ids existem; ele já pode registrar nós, então não ganha poder novo.
+- **O token de inferência escolhe nó, subdiretório, tensor e faixa de cada `ShardMatmul`.** É assim porque o gateway decide a divisão do modelo. O que limita o estrago: o nó precisa estar aprovado e com canal aberto; o worker só aceita projeções de camada (`is_projection`) e recusa subdiretório que saia da raiz de modelos (só componentes simples, caminho resolvido dentro da raiz); a faixa e o tamanho da entrada e da saída têm teto no controller e no worker. Quem tem o token consegue gastar CPU dos workers e ler pesos de modelo que já estejam na raiz, nada além disso.
+- **Gateways sem dono.** O token de inferência é compartilhado, então quem o tem apresenta qualquer id de gateway e sobrescreve a entrada de outro (inclusive a URL que o operador vê). O controller limita a 64 entradas (no máximo 16 vivas por endereço IP, `AI_CLUSTER_MAX_GATEWAYS_PER_HOST`) e troca a mais antiga sem sinal por uma nova. Ids e URLs aceitam só ASCII gráfico, e a CLI troca controle e caracteres invisíveis por `?` em todo texto vindo do controller (nós e gateways).

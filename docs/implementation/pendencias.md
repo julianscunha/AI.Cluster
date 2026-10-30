@@ -41,7 +41,6 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Nó desconhecido | Um `node_id` fora do registro passa pela checagem de credencial. | código |
 | Atalho `--trust-listed` | Aprova a impressão que o controller mostra, sem comparar com a do nó; anula a proteção contra o id tomado. Usado nos scripts de teste e no bootstrap manual. | decisão |
 | Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. O limite de gateways vivos por IP existe (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`); falta um segredo por gateway. | código, decisão |
 
@@ -49,7 +48,6 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Token escolhe nó | O token de inferência escolhe nó, subdiretório, tensor e faixa. | código |
 | Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; o teto de operações em voo por nó (64, `AI_CLUSTER_SHARD_MAX_PENDING`) dá 503 ao passar. | código |
 | Engine fora do scheduler | O canal de fatias ainda passa pelo controller. Tirá-lo exige porta de entrada no worker (revisa o [[adr-009-canal-residente-de-fatias]]) para um motor que só serve à paridade e à pesquisa; reabrir se o motor próprio voltar a ser caminho de uso. | decisão |
 
