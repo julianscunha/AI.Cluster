@@ -1752,6 +1752,7 @@ fn stream_chat(mut prepared: Prepared) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ai_cluster_protocol::metadata::check_secret_files()?;
     // Who may call: the single `AI_CLUSTER_API_KEY` (tenant "default", every model, no quota) and/or
     // the tenants of `AI_CLUSTER_TENANTS` (F11): `name=key[,models=a|b][,tokens=N][,class=c];...`.
     let mut list = Vec::new();
@@ -1954,7 +1955,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     match tls {
         Some(config) => tls::serve(listener, app, config).await?,
-        None => axum::serve(listener, app).await?,
+        None => tls::serve_plain(listener, app).await?,
     }
     Ok(())
 }

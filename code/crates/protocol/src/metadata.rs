@@ -149,6 +149,26 @@ pub fn secret(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Falha se algum `<NOME>_FILE` dos segredos conhecidos está configurado mas não pode ser lido
+/// (ausente, vazio, permissão aberta). `secret` só avisa e devolve "nenhum", e um segredo opcional
+/// (inferência, recuperação, chave da API) viraria "desligado" em silêncio. Cada binário chama isto
+/// no início, antes de ler qualquer segredo, para recusar subir.
+pub fn check_secret_files() -> Result<(), String> {
+    for name in [
+        JOIN_TOKEN_ENV,
+        OPERATOR_TOKEN_ENV,
+        INFERENCE_TOKEN_ENV,
+        RECOVERY_TOKEN_ENV,
+        "AI_CLUSTER_API_KEY",
+    ] {
+        if let Some(path) = std::env::var_os(format!("{name}_FILE")).filter(|p| !p.is_empty()) {
+            read_secret_file(std::path::Path::new(&path))
+                .map_err(|why| format!("{name}_FILE: {why}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// O conteúdo do arquivo de segredo, sem espaços nas pontas. Recusa vazio e, no Unix, arquivo
 /// legível por grupo ou outros (um segredo com permissão aberta já vazou).
 fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
@@ -644,6 +664,21 @@ mod tests {
         std::fs::write(&file, " \n").unwrap();
         assert!(read_secret_file(&file).unwrap_err().contains("vazio"));
         assert!(read_secret_file(&dir.join("falta")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn segredo_opcional_com_arquivo_ilegivel_recusa_subir() {
+        // Variável de ambiente é global ao processo: um nome só deste teste.
+        let name = "AI_CLUSTER_RECOVERY_TOKEN_FILE";
+        let dir = std::env::temp_dir().join(format!("aic-secret-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: nenhum outro teste lê ou escreve esta variável.
+        unsafe { std::env::set_var(name, dir.join("falta")) };
+        let erro = check_secret_files().unwrap_err();
+        assert!(erro.contains("AI_CLUSTER_RECOVERY_TOKEN_FILE"), "{erro}");
+        unsafe { std::env::remove_var(name) };
+        assert!(check_secret_files().is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

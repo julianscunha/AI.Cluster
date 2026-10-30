@@ -42,6 +42,7 @@ fn resolve_state_path(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ai_cluster_protocol::metadata::check_secret_files()?;
     let addr = std::env::var("AI_CLUSTER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
         .parse::<std::net::SocketAddr>()?;

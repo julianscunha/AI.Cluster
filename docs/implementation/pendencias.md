@@ -44,8 +44,6 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Nó desconhecido | Um `node_id` fora do registro passa pela checagem de credencial. | código |
 | Atalho `--trust-listed` | Aprova a impressão que o controller mostra, sem comparar com a do nó; anula a proteção contra o id tomado. Usado nos scripts de teste e no bootstrap manual. | decisão |
 | Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. Falta limite de ids por IP e segredo por gateway. | código, decisão |
-| Segredo lido uma vez | `secret()` relê o arquivo a cada chamada e, se o `_FILE` falhar, só avisa. Ler no início e falhar. | código |
-| Gateway sem TLS | `axum::serve` sem teto de conexões nem tempo de cabeçalho (o TLS tem os dois). | código |
 
 ## F08 — Inferência
 

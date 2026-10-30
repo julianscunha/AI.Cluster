@@ -1,4 +1,4 @@
-//! TLS na perna HTTP do gateway: a chave de API e os prompts deixam de cruzar a rede em claro.
+//! Servidor HTTP do gateway, com TLS opcional: a chave de API e os prompts deixam de cruzar a rede em claro.
 //! Ligado por `AI_CLUSTER_GATEWAY_TLS_CERT` e `AI_CLUSTER_GATEWAY_TLS_KEY` (PEM). O handshake é do
 //! rustls; depois dele a conexão é do axum, igual à de texto puro.
 
@@ -16,7 +16,7 @@ use tower_service::Service;
 /// Quanto o handshake pode levar: um cliente que abre a conexão e cala não segura recurso.
 const HANDSHAKE: Duration = Duration::from_secs(10);
 
-/// Conexões TLS abertas ao mesmo tempo.
+/// Conexões abertas ao mesmo tempo (com ou sem TLS).
 const MAX_CONNECTIONS: usize = 256;
 
 /// A configuração do servidor a partir do certificado (cadeia) e da chave, em PEM.
@@ -41,13 +41,26 @@ pub fn load_config(cert: &str, key: &str) -> Result<Arc<ServerConfig>, String> {
     Ok(Arc::new(config))
 }
 
-/// Aceita conexões, faz o handshake e entrega cada uma ao `app`. Não retorna.
+/// Aceita conexões TLS, faz o handshake e entrega cada uma ao `app`. Não retorna.
 pub async fn serve(
     listener: tokio::net::TcpListener,
     app: Router,
     config: Arc<ServerConfig>,
 ) -> std::io::Result<()> {
-    let acceptor = TlsAcceptor::from(config);
+    accept_loop(listener, app, Some(TlsAcceptor::from(config))).await
+}
+
+/// Como [`serve`], sem TLS: as mesmas defesas (teto de conexões abertas e prazo para o cabeçalho
+/// completo) em vez do `axum::serve`, que não tem nenhuma das duas.
+pub async fn serve_plain(listener: tokio::net::TcpListener, app: Router) -> std::io::Result<()> {
+    accept_loop(listener, app, None).await
+}
+
+async fn accept_loop(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    acceptor: Option<TlsAcceptor>,
+) -> std::io::Result<()> {
     // Teto de conexões abertas: acima dele o accept espera, em vez de gastar um descritor por cliente.
     let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
@@ -66,26 +79,66 @@ pub async fn serve(
         let (acceptor, app) = (acceptor.clone(), app.clone());
         tokio::spawn(async move {
             let _permit = permit;
-            let Ok(Ok(stream)) = tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await else {
-                return;
-            };
-            let service = hyper::service::service_fn(move |request| {
-                let mut app = app.clone();
-                async move { app.call(request).await }
-            });
-            // Sem cabeçalho completo em 30 s a conexão cai: quem completa o handshake e cala não a segura.
-            let _ = hyper::server::conn::http1::Builder::new()
-                .timer(TokioTimer::new())
-                .header_read_timeout(Duration::from_secs(30))
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
+            match acceptor {
+                Some(acceptor) => {
+                    let Ok(Ok(stream)) =
+                        tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await
+                    else {
+                        return;
+                    };
+                    connection(stream, app).await;
+                }
+                None => connection(tcp, app).await,
+            }
         });
     }
+}
+
+async fn connection<S>(stream: S, app: Router)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = hyper::service::service_fn(move |request| {
+        let mut app = app.clone();
+        async move { app.call(request).await }
+    });
+    // Sem cabeçalho completo em 30 s a conexão cai: quem conecta e cala não a segura.
+    let _ = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(Duration::from_secs(30))
+        .serve_connection(TokioIo::new(stream), service)
+        .await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn o_servidor_sem_tls_responde_http() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        tokio::spawn(serve_plain(listener, app));
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET / HTTP/1.1
+Host: x
+Connection: close
+
+",
+            )
+            .await
+            .unwrap();
+        let mut out = String::new();
+        stream.read_to_string(&mut out).await.unwrap();
+        assert!(
+            out.starts_with("HTTP/1.1 200") && out.ends_with("ok"),
+            "{out}"
+        );
+    }
 
     #[test]
     fn arquivos_ausentes_ou_sem_certificado_sao_recusados() {

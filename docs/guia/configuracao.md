@@ -170,7 +170,7 @@ Estas não são lidas pelos binários.
 
 ## Segredos em arquivo
 
-Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de um arquivo que guarda o valor (`AI_CLUSTER_JOIN_TOKEN_FILE`, `AI_CLUSTER_OPERATOR_TOKEN_FILE`, `AI_CLUSTER_INFERENCE_TOKEN_FILE`, `AI_CLUSTER_RECOVERY_TOKEN_FILE`, `AI_CLUSTER_API_KEY_FILE`). Serve para secrets do Docker e do Kubernetes e mantém o valor fora de `docker inspect` e de `/proc/<pid>/environ`. O arquivo vence a variável. No Unix ele precisa ter permissão `0600`; arquivo ausente, vazio ou aberto demais conta como "sem segredo" (e avisa), nunca cai para a variável.
+Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de um arquivo que guarda o valor (`AI_CLUSTER_JOIN_TOKEN_FILE`, `AI_CLUSTER_OPERATOR_TOKEN_FILE`, `AI_CLUSTER_INFERENCE_TOKEN_FILE`, `AI_CLUSTER_RECOVERY_TOKEN_FILE`, `AI_CLUSTER_API_KEY_FILE`). Serve para secrets do Docker e do Kubernetes e mantém o valor fora de `docker inspect` e de `/proc/<pid>/environ`. O arquivo vence a variável. No Unix ele precisa ter permissão `0600`; arquivo ausente, vazio ou aberto demais faz o controller, o gateway, o worker e a CLI recusarem subir (o erro diz qual `_FILE`); nunca cai para a variável nem vira "sem segredo" em silêncio.
 
 ## Quem pode tomar um id
 

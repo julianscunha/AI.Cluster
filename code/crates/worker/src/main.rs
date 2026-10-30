@@ -365,6 +365,7 @@ fn runtime_version() -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ai_cluster_protocol::metadata::check_secret_files()?;
     let endpoint =
         std::env::var("AI_CLUSTER_CONTROLLER").unwrap_or_else(|_| DEFAULT_CONTROLLER.to_string());
     let node_id = node_id();

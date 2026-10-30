@@ -254,6 +254,7 @@ enum NodeAction {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ai_cluster_protocol::metadata::check_secret_files()?;
     let cli = Cli::parse();
     match cli.command {
         Command::Status | Command::Nodes => print_nodes(&cli.controller).await?,
