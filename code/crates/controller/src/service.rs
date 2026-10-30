@@ -234,6 +234,32 @@ fn gateway_taken(
     alive && matches!((owner, host), (Some(owner), Some(host)) if *owner != host)
 }
 
+/// Gateways vivos por endereço (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`, padrão 16): quem tem a
+/// credencial de inferência não enche a tabela de gateways sozinho de um só endereço. Atrás de NAT
+/// todos parecem um endereço só; quem tem mais gateways ali sobe o limite.
+fn max_gateways_per_host() -> usize {
+    std::env::var("AI_CLUSTER_MAX_GATEWAYS_PER_HOST")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, MAX_GATEWAYS)
+}
+
+/// Se `host` já tem `max` gateways vivos além de `id`.
+fn host_is_full(
+    hosts: &std::collections::HashMap<String, std::net::IpAddr>,
+    alive: impl Fn(&str) -> bool,
+    host: std::net::IpAddr,
+    id: &str,
+    max: usize,
+) -> bool {
+    hosts
+        .iter()
+        .filter(|(other, owner)| **owner == host && other.as_str() != id && alive(other))
+        .count()
+        >= max
+}
+
 /// Valida o que o gateway diz de si: tamanhos limitados e sem caracteres de controle, porque o
 /// texto vai para a tela do operador.
 fn valid_gateway(request: &ReportGatewayRequest) -> bool {
@@ -1680,6 +1706,21 @@ impl ClusterControl for ClusterControlService {
                 return Err(Status::permission_denied(
                     "gateway já apresentado por outro endereço; aguarde ele ficar sem sinal",
                 ));
+            }
+            if let Some(host) = host
+                && host_is_full(
+                    &hosts,
+                    |id| {
+                        gateways.get(id).is_some_and(|gateway| {
+                            now.saturating_sub(gateway.last_seen_unix_ms) <= GATEWAY_ALIVE_MS
+                        })
+                    },
+                    host,
+                    &request.gateway_id,
+                    max_gateways_per_host(),
+                )
+            {
+                return Err(Status::resource_exhausted("gateways demais neste endereço"));
             }
             if !gateways.contains_key(&request.gateway_id) && gateways.len() >= MAX_GATEWAYS {
                 // Um gateway morto não segura a vaga para sempre: sai o que está sem sinal há mais
@@ -3720,6 +3761,30 @@ mod tests {
             "sem endereço, sem regra"
         );
         assert!(!gateway_taken(true, None, Some(b)), "id novo");
+    }
+
+    #[test]
+    fn um_endereco_nao_enche_a_tabela_de_gateways() {
+        let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
+        let mut hosts = std::collections::HashMap::new();
+        for n in 0..3 {
+            hosts.insert(format!("g{n}"), a);
+        }
+        hosts.insert("outro".to_string(), b);
+        let alive = |_: &str| true;
+        // 3 vivos em `a`: com teto 3 um id novo não entra; um id já conhecido sim (não conta a si).
+        assert!(host_is_full(&hosts, alive, a, "novo", 3));
+        assert!(!host_is_full(&hosts, alive, a, "g0", 3));
+        // Outro endereço não é afetado, e gateway sem sinal não ocupa vaga.
+        assert!(!host_is_full(&hosts, alive, b, "novo", 3));
+        assert!(!host_is_full(
+            &hosts,
+            |id| id != "g1" && id != "g2",
+            a,
+            "novo",
+            2
+        ));
     }
 
     #[tokio::test]

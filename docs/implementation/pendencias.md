@@ -43,7 +43,7 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Nó desconhecido | Um `node_id` fora do registro passa pela checagem de credencial. | código |
 | Atalho `--trust-listed` | Aprova a impressão que o controller mostra, sem comparar com a do nó; anula a proteção contra o id tomado. Usado nos scripts de teste e no bootstrap manual. | decisão |
-| Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. Falta limite de ids por IP e segredo por gateway. | código, decisão |
+| Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. O limite de gateways vivos por IP existe (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`); falta um segredo por gateway. | código, decisão |
 
 ## F08 — Inferência
 
