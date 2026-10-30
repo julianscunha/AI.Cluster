@@ -7,6 +7,7 @@
 # Critérios verificados:
 #   A) install.sh instala o servidor (controller + gateway) baixando só os pacotes desse papel;
 #   B) o convite entrega o pacote do worker pelo processador e o nó fica READY e aprovado;
+#   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
 #   D) processador errado, gateway em ARM de 32 bits e ARM de 64 bits são recusados com mensagem.
 set -uo pipefail
@@ -52,6 +53,19 @@ WNAME=$(docker exec aic-wk hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 docker exec aic-wk sh -c "openssl x509 -in /etc/ai-cluster/rpc-tls/worker.crt -noout -ext subjectAltName | grep -q 'DNS:aic-worker-$WNAME' && openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null"   || fail "o certificado do worker deveria ter o SAN aic-worker-$WNAME e conferir com a CA"
 docker exec aic-srv grep -q 'AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}' /etc/ai-cluster/gateway.env || fail "o gateway deveria esperar o nome por nó"
 echo "OK: certificado por nó"
+
+echo "=== B2) quem já tem Linux se apresenta pelo /wait e aparece para aprovar ==="
+# O convite que está aberto também abriu a porta de espera; o script baixa só o aic-wait e o roda.
+docker exec aic-wk sh -c "curl -fsSL http://$SIP:8099/wait -o /tmp/wait.sh" || fail "o servidor não serviu o /wait"
+docker exec -d aic-wk sh -c "timeout 40 sh /tmp/wait.sh > /tmp/wait.log 2>&1"
+for _ in $(seq 20); do
+  docker exec aic-srv ai-cluster installs 2>/dev/null | grep -q "fingerprint=.* aguardando" && break; sleep 2
+done
+docker exec aic-srv ai-cluster installs | grep -q "fingerprint=.* aguardando" || fail "o aparelho não apareceu em installs: $(docker exec aic-wk tail -5 /tmp/wait.log)"
+docker exec aic-wk grep -q "Impressão digital" /tmp/wait.log || fail "a tela de espera não mostrou a impressão digital"
+for _ in $(seq 10); do docker exec aic-srv grep -q "quer instalar" /tmp/invite.log && break; sleep 2; done
+docker exec aic-srv grep -q "quer instalar" /tmp/invite.log || fail "o convite deveria avisar o operador do aparelho"
+echo "OK: aparelho aguardando aprovação"
 
 echo "=== C) controller sozinho e gateway noutro computador ==="
 inst aic-ctl --role controller --arch x86_64 >/dev/null || fail "install.sh controller"

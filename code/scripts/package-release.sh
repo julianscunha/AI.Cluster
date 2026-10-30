@@ -36,7 +36,7 @@ x86() { mkdir -p "$STAGE/$1"; shift; for b in "$@"; do docker cp "$CID:/usr/loca
 
 name=controller-linux-x86_64; x86 $name ai-cluster-controller ai-cluster; pack $name
 name=gateway-linux-x86_64;    x86 $name ai-cluster-gateway llama-server; pack $name
-name=worker-linux-x86_64;     x86 $name ai-cluster-worker ggml-rpc-server; pack $name
+name=worker-linux-x86_64;     x86 $name ai-cluster-worker ggml-rpc-server aic-wait; pack $name
 
 # armv7: binários do build-armv7.sh (volume aic-target-armv7) e o rpc-server do build.sh do llama.cpp.
 arm() { # arm <nome> <volume> <caminho dentro dele> <binário>...
@@ -48,7 +48,7 @@ arm() { # arm <nome> <volume> <caminho dentro dele> <binário>...
 name=controller-linux-armv7
 arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-controller ai-cluster; pack $name
 name=worker-linux-armv7
-arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-worker
+arm $name aic-target-armv7 "$ARM_TARGET/release" ai-cluster-worker aic-wait
 docker run --rm -v aic-llama:/v:ro busybox cat /v/llama.cpp/build-armv7m/bin/ggml-rpc-server \
   > "$STAGE/$name/ggml-rpc-server"
 pack $name

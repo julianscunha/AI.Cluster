@@ -25,6 +25,7 @@ DATA=/var/lib/ai-cluster
 LOGDIR=/var/log/ai-cluster
 SETUP_LOG=/var/log/ai-cluster-setup.log
 GRPC_PORT=50051
+ENROLL_PORT=50052   # a porta de espera da instalação (ADR-023): fechada até o convite abri-la
 HTTP_PORT=8080
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -139,6 +140,7 @@ make_credentials() {
     echo "AI_CLUSTER_EVENTS=$DATA/state/events.log"
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
     echo "AI_CLUSTER_MODELS_STATE=$DATA/state/models.state"
+    echo "AI_CLUSTER_ENROLL_ADDR=$IP:$ENROLL_PORT"
   } > "$CONF/controller.env"
   {
     echo "AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE"
@@ -513,6 +515,34 @@ AIC_INVITED=1 sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecur
   --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls </dev/null
 echo "Pronto: \$NAME entrou no cluster. O servidor aprova o nó em instantes."
 JOIN_SCRIPT
+  # O script para quem já tem Linux e quer instalar o AI Cluster OS (modo dedicado): confere o
+  # ambiente, baixa só o aic-wait e o roda. Nada é instalado nem apagado sem a aprovação do operador.
+  cat > "$WEB/wait" <<WAIT_SCRIPT
+#!/bin/sh
+# AI Cluster — apresenta este computador ao cluster para instalar o AI Cluster OS (modo dedicado).
+# Uso: curl -fsSL http://$IP:$PORT/wait | sudo sh
+set -eu
+[ "\$(id -u)" = 0 ] || { echo "rode com sudo: curl -fsSL http://$IP:$PORT/wait | sudo sh" >&2; exit 1; }
+case "\$(uname -m)" in
+  x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
+  *) echo "este computador é \$(uname -m): ainda não há instalação para ele" >&2; exit 1 ;;
+esac
+case "\$A" in $SUMS
+  *) echo "o servidor não tem o pacote para \$A" >&2; exit 1 ;;
+esac
+T=\$(mktemp -d); trap 'rm -rf "\$T"' EXIT
+FREE=\$(df -Pk "\$T" | awk 'NR==2 {print \$4}')
+[ "\${FREE:-0}" -ge 51200 ] || { echo "pouco espaço livre em \$T (precisa de 50 MB)" >&2; exit 1; }
+if [ -d /sys/firmware/efi ]; then FW=uefi; else FW="u-boot ou BIOS"; fi
+echo "AI Cluster: este computador é \$A, firmware \$FW."
+echo "AI Cluster: baixando a etapa de espera de $IP…"
+curl -fsS http://$IP:$PORT/worker-linux-\$A.tar.gz -o "\$T/w.tgz"
+echo "\$SUM  \$T/w.tgz" | sha256sum -c - >/dev/null || { echo "pacote corrompido ou adulterado" >&2; exit 1; }
+tar -C "\$T" -xzf "\$T/w.tgz" ./aic-wait 2>/dev/null || { echo "o pacote desta versão não traz o aic-wait" >&2; exit 1; }
+chmod 755 "\$T/aic-wait"
+# Não instala nem apaga nada: mostra o resumo e a impressão digital e espera a aprovação no servidor.
+AIC_INSTALL_OUT=/run/aic-install.json "\$T/aic-wait" http://$IP:$ENROLL_PORT
+WAIT_SCRIPT
   cd "$WEB"
   # Servidor do convite: arquivos sem listagem de diretório (o código do gateway não pode ser
   # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
@@ -571,17 +601,29 @@ PYSERVER
   AIC_CA_DIR="$CONF/pki" AIC_SIGNED_LOG="$HD/signed" python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>&1 &
   SRV=$!
   # Qualquer saída (erro, Ctrl+C, fim do prazo) derruba o servidor e apaga o que ele servia.
-  trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB" "$HD"' EXIT
+  trap 'kill "$SRV" 2>/dev/null; rm -rf "$WEB" "$HD"; /usr/local/bin/ai-cluster enrollment close >/dev/null 2>&1 || true' EXIT
   trap 'printf "\n  Convite encerrado.\n\n"; exit 0' INT TERM
   sleep 1
   kill -0 "$SRV" 2>/dev/null || die "não consegui abrir a porta $PORT em $IP (em uso?)"
   banner "Convite de computadores"
+  # Instalação com aprovação: a porta de espera existe desde a instalação do servidor (servidor mais
+  # antigo: acrescenta e reinicia o controller uma vez) e só aceita aparelhos enquanto este convite vale.
+  if ! grep -q '^AI_CLUSTER_ENROLL_ADDR=' "$CONF/controller.env"; then
+    echo "AI_CLUSTER_ENROLL_ADDR=$IP:$ENROLL_PORT" >> "$CONF/controller.env"
+    warn "habilitei a porta de espera da instalação e reiniciei o controller (os workers voltam sozinhos)"
+    svc_start controller
+    sleep 2
+  fi
+  /usr/local/bin/ai-cluster enrollment open --minutes "$MIN" >/dev/null 2>&1 \
+    || warn "não consegui abrir a porta de espera da instalação; o /wait não vai funcionar"
   box "Worker (qualquer computador x86_64 ou ARM de 32 bits), rode:" "" \
       "curl -fsSL http://$IP:$PORT/join | sudo sh" "" \
       "Gateway noutro computador: sudo aic-setup gateway --server $IP:$PORT --code $GCODE" "" \
+      "Instalar o AI Cluster OS (modo dedicado) num computador que já tem Linux:" "" \
+      "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
       "Válido por $MIN min. Linux com systemd e, no x86_64, libgomp1."
   printf '\n  %sAguardando computadores… (Ctrl+C encerra o convite)%s\n\n' "$D" "$Z"
-  END=$(( $(date +%s) + MIN * 60 )); SEEN=0
+  END=$(( $(date +%s) + MIN * 60 )); SEEN=0; : > "$HD/seen-installs"
   while [ "$(date +%s)" -lt "$END" ]; do
     # Cada certificado que o convite assina aparece aqui: um nome que você não reconhece é um intruso.
     TOTAL_SIGNED=$(wc -l < "$HD/signed" | tr -d ' ')
@@ -591,6 +633,13 @@ PYSERVER
       done
       SEEN=$TOTAL_SIGNED
     fi
+    # Aparelhos que pediram para instalar: o operador confere a impressão digital e escolhe o disco.
+    /usr/local/bin/ai-cluster installs 2>/dev/null | grep '^INSTALAÇÃO fingerprint=' | while read -r _ fp rest; do
+      f=${fp#fingerprint=}
+      grep -qx "$f" "$HD/seen-installs" && continue
+      echo "$f" >> "$HD/seen-installs"
+      printf '  %s•%s aparelho %s quer instalar (%s)\n    confira a impressão digital na tela dele e aprove: ai-cluster approve-install %s --disk <disco>\n' "$C" "$Z" "$f" "$(echo "$rest" | sed 's/ cpu=.*//; s/^aguardando //')" "$f"
+    done || true
     # Nós pendentes enquanto o convite está aberto são aprovados: foi o operador quem os convidou.
     /usr/local/bin/ai-cluster nodes 2>/dev/null | awk '$0 ~ /pendente/ {print $1}' | while read -r n; do
       case "$n" in -*) continue ;; esac

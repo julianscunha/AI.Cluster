@@ -36,6 +36,7 @@ ai-cluster [--controller <endpoint>] <comando>
 | `revoke <nó>` | Retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
 | `installs` | Aparelhos na etapa de espera de instalação (ADR-023): impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
 | `approve-install <impressão> --disk <disco>` | Aprova a instalação do aparelho, apagando o disco informado (precisa ser um dos que ele listou). Gera o token de instalação, que só o aparelho dono do segredo recebe. |
+| `enrollment open [--minutes N]` / `enrollment close` | Abre (1 a 120 min, padrão 15) ou fecha a porta em que os aparelhos se apresentam para instalar. Fechada é o normal; a janela se fecha sozinha. O `aic-setup invite` a abre e fecha por você. |
 | `reject-install <impressão>` | Tira o aparelho da lista de espera. |
 
 ## Reservas

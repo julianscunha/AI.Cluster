@@ -7,7 +7,7 @@ FROM rust:1-bookworm AS rust
 WORKDIR /src
 COPY code/ code/
 RUN cd code && cargo build --release -p ai-cluster-controller -p ai-cluster-gateway \
-      -p ai-cluster-worker -p ai-cluster-cli
+      -p ai-cluster-worker -p ai-cluster-cli -p ai-cluster-wait
 
 FROM debian:bookworm AS llama
 RUN apt-get update -qq && apt-get install -y -qq build-essential cmake git ca-certificates >/dev/null
@@ -28,6 +28,6 @@ RUN apt-get update -qq && apt-get install -y -qq libgomp1 ca-certificates curl o
  && useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin aic \
  && mkdir /cache && chown aic /cache
 COPY --from=rust /src/code/target/release/ai-cluster /src/code/target/release/ai-cluster-controller \
-     /src/code/target/release/ai-cluster-gateway /src/code/target/release/ai-cluster-worker /usr/local/bin/
+     /src/code/target/release/ai-cluster-gateway /src/code/target/release/ai-cluster-worker /src/code/target/release/aic-wait /usr/local/bin/
 COPY --from=llama /llama/build/bin/llama-server /llama/build/bin/ggml-rpc-server /usr/local/bin/
 USER aic
