@@ -40,6 +40,15 @@ echo "assinatura nao confere" > /data/state/update-result
 st=$(sh /usr/libexec/aic/setup update status)
 echo "$st" | grep -q "ultima atualizacao: ok versao=12.1 slot=B" || { echo "FALHA C1"; echo "$st"; exit 1; }
 echo "$st" | grep -q "ultima recusa:" && echo "$st" | grep -q "assinatura nao confere" || { echo "FALHA C2"; echo "$st"; exit 1; }
+# E) role é uma linha só; status é o bloco com o detalhe
+printf "AI_CLUSTER_NODE_ID=n1
+AI_CLUSTER_CONTROLLER=http://c:50051
+" > /tmp/w.env
+r=$(AIC_WORKER_ENV=/tmp/w.env sh /usr/libexec/aic/setup worker role)
+[ "$(echo "$r" | wc -l)" = 1 ] && echo "$r" | grep -q "worker" || { echo "FALHA E1: role deveria ser uma linha: $r"; exit 1; }
+s=$(AIC_WORKER_ENV=/tmp/w.env sh /usr/libexec/aic/setup worker status)
+[ "$(echo "$s" | wc -l)" -gt 3 ] && echo "$s" | grep -q "Controller" || { echo "FALHA E2: status deveria trazer o detalhe: $s"; exit 1; }
+sh /usr/libexec/aic/setup worker role --short >/dev/null 2>&1 && { echo "FALHA E3: role --short nao existe mais"; exit 1; }
 echo TUDO-OK' 2>&1) || { echo "$out"; fail "contêiner"; }
 echo "$out" | grep -q "^FALHA" && { echo "$out"; fail "ver acima"; }
 echo "$out" | grep -q "TUDO-OK" || { echo "$out"; fail "não terminou"; }
@@ -47,4 +56,5 @@ echo "OK A) só grava quando a versão tentada é a que roda"
 echo "OK B) uma vez por versão"
 echo "OK C) aic update status mostra a última atualização e a última recusa"
 echo "OK D) sem registro, diz que não há"
+echo "OK E) aic worker role é uma linha, status traz o detalhe, e --short não existe mais"
 echo "=== update status do SO OK ==="

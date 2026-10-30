@@ -105,7 +105,7 @@ avisa_pendencias() {
 }
 
 # Largura em caracteres (não em bytes): descarta os bytes de continuação do UTF-8.
-clen() { printf '%s' "$1" | LC_ALL=C sed 's/[-¿]//g' | wc -c | tr -d ' '; }
+clen() { printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' '; }   # caracteres, não bytes: tira os bytes de continuação do UTF-8
 box() { # box linha...
   w=0
   for l in "$@"; do n=$(clen "$l"); [ "$n" -gt "$w" ] && w=$n; done

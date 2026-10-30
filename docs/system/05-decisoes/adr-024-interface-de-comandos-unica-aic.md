@@ -43,7 +43,7 @@ Os comandos cresceram em ferramentas separadas (`ai-cluster`, `aic-setup`, `aic`
 | `aic controller install [--with-gateway] [--ip] [--models-dir]` / `status` / `logs` | controller deste Linux | `aic-setup server` |
 | `aic gateway install --server S --code C` / `status` / `logs` | gateway deste Linux | `aic-setup gateway` |
 | `aic worker join --server S --code C` / `status` / `logs [-f] [-n N]` | worker deste Linux ou AI Cluster OS | `aic-setup worker`, `aic status/logs` |
-| `aic worker role [--short]` / `change …` / `passwd [--remove]` | só no AI Cluster OS | `aic role`, `aic change`, `aic passwd` |
+| `aic worker role` / `change …` / `passwd [--remove]` | só no AI Cluster OS | `aic role`, `aic change`, `aic passwd` |
 | `aic update status` / `apply [--version V] [--force] [--yes]` | atualização deste computador | `aic update`, `aic-setup update` |
 | `aic version` | versão do `aic` e do sistema | `aic version` |
 

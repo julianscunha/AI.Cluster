@@ -112,7 +112,7 @@ Estes comandos respondem que não existem nos Linux comuns.
 
 | Comando | O que faz |
 |---|---|
-| `aic worker role [--short]` | Papel deste nó (computação, com fatias de modelo, ou recuperação), lendo só a configuração local. `--short` mostra só a palavra. |
+| `aic worker role` | O papel deste nó em uma linha (computação, com fatias de modelo, ou recuperação), lendo só a configuração local. O detalhe (controller, estado, versão, slot) é `aic worker status`. |
 | `aic worker change --server IP[:8099] --code CÓDIGO` | Troca o convite (e o controller) do worker. |
 | `aic worker change --controller URL --token T` | Troca só o controller, com o token de join. |
 | `aic worker passwd [--remove]` | Senha do console local. `--remove` deixa o console sem login. |

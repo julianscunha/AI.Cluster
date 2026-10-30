@@ -120,10 +120,7 @@ fn cada_comando_delegado_repassa_a_linha_ao_setup() {
         ),
         (&["worker", "status"], &["worker", "status"]),
         (&["worker", "logs", "-f"], &["worker", "logs", "-f"]),
-        (
-            &["worker", "role", "--short"],
-            &["worker", "role", "--short"],
-        ),
+        (&["worker", "role"], &["worker", "role"]),
         (
             &["worker", "change", "--server", "10.0.0.5", "--code", "9"],
             &["worker", "change", "--server", "10.0.0.5", "--code", "9"],

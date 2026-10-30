@@ -2499,7 +2499,7 @@ mod tests {
             &[
                 "aic", "worker", "join", "--server", "10.0.0.5", "--code", "123",
             ],
-            &["aic", "worker", "role", "--short"],
+            &["aic", "worker", "role"],
             &["aic", "worker", "passwd", "--remove"],
             &["aic", "update", "apply", "--version", "1.2.0", "--force"],
             &["aic", "update", "status"],

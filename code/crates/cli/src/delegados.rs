@@ -172,12 +172,8 @@ pub enum Worker {
     Status,
     /// Registros do worker.
     Logs(Registros),
-    /// Papel deste computador no cluster (só no AI Cluster OS).
-    Role {
-        /// Só a palavra do papel, sem a explicação.
-        #[arg(long)]
-        short: bool,
-    },
+    /// O papel deste computador no cluster, em uma linha (só no AI Cluster OS). O detalhe é `worker status`.
+    Role,
     /// Troca o convite ou só o controller do worker (só no AI Cluster OS).
     #[command(group(clap::ArgGroup::new("forma").required(true).args(["server", "controller"])))]
     Change {
@@ -220,11 +216,7 @@ impl Worker {
             }
             Self::Status => vec!["status".to_string()],
             Self::Logs(registros) => registros.args(),
-            Self::Role { short } => {
-                let mut out = vec!["role".to_string()];
-                marca(&mut out, "--short", *short);
-                out
-            }
+            Self::Role => vec!["role".to_string()],
             Self::Change {
                 server,
                 code,
