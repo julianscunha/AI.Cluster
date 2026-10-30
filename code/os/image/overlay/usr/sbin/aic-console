@@ -99,7 +99,8 @@ draw() {
 	node=$(env_value AI_CLUSTER_NODE_ID)
 	controller=$(env_value AI_CLUSTER_CONTROLLER)
 	role=$(/usr/libexec/aic/role --short)
-	registered=$(/usr/libexec/aic/role | sed -n 's/^Registrado: *//p')
+	cred=$(env_value AI_CLUSTER_NODE_CREDENTIAL_FILE)
+	if [ -n "$cred" ] && [ -s "$cred" ]; then registered="sim (credencial salva)"; else registered="ainda nao (sem credencial)"; fi
 	if pidof ai-cluster-worker >/dev/null 2>&1; then
 		worker="em execucao"
 		dot_worker=$C_OK
