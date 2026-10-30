@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fatia da Fase B (B4): `ai-cluster node show <id>`.
+# Fatia da Fase B (B4): `aic cluster node show <id>`.
 #
 # Critério verificado: um nó pode ser inspecionado sozinho, com os campos que a tabela de
 # `nodes` não mostra — compute medido, classes de armazenamento, pressão de memória e a
@@ -38,7 +38,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "=== A) detalhe de um nó vivo ==="
-DETAIL=$(run "$R/ai-cluster node show node-b4")
+DETAIL=$(run "$R/aic cluster node show node-b4")
 echo "$DETAIL"
 for field in "estado=READY" "armazenamento=nvme,ssd" "threads=" "score=" "compute_score="; do
   if echo "$DETAIL" | grep -q "$field"; then
@@ -51,8 +51,8 @@ for field in "estado=READY" "armazenamento=nvme,ssd" "threads=" "score=" "comput
 done
 
 echo "=== B) a reserva do nó aparece no detalhe ==="
-run "$R/ai-cluster reserve node-b4 req-b4" >/dev/null
-HELD=$(run "$R/ai-cluster node show node-b4")
+run "$R/aic cluster reservation add node-b4 req-b4" >/dev/null
+HELD=$(run "$R/aic cluster node show node-b4")
 if echo "$HELD" | grep -q "requisicao=req-b4"; then
   echo "OK: o detalhe mostra a reserva de req-b4"
 else
@@ -62,7 +62,7 @@ else
 fi
 
 echo "=== C) id desconhecido ==="
-MISSING=$(run "$R/ai-cluster node show node-nao-existe")
+MISSING=$(run "$R/aic cluster node show node-nao-existe")
 if echo "$MISSING" | grep -q "não encontrado"; then
   echo "OK: id desconhecido é informativo ('$MISSING')"
 else

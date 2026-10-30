@@ -7,6 +7,8 @@ type: sistema/adr
 
 # ADR-021 — Persistência de traces, estado do gateway e exportação de eventos
 
+Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
+
 Status: decidido · Data: 2026-10-27 · Voltar para [[decisoes]].
 
 ## Contexto
@@ -17,7 +19,7 @@ Três limites da observabilidade (F05): os traces e o roll-up de unidades conclu
 
 1. **Traces em um arquivo só de acréscimo.** Um registro `CompletedRecord` (prost, com prefixo de tamanho) por unidade concluída, em `AI_CLUSTER_TRACES` ou `traces.log` no diretório de dados. No início o controller lê o arquivo, fica com os últimos 100 mil registros e o reescreve limpo; durante a execução só acrescenta. Ao passar de 100 mil registros o arquivo é rodado para `.1` por um `rename`, de modo que nada é reescrito sob o lock da fila e o disco guarda no máximo 200 mil registros. Uma cauda truncada por queda é descartada na leitura. Não vai no snapshot nem na réplica: seria reescrito a cada mutação.
 2. **Estado do gateway reaproveita `GatewayStats`.** O gateway grava só os contadores (requisições, falhas, tokens, acertos e erros do cache, tokens evitados) com `tmp` + `rename` a cada apresentação (15 s) e os recarrega ao subir. Percentis, KV e entradas do cache não persistem, porque descrevem a carga recente. O padrão do arquivo contém o id do gateway, para dois gateways não se corromperem.
-3. **O gateway leva suas estatísticas ao controller** em `ReportGateway`, e `ai-cluster dashboard` as mostra. A CLI não fala HTTP com o gateway.
+3. **O gateway leva suas estatísticas ao controller** em `ReportGateway`, e `aic cluster dashboard` as mostra. A CLI não fala HTTP com o gateway.
 4. **Eventos saem por syslog UDP (RFC 5424).** `AI_CLUSTER_EVENTS_SYSLOG=host:porta` liga uma tarefa que assina o barramento (`EventLog::subscribe`) e envia um datagrama por evento: facility `local0`, severidade notice para `audit` e info para o resto, texto sem controle e truncado em 1000 bytes.
 
 ## Cuidados com o arquivo de traces

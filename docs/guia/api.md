@@ -103,7 +103,7 @@ Texto Prometheus com as métricas de geração (`ai_cluster_inference_*`: requis
 |---|---|---|
 | `Authorization: Bearer` | toda requisição | Chave de API. |
 | `x-priority` | chat e embeddings | Classe do pedido: `background`, `batch`, `normal`, `interactive` ou `realtime` (sem diferenciar maiúsculas). Padrão `normal`. Não passa do teto do tenant. Só muda a ordem de espera e de despacho. |
-| `x-request-id` | toda resposta de inferência | Id do pedido. O mesmo aparece no corpo e serve a `ai-cluster request trace`. |
+| `x-request-id` | toda resposta de inferência | Id do pedido. O mesmo aparece no corpo e serve a `aic cluster request trace`. |
 | `x-model-id` | respostas de inferência | Id do modelo usado. |
 | `x-model-version` | respostas de inferência | Versão do manifest do modelo, quando houver. |
 | `Retry-After` | respostas `429` | Segundos a esperar antes de tentar de novo. |

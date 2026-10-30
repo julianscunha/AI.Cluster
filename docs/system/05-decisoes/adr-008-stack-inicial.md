@@ -7,6 +7,8 @@ type: sistema/adr
 
 # ADR-008 — Stack inicial
 
+Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
+
 Status: vivo · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
@@ -38,4 +40,4 @@ O primeiro protótipo precisa de uma stack concreta. Estas são escolhas de impl
 
 ## Limites
 
-- Ratatui não é usado. O painel `ai-cluster dashboard` é saída de texto, com ou sem `--watch`. Ratatui só entra se a TUI full-screen for feita ([[cli-tui]]).
+- Ratatui não é usado. O painel `aic cluster dashboard` é saída de texto, com ou sem `--watch`. Ratatui só entra se a TUI full-screen for feita ([[cli-tui]]).

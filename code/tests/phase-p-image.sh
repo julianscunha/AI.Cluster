@@ -30,7 +30,7 @@ docker run -d --name aic-worker-pi --network "$NET" -e AI_CLUSTER_INSECURE=1 -e 
 STATE=""
 for _ in $(seq 1 30); do
   STATE=$(MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
-    -e AI_CLUSTER_OPERATOR_TOKEN=pi-operator -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster nodes" 2>/dev/null \
+    -e AI_CLUSTER_OPERATOR_TOKEN=pi-operator -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic cluster nodes" 2>/dev/null \
     | awk '$1 == "node-image" { print $2 }')
   [ "$STATE" = READY ] && break
   sleep 2

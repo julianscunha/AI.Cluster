@@ -54,7 +54,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 6
 
 echo "=== A) 8 unidades de 256³, sem dependências ==="
-run "$R/ai-cluster benchmark --size 256 --repetitions 8" 2>&1 | tail -2
+run "$R/aic cluster benchmark --size 256 --repetitions 8" 2>&1 | tail -2
 
 echo "=== B) o snapshot final não guarda nenhuma matriz de saída ==="
 SIZE=$(MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm -v aic-target:/t "$IMG" sh -c "stat -c %s $STATE")
@@ -80,7 +80,7 @@ docker rm -f aic-controller >/dev/null 2>&1
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_STATE=$STATE "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 4
-REPORT=$(run "$R/ai-cluster metrics" 2>/dev/null)
+REPORT=$(run "$R/aic cluster metrics" 2>/dev/null)
 PEND=$(echo "$REPORT" | field units_pending)
 if [ "$PEND" = "0" ]; then
   echo "OK: o checkpoint carregou e não ressuscitou trabalho (units_pending=0)"

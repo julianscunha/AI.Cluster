@@ -22,7 +22,7 @@ CONTROLLER=http://aic-controller:50051
 SIZE=${SIZE:-256}
 WEAK_THREADS=${WEAK_THREADS:-2}
 STRONG_THREADS=${STRONG_THREADS:-8}
-TTL_MS=${TTL_MS:-60000}
+MINUTES=${MINUTES:-1}
 
 run() {
   MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
@@ -39,7 +39,7 @@ teardown() {
 # então pegamos o id de trabalho mais alto — que é sempre a unidade desta perna — em vez
 # de qualquer linha, que misturaria o resultado das pernas anteriores.
 place() {
-  run "$R/ai-cluster benchmark --size $SIZE --repetitions 1 --request-id $1" \
+  run "$R/aic cluster benchmark --size $SIZE --repetitions 1 --request-id $1" \
     | awk '/^w-/{split($1, parts, "-"); if (parts[2] + 0 >= top) { top = parts[2] + 0; node = $2 }} END{print node}'
 }
 
@@ -72,21 +72,21 @@ echo "=== A) baseline: sem reserva o cost model prefere o nó forte ==="
 expect "baseline" node-strong "$(place req-base)"
 
 echo "=== B) o dono recebe o nó: reserva em node-weak ($WEAK_THREADS threads) para req-held ==="
-run "$R/ai-cluster reserve node-weak req-held --ttl-ms $TTL_MS"
-run "$R/ai-cluster reservations"
+run "$R/aic cluster reservation add node-weak req-held --minutes $MINUTES"
+run "$R/aic cluster reservation list"
 expect "unidade de req-held" node-weak "$(place req-held)"
-run "$R/ai-cluster release node-weak"
+run "$R/aic cluster reservation remove node-weak"
 
 echo "=== C) recusa: reserva em node-strong ($STRONG_THREADS threads) para req-locked ==="
-run "$R/ai-cluster reserve node-strong req-locked --ttl-ms $TTL_MS"
+run "$R/aic cluster reservation add node-strong req-locked --minutes $MINUTES"
 expect "unidade de req-other" node-weak "$(place req-other)"
 
 echo "=== D) liberar devolve o nó forte ao ranking ==="
-run "$R/ai-cluster release node-strong"
+run "$R/aic cluster reservation remove node-strong"
 expect "unidade de req-free" node-strong "$(place req-free)"
 
 echo "=== E) nenhuma reserva ativa ao final ==="
-LISTED=$(run "$R/ai-cluster reservations")
+LISTED=$(run "$R/aic cluster reservation list")
 echo "$LISTED"
 grep -q '^RESERVAS 0$' <<<"$LISTED" \
   || { echo "FALHA: ainda há reserva ativa"; exit 1; }

@@ -18,7 +18,7 @@ Provisionamento é o caminho de uma máquina até ser um nó do cluster. Hoje el
 | Imagem em disco x86_64 | PC, notebook ou servidor UEFI | `x86/install-disk.sh` grava a imagem GPT (ESP, slots A/B, dados) a partir de qualquer Linux; apaga o disco inteiro. |
 | Boot pela rede | Placa armv7 que já tem um sistema qualquer | `install-netboot.sh`, com retorno ao cartão. |
 
-Em qualquer caminho, o worker chama o controller com o token de join e recebe uma credencial. A máquina entra pendente, e o operador aprova com `ai-cluster approve`. Ver [[seguranca]].
+Em qualquer caminho, o worker chama o controller com o token de join e recebe uma credencial. A máquina entra pendente, e o operador aprova com `aic cluster node approve`. Ver [[seguranca]].
 
 ## Condições antes de gravar o disco
 
@@ -34,7 +34,7 @@ Se qualquer condição falha, o cartão não é tocado.
 
 1. O worker mede o hardware e informa capacidade ao controller ([[capability-engine]]).
 2. O operador aprova o nó.
-3. O nó passa a receber trabalho e aparece como `READY` em `ai-cluster nodes`.
+3. O nó passa a receber trabalho e aparece como `READY` em `aic cluster nodes`.
 
 Sem reinstalação, a máquina continua com o Linux que já tinha, e pacotes e configurações fora do controle do cluster continuam lá.
 

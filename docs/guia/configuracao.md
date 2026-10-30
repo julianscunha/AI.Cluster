@@ -38,7 +38,7 @@ Convenções:
 | `AI_CLUSTER_TLS_CLIENT_CA` | — | CA PEM que assina certificados de cliente. Ativa o mTLS: sem certificado dessa CA, a conexão é recusada no handshake. Exige o par de servidor. |
 | `AI_CLUSTER_INSECURE` | desligado | `1` permite subir sem TLS (tokens em claro). Com certificado presente, o certificado prevalece. |
 | `AI_CLUSTER_RELEASE_STATE` | memória | Arquivo de uma linha com a release desejada do rollout. Sobrevive a reinício. |
-| `AI_CLUSTER_MODELS_DIR` | — | Pasta de modelos do controller (GGUF ou pastas com safetensors). `ai-cluster model list` lê os cabeçalhos e diz o que é cada modelo e se o motor atual o roda. Sem ela, a lista vem vazia. |
+| `AI_CLUSTER_MODELS_DIR` | — | Pasta de modelos do controller (GGUF ou pastas com safetensors). `aic cluster model list` lê os cabeçalhos e diz o que é cada modelo e se o motor atual o roda. Sem ela, a lista vem vazia. |
 | `AI_CLUSTER_MODELS_STATE` | `$AI_CLUSTER_DATA_DIR/models.state` | Arquivo com o modelo pedido, a geração e o hash das chaves de API. Sem ele (e sem `AI_CLUSTER_DATA_DIR`) o pedido não sobrevive a um reinício. |
 | `AI_CLUSTER_PLAN_STABLE_MS` | `30000` | Quanto a lista de workers com RPC precisa ficar igual antes de o plano do modelo mudar (e a geração subir). |
 | `AI_CLUSTER_ROLLOUT_WAVE` | `0` (todos) | Quantos nós atualizam ao mesmo tempo depois do canário. |
@@ -46,7 +46,7 @@ Convenções:
 | `AI_CLUSTER_MAX_IN_FLIGHT` | `4` | Requisições do motor próprio rodando ao mesmo tempo no gateway (1 a 64); acima disso, `429`. |
 | `AI_CLUSTER_SHARD_MAX_PENDING` | `64` | Operações de `ShardMatmul` em voo para um worker no controller (1 a 1024); acima disso, `503`. |
 | `AI_CLUSTER_MAX_GATEWAYS_PER_HOST` | `16` | Gateways vivos que o controller aceita de um mesmo endereço IP (de 1 a 64). Atrás de NAT todos parecem um endereço só: quem tem mais gateways ali sobe o limite. |
-| `AI_CLUSTER_ENROLL_ADDR` | desligado | Endereço (`ip:porta`) da única porta que o controller atende **sem token**, para a etapa de espera de instalação ([[adr-023-instalacao-com-aprovacao-do-controller]]). Só recebe `Announce`, e só enquanto o operador a mantém aberta (`ai-cluster enrollment open`, no máximo 120 min; fora da janela responde "indisponível"): a lista de aparelhos tem teto de 32, cota de 4 por IP (ou por /64 de IPv6) e validade de 15 min, e a porta aceita no máximo 64 conexões, de até 120 s cada. Com `AI_CLUSTER_TLS_CERT/KEY` usa o mesmo certificado, sem exigir certificado do cliente. Sem a variável, a porta não existe. |
+| `AI_CLUSTER_ENROLL_ADDR` | desligado | Endereço (`ip:porta`) da única porta que o controller atende **sem token**, para a etapa de espera de instalação ([[adr-023-instalacao-com-aprovacao-do-controller]]). Só recebe `Announce`, e só enquanto o operador a mantém aberta (`aic cluster install open`, no máximo 120 min; fora da janela responde "indisponível"): a lista de aparelhos tem teto de 32, cota de 4 por IP (ou por /64 de IPv6) e validade de 15 min, e a porta aceita no máximo 64 conexões, de até 120 s cada. Com `AI_CLUSTER_TLS_CERT/KEY` usa o mesmo certificado, sem exigir certificado do cliente. Sem a variável, a porta não existe. |
 | `AI_CLUSTER_GATEWAY_DEADLINE_MS` | `30000` | Prazo de uma requisição inteira no gateway, de 1000 a 3600000. Estourado, a resposta é `504 TIMEOUT`. |
 | `AI_CLUSTER_SHARD_TIMEOUT_MS` | `8000` | Prazo de uma chamada `ShardMatmul` (motor próprio), de 1000 a 300000. Nós lentos pedem mais. |
 | `AI_CLUSTER_PLACEMENT_TOLERANCE` | `0.10` | Faixa de histerese do custo, como fração do custo do nó mais barato. Negativo vira `0`. |
@@ -98,8 +98,8 @@ Convenções:
 | Variável | Padrão | Efeito |
 |---|---|---|
 | `AI_CLUSTER_GATEWAY_STATE` | `AI_CLUSTER_DATA_DIR/gateway-<id>.state` | Arquivo onde o gateway grava os contadores de inferência para sobreviverem ao reinício. Sem ele e sem o diretório de dados, os contadores partem de zero. |
-| `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `ai-cluster topology`. |
-| `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia e no painel. O `aic-setup` a define com o IP do computador. Sem ela, um gateway que escuta em `0.0.0.0` não anuncia endereço nenhum (o painel avisa), em vez de anunciar `http://0.0.0.0:8080`. |
+| `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `aic cluster topology`. |
+| `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia e no painel. O instalador a define com o IP do computador. Sem ela, um gateway que escuta em `0.0.0.0` não anuncia endereço nenhum (o painel avisa), em vez de anunciar `http://0.0.0.0:8080`. |
 | `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige TLS (as duas variáveis abaixo) ou `AI_CLUSTER_INSECURE`. |
 | `AI_CLUSTER_GATEWAY_TLS_CERT` / `AI_CLUSTER_GATEWAY_TLS_KEY` | — | Certificado (cadeia) e chave privada em PEM: a perna HTTP passa a ser HTTPS (HTTP/1.1) e o texto puro deixa de ser atendido. Vêm juntas. |
 | `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. Obrigatória se `AI_CLUSTER_TENANTS` estiver vazio. |
@@ -150,11 +150,11 @@ Estas variáveis valem para toda conexão com o controller:
 | `AI_CLUSTER_TLS_CLIENT_KEY` | — | Chave do certificado de cliente. |
 | `AI_CLUSTER_INSECURE` | desligado | `1` permite `http://` sem TLS. |
 
-## CLI (`ai-cluster`)
+## CLI (`aic`)
 
 | Variável | Padrão | Efeito |
 |---|---|---|
-| `AI_CLUSTER_CONTROLLER` | `http://127.0.0.1:50051` | Mesmo que a flag global `--controller`. |
+| `AI_CLUSTER_CONTROLLER` | `http://127.0.0.1:50051` | Mesmo que a opção `--controller` (vai depois do grupo: `aic cluster nodes --controller URL`). |
 | `AI_CLUSTER_OPERATOR_TOKEN` | — | Token de operador. Todos os comandos que falam com o controller usam. |
 
 As variáveis de TLS e de `AI_CLUSTER_INSECURE` da tabela de cliente também valem para a CLI.
@@ -179,7 +179,7 @@ Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de u
 
 ## Quem pode tomar um id
 
-- **Nó:** quem tem só o token de join não toma o `node_id` de um nó aprovado nem o de um pendente que ainda responde; um nó pendente sem sinal fica livre. `ai-cluster revoke` também libera o id.
+- **Nó:** quem tem só o token de join não toma o `node_id` de um nó aprovado nem o de um pendente que ainda responde; um nó pendente sem sinal fica livre. `aic cluster node revoke` também libera o id.
 - **Gateway:** enquanto um gateway está vivo (sinal nos últimos 45 s), outro endereço IP não se apresenta com o mesmo id (`permission_denied`). O token de inferência é compartilhado, então o endereço é o que amarra o id.
 
 **Checksum de modelo:** coloque `<arquivo>.gguf.sha256` (saída do `sha256sum`) ao lado do GGUF e o `model start` confere o hash antes de planejar (num GGUF dividido, cada parte pode ter o seu); hash diferente recusa o modelo. Sem o arquivo, não confere.

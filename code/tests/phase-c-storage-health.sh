@@ -56,12 +56,12 @@ start_worker aic-worker-slow node-slow 0.2
 # would tie on cost and the unit could land anywhere.
 sleep 12
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 
 echo "=== A) a saúde de storage atravessa worker → proto → controller → CLI ==="
-OK_S=$(run "$R/ai-cluster node show node-ok" | grep -o 'armaz_saude=[^ ]*')
-SLOW_S=$(run "$R/ai-cluster node show node-slow" | grep -o 'armaz_saude=[^ ]*')
+OK_S=$(run "$R/aic cluster node show node-ok" | grep -o 'armaz_saude=[^ ]*')
+SLOW_S=$(run "$R/aic cluster node show node-slow" | grep -o 'armaz_saude=[^ ]*')
 if [ "$OK_S" = "armaz_saude=1.00" ] && [ "$SLOW_S" = "armaz_saude=0.20" ]; then
   echo "OK: $OK_S / $SLOW_S"
 else
@@ -71,7 +71,7 @@ else
 fi
 
 # F10 K2: o worker também mede a latência de escrita com fsync e a anuncia no registro.
-LAT=$(run "$R/ai-cluster node show node-ok" | grep -o 'armaz_lat_ms=[^ ]*' | cut -d= -f2)
+LAT=$(run "$R/aic cluster node show node-ok" | grep -o 'armaz_lat_ms=[^ ]*' | cut -d= -f2)
 if [ -n "$LAT" ] && [ "$LAT" != "-" ]; then
   echo "OK: armaz_lat_ms de node-ok = $LAT"
 else
@@ -94,7 +94,7 @@ else
 fi
 
 echo "=== C) o placement manda a unidade para o nó ok ==="
-BENCH=$(run "$R/ai-cluster benchmark --size 64 --repetitions 1")
+BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 # The per-unit rows start with the work id; the second field is the node that ran it.
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')

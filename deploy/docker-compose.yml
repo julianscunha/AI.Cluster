@@ -1,8 +1,8 @@
 # AI Cluster em um computador só (teste). Antes: bash deploy/init.sh. Depois:
 #
 #   docker compose -f deploy/docker-compose.yml up -d --build
-#   docker compose -f deploy/docker-compose.yml exec controller ai-cluster model list
-#   docker compose -f deploy/docker-compose.yml exec controller ai-cluster model start <id>
+#   docker compose -f deploy/docker-compose.yml exec controller aic cluster model list
+#   docker compose -f deploy/docker-compose.yml exec controller aic cluster model start <id>
 #
 # Mais workers: `docker compose ... up -d --scale worker=3`. Para workers em outras máquinas, rode o
 # `ai-cluster-worker` lá com o AI_CLUSTER_CONTROLLER apontando para este computador (veja

@@ -38,7 +38,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "=== A) enfileirar 2 unidades ==="
-OUT=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 2")
+OUT=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 2")
 echo "$OUT"
 REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 if [ -z "$REQ" ]; then
@@ -49,7 +49,7 @@ fi
 echo "requisicao capturada: $REQ"
 
 echo "=== B) trace da requisição ==="
-TRACE=$(run "$R/ai-cluster request trace $REQ")
+TRACE=$(run "$R/aic cluster request trace $REQ")
 echo "$TRACE"
 COMPLETED=$(echo "$TRACE" | grep -c "completed")
 if [ "$COMPLETED" = "2" ]; then
@@ -69,7 +69,7 @@ else
 fi
 
 echo "=== C) id desconhecido ==="
-UNKNOWN=$(run "$R/ai-cluster request trace nao-existe")
+UNKNOWN=$(run "$R/aic cluster request trace nao-existe")
 echo "$UNKNOWN"
 if echo "$UNKNOWN" | grep -q "UNIDADES 0"; then
   echo "OK: id desconhecido devolve trace vazio, sem erro"

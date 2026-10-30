@@ -103,10 +103,10 @@ echo "=== A2) o token de inferência só serve para ShardMatmul ==="
 cli() { # cli <token> <comando>: o CLI como quem tem esse token
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
     -e AI_CLUSTER_OPERATOR_TOKEN="$1" -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
-    sh -c "$R/ai-cluster $2" 2>&1
+    sh -c "$R/aic $2" 2>&1
 }
-cli "$OPERATOR" nodes | grep -q worker-1 || fail "o operador deveria listar os nós"
-DENIED=$(cli "$INFERENCE" nodes)
+cli "$OPERATOR" cluster nodes | grep -q worker-1 || fail "o operador deveria listar os nós"
+DENIED=$(cli "$INFERENCE" cluster nodes)
 echo "$DENIED" | grep -q worker-1 && fail "o token de inferência vazou a lista de nós"
 echo "$DENIED" | grep -qi "PermissionDenied\|permission" || fail "o token de inferência deveria ser recusado: $DENIED"
 EMB=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \

@@ -67,7 +67,7 @@ O papel de inferência existe para o gateway rodar modelos nos workers sem poder
 
 1. O nó chama `RegisterNode` com o token de join e recebe uma credencial de 128 bits.
 2. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente. Um nó pendente não recebe unidades, não entra no placement, não tem a réplica de estado aceita, e `RequestWork` responde sem trabalho (sem erro, para o worker não sair).
-3. O operador aprova com `ai-cluster approve <nó> --fingerprint <fp>`; a impressão digital (SHA-256 da credencial, 16 hex) que o nó imprime ao registrar-se tem de bater com a credencial atual, então quem tomou o id depois de um `revoke` não é aprovado no lugar do nó. Aprovar de novo não tem efeito colateral.
+3. O operador aprova com `aic cluster node approve <nó> --fingerprint <fp>`; a impressão digital (SHA-256 da credencial, 16 hex) que o nó imprime ao registrar-se tem de bater com a credencial atual, então quem tomou o id depois de um `revoke` não é aprovado no lugar do nó. Aprovar de novo não tem efeito colateral.
 4. Um novo registro com o mesmo `node_id` só mantém a aprovação se provar a credencial atual. Sem prova, o nó volta a pendente.
 5. Um nó aprovado sem a credencial é recusado até um `revoke`. Assim, o token de join não expulsa um nó aprovado.
 
@@ -86,7 +86,7 @@ Sem `AI_CLUSTER_TLS_CLIENT_CA`, o cliente não apresenta certificado, e a creden
 
 ## Atestação de software
 
-Nas imagens do AI Cluster OS, cada nó mede o próprio slot de boot (SHA-256 da partição ativa) e informa a medida e a versão da imagem. O controller marca um nó como `attested` quando versão e medida são iguais às da release assinada. A coluna `MEDIDA` de `ai-cluster nodes` mostra `confere` nesse caso.
+Nas imagens do AI Cluster OS, cada nó mede o próprio slot de boot (SHA-256 da partição ativa) e informa a medida e a versão da imagem. O controller marca um nó como `attested` quando versão e medida são iguais às da release assinada. A coluna `MEDIDA` de `aic cluster nodes` mostra `confere` nesse caso.
 
 A medida prova que o conteúdo do slot é o esperado. Ela não prova que o nó é íntegro: quem controla o nó controla o que ele informa. Não há TPM, secure boot nem dm-verity nesta versão.
 
@@ -114,7 +114,7 @@ Não existe lista de revogação. Uma chave vazada vale até a imagem que a reti
 
 ## Revogação
 
-`ai-cluster revoke <nó>` (operador):
+`aic cluster node revoke <nó>` (operador):
 
 - retira a aprovação e troca a credencial do nó;
 - devolve as unidades em voo à fila e tira o nó do mapa de fatias;
@@ -147,7 +147,7 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 
 **Código do convite:** o token de join só sai no script `/join-<CÓDIGO>` e o `/sign` exige o mesmo código (comparação em tempo constante). O código tem 8 caracteres de um alfabeto de 32 símbolos (40 bits), único por convite, e 30 tentativas erradas (arquivo inexistente em `/join-*` ou `/gw-*`, ou `/sign` com código errado) travam o convite com 429. O convite é HTTP puro: quem escuta a rede vê o código.
 
-**Certificado por nó:** o `aic-setup` não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. O certificado vale só como servidor (`extendedKeyUsage=serverAuth`), o servidor assina um por nome em cada convite e mostra cada emissão no terminal do operador. **Limite:** o `/sign` não tem outra autenticação além de estar na janela do convite (quem alcança a porta também lê o `join` e o token de join), e não há renovação nem revogação do certificado (825 dias).
+**Certificado por nó:** o instalador não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. O certificado vale só como servidor (`extendedKeyUsage=serverAuth`), o servidor assina um por nome em cada convite e mostra cada emissão no terminal do operador. **Limite:** o `/sign` não tem outra autenticação além de estar na janela do convite (quem alcança a porta também lê o `join` e o token de join), e não há renovação nem revogação do certificado (825 dias).
 
 ## Chaves de API do controller
 

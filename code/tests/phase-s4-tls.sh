@@ -59,7 +59,7 @@ worker() {
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -v aic-tls:/tls \
     -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_TLS_CA=/tls/ca.pem \
-    -e AI_CLUSTER_CONTROLLER=https://$HOST:50051 "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    -e AI_CLUSTER_CONTROLLER=https://$HOST:50051 "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 echo "=== A) controller sem certificado nem INSECURE recusa subir ==="
@@ -82,7 +82,7 @@ sleep 3
 echo "=== B) https com a CA certa entra ==="
 worker aic-w-ok node-ok https://$HOST:50051 /tls/ca.pem 0
 sleep 8
-NODES=$(cli nodes)
+NODES=$(cli cluster nodes)
 echo "$NODES"
 if echo "$NODES" | grep -E "^node-ok " | grep -q READY; then
   echo "OK: node-ok está READY por https"
@@ -95,7 +95,7 @@ fi
 # transporte/certificado (não de token, nem outra falha qualquer do worker).
 refused() {
   sleep 8
-  if cli nodes | grep -q "$2"; then
+  if cli cluster nodes | grep -q "$2"; then
     fail "$3: o nó $2 não deveria ter entrado"
   fi
   local log

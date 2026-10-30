@@ -43,8 +43,8 @@ cli() {
   docker run $TOKENS --rm --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$1"
 }
 field() { grep -o "$1=[0-9]*" | head -1 | cut -d= -f2; }
-completed() { cli "$R/ai-cluster metrics" 2>/dev/null | field units_completed; }
-pending() { cli "$R/ai-cluster metrics" 2>/dev/null | field units_pending; }
+completed() { cli "$R/aic cluster metrics" 2>/dev/null | field units_completed; }
+pending() { cli "$R/aic cluster metrics" 2>/dev/null | field units_pending; }
 # Memória em MiB de um contêiner (docker stats traz "12.3MiB / 3.8GiB").
 mem() {
   docker stats --no-stream --format '{{.MemUsage}}' "$1" 2>/dev/null | awk '{
@@ -61,7 +61,7 @@ start_worker() {
 }
 start_load() {
   docker run $TOKENS -d --name "$1" --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
-    sh -c "while true; do $R/ai-cluster graph --size 64 >/dev/null 2>&1 || sleep 1; done" >/dev/null
+    sh -c "while true; do $R/aic cluster graph --size 64 >/dev/null 2>&1 || sleep 1; done" >/dev/null
 }
 # Espera o contador de concluídas subir $2 unidades em até $3 s.
 progress() {
@@ -99,7 +99,7 @@ sleep 25
 docker network connect "$NET" aic-worker-s1
 OK=0
 for _ in $(seq 1 30); do
-  cli "$R/ai-cluster nodes" 2>/dev/null | grep -E "node-s1 +READY" >/dev/null && { OK=1; break; }
+  cli "$R/aic cluster nodes" 2>/dev/null | grep -E "node-s1 +READY" >/dev/null && { OK=1; break; }
   sleep 2
 done
 [ "$OK" = 1 ] && echo "OK: node-s1 voltou a READY depois da partição" || fail "node-s1 não voltou a READY"
@@ -139,6 +139,6 @@ RC=0
 grows controller "$BASE_C" "$MAX_C" || RC=1
 grows worker1 "$BASE_W1" "$MAX_W1" || RC=1
 grows worker2 "$BASE_W2" "$MAX_W2" || RC=1
-cli "$R/ai-cluster metrics" 2>/dev/null | grep -E "units_(pending|completed|failed)" | head -3
+cli "$R/aic cluster metrics" 2>/dev/null | grep -E "units_(pending|completed|failed)" | head -3
 teardown
 [ "$RC" = 0 ] && echo "=== resistência OK ===" || { echo "=== resistência FALHOU ==="; exit 1; }

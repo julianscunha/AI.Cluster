@@ -43,11 +43,11 @@ start_worker() {
 # Com um honesto ao lado a corrida decidiria quantas unidades o mentiroso chega a ver.
 start_worker aic-worker-liar node-liar -e AI_CLUSTER_CORRUPT_RESULTS=1
 sleep 6
-MSYS_NO_PATHCONV=1 docker run $ENVS -d --name aic-cli-bench --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER   "$IMG" sh -c "$R/ai-cluster benchmark --size 64 --repetitions 6" >/dev/null
+MSYS_NO_PATHCONV=1 docker run $ENVS -d --name aic-cli-bench --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER   "$IMG" sh -c "$R/aic cluster benchmark --size 64 --repetitions 6" >/dev/null
 sleep 8
 
 echo "=== A) o mentiroso está em quarentena ==="
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 STATE=$(echo "$NODES" | awk '$1 == "node-liar" { print $2 }')
 if [ "$STATE" = "QUARANTINED" ]; then
@@ -72,7 +72,7 @@ else
 fi
 
 echo "=== C) o evento node_quarantined foi registrado ==="
-if run "$R/ai-cluster events --limit 200" | grep -q node_quarantined; then
+if run "$R/aic cluster events --limit 200" | grep -q node_quarantined; then
   echo "OK: node_quarantined"
 else
   echo "FALHA: sem evento node_quarantined"

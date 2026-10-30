@@ -1,89 +1,153 @@
 ---
-title: "CLI ai-cluster"
-aliases: ["ai-cluster", "Comandos"]
+title: "CLI aic"
+aliases: ["aic", "Comandos", "CLI"]
 tags: [guia, cli]
 type: guia
 ---
 
-# CLI `ai-cluster`
+# CLI `aic`
 
-A CLI é o painel do operador. Volte ao [[guia]] para o índice; variáveis em [[configuracao]]. A ajuda (`ai-cluster --help`, `<comando> --help`) e os erros de uso saem em português (`crates/cli/src/ptbr.rs` troca os títulos e as mensagens do clap); uma versão em inglês da CLI ainda não existe.
+Um só comando para tudo: o cluster, o controller, o gateway, o worker e a atualização. Volte ao [[guia]] para o índice; variáveis em [[configuracao]]. Todo comando aceita `-h` e `--help`. A ajuda e as mensagens saem em português; uma versão em inglês da CLI ainda não existe ([[pendencias]]).
+
+## Gramática
 
 ```
-ai-cluster [--controller <endpoint>] <comando>
+aic <recurso> <ação> [alvo] [--opções]
 ```
 
-- `--controller` aponta para o controller. Padrão: `AI_CLUSTER_CONTROLLER`, ou `http://127.0.0.1:50051`.
-- Todo comando que fala com o controller usa `AI_CLUSTER_OPERATOR_TOKEN`. Sem ele, o controller recusa. A única exceção é `model`, que trabalha em arquivos locais.
-- `-h` e `--help` mostram a ajuda de cada comando.
+- **Recursos:** `cluster` (o cluster visto do controller), `controller`, `gateway` e `worker` (cada um, deste Linux ou do AI Cluster OS), `update` (atualização deste computador) e `version`.
+- **`status` é sempre esta máquina:** `aic controller status`, `aic gateway status`, `aic worker status`. A visão do cluster é `aic cluster nodes` (ou `aic cluster dashboard`). Não existe `aic cluster status`.
+- **`update` só existe em `aic update`:** `aic update status` consulta (versão instalada × disponível, ou o resultado da última atualização assinada); `aic update apply` instala.
+- **Opções com um nome só.** `--controller URL` é o endereço gRPC do controller (porta 50051) e vai depois do grupo (`aic cluster nodes --controller https://ip:50051`); também vale a variável `AI_CLUSTER_CONTROLLER`. `--server IP[:porta]` é o endereço do convite (porta 8099), `--code` é o código do convite, `--minutes` mede janelas, `--lang pt|en` escolhe o idioma do instalador. Um nome antigo não é aceito como apelido.
+- **Comandos que falam com o controller** pedem o token de operador (`AI_CLUSTER_OPERATOR_TOKEN`). Exceções: `cluster model manifest` e `cluster model verify`, que trabalham em arquivos locais.
+- Endereço sem TLS é recusado, salvo `AI_CLUSTER_INSECURE=1` numa rede fechada.
 
-## Cluster
+## Cluster (`aic cluster`)
 
-| Comando | O que faz |
-|---|---|
-| `status` | Mesmo que `nodes`. |
-| `nodes` | Tabela de todos os nós (a coluna `VELOC` é a velocidade estimada que o plano de modelo usa para ordenar os workers: média geométrica da CPU com a banda de memória; só serve para comparar nós): estado, confiança (`pendente` ou `aprovado`), arquitetura, threads, RAM, scores, saúde, temperatura, swap, classes de armazenamento, versão e medida (`confere` quando a medida bate com a release assinada). |
-| `node show <id>` | Tudo que o controller sabe sobre um nó: capacidade, saúde e reserva. |
-| `metrics` | Roll-up do cluster: contagem de nós, profundidade da fila e tempos das unidades concluídas. |
-| `events [--limit N]` | Eventos recentes, do mais antigo para o mais novo. `--limit` padrão 20; `0` mostra tudo que o controller ainda guarda. |
-| `dashboard [--watch N]` | Painel de uma tela: nós, fila e reservas. `--watch N` atualiza a cada N segundos até Ctrl-C. Padrão `0`: imprime uma vez. No terminal, o painel traz o logotipo, seções com régua, estados coloridos e a tendência com seta; redirecionado (scripts), sai em `chave=valor` como sempre. `AI_CLUSTER_COLOR=always` força o painel bonito. |
-
-## Aprovação e saída
+### Nós
 
 | Comando | O que faz |
 |---|---|
-| `approve <nó> --fingerprint <fp>` | Aprova um nó pendente, para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a que o controller mostra agora, sem conferir (anula a proteção). Aprovar de novo não faz mal. Também libera um nó em quarentena. |
-| `revoke <nó>` | **Revoga a credencial**: retira a aprovação e a credencial do nó, devolve as unidades em voo à fila e registra `node_revoked`. Um worker revogado encerra. |
-| `node <id>` / `node show <id>` | Um nó só, com a capability e a saúde completas. |
-| `retire <nó>` | Tira o worker do trabalho **mantendo a identidade**: perde a aprovação (não recebe unidades nem entra no plano de modelo), as unidades em voo voltam à fila, e a credencial e a impressão digital continuam as mesmas. O worker segue conectado, como pendente. Volta com `approve <nó> --fingerprint <a impressão de antes>`. Registra `node_retired`. |
-| `remove <nó>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e credencial). Se o processo continuar rodando, ele se apresenta de novo como um nó novo e pendente. Registra `node_removed`. |
-| `installs` | Aparelhos na etapa de espera de instalação (ADR-023): impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
-| `approve-install <impressão> --disk <disco>` | Aprova a instalação do aparelho, apagando o disco informado (precisa ser um dos que ele listou). Gera o token de instalação, que só o aparelho dono do segredo recebe. |
-| `enrollment open [--minutes N]` / `enrollment close` | Abre (1 a 120 min, padrão 15) ou fecha a porta em que os aparelhos se apresentam para instalar. Fechada é o normal; a janela se fecha sozinha. O `aic-setup invite` a abre e fecha por você. |
-| `reject-install <impressão>` | Tira o aparelho da lista de espera. |
+| `aic cluster nodes` | Tabela de todos os nós: estado, confiança (`pendente` ou `aprovado`), arquitetura, threads, RAM, scores, saúde, temperatura, swap, classes de armazenamento, `VERSÃO` e `MEDIDA` (`confere` quando a medida bate com a release assinada). `VELOC` é a velocidade estimada que o plano de modelo usa para ordenar os workers; só serve para comparar nós. |
+| `aic cluster node show <id>` | Tudo que o controller sabe sobre um nó: capacidade, saúde, confiança e reserva. |
+| `aic cluster node approve <id> --fingerprint <fp>` | Aprova um nó pendente para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a impressão que o controller mostra agora, sem conferir (anula a proteção). Também tira um nó da quarentena. |
+| `aic cluster node retire <id>` | Tira o worker do trabalho **mantendo a identidade**: as unidades em voo voltam à fila, e a credencial e a impressão continuam as mesmas. Volta com `approve` e a impressão de antes. Registra `node_retired`. |
+| `aic cluster node revoke <id>` | **Revoga a credencial**: retira a aprovação, invalida a credencial, devolve as unidades em voo à fila e registra `node_revoked`. O worker revogado encerra e só volta com um novo join. |
+| `aic cluster node remove <id>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e credencial). Se o processo continuar rodando, ele se apresenta de novo como nó novo e pendente. Registra `node_removed`. |
 
-## Reservas
-
-Uma reserva segura um nó inteiro para uma requisição futura.
+### Instalação com aprovação (ADR-023)
 
 | Comando | O que faz |
 |---|---|
-| `reserve <nó> <request_id> [--ttl-ms N]` | Reserva o nó para a requisição. `--ttl-ms 0` (padrão) usa 60 s. |
-| `reservations` | Lista as reservas ativas: nó, requisição dona e vencimento. |
-| `release <nó>` | Libera a reserva antes do vencimento. |
+| `aic cluster install list` | Aparelhos na espera de instalação: impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
+| `aic cluster install approve <impressão> --disk <disco>` | Aprova a instalação, apagando o disco informado (precisa ser um dos que o aparelho listou). Gera o token de instalação, que só o aparelho dono do segredo recebe. |
+| `aic cluster install reject <impressão>` | Tira o aparelho da lista de espera. |
+| `aic cluster install open [--minutes N]` | Abre a porta em que os aparelhos se apresentam (1 a 120 min, padrão 15). Ela se fecha sozinha. |
+| `aic cluster install close` | Fecha a porta agora. |
 
-## Trabalho
+### Reservas
 
-| Comando | O que faz |
-|---|---|
-| `benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha unidades de multiplicação de matrizes N×N e compara compute com transferência. `--local` roda o mesmo trabalho no processo, sem despachar. `--min-threads` recusa nós com menos threads. `--request-id` enfileira sob um id existente (por exemplo, o de uma reserva). `--priority` define a classe: maior sai primeiro. Padrões: `--size 256`, `--repetitions 1`, `--min-threads 0`, `--priority 0`. |
-| `graph [--size N]` | Enfileira o grafo diamante (A, depois B e C, depois D) e acompanha até drenar. Padrão `--size 128`. |
-| `request trace <request_id>` | Unidades de uma requisição, em que estado estão, em que nó rodaram e quanto custaram. |
-| `request cancel <request_id>` | Remove da fila as unidades da requisição e manda parar as que já estão em um worker (o aviso vai na próxima batida; a conta é interrompida e o resultado, se vier, é recusado). |
-
-## Modelos (local)
-
-Estes comandos leem e gravam arquivos de um diretório de modelo. Não usam o controller.
+Uma reserva retém um nó para uma requisição futura.
 
 | Comando | O que faz |
 |---|---|
-| `model manifest <dir> --name NOME --version VERSÃO` | Calcula o SHA-256 de cada arquivo e grava `manifest.json` no diretório. |
-| `model verify <dir>` | Confere os arquivos do diretório com o `manifest.json`. Sai com erro se não houver manifest ou se algum arquivo diverge. |
-| `model list` | Lista os modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, parâmetros, precisão, tamanho, contexto, se o motor atual o roda e o motivo quando não. Exige o token de operador. |
-| `model check <id> [--ctx N]` | Diz se o cluster comporta o modelo: `OK` ou `NOK` com o motivo (o que falta em GB e quantos nós acrescentar). Soma a RAM dos nós aprovados e vivos (no máximo 80% de cada um, menos 128 MiB) contra pesos, cache de contexto e 10% de margem. Sai com código 1 no NOK. |
-| `model start <id> [--ctx N]` | Sobe o modelo (GGUF) no cluster: confere a RAM, fixa o plano de workers com RPC e cria a chave de API do tenant `default` (mostrada uma vez; o controller guarda o hash). Sai com código 1 no NOK. |
-| `model stop` | Tira o modelo do gateway. As chaves continuam valendo. |
-| `model status` | O modelo pedido, a geração, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e os prefixos das chaves, mais os avisos do plano (workers deixados de fora por versão diferente do rpc-server). |
-| `model key add <tenant> [--models a,b] [--tokens N] [--class c]` | Cria o tenant e mostra a chave (uma vez). `--models` limita os modelos (padrão: todos), `--tokens` dá a cota por janela e `--class` o teto de prioridade (`background`, `batch`, `normal`, `interactive`, `realtime`). |
-| `model key rotate <tenant>` | Troca a chave de um tenant que existe; a antiga deixa de valer na próxima apresentação do gateway (até 5 s) e os limites ficam. |
-| `model key remove <tenant>` | Tira o tenant. |
-| `model key list` | Os tenants, com o prefixo da chave e os limites (nunca a chave). |
+| `aic cluster reservation list` | Reservas ativas: nó, requisição dona e vencimento. |
+| `aic cluster reservation add <nó> <request_id> [--minutes N] [--slots N]` | Reserva o nó. `--minutes 0` (padrão) usa o padrão do controller (60 s). `--slots N` guarda só N slots de trabalho; `0` é o nó inteiro. |
+| `aic cluster reservation remove <nó>` | Libera a reserva antes do vencimento. Não tem relação com o `rollout`. |
 
-## Atualização pelo controller
+### Trabalho e diagnóstico
 
 | Comando | O que faz |
 |---|---|
-| `rollout <versão> --url URL --sha256 HEX --image-sha256 HEX --signature B64` | Define a release que os nós devem rodar. O canário atualiza primeiro. A assinatura e as somas vêm de `os/image/sign-release.sh`. O controller só confere o formato; a assinatura é conferida no nó. |
-| `rollout --cancel` | Encerra o rollout em andamento. |
+| `aic cluster topology` | Estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel. O gateway aparece num ramo à parte. |
+| `aic cluster metrics` | Roll-up do cluster: nós por estado, profundidade da fila e tempos das unidades concluídas. |
+| `aic cluster events [--limit N] [--follow]` | Eventos recentes, do mais antigo para o mais novo. `--limit` padrão 20; `0` mostra tudo que o controller guarda. `--follow` segue os eventos novos. |
+| `aic cluster dashboard [--watch N]` | Painel de uma tela: nós, fila e reservas. `--watch N` repinta a cada N segundos até Ctrl-C; padrão `0`, imprime uma vez. |
+| `aic cluster benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N] [--require-attested]` | Despacha multiplicações de matrizes N×N e compara compute com transferência. `--local` roda no próprio processo. `--min-threads` recusa nós com menos threads. `--request-id` enfileira sob um id existente (o de uma reserva, por exemplo). `--priority`: maior sai primeiro. `--require-attested` só aceita nós atestados. Padrões: `--size 256`, `--repetitions 1`. |
+| `aic cluster graph [--size N]` | Enfileira o grafo em losango (A, depois B e C, depois D) e mostra os ramos que esperam uns pelos outros. Padrão `--size 128`. |
+| `aic cluster request trace <request_id>` | Unidades de uma requisição, com estado, nó em que rodaram e custo. |
+| `aic cluster request cancel <request_id>` | Tira da fila as unidades da requisição. As que já estão num worker terminam; o resultado, se vier, é recusado. |
 
-Atenção: `release <nó>` libera uma reserva. Não tem relação com o rollout, que é `rollout`.
+### Modelos
+
+| Comando | O que faz |
+|---|---|
+| `aic cluster model list` | Modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, parâmetros, precisão, tamanho, contexto e se o motor atual os roda (com o motivo, quando não). |
+| `aic cluster model check <id> [--ctx N]` | Diz se o cluster comporta o modelo: `OK`, ou `NOK` com o que falta em GB e quantos nós acrescentar. Soma a RAM dos nós aprovados e vivos (no máximo 80% de cada um, menos 128 MiB) contra pesos, cache de contexto e 10% de margem. Sai com código 1 no NOK. |
+| `aic cluster model start <id> [--ctx N]` | Sobe o modelo no cluster: confere a RAM, fixa o plano de workers com RPC, cria a chave de API do tenant `default` (mostrada uma vez) e o gateway o carrega. Sai com código 1 no NOK. |
+| `aic cluster model stop` | Tira o modelo do gateway. As chaves continuam valendo para o próximo `start`. |
+| `aic cluster model status` | O modelo pedido, os workers do plano, o estado que o gateway reportou (CARREGANDO, PRONTO, FALHOU), os tokens/s do benchmark e avisos do plano (worker deixado de fora por versão diferente do rpc-server). |
+| `aic cluster model key add <tenant> [--models a,b] [--tokens N] [--class c]` | Cria o tenant e mostra a chave (uma vez; o controller guarda só o hash). `--models` limita os modelos (padrão: todos), `--tokens` dá a cota por janela (0 = sem cota) e `--class` o teto de prioridade (`background`, `batch`, `normal`, `interactive`, `realtime`). |
+| `aic cluster model key rotate <tenant>` | Troca a chave; a antiga deixa de valer e os limites ficam. |
+| `aic cluster model key remove <tenant>` | Tira o tenant. |
+| `aic cluster model key list` | Tenants, com o prefixo da chave e os limites (nunca a chave). |
+| `aic cluster model manifest <dir> --name NOME --version VERSÃO` | Calcula o SHA-256 de cada arquivo e grava `manifest.json` na pasta. Local. |
+| `aic cluster model verify <dir>` | Confere os arquivos da pasta com o `manifest.json`; sai com erro se faltar o manifest ou se algum arquivo divergir. Local. |
+
+### Atualização da release e convite
+
+| Comando | O que faz |
+|---|---|
+| `aic cluster rollout <versão> --url URL --sha256 HEX --image-sha256 HEX --signature B64` | Define a release que os nós com AI Cluster OS devem rodar. O canário atualiza primeiro. Os argumentos saem de `os/image/sign-release.sh`. O controller confere só o formato; a assinatura é conferida no nó. |
+| `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
+| `aic cluster invite [--minutes N] [--port P]` | Abre o convite para computadores novos entrarem (instalador). Mostra o código de 8 caracteres e a linha de instalação; fecha ao sair. |
+
+## Controller, gateway e worker deste Linux
+
+| Comando | O que faz |
+|---|---|
+| `aic controller install [--with-gateway] [--ip IP] [--models-dir DIR] [--yes] [--lang pt\|en]` | Instala o controller neste Linux. Com `--with-gateway`, instala o gateway no mesmo computador. Gera tokens, a CA do túnel e os certificados. |
+| `aic controller status` | Estado do controller deste Linux. |
+| `aic controller logs [-f] [-n N]` | Registros do controller. `-f` segue; `-n N` mostra só as últimas N linhas. |
+| `aic gateway install --server IP[:8099] --code CÓDIGO [--models-dir DIR] [--yes] [--lang pt\|en]` | Instala o gateway de inferência neste Linux, apontado para o controller do convite. |
+| `aic gateway status` | Estado do gateway deste Linux. |
+| `aic gateway logs [-f] [-n N]` | Registros do gateway. |
+| `aic worker join --server IP[:8099] --code CÓDIGO [--yes] [--lang pt\|en]` | Entra no cluster com um convite: instala o worker neste Linux ou no AI Cluster OS. |
+| `aic worker status` | Estado do worker deste computador. |
+| `aic worker logs [-f] [-n N]` | Registros do worker. |
+
+## Só no AI Cluster OS
+
+Estes comandos respondem que não existem nos Linux comuns.
+
+| Comando | O que faz |
+|---|---|
+| `aic worker role [--short]` | Papel deste nó (computação, com fatias de modelo, ou recuperação), lendo só a configuração local. `--short` mostra só a palavra. |
+| `aic worker change --server IP[:8099] --code CÓDIGO` | Troca o convite (e o controller) do worker. |
+| `aic worker change --controller URL --token T` | Troca só o controller, com o token de join. |
+| `aic worker passwd [--remove]` | Senha do console local. `--remove` deixa o console sem login. |
+
+## Atualização e versão
+
+| Comando | O que faz |
+|---|---|
+| `aic update status` | Versão instalada × disponível, ou o resultado da última atualização assinada. |
+| `aic update apply [--version V] [--force] [--yes] [--lang pt\|en]` | Atualiza este computador. Em Linux, baixa da origem da instalação e troca o que o papel usa. No AI Cluster OS, pede ao `aic-updater` que cheque agora. Ver [[operacao]]. |
+| `aic version` | Versão do `aic` e do sistema. |
+
+## Migração dos comandos
+
+Versões anteriores tinham ferramentas separadas (`ai-cluster`, `aic-setup`, `aic-change`, `aic-role`, `aic-passwd`). Elas **não existem mais**, sem apelidos. Use a tabela para trocar os comandos antigos (decisão em [[adr-024-interface-de-comandos-unica-aic]]).
+
+| Era | Agora |
+|---|---|
+| `ai-cluster nodes`, `ai-cluster status`, `aic-setup status` | `aic cluster nodes` |
+| `ai-cluster node show <id>`, `ai-cluster node <id>` | `aic cluster node show <id>` |
+| `ai-cluster approve <nó> --fingerprint F` | `aic cluster node approve <nó> --fingerprint F` |
+| `ai-cluster revoke`, `retire`, `remove` | `aic cluster node revoke`, `retire`, `remove` |
+| `ai-cluster installs` | `aic cluster install list` |
+| `ai-cluster approve-install <fp> --disk D` / `reject-install <fp>` | `aic cluster install approve <fp> --disk D` / `reject <fp>` |
+| `ai-cluster enrollment open/close` | `aic cluster install open/close` |
+| `ai-cluster reserve <nó> <req> --ttl-ms N --slots N` | `aic cluster reservation add <nó> <req> --minutes M --slots N` (`--ttl-ms` em milissegundos vira `--minutes`) |
+| `ai-cluster reservations` / `ai-cluster release <nó>` | `aic cluster reservation list` / `reservation remove <nó>` |
+| `ai-cluster model …`, `ai-cluster request …` | `aic cluster model …`, `aic cluster request …` |
+| `ai-cluster topology`, `metrics`, `events`, `dashboard`, `benchmark`, `graph`, `rollout` | `aic cluster` + o mesmo nome |
+| `aic-setup invite` | `aic cluster invite` |
+| `aic-setup server` | `aic controller install` |
+| `aic-setup gateway …` | `aic gateway install …` |
+| `aic-setup worker …`, `os/bootstrap.sh --join-token(-file)` | `aic worker join …`; o `bootstrap.sh` aceita `--token` e `--token-file` |
+| `aic-setup update` | `aic update apply` (e `aic update status` para consultar) |
+| `aic status`, `aic logs` (AI Cluster OS) | `aic worker status`, `aic worker logs` |
+| `aic role`, `aic change`, `aic passwd` | `aic worker role`, `aic worker change`, `aic worker passwd` |
+| `aic update` (consultar e aplicar) | `aic update status` e `aic update apply` |
+| `aic version` | `aic version` (não mudou) |

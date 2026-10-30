@@ -30,7 +30,7 @@ teardown() {
 cli() {
   MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_OPERATOR_TOKEN=${CLI_TOKEN:-$OPERATOR} -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
-    "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 fail() {
@@ -65,7 +65,7 @@ start_controller_and_worker() {
 
 echo "=== A) model list ==="
 start_controller_and_worker
-LIST=$(cli model list)
+LIST=$(cli cluster model list)
 echo "$LIST"
 echo "$LIST" | grep -E "^gpt2 " | grep -q " sim " || fail "gpt2 deveria constar como suportado"
 echo "$LIST" | grep -E "^smollm2 " | grep -q " sim " || fail "smollm2 deveria constar como suportado"
@@ -73,20 +73,20 @@ echo "$LIST" | grep -E "^quebrado.gguf " | grep -q "inválido" || fail "o GGUF q
 echo "OK: catálogo lido dos cabeçalhos"
 
 echo "=== B) model check cabe ==="
-OUT=$(cli model check gpt2)
+OUT=$(cli cluster model check gpt2)
 echo "$OUT"
 echo "$OUT" | grep -q "^OK" || fail "gpt2 deveria caber na RAM do nó de teste"
 
 echo "=== C) model check não cabe: NOK com o que falta ==="
 start_controller_and_worker 134217728   # 128 MiB: abaixo da reserva por nó
-OUT=$(cli model check smollm2)
+OUT=$(cli cluster model check smollm2)
 echo "$OUT"
 echo "$OUT" | grep -q "^NOK" || fail "smollm2 não deveria caber em 128 MiB"
 echo "$OUT" | grep -q "faltam" || fail "o NOK deveria dizer quanto falta"
 echo "$OUT" | grep -q "acrescente" || fail "o NOK deveria dizer quantos nós acrescentar"
 
 echo "=== D) token de join não lista modelos ==="
-DENIED=$(CLI_TOKEN=$JOIN cli model list)
+DENIED=$(CLI_TOKEN=$JOIN cli cluster model list)
 echo "$DENIED"
 echo "$DENIED" | grep -qi "operador" || fail "o token de join deveria ser recusado"
 

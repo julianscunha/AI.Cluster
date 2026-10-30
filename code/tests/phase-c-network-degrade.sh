@@ -32,7 +32,7 @@ teardown() {
 
 # rede_atual=<n> from `node show`, or "-" when not yet remeasured.
 current() {
-  run "$R/ai-cluster node show $1" | grep -o 'rede_atual=[^ ]*' | cut -d= -f2
+  run "$R/aic cluster node show $1" | grep -o 'rede_atual=[^ ]*' | cut -d= -f2
 }
 
 teardown
@@ -71,7 +71,7 @@ docker exec aic-worker-a sh -c 'apt-get update -qq >/dev/null 2>&1; apt-get inst
 sleep 15
 
 # F09 E5: o worker também mede a latência até o controller e a reporta na saúde.
-LAT=$(run "$R/ai-cluster node show node-b" | grep -o 'latencia_ms=[^ ]*' | cut -d= -f2)
+LAT=$(run "$R/aic cluster node show node-b" | grep -o 'latencia_ms=[^ ]*' | cut -d= -f2)
 if [ -n "$LAT" ] && [ "$LAT" != "-" ]; then
   echo "OK: latencia_ms de node-b = $LAT"
 else
@@ -92,7 +92,7 @@ else
 fi
 
 echo "=== C) o placement manda a unidade para o nó de link intacto ==="
-BENCH=$(run "$R/ai-cluster benchmark --size 64 --repetitions 1")
+BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')
 if [ "$RAN" = "node-b" ]; then

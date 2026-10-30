@@ -49,7 +49,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 # The heartbeat that carries the profile runs every 5s, so a couple of ticks is enough.
 sleep 12
 
-DETAIL=$(run "$R/ai-cluster node show node-cur")
+DETAIL=$(run "$R/aic cluster node show node-cur")
 echo "$DETAIL"
 
 BASELINE=$(echo "$DETAIL" | sed -n 's/.*compute_score=\([0-9.]*\).*/\1/p' | head -1)
@@ -120,7 +120,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 12
 
-PINNED=$(run "$R/ai-cluster node show node-cur")
+PINNED=$(run "$R/aic cluster node show node-cur")
 echo "$PINNED"
 PINNED_BASE=$(echo "$PINNED" | sed -n 's/.*compute_score=\([0-9.]*\).*/\1/p' | head -1)
 PINNED_CUR=$(echo "$PINNED" | sed -n 's/.*current_compute_score=\([0-9.-]*\).*/\1/p' | head -1)

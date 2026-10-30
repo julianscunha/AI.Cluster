@@ -2,7 +2,7 @@
 # Fatia da Fase S (S2): aprovação de nó novo.
 #
 # Critério verificado: um nó que acabou de se registrar fica pendente e não recebe trabalho
-# até alguém rodar `ai-cluster approve`; a aprovação sobrevive a um re-registro. O token de
+# até alguém rodar `aic cluster node approve`; a aprovação sobrevive a um re-registro. O token de
 # join (S1) prova quem pode falar com o controller; a aprovação decide quem pode trabalhar.
 #
 # Sequência:
@@ -27,7 +27,7 @@ OPERATOR=s2-operator
 cli() {
   MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_OPERATOR_TOKEN=${CLI_TOKEN:-$OPERATOR} -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
-    "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 fail() {
@@ -51,7 +51,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker --ne
 sleep 8
 
 echo "=== A) nó novo fica pendente e não recebe trabalho ==="
-NODES=$(cli nodes)
+NODES=$(cli cluster nodes)
 echo "$NODES"
 if echo "$NODES" | grep -E "^node-new " | grep -q pendente; then
   echo "OK: node-new está pendente"
@@ -60,7 +60,7 @@ else
 fi
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-bench --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
-  "$IMG" sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1" >/dev/null
+  "$IMG" sh -c "$R/aic cluster benchmark --size $SIZE --repetitions 1" >/dev/null
 sleep 10
 if docker logs aic-bench 2>&1 | grep -q '^w-'; then
   docker logs aic-bench 2>&1 | tail -3
@@ -69,27 +69,27 @@ fi
 echo "OK: a unidade esperou, o nó pendente não recebeu trabalho"
 
 echo "=== A2) o token de join não aprova nó (S3a) ==="
-DENIED=$(CLI_TOKEN=$TOKEN cli approve node-new --trust-listed)
+DENIED=$(CLI_TOKEN=$TOKEN cli cluster node approve node-new --trust-listed)
 echo "$DENIED"
 if echo "$DENIED" | grep -qi "operador"; then
   echo "OK: approve com o token de join foi recusado"
 else
   fail "approve com o token de join deveria ser recusado"
 fi
-if cli nodes | grep -E "^node-new " | grep -q pendente; then
+if cli cluster nodes | grep -E "^node-new " | grep -q pendente; then
   echo "OK: node-new continua pendente"
 else
   fail "node-new não deveria ter sido aprovado pelo token de join"
 fi
 
 echo "=== B) approve confere a impressão digital da credencial ==="
-BAD=$(cli approve node-new --fingerprint 0000000000000000 2>&1 || true)
+BAD=$(cli cluster node approve node-new --fingerprint 0000000000000000 2>&1 || true)
 echo "$BAD"
 echo "$BAD" | grep -qi "não confere" || fail "impressão errada deveria ser recusada"
-cli nodes | grep -E "^node-new " | grep -q pendente || fail "impressão errada não deveria aprovar"
+cli cluster nodes | grep -E "^node-new " | grep -q pendente || fail "impressão errada não deveria aprovar"
 echo "OK: impressão errada recusada, o nó segue pendente"
-FP=$(cli nodes | grep -E "^node-new " | awk '{print $NF}')
-OUT=$(cli approve node-new --fingerprint "$FP")
+FP=$(cli cluster nodes | awk '$1=="NÓ"{for(i=1;i<=NF;i++) if($i=="IMPRESSÃO") c=i} $1=="node-new"{print $c}')
+OUT=$(cli cluster node approve node-new --fingerprint "$FP")
 echo "$OUT"
 echo "$OUT" | grep -q "aprovado" || fail "approve deveria confirmar a aprovação"
 sleep 8
@@ -99,14 +99,14 @@ else
   docker logs aic-bench 2>&1 | tail -5
   fail "a unidade deveria ter rodado em node-new"
 fi
-if cli nodes | grep -E "^node-new " | grep -q aprovado; then
+if cli cluster nodes | grep -E "^node-new " | grep -q aprovado; then
   echo "OK: node-new consta como aprovado"
 else
   fail "node-new deveria constar como aprovado"
 fi
 
 echo "=== C) nó desconhecido ==="
-GHOST=$(cli approve ghost --trust-listed || true)
+GHOST=$(cli cluster node approve ghost --trust-listed || true)
 if echo "$GHOST" | grep -q "não encontrado"; then
   echo "OK: approve de um nó desconhecido responde 'não encontrado'"
 else

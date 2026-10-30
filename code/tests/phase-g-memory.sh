@@ -44,12 +44,12 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "--- nós: o nó pequeno reporta ${SMALL_MEM} bytes ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== enfileirar a unidade; apenas o nó pequeno está presente e ela não cabe nele ==="
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
-  sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1" &
+  sh -c "$R/aic cluster benchmark --size $SIZE --repetitions 1" &
 CLI=$!
 sleep 12
 

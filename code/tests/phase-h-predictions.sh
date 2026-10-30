@@ -46,11 +46,11 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "=== A) size=64 — previsão de 622us por unidade ==="
-OUT=$(run "$R/ai-cluster benchmark --size 64 --repetitions 2")
+OUT=$(run "$R/aic cluster benchmark --size 64 --repetitions 2")
 echo "$OUT"
 REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 [ -n "$REQ" ] || { echo "FALHA: o benchmark não imprimiu requisicao="; teardown; exit 1; }
-TRACE=$(run "$R/ai-cluster request trace $REQ")
+TRACE=$(run "$R/aic cluster request trace $REQ")
 echo "$TRACE"
 PREDITO=$(echo "$TRACE" | sed -n 's/^PREVISTO somado_us=\([0-9]*\).*/\1/p')
 if [ "$PREDITO" = "1244" ]; then
@@ -84,10 +84,10 @@ else
 fi
 
 echo "=== B) size=128 — a previsão escala com o cubo ==="
-OUT2=$(run "$R/ai-cluster benchmark --size 128 --repetitions 1")
+OUT2=$(run "$R/aic cluster benchmark --size 128 --repetitions 1")
 echo "$OUT2"
 REQ2=$(echo "$OUT2" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
-TRACE2=$(run "$R/ai-cluster request trace $REQ2")
+TRACE2=$(run "$R/aic cluster request trace $REQ2")
 echo "$TRACE2"
 PREDITO2=$(echo "$TRACE2" | sed -n 's/^PREVISTO somado_us=\([0-9]*\).*/\1/p')
 if [ "$PREDITO2" = "775" ]; then
@@ -99,7 +99,7 @@ else
 fi
 
 echo "=== C) requisição desconhecida — nada previsto ==="
-UNKNOWN=$(run "$R/ai-cluster request trace nao-existe")
+UNKNOWN=$(run "$R/aic cluster request trace nao-existe")
 echo "$UNKNOWN"
 if echo "$UNKNOWN" | grep -q "PREVISTO"; then
   echo "FALHA: trace vazio não deveria imprimir linha PREVISTO"
@@ -109,7 +109,7 @@ fi
 echo "OK: sem linha PREVISTO quando não há previsão"
 
 echo "=== D) roll-up do cluster — a previsão somada no metrics ==="
-METRICS=$(run "$R/ai-cluster metrics")
+METRICS=$(run "$R/aic cluster metrics")
 echo "$METRICS"
 PRED_TOTAL=$(echo "$METRICS" | grep -o "total_predicted_compute_us=[0-9]*" | head -1 | cut -d= -f2)
 if [ "$PRED_TOTAL" = "2019" ]; then

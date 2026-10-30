@@ -44,7 +44,7 @@ fail() {
 cli() {
   docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_CONTROLLER=http://aic-controller:50051 \
-    "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 net_curl() {
@@ -63,7 +63,7 @@ worker() { # nome  id  [versão do rpc-server]
 wait_status() { # trecho esperado  tentativas
   local out=
   for _ in $(seq 1 "$2"); do
-    out=$(cli model status)
+    out=$(cli cluster model status)
     echo "$out" | grep -q "$1" && { echo "$out"; return 0; }
     sleep 4
   done
@@ -107,9 +107,9 @@ docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-gateway-r --network "$NET" -v 
 sleep 5
 
 echo "=== A) catálogo e start sem worker com RPC ==="
-LIST=$(cli model list); echo "$LIST"
+LIST=$(cli cluster model list); echo "$LIST"
 echo "$LIST" | grep -E "^smollm2-360m-q4.gguf " | grep -q " sim " || fail "o GGUF deveria constar como suportado"
-OUT=$(cli model check smollm2-360m-q4.gguf); echo "$OUT"
+OUT=$(cli cluster model check smollm2-360m-q4.gguf); echo "$OUT"
 # Sem nenhum worker o start cai para o modo só-gateway e avisa.
 echo "OK: catálogo"
 
@@ -117,7 +117,7 @@ worker aic-worker-r r-worker
 sleep 8
 
 echo "=== B) model start, chave, estado e chat ==="
-START=$(cli model start smollm2-360m-q4.gguf --ctx 1024); echo "$START"
+START=$(cli cluster model start smollm2-360m-q4.gguf --ctx 1024); echo "$START"
 echo "$START" | grep -q "^OK" || fail "o start deveria ser aceito"
 KEY=$(echo "$START" | grep -o "aic_[A-Za-z0-9_-]*" | head -1)
 [ -n "$KEY" ] || fail "o start deveria mostrar a chave de API"
@@ -137,7 +137,7 @@ worker aic-worker-r2 r-worker2
 # Com o modelo cabendo no r-worker, um segundo worker de mesma classe fica de fora do plano (cada
 # worker a mais soma um salto de rede por token): depois da janela de estabilidade nada muda.
 sleep 20
-STATUS=$(cli model status)
+STATUS=$(cli cluster model status)
 echo "$STATUS" | grep -q "^worker r-worker2 em" && fail "o r-worker2 não deveria entrar: o modelo cabe só no r-worker"
 GEN2=$(echo "$STATUS" | grep -o "geração [0-9]*" | head -1)
 [ "$GEN1" = "$GEN2" ] || fail "a geração não deveria subir sem mudar o conjunto de workers ($GEN1 -> $GEN2)"
@@ -158,14 +158,14 @@ CODE=$(net_curl -o /dev/null -w "%{http_code}" -H "Authorization: Bearer errada"
 echo "OK: 401"
 
 echo "=== E) model stop e novo start com a mesma chave ==="
-cli model stop | grep -q "parado" || fail "o stop deveria confirmar"
+cli cluster model stop | grep -q "parado" || fail "o stop deveria confirmar"
 for _ in $(seq 1 20); do
   CODE=$(net_curl -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d "$BODY" http://aic-gateway-r:8080/v1/chat/completions)
   [ "$CODE" = 404 ] && break
   sleep 3
 done
 [ "$CODE" = 404 ] || fail "parado, o modelo deveria sair da API (deu $CODE)"
-START=$(cli model start smollm2-360m-q4.gguf --ctx 1024); echo "$START" | head -2
+START=$(cli cluster model start smollm2-360m-q4.gguf --ctx 1024); echo "$START" | head -2
 echo "$START" | grep -q "CHAVE DE API" && fail "a chave já existe: o start não deveria criar outra"
 wait_status "PRONTO" 90 >/dev/null || fail "o modelo deveria voltar a PRONTO"
 OUT=$(net_curl -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d "$BODY" http://aic-gateway-r:8080/v1/chat/completions)
@@ -186,21 +186,21 @@ wait_code() { # chave  código esperado  tentativas
   echo "código final: $code"
   return 1
 }
-ADD=$(cli model key add acme --models smollm2-360m-q4 --tokens 100000 --class batch); echo "$ADD" | cut -c1-60
+ADD=$(cli cluster model key add acme --models smollm2-360m-q4 --tokens 100000 --class batch); echo "$ADD" | cut -c1-60
 KEY2=$(echo "$ADD" | grep -o "aic_[A-Za-z0-9_-]*" | head -1)
 [ -n "$KEY2" ] || fail "key add deveria mostrar a chave"
 wait_code "$KEY2" 200 20 || fail "a chave nova deveria valer depois da próxima apresentação do gateway"
-LIST=$(cli model key list); echo "$LIST"
+LIST=$(cli cluster model key list); echo "$LIST"
 echo "$LIST" | grep acme | grep -q "100000" || fail "key list deveria mostrar a cota"
 echo "$LIST" | grep -q "$KEY2" && fail "key list não pode mostrar a chave inteira"
-DUP=$(cli model key add acme || true)
+DUP=$(cli cluster model key add acme || true)
 echo "$DUP" | grep -qi "existe" || fail "repetir o tenant sem rotate deveria falhar"
-ROT=$(cli model key rotate acme); KEY3=$(echo "$ROT" | grep -o "aic_[A-Za-z0-9_-]*" | head -1)
+ROT=$(cli cluster model key rotate acme); KEY3=$(echo "$ROT" | grep -o "aic_[A-Za-z0-9_-]*" | head -1)
 [ -n "$KEY3" ] && [ "$KEY3" != "$KEY2" ] || fail "rotate deveria dar uma chave nova"
 wait_code "$KEY2" 401 20 || fail "a chave antiga deveria deixar de valer"
 wait_code "$KEY3" 200 20 || fail "a chave girada deveria valer"
-cli model key list | grep acme | grep -q "100000" || fail "o rotate deveria manter a cota"
-cli model key remove acme | grep -q removido || fail "key remove deveria confirmar"
+cli cluster model key list | grep acme | grep -q "100000" || fail "o rotate deveria manter a cota"
+cli cluster model key remove acme | grep -q removido || fail "key remove deveria confirmar"
 wait_code "$KEY3" 401 20 || fail "depois do remove a chave deveria deixar de valer"
 echo "OK: add, list, rotate e remove"
 

@@ -32,13 +32,13 @@ fail() {
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t \
     -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR \
-    -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 # trust <nó>: aprovado | pendente | ausente
 trust() {
   local row
-  row=$(cli nodes | grep -E "^$1 ")
+  row=$(cli cluster nodes | grep -E "^$1 ")
   if [ -z "$row" ]; then echo ausente; elif echo "$row" | grep -q aprovado; then echo aprovado; else echo pendente; fi
 }
 
@@ -63,7 +63,7 @@ sleep 8
 
 echo "=== A) nó novo pendente; approve o aprova ==="
 [ "$(trust node-p)" = pendente ] || fail "node-p deveria nascer pendente"
-cli approve node-p --trust-listed | grep -q aprovado || fail "approve deveria confirmar"
+cli cluster node approve node-p --trust-listed | grep -q aprovado || fail "approve deveria confirmar"
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria estar aprovado"
 echo "OK: node-p aprovado"
 
@@ -88,7 +88,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-impostor --network "$NET" -v aic-tar
   -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   -e AI_CLUSTER_NODE_ID=node-p "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 6
-if docker logs aic-impostor 2>&1 | grep -q "ai-cluster revoke"; then
+if docker logs aic-impostor 2>&1 | grep -q "aic cluster node revoke"; then
   echo "OK: o impostor foi recusado e o aviso manda revogar"
 else
   docker logs aic-impostor 2>&1 | tail -3
@@ -99,7 +99,7 @@ docker rm -f aic-impostor >/dev/null 2>&1
 echo "OK: node-p continua aprovado"
 
 echo "=== D) revoke devolve o nó a pendente e derruba o worker ==="
-OUT=$(cli revoke node-p)
+OUT=$(cli cluster node revoke node-p)
 echo "$OUT"
 echo "$OUT" | grep -q revogado || fail "revoke deveria confirmar"
 [ "$(trust node-p)" = pendente ] || fail "node-p deveria ficar pendente depois do revoke"
@@ -111,7 +111,7 @@ else
   docker logs aic-worker 2>&1 | tail -3
   fail "o worker revogado deveria encerrar com Unauthenticated"
 fi
-cli revoke ghost | grep -q "não encontrado" || fail "revoke de nó desconhecido deveria responder 'não encontrado'"
+cli cluster node revoke ghost | grep -q "não encontrado" || fail "revoke de nó desconhecido deveria responder 'não encontrado'"
 
 teardown
 echo "=== S5 persistência e revogação OK ==="

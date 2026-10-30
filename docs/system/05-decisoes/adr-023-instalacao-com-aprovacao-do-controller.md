@@ -7,6 +7,8 @@ type: sistema/adr
 
 # ADR-023 — Instalação só com aprovação do controller
 
+Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
+
 Status: decidido · registro de pendentes e aprovação implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`); faltam a etapa de espera, o uso do token e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
 
 ## Contexto
@@ -40,7 +42,7 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 
 - Identidade: todo componente que fala com uma pessoa abre com o logotipo e o nome do produto (`ai_cluster_common::brand`: `banner`, `rule`, `dot`), inclusive a etapa de espera. Sem terminal (log, arquivo) a abertura vira uma linha só.
 
-- Janela de abertura: a porta anônima existe, mas responde "indisponível" até o operador abrir (`SetEnrollment`, até 120 min, fecha sozinha). O `aic-setup invite` abre pelos minutos do convite e fecha ao sair; o convite serve o script `/wait` para quem já tem Linux (confere o ambiente, baixa só o `aic-wait` do pacote do worker e o roda).
+- Janela de abertura: a porta anônima existe, mas responde "indisponível" até o operador abrir (`SetEnrollment`, até 120 min, fecha sozinha). O `aic cluster invite` abre pelos minutos do convite e fecha ao sair; o convite serve o script `/wait` para quem já tem Linux (confere o ambiente, baixa só o `aic-wait` do pacote do worker e o roda).
 
 ## Alternativas
 

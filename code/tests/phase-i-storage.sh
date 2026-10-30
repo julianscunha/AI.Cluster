@@ -55,7 +55,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 
 echo "=== A) nó com classes fixadas (nvme,ssd) ==="

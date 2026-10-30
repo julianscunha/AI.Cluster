@@ -12,7 +12,7 @@ Subsistema que mostra o cluster a quem opera: métricas, eventos, traces e o pai
 ## Notas
 
 - [[observabilidade]]: os três tipos de telemetria (métricas, eventos e traces), previsto contra real e a trilha de ações administrativas.
-- [[cli-tui]]: a CLI `ai-cluster`, o painel de uma tela e os comandos de operação.
+- [[cli-tui]]: a CLI `aic`, o painel de uma tela e os comandos de operação.
 
 Leitura: [[observabilidade]] primeiro, depois [[cli-tui]]. A CLI é a interface de todo dado da observabilidade.
 
@@ -44,11 +44,11 @@ O worker não expõe porta. Ele abre o canal ao controller por iniciativa própr
 
 ## Rotina de operação
 
-1. `ai-cluster dashboard` para o estado geral.
-2. `ai-cluster nodes` para aprovação, versão e medida de cada nó.
-3. `ai-cluster events` para a linha do tempo recente.
-4. `ai-cluster metrics` ou o scraper em `/metrics` para números agregados.
-5. `ai-cluster request trace <id>` para uma requisição específica.
+1. `aic cluster dashboard` para o estado geral.
+2. `aic cluster nodes` para aprovação, versão e medida de cada nó.
+3. `aic cluster events` para a linha do tempo recente.
+4. `aic cluster metrics` ou o scraper em `/metrics` para números agregados.
+5. `aic cluster request trace <id>` para uma requisição específica.
 
 Cada comando está em [[cli-tui]].
 

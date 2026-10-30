@@ -46,13 +46,13 @@ done
 sleep 8
 
 echo "--- nós antes da falha ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== enfileirar duas unidades para que ambos os workers segurem uma, então matar um worker em voo ==="
 # Duas unidades prontas e dois workers: cada worker reivindica uma, então o nó que morre
 # está de fato segurando trabalho. O diamante não faria isso — ele tem uma única cabeça pronta,
 # então só um worker pode estar ocupado por vez.
-run "$R/ai-cluster benchmark --size "$SIZE" --repetitions 2" &
+run "$R/aic cluster benchmark --size "$SIZE" --repetitions 2" &
 CLI=$!
 sleep "$KILL_AFTER"
 echo "--- matando node-b: SIGKILL, sem leave, sem requeue na saída ---"
@@ -60,12 +60,12 @@ docker kill aic-worker-b >/dev/null 2>&1
 wait "$CLI"
 
 echo "--- nós após a falha ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -20
 
 echo "=== o evento node_offline e o reenfileiramento aparecem em events ==="
-EVENTS=$(run "$R/ai-cluster events --limit 100")
+EVENTS=$(run "$R/aic cluster events --limit 100")
 echo "$EVENTS" | grep -E "node_offline|requeue|reenfileir"
 echo "$EVENTS" | grep -q node_offline && echo "OK: node_offline registrado" || { echo "FALHA: faltou node_offline em events"; teardown 2>/dev/null; exit 1; }

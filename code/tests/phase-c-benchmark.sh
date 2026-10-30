@@ -49,7 +49,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 SCORE=$(echo "$NODES" | compute_of node-bench)
 echo "compute_score medido = $SCORE"
@@ -61,7 +61,7 @@ else
 fi
 
 # Reproduzível: uma segunda leitura do mesmo nó não pode mudar o perfil reportado.
-SCORE2=$(run "$R/ai-cluster nodes" | compute_of node-bench)
+SCORE2=$(run "$R/aic cluster nodes" | compute_of node-bench)
 echo "compute_score relido  = $SCORE2"
 if [ "$SCORE" = "$SCORE2" ]; then
   echo "OK: o perfil é reproduzível entre leituras"
@@ -80,7 +80,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-PINNED=$(run "$R/ai-cluster nodes" | compute_of node-pinned)
+PINNED=$(run "$R/aic cluster nodes" | compute_of node-pinned)
 echo "compute_score fixado = $PINNED"
 if [ "$PINNED" = "2.00" ]; then
   echo "OK: o score fixado foi reportado como veio"

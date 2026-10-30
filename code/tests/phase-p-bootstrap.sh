@@ -21,7 +21,7 @@ teardown() { docker rm -f aic-controller-p aic-clean-p >/dev/null 2>&1; }
 fail() { echo "FALHA: $1"; teardown; exit 1; }
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
-    -e AI_CLUSTER_OPERATOR_TOKEN=p-operator -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster $*"
+    -e AI_CLUSTER_OPERATOR_TOKEN=p-operator -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic $*"
 }
 
 teardown
@@ -39,31 +39,31 @@ boot() { MSYS_NO_PATHCONV=1 docker exec aic-clean-p /os/bootstrap.sh "$@"; }
 refused() { boot "$@" >/dev/null 2>&1; [ $? = 2 ]; }
 
 echo "=== A) argumentos recusados antes de tocar na máquina ==="
-refused --controller http://aic-controller-p:50051 --join-token p-join --binary /t/release/ai-cluster-worker   || fail "http sem --insecure deveria ser recusado (código 2)"
+refused --controller http://aic-controller-p:50051 --token p-join --binary /t/release/ai-cluster-worker   || fail "http sem --insecure deveria ser recusado (código 2)"
 refused --controller https://x --binary /t/release/ai-cluster-worker || fail "sem token deveria ser recusado (código 2)"
-refused --controller https://x --join-token "a b" --binary /t/release/ai-cluster-worker   || fail "token com espaço deveria ser recusado (código 2)"
-refused --controller https://x --join-token t --binary /nao/existe || fail "binário ausente deveria ser recusado (código 2)"
+refused --controller https://x --token "a b" --binary /t/release/ai-cluster-worker   || fail "token com espaço deveria ser recusado (código 2)"
+refused --controller https://x --token t --binary /nao/existe || fail "binário ausente deveria ser recusado (código 2)"
 # Caracteres de shell ou quebra de linha em qualquer valor: recusados antes de escrever nada.
 for bad in 'a$(id)' 'a`id`' 'a' 'a#b' 'a;b' "a
 b"; do
-  refused --controller https://x --join-token "$bad" --binary /t/release/ai-cluster-worker     || fail "token com caractere perigoso deveria ser recusado"
-  refused --controller https://x --join-token t --node-id "$bad" --binary /t/release/ai-cluster-worker     || fail "node-id com caractere perigoso deveria ser recusado"
-  refused --controller https://x --join-token t --model-dir "$bad" --binary /t/release/ai-cluster-worker     || fail "model-dir com caractere perigoso deveria ser recusado"
-  refused --controller https://x --join-token t --prefix "$bad" --binary /t/release/ai-cluster-worker     || fail "prefix com caractere perigoso deveria ser recusado"
+  refused --controller https://x --token "$bad" --binary /t/release/ai-cluster-worker     || fail "token com caractere perigoso deveria ser recusado"
+  refused --controller https://x --token t --node-id "$bad" --binary /t/release/ai-cluster-worker     || fail "node-id com caractere perigoso deveria ser recusado"
+  refused --controller https://x --token t --model-dir "$bad" --binary /t/release/ai-cluster-worker     || fail "model-dir com caractere perigoso deveria ser recusado"
+  refused --controller https://x --token t --prefix "$bad" --binary /t/release/ai-cluster-worker     || fail "prefix com caractere perigoso deveria ser recusado"
 done
-refused --controller https://x --join-token t --prefix relativo --binary /t/release/ai-cluster-worker   || fail "prefix relativo deveria ser recusado"
+refused --controller https://x --token t --prefix relativo --binary /t/release/ai-cluster-worker   || fail "prefix relativo deveria ser recusado"
 # RPC do llama.cpp: tudo ou nada, binário executável, os três arquivos de TLS, nada de texto puro.
-refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server   || fail "RPC sem pasta de TLS deveria ser recusado"
-refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-tls-dir /tmp   || fail "RPC sem binário deveria ser recusado"
-refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /nao/existe --rpc-tls-dir /tmp   || fail "binário de RPC ausente deveria ser recusado"
-refused --controller https://x --join-token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server --rpc-tls-dir /tmp   || fail "pasta de TLS sem os arquivos deveria ser recusada"
+refused --controller https://x --token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server   || fail "RPC sem pasta de TLS deveria ser recusado"
+refused --controller https://x --token t --binary /t/release/ai-cluster-worker --rpc-tls-dir /tmp   || fail "RPC sem binário deveria ser recusado"
+refused --controller https://x --token t --binary /t/release/ai-cluster-worker --rpc-server-bin /nao/existe --rpc-tls-dir /tmp   || fail "binário de RPC ausente deveria ser recusado"
+refused --controller https://x --token t --binary /t/release/ai-cluster-worker --rpc-server-bin /t/llama/ggml-rpc-server --rpc-tls-dir /tmp   || fail "pasta de TLS sem os arquivos deveria ser recusada"
 MSYS_NO_PATHCONV=1 docker exec aic-clean-p test ! -e /opt/ai-cluster || fail "nada deveria ter sido instalado"
 echo "OK"
 
 echo "=== B) instala e vira READY ==="
 # O token por arquivo: nada de segredo na linha de comando.
 MSYS_NO_PATHCONV=1 docker exec aic-clean-p sh -c 'echo p-join > /tmp/join-token'
-boot --controller $CONTROLLER --join-token-file /tmp/join-token --insecure --node-id node-clean \
+boot --controller $CONTROLLER --token-file /tmp/join-token --insecure --node-id node-clean \
   --binary /t/release/ai-cluster-worker || fail "o bootstrap falhou"
 MODE=$(MSYS_NO_PATHCONV=1 docker exec aic-clean-p stat -c '%a %U:%G' /opt/ai-cluster/worker.env)
 [ "$MODE" = "640 root:ai-cluster" ] || fail "worker.env deveria ser 640 root:ai-cluster, veio '$MODE'"
@@ -71,7 +71,7 @@ BIN=$(MSYS_NO_PATHCONV=1 docker exec aic-clean-p stat -c '%a %U' /opt/ai-cluster
 [ "$BIN" = "755 root" ] || fail "o binário deveria ser 755 do root, veio '$BIN'"
 STATE=""
 for _ in $(seq 1 20); do
-  STATE=$(cli nodes 2>/dev/null | awk '$1 == "node-clean" { print $2 }')
+  STATE=$(cli cluster nodes 2>/dev/null | awk '$1 == "node-clean" { print $2 }')
   [ "$STATE" = READY ] && break
   sleep 1
 done
@@ -81,10 +81,10 @@ PID=$(MSYS_NO_PATHCONV=1 docker exec aic-clean-p cat /opt/ai-cluster/state/worke
 echo "OK: node-clean READY, worker.env 640 root:ai-cluster, binário do root, processo do ai-cluster"
 
 echo "=== C) rodar de novo é inofensivo ==="
-boot --controller $CONTROLLER --join-token p-join --insecure --node-id node-clean \
+boot --controller $CONTROLLER --token p-join --insecure --node-id node-clean \
   --binary /t/release/ai-cluster-worker >/dev/null || fail "a segunda execução falhou"
 sleep 6
-COUNT=$(cli nodes 2>/dev/null | awk '$1 == "node-clean"' | wc -l)
+COUNT=$(cli cluster nodes 2>/dev/null | awk '$1 == "node-clean"' | wc -l)
 [ "$COUNT" = 1 ] || fail "deveria haver um nó node-clean, há $COUNT"
 # O nome do processo no /proc é cortado em 15 caracteres ("ai-cluster-work"). O contêiner não tem
 # init que recolha filhos, então o worker antigo, já encerrado, fica como zumbi: não conta.
@@ -93,7 +93,7 @@ RUNNING=$(MSYS_NO_PATHCONV=1 docker exec aic-clean-p sh -c 'for d in /proc/[0-9]
 echo "OK: um nó, um processo"
 
 echo "=== D) trocar o id da máquina exige --force ==="
-refused --controller $CONTROLLER --join-token p-join --insecure --node-id outro-nome   --binary /t/release/ai-cluster-worker || fail "trocar o node-id sem --force deveria ser recusado (código 2)"
+refused --controller $CONTROLLER --token p-join --insecure --node-id outro-nome   --binary /t/release/ai-cluster-worker || fail "trocar o node-id sem --force deveria ser recusado (código 2)"
 echo "OK"
 
 teardown

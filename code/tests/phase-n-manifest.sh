@@ -4,7 +4,7 @@
 # remove code/models/gpt2-bad (só links para os mesmos pesos e um manifest adulterado).
 #
 # Sequência:
-#   A) `ai-cluster model manifest` grava o manifest e `model verify` confere;
+#   A) `aic cluster model manifest` grava o manifest e `model verify` confere;
 #   B) o gateway sobe com o manifest, lista a versão em /v1/models e a devolve no cabeçalho
 #      `x-model-version` do chat;
 #   C) um manifest que não confere com os pesos impede o gateway de subir, e nomeia o arquivo;
@@ -29,15 +29,15 @@ fail() { echo "FALHA: $1"; teardown; exit 1; }
 common=(--network "$NET" -v aic-target:/t -e AI_CLUSTER_INSECURE=1
   -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR)
 http() { MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" "$IMG" curl -s "$@"; }
-cli() { MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/models:/models" -v aic-target:/t "$IMG" sh -c "$R/ai-cluster $*" 2>&1; }
+cli() { MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/models:/models" -v aic-target:/t "$IMG" sh -c "$R/aic $*" 2>&1; }
 
 teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
 echo "=== A) gerar e conferir o manifest ==="
-cli model manifest /models/gpt2 --name gpt2 --version 124m-test-1 | tail -2
-cli model verify /models/gpt2 | grep -q "ok: gpt2 124m-test-1" || fail "model verify deveria conferir"
+cli cluster model manifest /models/gpt2 --name gpt2 --version 124m-test-1 | tail -2
+cli cluster model verify /models/gpt2 | grep -q "ok: gpt2 124m-test-1" || fail "model verify deveria conferir"
 echo "OK"
 
 start_gateway() { # start_gateway <diretório de pesos dentro do contêiner> [variáveis extras...]

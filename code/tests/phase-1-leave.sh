@@ -30,10 +30,10 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 
 sleep 6
 echo "=== nós antes da saída ==="
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== enfileirar 6 unidades (faz poll até a fila drenar) ==="
-run "$R/ai-cluster benchmark --size 128 --repetitions 6" >"$LOG" 2>&1 &
+run "$R/aic cluster benchmark --size 128 --repetitions 6" >"$LOG" 2>&1 &
 BENCH=$!
 sleep 4
 
@@ -48,7 +48,7 @@ docker stop aic-worker1
 sleep 2
 
 echo "=== nós após a saída ==="
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== aguardando o benchmark drenar ==="
 wait $BENCH

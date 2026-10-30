@@ -13,7 +13,7 @@ Notas práticas para instalar, configurar, operar e testar o AI Cluster. Cada no
 |---|---|
 | [[instalacao]] | Compilar, subir um cluster de desenvolvimento, montar um cluster com TLS, instalar workers e a imagem do AI Cluster OS |
 | [[configuracao]] | Todas as variáveis `AI_CLUSTER_*` por componente, com padrão e efeito |
-| [[cli]] | Subcomandos e flags do `ai-cluster` |
+| [[cli]] | Comando `aic`: gramática, subcomandos, flags e migração dos nomes antigos |
 | [[api]] | API HTTP do gateway: rotas, autenticação, cabeçalhos, cotas e erros |
 | [[modelos]] | Modelos suportados e homologados, do mais simples ao mais avançado, com notas e links de download |
 | [[operacao]] | Tokens e papéis, mTLS, aprovação de nós, saída de nós, eventos, métricas, estado, atualização assinada, rotação de chave e solução de problemas |
@@ -24,7 +24,7 @@ Notas práticas para instalar, configurar, operar e testar o AI Cluster. Cada no
 - `ai-cluster-controller`: plano de controle. Registra nós, guarda a fila de trabalho, decide o placement e expõe o gRPC de controle.
 - `ai-cluster-worker`: agente do nó. Registra-se, envia heartbeat, mede a capacidade e executa unidades de trabalho.
 - `ai-cluster-gateway`: API HTTP de inferência (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`).
-- `ai-cluster`: CLI do operador. Fala com o controller.
+- `aic`: o comando único do operador e de cada máquina (cluster, controller, gateway, worker e atualização). Fala com o controller.
 
 ## Ordem sugerida
 

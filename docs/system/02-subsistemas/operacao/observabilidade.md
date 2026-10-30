@@ -13,15 +13,15 @@ O cluster responde três perguntas em qualquer momento: como está cada nó e o 
 
 | Tipo | Responde | Forma | Onde se lê |
 |---|---|---|---|
-| Métricas | Como está agora | Totais, médias, percentis e sinais por nó | `ai-cluster metrics`, `ai-cluster nodes`, `/metrics` |
-| Eventos | O que mudou | Linha do tempo de transições | `ai-cluster events` |
-| Traces | Por onde passou uma requisição | Unidades de uma requisição, com nó e tempos | `ai-cluster request trace <id>` |
+| Métricas | Como está agora | Totais, médias, percentis e sinais por nó | `aic cluster metrics`, `aic cluster nodes`, `/metrics` |
+| Eventos | O que mudou | Linha do tempo de transições | `aic cluster events` |
+| Traces | Por onde passou uma requisição | Unidades de uma requisição, com nó e tempos | `aic cluster request trace <id>` |
 
-O painel `ai-cluster dashboard` junta os três numa tela só ([[cli-tui]]).
+O painel `aic cluster dashboard` junta os três numa tela só ([[cli-tui]]).
 
 ## Métricas do cluster
 
-`ai-cluster metrics` imprime `chave=valor`, com os mesmos nomes dos campos do protocolo:
+`aic cluster metrics` imprime `chave=valor`, com os mesmos nomes dos campos do protocolo:
 
 ```text
 nodes_total=1 nodes_available=1
@@ -83,7 +83,7 @@ Percentis são nearest-rank, sobre as últimas 1024 amostras de cada série. Can
 
 ## Inferência no painel
 
-O gateway se apresenta ao controller a cada 5 s (a cada 1 s enquanto o modelo carrega) e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `ai-cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.
+O gateway se apresenta ao controller a cada 5 s (a cada 1 s enquanto o modelo carrega) e leva junto o que mediu (`GatewayStats`): contadores de requisições, falhas e tokens, TTFT e ITL (p50 e p95 das últimas 1024 amostras), taxa de decodificação, tamanho do cache KV, acertos e erros do cache de respostas e **tokens evitados** pelo cache. `aic cluster dashboard` mostra uma seção INFERÊNCIA por gateway, sem falar HTTP com ele.
 
 - **Taxas e tendência:** requisições e tokens gerados por segundo nas janelas de 1 e 5 minutos, com a razão como tendência (`↑`, `→`, `↓`). Zero antes de a história cobrir a janela; nunca extrapolado.
 - **Gateway sem sinal:** o painel diz há quantos segundos e avisa que os números são do último sinal.
@@ -100,7 +100,7 @@ O exportador do controller serve `GET /metrics` na porta `AI_CLUSTER_METRICS_ADD
 
 ## Eventos
 
-`ai-cluster events [--limit N] [--follow]` imprime do mais antigo para o mais recente. Padrão: os últimos 20. `--limit 0` mostra tudo que o controller ainda guarda.
+`aic cluster events [--limit N] [--follow]` imprime do mais antigo para o mais recente. Padrão: os últimos 20. `--limit 0` mostra tudo que o controller ainda guarda.
 
 Nomes de evento:
 
@@ -139,7 +139,7 @@ A razão não é persistida. Reiniciar o controller reaprende.
 
 ## Traces por requisição
 
-`ai-cluster request trace <id>` lista as unidades de uma requisição:
+`aic cluster request trace <id>` lista as unidades de uma requisição:
 
 ```text
 REQUISIÇÃO abc123 UNIDADES 2
@@ -160,7 +160,7 @@ O id da requisição é escolhido pelo cliente, ou cunhado pelo controller quand
 
 ## Painel
 
-`ai-cluster dashboard [--watch N]` mostra nós disponíveis, a tabela de nós, o trabalho (concluídas, pendentes, bloqueadas e falhas), os tempos de compute e latência com o previsto, e as reservas. Sem `--watch` imprime uma vez. Com `--watch N` repinta a cada N segundos. O painel lê as mesmas chamadas da CLI e não tem navegação.
+`aic cluster dashboard [--watch N]` mostra nós disponíveis, a tabela de nós, o trabalho (concluídas, pendentes, bloqueadas e falhas), os tempos de compute e latência com o previsto, e as reservas. Sem `--watch` imprime uma vez. Com `--watch N` repinta a cada N segundos. O painel lê as mesmas chamadas da CLI e não tem navegação.
 
 ## Limites conhecidos
 

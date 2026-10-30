@@ -48,8 +48,8 @@ O gateway lê diretórios por variável (`AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOL
 Gerar e conferir pela CLI, sem controller:
 
 ```bash
-ai-cluster model manifest <diretório> --name <nome> --version <versão>
-ai-cluster model verify <diretório>
+aic cluster model manifest <diretório> --name <nome> --version <versão>
+aic cluster model verify <diretório>
 ```
 
 - O manifesto lista os arquivos em ordem de nome, com tamanho e SHA-256 de cada um. Os mesmos pesos geram o mesmo manifesto.

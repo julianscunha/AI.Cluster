@@ -55,12 +55,12 @@ start_worker aic-worker-slow node-slow 15:discharging
 # would tie on cost and the unit could land anywhere.
 sleep 12
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 
 echo "=== A) a bateria atravessa worker → proto → controller → CLI ==="
-OK_S=$(run "$R/ai-cluster node show node-ok" | grep -o 'bateria=.*')
-SLOW_S=$(run "$R/ai-cluster node show node-slow" | grep -o 'bateria=.*')
+OK_S=$(run "$R/aic cluster node show node-ok" | grep -o 'bateria=.*')
+SLOW_S=$(run "$R/aic cluster node show node-slow" | grep -o 'bateria=.*')
 if [ "$OK_S" = "bateria=80%" ] && [ "$SLOW_S" = "bateria=15% descarregando" ]; then
   echo "OK: $OK_S / $SLOW_S"
 else
@@ -83,7 +83,7 @@ else
 fi
 
 echo "=== C) o placement manda a unidade para o nó ok ==="
-BENCH=$(run "$R/ai-cluster benchmark --size 64 --repetitions 1")
+BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 # The per-unit rows start with the work id; the second field is the node that ran it.
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')

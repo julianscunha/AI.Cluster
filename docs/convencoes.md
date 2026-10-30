@@ -23,10 +23,10 @@ A documentação descreve **como o sistema é e como usá-lo**, não como foi co
 
 ## Nomes de comandos
 
-Dois prefixos, cada um com um papel:
+Um só comando de usuário, `aic <recurso> <ação>` (ADR-024; a referência está em [[cli]], e a tabela de troca dos nomes antigos em [[cli#Migração dos comandos]]). Os nomes da versão anterior deixaram de existir, sem apelidos. Dois prefixos continuam para programas que não são comandos de operador:
 
-- **`ai-cluster*`** é o software do cluster, o que o operador instala e roda: a CLI `ai-cluster` e os binários `ai-cluster-controller`, `ai-cluster-worker`, `ai-cluster-gateway` e `ai-cluster-benchmark`.
-- **`aic-*`** são as ferramentas do SO do nó, que só existem dentro da imagem. A porta de entrada é o comando único `aic <subcomando>`; as ferramentas internas (`aic-console`, `aic-updater`, `aic-update-request`, `aic-splash-run`) são chamadas pelo sistema, não à mão.
+- **`ai-cluster-*`** são os binários do cluster: `ai-cluster-controller`, `ai-cluster-worker`, `ai-cluster-gateway` e `ai-cluster-benchmark`.
+- **`aic-*`** são programas internos do SO do nó e da instalação (`aic-console`, `aic-updater`, `aic-update-request`, `aic-splash-run`, `aic-wait`). Não são chamados à mão.
 
 Todo comando aceita `--help`.
 
@@ -34,7 +34,7 @@ Todo comando aceita `--help`.
 
 Todo componente fala com a mesma cara, definida em `crates/common/src/brand.rs` (Rust) e em `os/image/overlay/usr/lib/aic/ui.sh` (scripts do nó). Mexa nos dois juntos.
 
-- **Logotipo:** uma malha de sete nós em cinco linhas, em ciano. Aparece no banner de partida do controller, do gateway e do worker, no painel (`ai-cluster dashboard`), no console do monitor e na tela de carregamento do nó.
+- **Logotipo:** uma malha de sete nós em cinco linhas, em ciano. Aparece no banner de partida do controller, do gateway e do worker, no painel (`aic cluster dashboard`), no console do monitor e na tela de carregamento do nó.
 - **Paleta por papel, não por componente:** título forte (branco), rótulo e logotipo em ciano, **verde** para pronto, **amarelo** para atenção (pendente, drenando), **vermelho** para falha ou sem sinal, cinza para apoio. `READY` e `VIVO` são verdes; `OFFLINE`, `QUARANTINED` e `SEM SINAL` são vermelhos; o resto é amarelo.
 - **Só onde a tela aceita:** cor e glifos de caixa saem num terminal de verdade. Saída redirecionada (log de contêiner, arquivo, scripts, testes) fica em texto puro, e o painel volta ao formato `chave=valor` que os scripts leem. `NO_COLOR` e `AI_CLUSTER_COLOR=never` desligam a cor, `AI_CLUSTER_COLOR=always` força, `AI_CLUSTER_ASCII=1` troca os glifos por ASCII.
 - **Linha de partida:** num log, o banner é uma linha só (`Real.AI.Cluster <componente> v<versão> - <detalhe>`), seguida pelas linhas de sempre.

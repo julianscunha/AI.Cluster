@@ -22,13 +22,13 @@ UNITS=6
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm -v aic-target:/t -e AI_CLUSTER_INSECURE=1 \
     -e AI_CLUSTER_OPERATOR_TOKEN="$OPERATOR" -e AI_CLUSTER_CONTROLLER="$CONTROLLER" \
-    aic-rust:1 /t/release/ai-cluster "$@"
+    aic-rust:1 /t/release/aic "$@"
 }
 
 fail() { echo "FALHA: $1"; exit 1; }
 
 echo "=== A) nós READY de arquiteturas diferentes ==="
-NODES=$(cli nodes)
+NODES=$(cli cluster nodes)
 echo "$NODES"
 ARCHS=$(echo "$NODES" | awk '$2 == "READY" { print $3 }' | sort -u | wc -l)
 [ "$ARCHS" -ge 2 ] || fail "esperadas >= 2 arquiteturas entre os nós READY, vieram $ARCHS"
@@ -37,7 +37,7 @@ echo "OK: $ARCHS arquiteturas entre os nós READY"
 echo "=== B) o lote termina inteiro e roda em mais de um nó ==="
 BEFORE=$(docker logs "$CONTAINER" 2>&1 | grep -c "finalizado")
 # Três lotes de UNITS unidades com a mesma semente: cada unidade se repete a cada UNITS ids.
-for _ in 1 2 3; do cli benchmark --size 96 --repetitions $UNITS >"$(mktemp)" 2>&1 || fail "o benchmark falhou"; done
+for _ in 1 2 3; do cli cluster benchmark --size 96 --repetitions $UNITS >"$(mktemp)" 2>&1 || fail "o benchmark falhou"; done
 RUN=$(docker logs "$CONTAINER" 2>&1 | grep "finalizado" | tail -n +$((BEFORE + 1)))
 [ "$(echo "$RUN" | wc -l)" -eq $((3 * UNITS)) ] || fail "esperadas $((3 * UNITS)) unidades concluídas"
 NODES_USED=$(echo "$RUN" | sed -E 's/.*finalizado em ([^ ]+) .*/\1/' | sort -u | wc -l)

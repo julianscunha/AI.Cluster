@@ -42,7 +42,7 @@ O controller guarda a confiança de cada nó como aprovado ou não aprovado, com
 
 | Situação | Efeito |
 |---|---|
-| Nó novo | Não confiável. Não recebe trabalho até ser aprovado (`ai-cluster approve`). |
+| Nó novo | Não confiável. Não recebe trabalho até ser aprovado (`aic cluster node approve`). |
 | Aprovado | Recebe trabalho. |
 | Revogado (`RevokeNode`) | Sai de circulação. Suas unidades em voo voltam à fila. |
 | Quarentena | Sai de circulação até um operador aprovar de novo. Ver abaixo. |
@@ -58,11 +58,11 @@ Um resultado é inválido quando não tem a forma esperada, tem números não fi
 - Um resultado inválido não é aceito. A unidade volta à fila **sem gastar** a tentativa dela, porque a culpa é do nó.
 - Três resultados inválidos seguidos colocam o nó em quarentena. Um resultado válido zera a contagem.
 - Ao entrar em quarentena, o nó perde as unidades que ainda segura (cada uma volta à fila gastando uma tentativa) e os canais de fatias são derrubados.
-- Só `ai-cluster approve` libera o nó. O limite de três é fixo, sem variável de ambiente.
+- Só `aic cluster node approve` libera o nó. O limite de três é fixo, sem variável de ambiente.
 
 ## Diagnóstico
 
-O sistema não registra a causa provável de uma degradação nem o impacto estimado sobre o trabalho. O operador vê os valores brutos do relatório de saúde e a coluna de saúde em `ai-cluster nodes`.
+O sistema não registra a causa provável de uma degradação nem o impacto estimado sobre o trabalho. O operador vê os valores brutos do relatório de saúde e a coluna de saúde em `aic cluster nodes`.
 
 ## Limites conhecidos
 

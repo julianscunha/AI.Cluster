@@ -49,7 +49,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-BASE=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
+BASE=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
 echo "$BASE"
 if grep -q 'node-weak' <<<"$BASE"; then
   echo "OK: primeiro-a-chegar entregou a unidade ao nó fraco"
@@ -79,9 +79,9 @@ done
 sleep 8
 
 echo "--- nós presentes ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
-PLACED=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
+PLACED=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
 echo "$PLACED"
 if grep -q 'node-strong' <<<"$PLACED" && ! grep -q 'node-weak' <<<"$PLACED"; then
   echo "OK: placement entregou a unidade ao nó forte, que estava ocioso"

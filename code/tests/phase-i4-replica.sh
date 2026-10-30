@@ -76,7 +76,7 @@ sleep 8
 echo "=== B) enfileira: a gravação leva a cópia até o nó ==="
 # Em segundo plano: com o worker segurando a unidade, a fila não drena e o cliente ficaria
 # esperando até o próprio deadline.
-run "$R/ai-cluster benchmark --size 64 --repetitions 3" >/dev/null 2>&1 &
+run "$R/aic cluster benchmark --size 64 --repetitions 3" >/dev/null 2>&1 &
 CLI=$!
 sleep 12
 
@@ -134,7 +134,7 @@ fi
 
 echo "=== E) o cluster drena o trabalho recuperado ==="
 sleep 12
-METRICS=$(run "$R/ai-cluster metrics")
+METRICS=$(run "$R/aic cluster metrics")
 echo "$METRICS"
 PENDING=$(echo "$METRICS" | sed -n 's/.*units_pending=\([0-9]*\).*/\1/p' | head -1)
 FAILED=$(echo "$METRICS" | sed -n 's/.*units_failed=\([0-9]*\).*/\1/p' | head -1)

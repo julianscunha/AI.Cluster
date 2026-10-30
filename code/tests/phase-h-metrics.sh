@@ -44,7 +44,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "=== A) cluster ocioso ==="
-IDLE=$(run "$R/ai-cluster metrics")
+IDLE=$(run "$R/aic cluster metrics")
 echo "$IDLE"
 NODES=$(echo "$IDLE" | field nodes_total)
 COMPLETED=$(echo "$IDLE" | field units_completed)
@@ -59,8 +59,8 @@ else
 fi
 
 echo "=== B) duas unidades executadas ==="
-run "$R/ai-cluster benchmark --size $SIZE --repetitions 2" >/dev/null
-AFTER=$(run "$R/ai-cluster metrics")
+run "$R/aic cluster benchmark --size $SIZE --repetitions 2" >/dev/null
+AFTER=$(run "$R/aic cluster metrics")
 echo "$AFTER"
 COMPLETED=$(echo "$AFTER" | field units_completed)
 PENDING=$(echo "$AFTER" | field units_pending)
@@ -87,7 +87,7 @@ else
 fi
 
 echo "=== D) métricas de nó ==="
-NODES_OUT=$(run "$R/ai-cluster nodes")
+NODES_OUT=$(run "$R/aic cluster nodes")
 echo "$NODES_OUT"
 if echo "$NODES_OUT" | grep -q "CPU_%"; then
   echo "OK: a tabela de nós traz as colunas de métricas de nó"

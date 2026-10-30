@@ -20,7 +20,7 @@ O grafo de execução representa uma requisição como operações com dependên
 
 ## Montagem
 
-O cliente monta o grafo enviando as unidades com seus vínculos. O RPC `EnqueueGraph` enfileira um grafo de quatro unidades em diamante (A alimenta B e C, que alimentam D), com vínculos reais. O comando `ai-cluster graph` envia esse grafo e espera a fila esvaziar.
+O cliente monta o grafo enviando as unidades com seus vínculos. O RPC `EnqueueGraph` enfileira um grafo de quatro unidades em diamante (A alimenta B e C, que alimentam D), com vínculos reais. O comando `aic cluster graph` envia esse grafo e espera a fila esvaziar.
 
 ## Invariantes
 

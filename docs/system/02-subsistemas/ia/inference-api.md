@@ -146,7 +146,7 @@ Os códigos são estáveis. A causa interna vai para o log, não para a resposta
 
 ## Cabeçalhos
 
-- `x-request-id`: identificador da requisição, também no corpo. Leva a `ai-cluster request trace <id>` ([[cli-tui]]).
+- `x-request-id`: identificador da requisição, também no corpo. Leva a `aic cluster request trace <id>` ([[cli-tui]]).
 - `x-model-id` e `x-model-version`: modelo e versão dos pesos que responderam.
 - `x-priority`: classe pedida pelo cliente (entrada).
 - `Retry-After`: em respostas 429.

@@ -1,13 +1,13 @@
 ---
 title: "CLI e painel"
-aliases: ["CLI", "TUI", "ai-cluster", "Painel"]
+aliases: ["CLI", "TUI", "aic", "Painel"]
 tags: [sistema/subsistema/operacao]
 type: sistema/subsistema
 ---
 
 # CLI e painel
 
-A operação do cluster é feita pelo shell. A CLI `ai-cluster` é o cliente administrativo: cada comando é uma chamada ao controller, sem estado próprio. O painel é a mesma leitura em tela única, repintada. Nenhum dos dois depende de interface gráfica. Voltar para [[operacao]].
+A operação do cluster é feita pelo shell. A CLI `aic` é o cliente administrativo: cada comando `aic cluster …` é uma chamada ao controller, sem estado próprio. O painel é a mesma leitura em tela única, repintada. Nenhum dos dois depende de interface gráfica. A referência completa, com todas as opções e a tabela de migração dos nomes antigos, está em [[cli]]. Voltar para [[operacao]].
 
 ## Configuração
 
@@ -24,7 +24,7 @@ Ver [[seguranca]] para os papéis de cada token.
 ## Regras de saída
 
 - Saída que um script lê é `chave=valor` ou tabela de colunas fixas.
-- Estado é sempre texto. O painel não usa cor, então funciona em terminal sem cor, com `grep` e em operação remota.
+- Estado é texto. Em terminal o painel usa cor e glifos; redirecionado (scripts, `grep`, log), sai em texto puro, em `chave=valor`.
 - Comandos que mudam estado respondem com uma linha que diz o resultado, como `NÓ aprovado` ou `NÓ não encontrado`.
 
 ## Comandos
@@ -33,12 +33,14 @@ Ver [[seguranca]] para os papéis de cada token.
 
 | Comando | Função |
 |---|---|
-| `ai-cluster status` | Mesma saída de `nodes`: uma linha por nó, com estado, confiança, versão, medida e sinais. |
-| `ai-cluster nodes` | Tabela de nós. |
-| `ai-cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os nós agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway entra como um ramo à parte: ele se apresenta ao controller a cada 15 s (`ReportGateway`, não é um nó e não recebe trabalho) e a árvore mostra o id, a URL, se está vivo e, por modelo, os nós que guardam as fatias. Controller antigo, sem o RPC, mostra a árvore sem o ramo. |
-| `ai-cluster node show <id>` | Um nó, com capability, saúde e confiança completas. |
-| `ai-cluster approve <nó>` | Aprova um nó pendente para receber trabalho. |
-| `ai-cluster revoke <nó>` | Retira a aprovação e a credencial do nó, devolve o trabalho em voo à fila e deixa o nó pendente. |
+| `aic cluster nodes` | Tabela de nós: uma linha por nó, com estado, confiança, versão, medida e sinais. |
+| `aic cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os nós agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway entra como um ramo à parte: ele se apresenta ao controller a cada 15 s (`ReportGateway`, não é um nó e não recebe trabalho) e a árvore mostra o id, a URL, se está vivo e, por modelo, os nós que guardam as fatias. Controller antigo, sem o RPC, mostra a árvore sem o ramo. |
+| `aic cluster node show <id>` | Um nó, com capability, saúde e confiança completas. |
+| `aic cluster node approve <nó>` | Aprova um nó pendente para receber trabalho. |
+| `aic cluster node revoke <nó>` | Retira a aprovação e a credencial do nó, devolve o trabalho em voo à fila e deixa o nó pendente. |
+| `aic cluster node retire <nó>` / `remove <nó>` | Tira o nó do trabalho mantendo a identidade, ou o esquece por inteiro. |
+
+A instalação com aprovação (`aic cluster install list|approve|reject|open|close`) e o convite (`aic cluster invite`) estão na referência de [[cli]].
 
 A tabela de nós traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão da imagem) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
 
@@ -46,9 +48,9 @@ A tabela de nós traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERS�
 
 | Comando | Função |
 |---|---|
-| `ai-cluster reserve <nó> <requisição> [--ttl-ms N] [--slots N]` | Retém um nó para uma requisição. `0` usa o padrão do controller (60 s). `--slots` guarda só N slots; `0` é o nó inteiro. |
-| `ai-cluster reservations` | Lista nó, requisição dona e vencimento. |
-| `ai-cluster release <nó>` | Libera a reserva antes do vencimento. Nó sem reserva não é erro. |
+| `aic cluster reservation add <nó> <requisição> [--minutes N] [--slots N]` | Retém um nó para uma requisição. `--minutes 0` usa o padrão do controller (60 s). `--slots` guarda só N slots; `0` é o nó inteiro. |
+| `aic cluster reservation list` | Lista nó, requisição dona e vencimento. |
+| `aic cluster reservation remove <nó>` | Libera a reserva antes do vencimento. Nó sem reserva não é erro. |
 
 Reservar antes de enfileirar permite que a requisição caia no nó reservado: o `benchmark --request-id` aceita o mesmo id da reserva.
 
@@ -56,18 +58,18 @@ Reservar antes de enfileirar permite que a requisição caia no nó reservado: o
 
 | Comando | Função |
 |---|---|
-| `ai-cluster request trace <id>` | Unidades de uma requisição, com estado, nó e tempos. |
-| `ai-cluster request cancel <id>` | Remove da fila as unidades de uma requisição. Unidade já em execução termina. |
-| `ai-cluster benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha multiplicações de matrizes e compara compute com transferência. `--local` roda no próprio processo. |
-| `ai-cluster graph [--size N]` | Despacha um grafo diamante de dependências e mostra as ramificações liberadas. |
+| `aic cluster request trace <id>` | Unidades de uma requisição, com estado, nó e tempos. |
+| `aic cluster request cancel <id>` | Remove da fila as unidades de uma requisição. Unidade já em execução termina. |
+| `aic cluster benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha multiplicações de matrizes e compara compute com transferência. `--local` roda no próprio processo. |
+| `aic cluster graph [--size N]` | Despacha um grafo diamante de dependências e mostra as ramificações liberadas. |
 
 ### Métricas e eventos
 
 | Comando | Função |
 |---|---|
-| `ai-cluster metrics` | Roll-up do cluster em `chave=valor`, com percentis. |
-| `ai-cluster events [--limit N] [--follow]` | Linha do tempo, do mais antigo para o mais recente. Padrão 20. `0` mostra tudo. Com `--follow`, segue os eventos novos pelo barramento. |
-| `ai-cluster dashboard [--watch N]` | Painel de uma tela. `0` ou sem a opção imprime uma vez. |
+| `aic cluster metrics` | Roll-up do cluster em `chave=valor`, com percentis. |
+| `aic cluster events [--limit N] [--follow]` | Linha do tempo, do mais antigo para o mais recente. Padrão 20. `0` mostra tudo. Com `--follow`, segue os eventos novos pelo barramento. |
+| `aic cluster dashboard [--watch N]` | Painel de uma tela. `0` ou sem a opção imprime uma vez. |
 
 Ver [[observabilidade]] para o significado de cada campo.
 
@@ -75,8 +77,8 @@ Ver [[observabilidade]] para o significado de cada campo.
 
 | Comando | Função |
 |---|---|
-| `ai-cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` | Define a release que os nós devem rodar. |
-| `ai-cluster rollout --cancel` | Encerra o rollout em andamento. |
+| `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` | Define a release que os nós devem rodar. |
+| `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
 
 O `sign-release.sh` do repositório gera os argumentos de `rollout` a partir do artefato assinado. O fluxo está em [[ai-cluster-os]].
 
@@ -84,14 +86,14 @@ O `sign-release.sh` do repositório gera os argumentos de `rollout` a partir do 
 
 | Comando | Função |
 |---|---|
-| `ai-cluster model manifest <diretório> --name <nome> --version <versão>` | Grava `manifest.json` com nome, versão e SHA-256 de cada arquivo. |
-| `ai-cluster model verify <diretório>` | Confere os arquivos contra o manifesto. |
+| `aic cluster model manifest <diretório> --name <nome> --version <versão>` | Grava `manifest.json` com nome, versão e SHA-256 de cada arquivo. |
+| `aic cluster model verify <diretório>` | Confere os arquivos contra o manifesto. |
 
 Ver [[model-manager]].
 
 ## Painel
 
-`ai-cluster dashboard` mostra, em texto:
+`aic cluster dashboard` mostra, em texto:
 
 - `nós_disponíveis`: quantos nós o placement pode escolher agora.
 - Tabela de nós, com estado (`READY`, `DRAINING` e outros) e saúde.
@@ -99,7 +101,7 @@ Ver [[model-manager]].
 - `TEMPO`: compute e latência totais e médios, com o previsto ao lado.
 - `RESERVAS`: reservas ativas e a requisição dona de cada uma.
 
-Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não tem seleção nem paginação. Detalhe de um nó vem de `node show`, e de uma requisição, de `request trace`.
+Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não tem seleção nem paginação. Detalhe de um nó vem de `aic cluster node show`, e de uma requisição, de `aic cluster request trace`.
 
 ## Limites conhecidos
 
@@ -110,7 +112,7 @@ Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não
 
 > Planejado: `node drain`, `node reprovision` e `node history`.
 > Planejado: `request list` e `request show`.
-> Planejado: `model list` e `model show`.
-> Planejado: `topology`, `diagnose`, `rebalance` e `graph query`.
+> Planejado: `model show`.
+> Planejado: `diagnose`, `rebalance` e `graph query`.
 > Planejado: TUI com navegação e seleção de nó, e estado com cor além do texto.
 > Planejado: TTFT, ITL, tokens por segundo e cache KV no painel.

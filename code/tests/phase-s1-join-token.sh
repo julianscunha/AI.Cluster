@@ -28,7 +28,7 @@ cli() {
   local env=()
   [ "$token" != "-" ] && env=(-e "AI_CLUSTER_OPERATOR_TOKEN=$token")
   MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 --rm --network "$NET" -v aic-target:/t "${env[@]}" \
-    -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster $*" 2>&1
+    -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
 # worker <nome> <nó> <token|->
@@ -66,7 +66,7 @@ echo "=== B) token errado e token ausente não entram ==="
 worker aic-w-bad node-bad wrong-token
 worker aic-w-none node-none -
 sleep 8
-NODES=$(cli "$TOKEN" nodes)
+NODES=$(cli "$TOKEN" cluster nodes)
 if echo "$NODES" | grep -qE "node-bad|node-none"; then
   echo "$NODES"
   fail "um nó sem o token certo apareceu em nodes"
@@ -83,7 +83,7 @@ done
 echo "=== C) token certo entra ==="
 worker aic-w-ok node-ok "$TOKEN"
 sleep 8
-NODES=$(cli "$TOKEN" nodes)
+NODES=$(cli "$TOKEN" cluster nodes)
 echo "$NODES"
 if echo "$NODES" | grep -E "^node-ok " | grep -q READY; then
   echo "OK: node-ok entrou e está READY"

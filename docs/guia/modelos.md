@@ -24,10 +24,10 @@ Referência dos modelos de pesos abertos que o AI Cluster tem como alvo, do mais
 Com o controller, o gateway e pelo menos um worker no ar (cada worker com o `rpc-server`, veja [[configuracao]]):
 
 ```bash
-ai-cluster model list                    # o que há na pasta de modelos do controller (GGUF)
-ai-cluster model check <id>              # cabe na RAM dos workers? OK, ou NOK com o que falta
-ai-cluster model start <id>              # sobe o modelo; mostra a chave de API uma vez
-ai-cluster model status                  # estado (CARREGANDO, PRONTO), workers do plano e tokens/s
+aic cluster model list                    # o que há na pasta de modelos do controller (GGUF)
+aic cluster model check <id>              # cabe na RAM dos workers? OK, ou NOK com o que falta
+aic cluster model start <id>              # sobe o modelo; mostra a chave de API uma vez
+aic cluster model status                  # estado (CARREGANDO, PRONTO), workers do plano e tokens/s
 ```
 
 1. Baixe um modelo em **GGUF** e ponha na pasta `AI_CLUSTER_MODELS_DIR` do controller (a mesma pasta

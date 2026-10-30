@@ -37,7 +37,7 @@ timed_batch() {
     -e AI_CLUSTER_WORK_SLOTS="$slots" -e AI_CLUSTER_WORK_DELAY_MS=600 \
     "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
   sleep 8
-  run "start=\$(date +%s%N); $R/ai-cluster benchmark --size 32 --repetitions 8 | grep concluidas; end=\$(date +%s%N); echo \$(( (end - start) / 1000000 ))"
+  run "start=\$(date +%s%N); $R/aic cluster benchmark --size 32 --repetitions 8 | grep concluidas; end=\$(date +%s%N); echo \$(( (end - start) / 1000000 ))"
 }
 
 docker network rm "$NET" >/dev/null 2>&1

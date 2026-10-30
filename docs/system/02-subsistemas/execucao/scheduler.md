@@ -70,10 +70,10 @@ Um cliente pode reter um nó para a requisição dele antes de o trabalho existi
 - A expiração é verificada quando alguém pergunta pela reserva, não por um temporizador. Um cliente que some libera o nó no primeiro consulta depois do vencimento.
 
 ```bash
-ai-cluster reserve <nó> <requisição> --ttl-ms 60000 [--slots 1]
-ai-cluster benchmark --request-id <requisição>
-ai-cluster release <nó>
-ai-cluster reservations
+aic cluster reservation add <nó> <requisição> --minutes 1 [--slots 1]
+aic cluster benchmark --request-id <requisição>
+aic cluster reservation remove <nó>
+aic cluster reservation list
 ```
 
 ## Exigência de atestado

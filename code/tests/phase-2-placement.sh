@@ -42,7 +42,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "--- nós: o nó fraco reporta $WEAK_THREADS threads ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== enfileirar uma unidade que precisa de $MIN_THREADS threads; apenas o nó fraco está presente ==="
 # O cliente faz poll até a fila drenar, o que não pode acontecer enquanto o único nó
@@ -50,7 +50,7 @@ echo "=== enfileirar uma unidade que precisa de $MIN_THREADS threads; apenas o n
 # que ainda esteja fazendo poll quando o nó forte for adicionado abaixo.
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
-  sh -c "$R/ai-cluster benchmark --size $SIZE --repetitions 1 --min-threads $MIN_THREADS" &
+  sh -c "$R/aic cluster benchmark --size $SIZE --repetitions 1 --min-threads $MIN_THREADS" &
 CLI=$!
 sleep 12
 

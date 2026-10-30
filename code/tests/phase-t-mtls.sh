@@ -79,7 +79,7 @@ worker() {
 cli() {
   MSYS_NO_PATHCONV=1 docker run --rm --network "$NET" -v aic-target:/t -v aic-tls-mtls:/tls \
     -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_TLS_CA=/tls/ca.pem "$@" \
-    -e AI_CLUSTER_CONTROLLER=https://$HOST:50051 "$IMG" sh -c "$R/ai-cluster nodes" 2>&1
+    -e AI_CLUSTER_CONTROLLER=https://$HOST:50051 "$IMG" sh -c "$R/aic cluster nodes" 2>&1
 }
 
 echo "=== B) certificado de cliente da CA certa entra ==="

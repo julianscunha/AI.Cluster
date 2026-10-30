@@ -25,10 +25,10 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-q $ENVS --network "$NET" -v a
 sleep 8
 
 echo "=== 40 unidades, uma por vez, num nó que promete 4x o que entrega ==="
-OUT=$(run "$R/ai-cluster benchmark --size 64 --repetitions 40")
+OUT=$(run "$R/aic cluster benchmark --size 64 --repetitions 40")
 REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 [ -n "$REQ" ] || fail "sem request id"
-TRACE=$(run "$R/ai-cluster request trace $REQ")
+TRACE=$(run "$R/aic cluster request trace $REQ")
 # Linhas "w-N nó completed COMPUTE PREDITO ..."; ordena pelo número da unidade.
 ROWS=$(echo "$TRACE" | awk '$3 == "completed" { sub("w-", "", $1); print $1, $4, $5 }' | sort -n)
 echo "$ROWS" | head -3; echo "..."; echo "$ROWS" | tail -3

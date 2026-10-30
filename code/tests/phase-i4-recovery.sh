@@ -86,14 +86,14 @@ sleep 8
 # inteiro: ele fica em segundo plano e é cortado junto com o controller. O que importa aqui é
 # o enfileiramento e a reivindicação, não o desfecho dele.
 OUT=$(mktemp)
-run "$R/ai-cluster benchmark --size 64 --repetitions 1" >"$OUT" 2>&1 &
+run "$R/aic cluster benchmark --size 64 --repetitions 1" >"$OUT" 2>&1 &
 CLI=$!
 sleep 10
 REQ=$(request_id_of <"$OUT")
 [ -n "$REQ" ] || { echo "FALHA: o benchmark não imprimiu requisicao="; cat "$OUT"; teardown; exit 1; }
 echo "requisicao=$REQ"
 
-INFLIGHT=$(run "$R/ai-cluster request trace $REQ")
+INFLIGHT=$(run "$R/aic cluster request trace $REQ")
 echo "$INFLIGHT"
 if echo "$INFLIGHT" | grep -q "dispatched" && echo "$INFLIGHT" | grep -q "node-old"; then
   echo "OK: a unidade está em voo em node-old"
@@ -109,7 +109,7 @@ sleep 3
 # Em segundo plano pela mesma razão da seção A: o cliente espera a fila *inteira* drenar, e
 # w-0 continua retida por node-old. Só as conclusões de node-fast interessam aqui.
 OUT2=$(mktemp)
-run "$R/ai-cluster benchmark --size 64 --repetitions 2" >"$OUT2" 2>&1 &
+run "$R/aic cluster benchmark --size 64 --repetitions 2" >"$OUT2" 2>&1 &
 CLI2=$!
 for _ in $(seq 1 10); do
   [ "$(docker logs aic-controller 2>&1 | grep -c 'finalizado em node-fast')" = "2" ] && break
@@ -159,7 +159,7 @@ echo "=== F) node-new termina o trabalho ==="
 worker aic-worker-new node-new 0
 sleep 14
 
-METRICS=$(run "$R/ai-cluster metrics")
+METRICS=$(run "$R/aic cluster metrics")
 echo "$METRICS"
 PENDING=$(echo "$METRICS" | sed -n 's/.*units_pending=\([0-9]*\).*/\1/p' | head -1)
 FAILED=$(echo "$METRICS" | sed -n 's/.*units_failed=\([0-9]*\).*/\1/p' | head -1)
@@ -172,7 +172,7 @@ else
   exit 1
 fi
 
-FINAL=$(run "$R/ai-cluster request trace $REQ")
+FINAL=$(run "$R/aic cluster request trace $REQ")
 echo "$FINAL"
 if echo "$FINAL" | grep -q "completed" && echo "$FINAL" | grep -q "node-new"; then
   echo "OK: a unidade recuperada foi concluída em node-new, não no dono perdido"

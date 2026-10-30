@@ -34,10 +34,10 @@ sleep 2
 
 echo "=== A) quatro unidades de prioridade 0 e uma de prioridade 5, sem worker ==="
 MSYS_NO_PATHCONV=1 docker run $ENVS -d --name aic-cli-low --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
-  "$IMG" sh -c "$R/ai-cluster benchmark --size 64 --repetitions 4 --priority 0 --request-id req-low" >/dev/null
+  "$IMG" sh -c "$R/aic cluster benchmark --size 64 --repetitions 4 --priority 0 --request-id req-low" >/dev/null
 sleep 2
 MSYS_NO_PATHCONV=1 docker run $ENVS -d --name aic-cli-high --network "$NET" -v aic-target:/t -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
-  "$IMG" sh -c "$R/ai-cluster benchmark --size 64 --repetitions 1 --priority 5 --request-id req-high" >/dev/null
+  "$IMG" sh -c "$R/aic cluster benchmark --size 64 --repetitions 1 --priority 5 --request-id req-high" >/dev/null
 sleep 2
 
 echo "=== B) um worker sobe; a unidade de prioridade 5 completa primeiro ==="
@@ -49,7 +49,7 @@ sleep 20
 # O controller numera as unidades na ordem de enfileiramento: w-0..w-3 são as de prioridade 0
 # e w-4 a de prioridade 5. A ordem dos eventos work_completed é a ordem de despacho com um
 # só worker.
-EVENTS=$(run "$R/ai-cluster events --limit 200")
+EVENTS=$(run "$R/aic cluster events --limit 200")
 echo "$EVENTS" | grep work_completed
 FIRST=$(echo "$EVENTS" | grep work_completed | head -1)
 if echo "$FIRST" | grep -q " w-4 "; then

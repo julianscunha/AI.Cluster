@@ -34,10 +34,10 @@ done
 sleep 8
 
 echo "--- nós ---"
-run "$R/ai-cluster nodes"
+run "$R/aic cluster nodes"
 
 echo "=== enfileirar o diamante e aguardar drenar ==="
-run "$R/ai-cluster graph --size 128"
+run "$R/aic cluster graph --size 128"
 
 echo "--- log do controller ---"
 docker logs aic-controller 2>&1 | tail -15

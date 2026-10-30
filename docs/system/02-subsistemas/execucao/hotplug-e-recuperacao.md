@@ -14,7 +14,7 @@ Nós entram e saem do cluster sem operação manual. Trabalho em voo volta à fi
 ## Entrada
 
 1. O worker se conecta com o token de entrada e se registra.
-2. O controller guarda o nó com a capacidade reportada e o deixa aguardando aprovação do operador (`ai-cluster approve`), a não ser que `AI_CLUSTER_AUTO_APPROVE` esteja ligado.
+2. O controller guarda o nó com a capacidade reportada e o deixa aguardando aprovação do operador (`aic cluster node approve`), a não ser que `AI_CLUSTER_AUTO_APPROVE` esteja ligado.
 3. Depois de aprovado, o nó recebe trabalho. Ele já reportou benchmark, saúde e capacidade no registro.
 
 Um nó novo não recebe trabalho antes de ser aprovado. Não há etapa de carga de modelo ou de estado antes de o nó ficar pronto.
@@ -57,7 +57,7 @@ Quando o controller perde o estado do disco e nenhum worker tem cópia, a fila s
 
 ## Revogação
 
-`ai-cluster revoke <nó>` tira a confiança do nó e devolve as unidades em voo dele à fila. Ver [[saude-e-confianca]].
+`aic cluster node revoke <nó>` tira a confiança do nó e devolve as unidades em voo dele à fila. Ver [[saude-e-confianca]].
 
 ## Garantias
 

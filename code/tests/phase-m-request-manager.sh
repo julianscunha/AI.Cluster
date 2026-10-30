@@ -115,7 +115,7 @@ CODE=$(http -o /dev/null -w '%{http_code}' --max-time 60 -H "Authorization: Bear
   -d '{"model":"matmul-diamond-v0","input":"oi"}' $GATEWAY/v1/embeddings)
 [ "$CODE" = 504 ] || fail "embeddings sem worker deveriam dar 504, deu $CODE"
 MSYS_NO_PATHCONV=1 docker run --rm "${common[@]:0:4}" -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR \
-  -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/ai-cluster events --limit 50" | grep request_cancelled \
+  -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic cluster events --limit 50" | grep request_cancelled \
   || fail "faltou o evento request_cancelled"
 echo "OK: 504 e request_cancelled"
 

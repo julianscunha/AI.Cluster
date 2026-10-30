@@ -52,7 +52,7 @@ measure() {
     "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
   sleep 8
 
-  out=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 1")
+  out=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1")
 
   {
     echo "--- fase $name: o nó reporta $threads threads ---"

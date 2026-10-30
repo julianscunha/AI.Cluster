@@ -53,7 +53,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
 sleep 8
 
 echo "=== A) cluster ocioso ==="
-PANEL=$(run "$R/ai-cluster dashboard")
+PANEL=$(run "$R/aic cluster dashboard")
 echo "$PANEL"
 expect_contains "cabeçalho" "PAINEL nós_disponíveis=1/1" "$PANEL"
 expect_contains "nó listado" "node-d" "$PANEL"
@@ -61,16 +61,16 @@ expect_contains "nada concluído" "TRABALHO concluídas=0" "$PANEL"
 expect_contains "sem reservas" "RESERVAS 0" "$PANEL"
 
 echo "=== B) duas unidades executadas ==="
-run "$R/ai-cluster benchmark --size $SIZE --repetitions 2" >/dev/null
-PANEL=$(run "$R/ai-cluster dashboard")
+run "$R/aic cluster benchmark --size $SIZE --repetitions 2" >/dev/null
+PANEL=$(run "$R/aic cluster dashboard")
 echo "$PANEL"
 expect_contains "concluídas somam" "TRABALHO concluídas=2" "$PANEL"
 expect_contains "tempo registrado" "TEMPO compute_total_us=" "$PANEL"
 expect_contains "previsto no painel" "previsto_total_us=" "$PANEL"
 
 echo "=== C) reserva ativa ==="
-run "$R/ai-cluster reserve node-d req-panel --ttl-ms 60000" >/dev/null
-PANEL=$(run "$R/ai-cluster dashboard")
+run "$R/aic cluster reservation add node-d req-panel --minutes 1" >/dev/null
+PANEL=$(run "$R/aic cluster dashboard")
 echo "$PANEL"
 expect_contains "reserva contada" "RESERVAS 1" "$PANEL"
 expect_contains "requisição dona" "requisição=req-panel" "$PANEL"

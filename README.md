@@ -17,13 +17,13 @@
 
 **Transforme as máquinas paradas que você já tem (PCs velhos, notebooks, servidores, Raspberry/Orange Pi) em um único pool de computação para IA.**
 
-Cada uma é fraca; juntas rodam um modelo. Você baixa um modelo em **GGUF**, coloca numa pasta e roda `model start`: o controller confere se a **memória somada** dos workers comporta o modelo (e diz o que falta, se não), escolhe quais máquinas o carregam, divide as camadas entre elas e entrega a **chave de API**. Quando uma máquina nova entra, ele refaz o plano sozinho. Sem GPU, sem configurar nó a nó. A execução é do [llama.cpp](https://github.com/ggml-org/llama.cpp) (centenas de arquiteturas, pesos quantizados, x86 e ARM); o AI Cluster cuida de admitir os nós com segurança, medir o que cada um aguenta, dividir o modelo e continuar funcionando quando uma máquina cai. Escrito em Rust, com API compatível com OpenAI.
+Cada uma é fraca; juntas rodam um modelo. Você baixa um modelo em **GGUF**, coloca numa pasta e roda `aic cluster model start`: o controller confere se a **memória somada** dos workers comporta o modelo (e diz o que falta, se não), escolhe quais máquinas o carregam, divide as camadas entre elas e entrega a **chave de API**. Quando uma máquina nova entra, ele refaz o plano sozinho. Sem GPU, sem configurar nó a nó. A execução é do [llama.cpp](https://github.com/ggml-org/llama.cpp) (centenas de arquiteturas, pesos quantizados, x86 e ARM); o AI Cluster cuida de admitir os nós com segurança, medir o que cada um aguenta, dividir o modelo e continuar funcionando quando uma máquina cai. Escrito em Rust, com API compatível com OpenAI.
 
 ```bash
-ai-cluster model list            # os modelos GGUF da pasta
-ai-cluster model check qwen2.5-7b-q4.gguf   # cabe? OK, ou NOK com o que falta
-ai-cluster model start qwen2.5-7b-q4.gguf   # carrega e mostra a chave de API (uma vez)
-ai-cluster model status          # estado, workers do plano e tokens/s medidos
+aic cluster model list            # os modelos GGUF da pasta
+aic cluster model check qwen2.5-7b-q4.gguf   # cabe? OK, ou NOK com o que falta
+aic cluster model start qwen2.5-7b-q4.gguf   # carrega e mostra a chave de API (uma vez)
+aic cluster model status          # estado, workers do plano e tokens/s medidos
 ```
 
 <p align="center">
@@ -43,7 +43,7 @@ O AI Cluster é um sistema Linux com **papéis**. Você escolhe onde cada um rod
 | **Controller** | Cérebro do cluster: registra os nós, distribui o trabalho, guarda estado e métricas. | Um servidor Linux que fica sempre ligado. | 1 |
 | **Worker** | Executa o trabalho e guarda as fatias do modelo na memória. | **Cada dispositivo que você quer aproveitar**: PC, notebook, servidor, placa ARM. | quantos você tiver |
 | **Gateway** | A API (`/v1/chat/completions`, compatível com OpenAI) que seus aplicativos chamam. | No mesmo servidor do controller (ou em outro Linux com acesso a ele). | 1 |
-| **CLI `ai-cluster`** | Como você administra e monitora: listar nós, aprovar, atualizar. | Seu computador, ou o próprio servidor. | — |
+| **Comando `aic`** | Como você administra e monitora o cluster (`aic cluster …`) e atualiza cada máquina (`aic update`). | Seu computador, ou o próprio servidor. | — |
 
 Fluxo de uso:
 
@@ -51,7 +51,7 @@ Fluxo de uso:
 1. **Instale o controller** no servidor e anote os dois tokens (join e operador).
 2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7** (testada em hardware) e para **PCs x86_64 UEFI** (validada em QEMU, ainda não em hardware real); para **ARM64 ainda não existe**. Nos casos sem imagem o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
 3. **Aprove** cada nó novo e **monitore** tudo pela CLI.
-4. **Ponha um modelo GGUF na pasta do controller e rode `model start`** (passo 5). Aponte seus aplicativos para o gateway com a chave que ele mostrar.
+4. **Ponha um modelo GGUF na pasta do controller e rode `aic cluster model start`** (passo 5). Aponte seus aplicativos para o gateway com a chave que ele mostrar.
 
 ## Pré-requisitos
 
@@ -60,7 +60,7 @@ Fluxo de uso:
 | **Servidor do controller/gateway** | Linux x86_64 (glibc), acesso de rede dos workers à porta `50051` e dos clientes à `8080`. O gateway é o nó principal do modelo (roda o `llama-server`): precisa de RAM para as camadas que ficarem com ele e para o contexto. |
 | **Cada worker** | **AI Cluster OS** (placa ARMv7 ou PC x86_64 UEFI: o disco é apagado e regravado) **ou** um Linux x86_64/ARMv7/ARM64 já instalado com `root` e, de preferência, systemd. Nos dois casos: conexão de saída até a porta `50051` do controller e memória livre para a fatia do modelo. |
 | **Máquina de build** (uma vez) | Linux com Rust estável ≥ 1.85 (`rustup`). Compila os binários; servidores e dispositivos não precisam de Rust. Para gerar binário ARMv7 a partir de x86, Docker nessa máquina. |
-| **Seu computador** | O binário `ai-cluster` e acesso de rede ao controller. |
+| **Seu computador** | O comando `aic` e acesso de rede ao controller. |
 | **Modelos** | Arquivos **GGUF** (a maioria dos modelos abertos tem uma versão quantizada), numa pasta que o controller e o gateway enxerguem. Sem modelo o cluster funciona, só não responde chat. |
 | **Catálogo de modelos** | Modelos de pesos abertos, do mais simples ao mais avançado, com notas, RAM estimada, link de download e quais já foram homologados: [`docs/guia/modelos.md`](docs/guia/modelos.md). |
 
@@ -74,12 +74,12 @@ Para experimentar o fluxo inteiro sem montar nada à mão (precisa de Docker, ba
 bash deploy/init.sh                                    # gera tokens e certificados (uma vez)
 cp meu-modelo.gguf deploy/models/                      # qualquer modelo em GGUF
 docker compose -f deploy/docker-compose.yml up -d --build --scale worker=2
-docker compose -f deploy/docker-compose.yml exec controller ai-cluster model list
-docker compose -f deploy/docker-compose.yml exec controller ai-cluster model start meu-modelo.gguf
-docker compose -f deploy/docker-compose.yml exec controller ai-cluster model status
+docker compose -f deploy/docker-compose.yml exec controller aic cluster model list
+docker compose -f deploy/docker-compose.yml exec controller aic cluster model start meu-modelo.gguf
+docker compose -f deploy/docker-compose.yml exec controller aic cluster model status
 ```
 
-O `model start` confere a RAM dos workers, divide o modelo entre eles e mostra a chave de API (uma vez).
+O `aic cluster model start` confere a RAM dos workers, divide o modelo entre eles e mostra a chave de API (uma vez).
 Depois é só chamar `POST http://localhost:8080/v1/chat/completions` com `Authorization: Bearer <chave>`.
 Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras máquinas,
 [a instalação](docs/guia/instalacao.md).
@@ -90,7 +90,24 @@ Veja [os modelos e as notas](docs/guia/modelos.md) e, para workers em outras má
 curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
 ```
 
-O script explica os 3 componentes (controller, gateway e worker), pergunta o que cada computador será e qual é o processador (x86_64 ou ARM de 32 bits), e baixa da última release só o que esse papel precisa. Comece pelo controller; depois `sudo aic-setup invite` mostra um **código de 8 caracteres** e a linha para os outros computadores entrarem (o instalador do worker e do gateway pergunta o código; sem ele ninguém entra). Num computador que já tem Linux e vai virar um AI Cluster OS dedicado, o convite também mostra `curl -fsSL http://<ip>:8099/wait | sudo sh`: o aparelho se apresenta com uma impressão digital, e **nada é instalado nem apagado até você aprovar** no servidor (`ai-cluster installs`, `ai-cluster approve-install <impressão> --disk <disco>`). A instalação em si ainda não existe ([ADR-023](docs/system/05-decisoes/adr-023-instalacao-com-aprovacao-do-controller.md)). Depois, `ai-cluster model start <arquivo.gguf>` e a API está em `http://<ip>:8080`. Detalhes, limites e o modo dedicado (o computador só para o cluster) em [a instalação](docs/guia/instalacao.md). O passo a passo manual abaixo continua valendo para quem quer controlar cada peça.
+O instalador explica os 3 componentes (controller, gateway e worker), pergunta o que cada computador será e qual é o processador (x86_64 ou ARM de 32 bits), e baixa da última release só o que esse papel precisa. Em inglês, acrescente `-s -- --lang en` ao `sh`.
+
+Depois da instalação, o comando é o `aic`. Ele cobre tudo: `aic cluster …` (o cluster visto do controller), `aic controller|gateway|worker status` (esta máquina), `aic update` e `aic version`. A referência completa está em [a CLI](docs/guia/cli.md).
+
+### Dois computadores
+
+1. **No servidor:** escolha *Controller* (com o gateway junto, o mais simples). Depois rode `sudo aic cluster invite`: ele mostra um **código de 8 caracteres** e a linha para os outros computadores entrarem.
+2. **No segundo computador:** rode a linha do convite (`curl -fsSL http://<ip-do-servidor>:8099/join-<CÓDIGO> | sudo sh`) e escolha *Worker*. Sem o código ninguém entra.
+3. **De volta ao servidor:** `aic cluster nodes` mostra o nó pendente; `aic cluster node approve <id> --fingerprint <impressão>` aprova. Só nó aprovado recebe trabalho.
+4. `aic cluster model start <arquivo.gguf>` sobe o modelo e mostra a chave de API. A API fica em `http://<ip>:8080`.
+
+Num computador com Linux que vai virar AI Cluster OS dedicado, o convite mostra também `curl -fsSL http://<ip>:8099/wait | sudo sh`: o aparelho se apresenta com uma impressão digital, e **nada é instalado nem apagado até você aprovar** com `aic cluster install approve`. Detalhes, limites e o modo dedicado em [a instalação](docs/guia/instalacao.md). O passo a passo manual abaixo continua valendo para quem quer controlar cada peça.
+
+### Atualizar e serviços no boot
+
+- `aic update status` mostra a versão instalada e a disponível; `sudo aic update apply` atualiza este computador (controller, gateway ou worker em Linux).
+- No AI Cluster OS, o controller empurra a release assinada. `aic cluster nodes` mostra a `VERSÃO` de cada nó, para ver quem está para trás.
+- Os serviços sobem sozinhos ao ligar o computador (systemd, com reinício automático). Em contêiner sem systemd, eles não voltam sozinhos depois de reiniciar o contêiner. O que cada componente faz no `aic update` está em [a operação](docs/guia/operacao.md).
 
 ## Instalação passo a passo
 
@@ -102,10 +119,10 @@ Em uma máquina Linux de build:
 git clone https://github.com/julianscunha/Real.AI.Cluster.git
 cd Real.AI.Cluster/code
 cargo build --release --workspace
-# binários em target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, ai-cluster
+# binários em target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, aic
 ```
 
-Copie `ai-cluster-controller` e `ai-cluster-gateway` para o servidor, `ai-cluster` para quem vai administrar e `ai-cluster-worker` para cada dispositivo **da mesma arquitetura**. Para placas ARMv7 compile com `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (veja o [guia de instalação](docs/guia/instalacao.md)). Para x86_64 há um pacote pronto na [release v0.2.0](https://github.com/julianscunha/Real.AI.Cluster/releases/tag/v0.2.0).
+Copie `ai-cluster-controller` e `ai-cluster-gateway` para o servidor, `aic` para quem vai administrar e `ai-cluster-worker` para cada dispositivo **da mesma arquitetura**. Para placas ARMv7 compile com `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (veja o [guia de instalação](docs/guia/instalacao.md)). Para x86_64 há um pacote pronto na [release v0.2.0](https://github.com/julianscunha/Real.AI.Cluster/releases/tag/v0.2.0).
 
 ### 2. Controller (no servidor)
 
@@ -120,7 +137,7 @@ AI_CLUSTER_NODES=/var/lib/aic/nodes AI_CLUSTER_STATE=/var/lib/aic/state.bin AI_C
 ./ai-cluster-controller        # escuta em 0.0.0.0:50051
 ```
 
-> `AI_CLUSTER_INSECURE=1` desliga o TLS: use só em rede local confiável. Em qualquer outra rede configure o TLS (certificado do controller e `AI_CLUSTER_TLS_CA` nos workers): [`docs/guia/instalacao.md`](docs/guia/instalacao.md#produção-com-tls). Para manter o controller ligado após reinício, rode-o como serviço do systemd.
+> `AI_CLUSTER_INSECURE=1` desliga o TLS: use só em rede local confiável. Em qualquer outra rede configure o TLS (certificado do controller e `AI_CLUSTER_TLS_CA` nos workers): [`docs/guia/instalacao.md`](docs/guia/instalacao.md#produção-com-tls). `aic controller install` já instala o controller como serviço do systemd; rodar à mão, como acima, serve para entender cada peça.
 
 ### 3. Worker (em cada dispositivo)
 
@@ -131,7 +148,7 @@ AI_CLUSTER_NODES=/var/lib/aic/nodes AI_CLUSTER_STATE=/var/lib/aic/state.bin AI_C
 ```bash
 echo '<token-de-join>' > /root/join-token && chmod 600 /root/join-token
 sudo ./bootstrap.sh --controller http://<ip-do-servidor>:50051 --insecure \
-  --join-token-file /root/join-token --binary ./ai-cluster-worker --node-id sala-pc1
+  --token-file /root/join-token --binary ./ai-cluster-worker --node-id sala-pc1
 ```
 
 O script cria o usuário, instala o worker como serviço do systemd e confirma que ele se registrou. (`--insecure` só porque o exemplo usa `http://`; com TLS use `https://` e a CA.)
@@ -140,14 +157,14 @@ O script cria o usuário, instala o worker como serviço do systemd e confirma q
 
 ```bash
 export AI_CLUSTER_CONTROLLER=http://<ip-do-servidor>:50051 AI_CLUSTER_OPERATOR_TOKEN=<token-de-operador>
-ai-cluster nodes             # o nó novo aparece, pendente
-ai-cluster approve sala-pc1  # só nós aprovados recebem trabalho
-ai-cluster dashboard --watch 2
-ai-cluster events            # entradas, saídas, falhas
+aic cluster nodes             # o nó novo aparece, pendente
+aic cluster node approve sala-pc1 --fingerprint <impressão>  # só nós aprovados recebem trabalho
+aic cluster dashboard --watch 2
+aic cluster events            # entradas, saídas, falhas
 ```
 
 <p align="center">
-  <img src="docs/assets/terminal-nodes.svg" alt="Saída real do ai-cluster nodes com um PC x86 e um Orange Pi" width="100%">
+  <img src="docs/assets/terminal-nodes.svg" alt="Saída real do aic cluster nodes com um PC x86 e um Orange Pi" width="100%">
 </p>
 
 ### 5. Modelo, gateway e API
@@ -155,10 +172,10 @@ ai-cluster events            # entradas, saídas, falhas
 Cada worker que vai dividir modelos roda o `ggml-rpc-server` do llama.cpp **atrás de um túnel mTLS** (o servidor RPC não tem senha, então nunca fica exposto): na imagem ARMv7 ele já vem e liga sozinho quando existem os certificados em `/data/rpc-tls`; em um Linux comum use `bootstrap.sh --rpc-server-bin ... --rpc-tls-dir ...`. O gateway recebe o `llama-server`, a pasta de modelos e os certificados ([`docs/guia/configuracao.md`](docs/guia/configuracao.md)). Depois:
 
 ```bash
-ai-cluster model list                       # coluna ROD: o motor roda este modelo
-ai-cluster model check meu-modelo.gguf      # soma a RAM dos workers; NOK diz quanto falta
-ai-cluster model start meu-modelo.gguf      # plano, carga e a chave de API (uma vez)
-ai-cluster model status                     # CARREGANDO, PRONTO; workers do plano; tokens/s
+aic cluster model list                       # coluna ROD: o motor roda este modelo
+aic cluster model check meu-modelo.gguf      # soma a RAM dos workers; NOK diz quanto falta
+aic cluster model start meu-modelo.gguf      # plano, carga e a chave de API (uma vez)
+aic cluster model status                     # CARREGANDO, PRONTO; workers do plano; tokens/s
 ```
 
 ```bash
@@ -169,9 +186,9 @@ curl http://<ip-do-servidor>:8080/v1/chat/completions \
 
 **Como o controller decide:** os workers mais rápidos primeiro, **só até a RAM somada comportar o modelo**. Cada worker que entra soma um salto de rede por palavra, então um lento (um Pi ao lado de um PC) só participa quando faltaria memória; com o modelo cabendo no PC, o Pi o faria perder cerca de 5 vezes a velocidade (medido). Entre os escolhidos, a divisão de camadas é proporcional à velocidade e limitada pela RAM de cada um. Um worker novo muda o plano só se mudar esse conjunto, depois de 30 s estável. Se a RAM deixa de bastar, o modelo para com o motivo e volta sozinho quando ela volta.
 
-**Chaves de API:** uma por tenant, com modelos, cota e classe de prioridade (`ai-cluster model key add|rotate|remove|list`). O controller guarda só o hash. **Várias vagas** (`AI_CLUSTER_LLAMA_SLOTS`) atendem mais pedidos ao mesmo tempo: no laboratório, 2 pedidos juntos deram 34% mais tokens por segundo no total.
+**Chaves de API:** uma por tenant, com modelos, cota e classe de prioridade (`aic cluster model key add|rotate|remove|list`). O controller guarda só o hash. **Várias vagas** (`AI_CLUSTER_LLAMA_SLOTS`) atendem mais pedidos ao mesmo tempo: no laboratório, 2 pedidos juntos deram 34% mais tokens por segundo no total.
 
-**Admissão e operação em casa:** `model check` conta o cache de contexto por vaga, a memória do gateway (128 MiB mais 30% dos pesos) e se o modelo sobrevive à perda de um worker; pedir o nome da família escolhe a variante mais precisa que cabe. Se um worker cai, o gateway espera a recarga (até 120 s) e refaz o pedido uma vez. Workers com disco rápido ligam sozinhos o cache de tensores do `rpc-server` (a 2ª carga no Orange Pi levou 42 s, contra 51 a 67 s sem cache). Para um Linux x86_64, `code/scripts/package-worker.sh` gera um pacote com worker, `rpc-server` e `install.sh`. O controller grava o estado sem passar de ~10% do tempo e grava ao receber SIGTERM. Resistência medida: 60 min de carga com partição de rede e reinícios do controller, 14.432 unidades sem falha e memória estável.
+**Admissão e operação em casa:** `aic cluster model check` conta o cache de contexto por vaga, a memória do gateway (128 MiB mais 30% dos pesos) e se o modelo sobrevive à perda de um worker; pedir o nome da família escolhe a variante mais precisa que cabe. Se um worker cai, o gateway espera a recarga (até 120 s) e refaz o pedido uma vez. Workers com disco rápido ligam sozinhos o cache de tensores do `rpc-server` (a 2ª carga no Orange Pi levou 42 s, contra 51 a 67 s sem cache). Para um Linux x86_64, `code/scripts/package-worker.sh` gera um pacote com worker, `rpc-server` e `install.sh`. O controller grava o estado sem passar de ~10% do tempo e grava ao receber SIGTERM. Resistência medida: 60 min de carga com partição de rede e reinícios do controller, 14.432 unidades sem falha e memória estável.
 
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="Uma camada do modelo dividida entre três workers" width="100%">
@@ -193,8 +210,8 @@ Gerar a imagem, gravar o cartão e publicar releases: [`docs/guia/instalacao.md`
 
 ## O que você ganha
 
-- **Um comando põe o modelo no ar:** `model start` confere a RAM, escolhe os workers, divide as camadas, carrega e entrega a chave de API. Sem variável por modelo nem cópia de pesos para cada nó.
-- **Diz "não cabe" antes de tentar:** o `model check` soma a RAM dos workers e responde OK ou NOK com o que falta e quantos nós acrescentar. Mais máquinas, mais modelo: sem teto de tamanho além da memória somada.
+- **Um comando põe o modelo no ar:** `aic cluster model start` confere a RAM, escolhe os workers, divide as camadas, carrega e entrega a chave de API. Sem variável por modelo nem cópia de pesos para cada nó.
+- **Diz "não cabe" antes de tentar:** o `aic cluster model check` soma a RAM dos workers e responde OK ou NOK com o que falta e quantos nós acrescentar. Mais máquinas, mais modelo: sem teto de tamanho além da memória somada.
 - **Escolhe os workers certos:** rápidos primeiro, lentos só quando a RAM exige; a divisão de camadas segue a velocidade de cada nó e o limite da memória dele.
 - **Modelos quantizados e centenas de arquiteturas** (GGUF, pelo llama.cpp), em x86_64 e em ARMv7 de 1 GB, sem GPU obrigatória. O Orange Pi PC roda um modelo de 360M a 2,6 tokens/s sozinho e um de 1,5B dividido com um PC.
 - **Worker novo entra sozinho:** o plano se refaz, o modelo recarrega e o benchmark é medido de novo.

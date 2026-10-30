@@ -53,7 +53,7 @@ Há três caminhos para colocar um nó no ar.
 3. **Bootstrap sobre Linux existente.** `os/bootstrap.sh`, executado como root, instala o worker num Linux que já existe.
 
 ```text
-os/bootstrap.sh --controller URL --join-token-file ARQUIVO [--binary CAMINHO] [--node-id ID] [--prefix DIR] [--model-dir DIR] [--insecure]
+os/bootstrap.sh --controller URL --token-file ARQUIVO [--binary CAMINHO] [--node-id ID] [--prefix DIR] [--model-dir DIR] [--insecure]
 ```
 
 - O token é lido de arquivo, para não aparecer na linha de comando.
@@ -74,9 +74,9 @@ Uma atualização troca a imagem inteira, não arquivos isolados. O operador ass
 ### Preparar a release
 
 1. `sign-release.sh <versão> <rootfs.gz> <rootfs.ext4>` calcula os SHA-256 do arquivo comprimido e da imagem, assina e imprime os argumentos do rollout.
-2. `ai-cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` define a release.
-3. `ai-cluster nodes` mostra a versão e a medida de cada nó. `ai-cluster events` mostra o andamento.
-4. `ai-cluster rollout --cancel` encerra o rollout.
+2. `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` define a release.
+3. `aic cluster nodes` mostra a versão e a medida de cada nó. `aic cluster events` mostra o andamento.
+4. `aic cluster rollout --cancel` encerra o rollout.
 
 Ver [[cli-tui]] para os argumentos e [[seguranca]] para a assinatura e a rotação de chaves.
 
@@ -105,11 +105,11 @@ As telas do sistema mostram a mesma marca (grafo de nós, "Real.AI.Cluster" e "A
 - **Login:** `/etc/issue` (antes do login, com nome do nó e tty) e `/etc/motd` (depois), no overlay comum.
 - **Boot:** uma linha de marca no `boot.cmd` (U-Boot) e no `grub.cfg` (x86), sem o desenho, porque os dois interpretam `\`.
 - **Console no monitor (tty1), no estilo do DCUI do ESXi:** o `aic-console` mostra uma tela de repouso parada, com o logotipo, a versão e o slot, um painel "Estado do nó" (papel, worker, rede, hardware, controller e registro, cada um com um ponto verde, amarelo ou vermelho) e a dica de como administrar o nó. Ele só repinta quando o conteúdo muda: nada pisca. `F2` abre o login e o menu "Personalizar o sistema" (registros do worker, rede em leitura, reiniciar o worker, reiniciar e desligar o nó, estado da atualização); `F12` abre reiniciar ou desligar. Não há shell nele: cada item chama um comando fixo.
-- **Senha do console:** opcional. `aic passwd` (por SSH, root) grava `/data/console-pass` como hash SHA-512 com sal. Com senha, `F2` e `F12` pedem login (três erros travam a entrada por 30 s, dobrando a cada rodada); sem senha eles abrem direto e a tela avisa. A senha só aceita ASCII imprimível e 8 caracteres ou mais.
+- **Senha do console:** opcional. `aic worker passwd` (por SSH, root) grava `/data/console-pass` como hash SHA-512 com sal. Com senha, `F2` e `F12` pedem login (três erros travam a entrada por 30 s, dobrando a cada rodada); sem senha eles abrem direto e a tela avisa. A senha só aceita ASCII imprimível e 8 caracteres ou mais.
 - **Tela de carregamento:** o serviço `aic-splash` (sysinit) mostra o logotipo e uma barra de progresso real (serviços iniciados sobre os dos runlevels) no tty2 e troca para ele com `chvt`, porque o OpenRC escreve no tty1; o `aic-console` volta para o tty1 quando assume. O GRUB e o U-Boot só mostram uma linha de marca: trocar isso exige regravar a partição de boot. Valor visual em ASCII puro com `AIC_CONSOLE_ASCII=1` (serial).
-- **Comando `aic`:** a porta de entrada das ferramentas do nó, com `--help` em todas: `aic status`, `aic role`, `aic version`, `aic logs [-f]`, `aic update` e `aic passwd`. As ferramentas internas (`aic-console`, `aic-updater`, `aic-update-request`, `aic-splash-run`) também respondem a `--help`, mas não são para uso manual.
+- **Comando `aic`:** a porta de entrada das ferramentas do nó, com `--help` em todas: `aic worker status`, `aic worker role`, `aic worker logs [-f]`, `aic worker change`, `aic worker passwd`, `aic update status|apply` e `aic version`. As ferramentas internas (`aic-console`, `aic-updater`, `aic-update-request`, `aic-splash-run`) também respondem a `--help`, mas não são para uso manual.
 - **Biblioteca visual:** `/usr/lib/aic/ui.sh` guarda a paleta, os glifos (com fallback ASCII), o logotipo e as molduras que o console e a tela de carregamento compartilham.
-- **Papel do nó:** `aic-role` (por SSH) diz o papel do nó lendo só a configuração local: worker de computação, com ou sem fatias de modelo (`AI_CLUSTER_MODEL_DIR`), ou recuperação (só presença). Mostra também controller, estado do worker, se já há credencial salva, versão e slot. `aic-role --short` dá a linha única que o console mostra em "Papel". A estrutura do cluster e a aprovação do nó são do controller (`ai-cluster topology` e `ai-cluster nodes`), por isso o comando não as afirma e só aponta para elas.
+- **Papel do nó:** `aic worker role` (por SSH) diz o papel do nó lendo só a configuração local: worker de computação, com ou sem fatias de modelo (`AI_CLUSTER_MODEL_DIR`), ou recuperação (só presença). Mostra também controller, estado do worker, se já há credencial salva, versão e slot. `aic worker role --short` dá a linha única que o console mostra em "Papel". A estrutura do cluster e a aprovação do nó são do controller (`aic cluster topology` e `aic cluster nodes`), por isso o comando não as afirma e só aponta para elas.
 - **Recuperação:** o `init` do initramfs de netboot imprime a marca com "(recuperacao)".
 
 ## Limites conhecidos

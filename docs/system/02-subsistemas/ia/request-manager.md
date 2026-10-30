@@ -48,7 +48,7 @@ realtime > interactive > normal > batch > background
 
 - Um embedding que termina sem entregar resposta (prazo, falha ao consultar ou cliente que saiu) pede ao controller o cancelamento. As unidades ainda na fila são removidas, e o controller registra um evento `request_cancelled`.
 - Unidade já em execução num worker não é interrompida. Ela termina, e o resultado é descartado.
-- O operador pode cancelar por CLI: `ai-cluster request cancel <id>` ([[cli-tui]]).
+- O operador pode cancelar por CLI: `aic cluster request cancel <id>` ([[cli-tui]]).
 - Chat não tem cancelamento explícito. Desconectar cancela a geração no próximo token.
 
 ## Prazos

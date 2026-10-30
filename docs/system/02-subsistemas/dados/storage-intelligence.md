@@ -25,7 +25,7 @@ Dispositivos `loop`, `ram` e device-mapper são ignorados, porque não são arma
 
 O relatório de capacidade traz `storage_classes` da classe mais quente para a mais fria. Um nó sem disco visível reporta lista vazia, que significa "não medido" e não "sem armazenamento".
 
-`AI_CLUSTER_STORAGE_CLASSES` substitui a detecção, e `ai-cluster nodes` mostra a coluna `ARMAZ`.
+`AI_CLUSTER_STORAGE_CLASSES` substitui a detecção, e `aic cluster nodes` mostra a coluna `ARMAZ`.
 
 ## Medida de escrita
 

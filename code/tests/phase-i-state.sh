@@ -57,7 +57,7 @@ sleep 4
 # entram. O que importa é o enfileiramento, que é o que grava o snapshot.
 timeout 8 env MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 --rm --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
-  sh -c "$R/ai-cluster graph --size 128" >/dev/null 2>&1 || true
+  sh -c "$R/aic cluster graph --size 128" >/dev/null 2>&1 || true
 
 if in_vol "test -s $STATE && test -s $REPLICA"; then
   echo "OK: primário e cópia escritos"
@@ -101,7 +101,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 PEND=""; DONE=""
 for _ in $(seq 1 40); do
-  REPORT=$(run "$R/ai-cluster metrics" 2>/dev/null)
+  REPORT=$(run "$R/aic cluster metrics" 2>/dev/null)
   PEND=$(echo "$REPORT" | field units_pending)
   DONE=$(echo "$REPORT" | field units_completed)
   [ "$PEND" = "0" ] && [ "$DONE" = "4" ] && break

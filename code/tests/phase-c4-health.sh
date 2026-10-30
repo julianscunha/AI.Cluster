@@ -60,7 +60,7 @@ start_worker aic-worker-hot node-hot 100
 # would tie on cost and the unit could land anywhere.
 sleep 12
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 
 echo "=== A) a temperatura atravessa worker → proto → controller → CLI ==="
@@ -88,7 +88,7 @@ else
 fi
 
 echo "=== C) o placement manda a unidade para o nó frio ==="
-BENCH=$(run "$R/ai-cluster benchmark --size 64 --repetitions 1")
+BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 # The per-unit rows start with the work id; the second field is the node that ran it.
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')

@@ -99,9 +99,9 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | J2 a J4 | Imagem de SO além do contêiner, `bootstrap.sh` em VM com systemd, reimage automático pelo controller. | código, hardware |
 | J5, J6, assinatura de boot | A/B em mais placas, ARM64, u-boot que verifique a imagem (TPM/secure boot). | hardware |
 | Modo dedicado no instalador | Controller e gateway dentro do AI Cluster OS (hoje só o worker tem imagem). O papel vira configuração em `/data`. O slot do controller não pode ser confirmado por "registrou no controller": falta o critério (por exemplo, o serviço respondeu na porta). Validar a imagem x86 em hardware real. | código, decisão, hardware |
-| Instalação com aprovação do controller | O registro de pendentes, a aprovação com o disco a apagar e o token de uso único existem no controller e na CLI (`installs`, `approve-install`, `reject-install`). O `aic-wait` (coleta o resumo, mostra a impressão digital, pergunta de novo) existe e foi testado contra o controller (`phase-u-wait.sh`). Falta do [[adr-023-instalacao-com-aprovacao-do-controller]]: colocá-lo na imagem de boot mínima (netboot e pendrive), uso do token na instalação, TLS com a CA do controller fixada na imagem, o reinício do Linux existente para a imagem de espera (o `/wait` do convite já apresenta o aparelho sem reiniciar), pendrive e netboot sem lista de MACs obrigatória (MAC como pré-aprovação opcional). Substitui "Boot de rede restrito" e "Instalador em pendrive". | código |
+| Instalação com aprovação do controller | O registro de pendentes, a aprovação com o disco a apagar e o token de uso único existem no controller e na CLI (`aic cluster install list`, `approve`, `reject`). O `aic-wait` (coleta o resumo, mostra a impressão digital, pergunta de novo) existe e foi testado contra o controller (`phase-u-wait.sh`). Falta do [[adr-023-instalacao-com-aprovacao-do-controller]]: colocá-lo na imagem de boot mínima (netboot e pendrive), uso do token na instalação, TLS com a CA do controller fixada na imagem, o reinício do Linux existente para a imagem de espera (o `/wait` do convite já apresenta o aparelho sem reiniciar), pendrive e netboot sem lista de MACs obrigatória (MAC como pré-aprovação opcional). Substitui "Boot de rede restrito" e "Instalador em pendrive". | código |
 | Release em mais processadores | ARM de 64 bits e, depois, celular e desktop: o `install.sh` já recusa com mensagem clara. Gateway em ARM exige compilar o `llama-server`. | código, hardware |
-| Inglês na CLI e nos binários | O instalador, o `aic-setup` e o `bootstrap.sh` falam inglês (`--lang en`), mas a CLI `ai-cluster`, o `aic-wait` e os logs do controller, gateway e worker só em português. Falta um seletor único (`AIC_LANG`) no Rust e as mensagens traduzidas. | código |
+| Inglês na CLI e nos binários | O instalador, os comandos de instalação e atualização (`--lang en`) e o `bootstrap.sh` falam inglês, mas a CLI `aic`, o `aic-wait` e os logs do controller, gateway e worker só em português. Falta um seletor único (`AIC_LANG`) no Rust e as mensagens traduzidas. | código |
 | Base Linux | Escolher a base específica. | decisão |
 | Aceleradores | ARM64, GPU NVIDIA/AMD/Intel, NPU (abstração e móvel); o worker não preenche o campo de aceleradores; scores por workload (M6). | código, hardware |
 
@@ -123,6 +123,19 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Auditoria | O log persiste, mas não é assinado nem à prova de adulteração. | código, decisão |
 | Saúde do upgrade | Binário que registra e quebra depois passa; sem rollback sem systemd. | código |
 
+## aic, instalação e atualização
+
+| Item | O que falta | Dependência |
+|---|---|---|
+| `aic update apply` no AI Cluster OS | Só explica que a atualização é empurrada pelo controller e pede ao `aic-updater` que cheque. Falta uma checagem local sob demanda. | código |
+| Rollback do worker Linux | O `aic update apply` guarda o binário anterior em `/opt/ai-cluster/bin/.prev`, mas o caminho de volta não foi testado. | código |
+| Imagens do SO sem o `aic` novo | Os rootfs ARM e x86 não foram reconstruídos com o `aic` atual e não foram testados em hardware real. | código, hardware |
+| Ajuda do clap em inglês | A ajuda do `aic` ainda mostra `[possible values: pt, en]` em inglês, na opção `--lang`. | código |
+| `aic worker change` sem `--token-file` | Só aceita `--token` na linha de comando, sem o token por arquivo que o `bootstrap.sh` tem. | código |
+| Empurrão só para AI Cluster OS | O controller empurra só a release assinada, e só para nós com AI Cluster OS. Workers e gateways em Linux comum não recebem empurrão: cada máquina roda `aic update apply`. | decisão |
+| Scripts com `--join-token` | `install-disk.py` e `mk-disk.sh` ainda aceitam `--join-token`, e `phase-p-bootstrap.sh` ainda o passa ao `bootstrap.sh`, que hoje só aceita `--token`. Trocar junto com o código e os testes. | código |
+| Migração de servidor antigo | A atualização de um servidor instalado com a ferramenta de nome antigo (`setup update apply --force`, vindo do `tools.tar.gz`) não foi testada. | código |
+
 ## Marcos
 
 M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e ARM) e M7 (celular) dependem de hardware. M4 pede o overhead de comunicação decomposto no trace e os tokens esperado e real. M5 depende de F11, F12 e F13.
@@ -131,4 +144,4 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Certificado por nó | Cada worker gera a própria chave e o convite (`aic-setup invite`) assina o certificado, com o SAN `aic-worker-<nó>`. Falta renovar (825 dias), revogar e emitir sem convite aberto; a CA mora no servidor do convite, não no controller em si. | código |
+| Certificado por nó | Cada worker gera a própria chave e o convite (`aic cluster invite`) assina o certificado, com o SAN `aic-worker-<nó>`. Falta renovar (825 dias), revogar e emitir sem convite aberto; a CA mora no servidor do convite, não no controller em si. | código |

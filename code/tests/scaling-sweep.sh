@@ -48,7 +48,7 @@ for nodes in $NODES; do
   for size in $SIZES; do
     echo "=== nós=$nodes tamanho=$size reps=$REPS ==="
     start=$(date +%s)
-    run "$R/ai-cluster benchmark --size "$size" --repetitions $REPS"
+    run "$R/aic cluster benchmark --size "$size" --repetitions $REPS"
     end=$(date +%s)
     echo "wall_seconds=$((end - start)) nodes=$nodes size=$size"
   done

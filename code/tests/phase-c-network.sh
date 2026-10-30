@@ -69,7 +69,7 @@ start_controller
 start_worker aic-worker-net node-net -e AI_CLUSTER_RECOMPUTE_INTERVAL_SECS=0
 sleep 12
 
-DETAIL=$(run "$R/ai-cluster node show node-net")
+DETAIL=$(run "$R/aic cluster node show node-net")
 echo "$DETAIL"
 REDE=$(echo "$DETAIL" | field rede_score)
 if [ -z "$REDE" ]; then
@@ -112,7 +112,7 @@ start_controller
 start_worker aic-worker-net node-net -e AI_CLUSTER_NETWORK_SCORE=4.0
 sleep 8
 
-PINNED=$(run "$R/ai-cluster node show node-net")
+PINNED=$(run "$R/aic cluster node show node-net")
 echo "$PINNED"
 REDE=$(echo "$PINNED" | field rede_score)
 ALCANCADA=$(echo "$PINNED" | field rede_alcancada)
@@ -132,7 +132,7 @@ start_worker aic-worker-slow node-slow \
   -e AI_CLUSTER_NETWORK_SCORE=$SLOW_LINK
 sleep 8
 
-BASE=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
+BASE=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
 echo "$BASE"
 if grep -q 'node-slow' <<<"$BASE"; then
   echo "OK: primeiro-a-chegar entregou a unidade ao nó de link lento"
@@ -153,9 +153,9 @@ start_worker aic-worker-fast node-fast \
   -e AI_CLUSTER_NETWORK_SCORE=$FAST_LINK
 sleep 8
 
-NODES=$(run "$R/ai-cluster nodes")
+NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
-ROW=$(run "$R/ai-cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
+ROW=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
 echo "$ROW"
 if grep -q 'node-fast' <<<"$ROW"; then
   echo "OK: o custo mandou a unidade para o link rápido ($FAST_LINK contra $SLOW_LINK)"
