@@ -166,7 +166,7 @@ O `os/bootstrap.sh` continua servindo para pôr o worker num Linux sem o `aic`. 
 
 ### Rollout pelo controller (imagem A/B, armv7 e x86_64)
 
-1. Assine a release: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]`. O script imprime os argumentos do passo seguinte.
+1. Gere o `.gz` do rootfs (`gzip -n -k os/image/build/rootfs.ext4`; o `build-rootfs.sh` produz só o `.ext4`) e assine a release: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]`. O script imprime os argumentos do passo seguinte.
 2. Publique a release: `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>`.
 3. O controller anuncia a release pelo heartbeat, só para nós que declaram que podem atualizar (`AI_CLUSTER_UPDATE_CMD`). O primeiro nó apto é o canário.
 4. O canário baixa a imagem, grava o slot inativo, reinicia, confere a medida do slot e reporta a versão nova. Só então os demais recebem a release. Com `AI_CLUSTER_ROLLOUT_WAVE=N`, no máximo N atualizam ao mesmo tempo.
