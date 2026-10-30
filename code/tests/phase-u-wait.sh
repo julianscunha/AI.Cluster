@@ -20,6 +20,12 @@ CTRL=$!
 fail() { echo "FALHA: $1"; cat /tmp/controller.log | tail -5; kill $CTRL 2>/dev/null; exit 1; }
 for i in 1 2 3 4 5 6 7 8 9 10; do grep -q "etapa de espera" /tmp/controller.log && break; sleep 0.5; done
 
+# 0) a porta nasce fechada: o aparelho recebe "indisponível" e nada entra na lista
+$B/aic-wait http://127.0.0.1:50052 --once 2>&1 | grep -q "instalação fechada" || fail "a porta devia nascer fechada"
+$B/ai-cluster installs | grep -q "nenhum aparelho" || fail "algo entrou com a porta fechada"
+$B/ai-cluster enrollment open --minutes 5 | grep -q aberta || fail "enrollment open"
+echo "OK 0) porta fechada por padrão e aberta pelo operador"
+
 # A) o aparelho se apresenta e fica na lista, aguardando
 OUT=$($B/aic-wait http://127.0.0.1:50052 --once) || fail "aic-wait --once"
 FP=$(echo "$OUT" | sed -n "s/.*fingerprint=\([0-9a-f-]*\) approved=false.*/\1/p")
@@ -58,6 +64,10 @@ echo "OK D) MAC aprovado não é tomado"
 $B/ai-cluster reject-install "$FP2" | grep -q recusada || fail "reject-install"
 $B/ai-cluster installs | grep -q "$FP2" && fail "ainda listado"
 echo "OK E) recusar remove da lista"
+
+$B/ai-cluster enrollment close | grep -q fechada || fail "enrollment close"
+$B/aic-wait http://127.0.0.1:50052 --once 2>&1 | grep -q "instalação fechada" || fail "fechar não vale"
+echo "OK F) fechar a porta vale na hora"
 
 kill $CTRL $WAIT 2>/dev/null
 echo "TUDO OK"

@@ -1093,6 +1093,16 @@ message RejectInstallResponse {
   bool rejected = 1;
 }
 
+message SetEnrollmentRequest {
+  /// Por quantos minutos a porta de espera aceita aparelhos (1 a 120); 0 fecha na hora.
+  uint32 minutes = 1;
+}
+
+message SetEnrollmentResponse {
+  /// Até quando fica aberta (0 = fechada).
+  uint64 open_until_unix_ms = 1;
+}
+
 /// Porta separada e sem interceptor: é a única coisa que o controller atende sem token, e só serve
 /// à etapa de espera.
 service Enrollment {
@@ -1152,6 +1162,7 @@ service ClusterControl {
   rpc ListPendingInstalls(ListPendingInstallsRequest) returns (ListPendingInstallsResponse);
   rpc ApproveInstall(ApproveInstallRequest) returns (ApproveInstallResponse);
   rpc RejectInstall(RejectInstallRequest) returns (RejectInstallResponse);
+  rpc SetEnrollment(SetEnrollmentRequest) returns (SetEnrollmentResponse);
   rpc ListReservations(ListReservationsRequest) returns (ListReservationsResponse);
   rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
 }

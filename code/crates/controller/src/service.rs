@@ -5,7 +5,8 @@ use ai_cluster_protocol::cluster::cluster_control_server::ClusterControl;
 use ai_cluster_protocol::cluster::link_probe_server::LinkProbe;
 use ai_cluster_protocol::cluster::{
     ApproveInstallRequest, ApproveInstallResponse, ListPendingInstallsRequest,
-    ListPendingInstallsResponse, RejectInstallRequest, RejectInstallResponse,
+    ListPendingInstallsResponse, RejectInstallRequest, RejectInstallResponse, SetEnrollmentRequest,
+    SetEnrollmentResponse,
 };
 use ai_cluster_protocol::cluster::{
     ApproveNodeRequest, ApproveNodeResponse, CancelRequestRequest, CancelRequestResponse,
@@ -2131,6 +2132,21 @@ impl ClusterControl for ClusterControlService {
             );
         }
         Ok(Response::new(ApproveInstallResponse { approved }))
+    }
+
+    async fn set_enrollment(
+        &self,
+        request: Request<SetEnrollmentRequest>,
+    ) -> Result<Response<SetEnrollmentResponse>, Status> {
+        let peer = operator_peer(&request)?;
+        let minutes = request.into_inner().minutes;
+        let open_until_unix_ms = self.enrollments.open_for(minutes, unix_ms());
+        self.audit(
+            &peer,
+            "enrollment",
+            if minutes == 0 { "fechada" } else { "aberta" },
+        );
+        Ok(Response::new(SetEnrollmentResponse { open_until_unix_ms }))
     }
 
     async fn reject_install(

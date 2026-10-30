@@ -25,6 +25,8 @@ pub const TTL_MS: u64 = 15 * 60_000;
 /// De quanto em quanto tempo o aparelho volta a perguntar.
 pub const RETRY_SECS: u32 = 5;
 const MAX_DISKS: usize = 16;
+/// Teto da janela em que a porta fica aberta.
+pub const MAX_OPEN_MINUTES: u32 = 120;
 
 #[derive(Clone, Debug)]
 struct Candidate {
@@ -39,6 +41,9 @@ struct Candidate {
 #[derive(Debug, Default)]
 pub struct Enrollments {
     waiting: Mutex<HashMap<String, Candidate>>,
+    /// Até quando a porta de espera aceita aparelhos (ms desde a época; 0 = fechada). Fechada é o
+    /// normal: o operador abre por uma janela e ela se fecha sozinha, mesmo que ele esqueça.
+    open_until: std::sync::atomic::AtomicU64,
 }
 
 fn hash(secret: &[u8]) -> [u8; 32] {
@@ -214,6 +219,22 @@ impl Enrollments {
         })
     }
 
+    /// Abre a porta por `minutes` (0 fecha) e devolve até quando; o teto é `MAX_OPEN_MINUTES`.
+    pub fn open_for(&self, minutes: u32, now: u64) -> u64 {
+        let until = if minutes == 0 {
+            0
+        } else {
+            now + u64::from(minutes.min(MAX_OPEN_MINUTES)) * 60_000
+        };
+        self.open_until
+            .store(until, std::sync::atomic::Ordering::Relaxed);
+        until
+    }
+
+    pub fn is_open(&self, now: u64) -> bool {
+        now < self.open_until.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn list(&self, now: u64) -> Vec<PendingInstall> {
         let mut list: Vec<PendingInstall> = self
             .lock()
@@ -275,9 +296,13 @@ impl Enrollment for EnrollmentService {
         request: Request<AnnounceRequest>,
     ) -> Result<Response<AnnounceResponse>, Status> {
         let host = request.remote_addr().map(|addr| addr.ip().to_canonical());
-        let response =
-            self.enrollments
-                .announce(request.into_inner(), host, crate::registry::unix_ms())?;
+        let now = crate::registry::unix_ms();
+        if !self.enrollments.is_open(now) {
+            return Err(Status::unavailable(
+                "instalação fechada: o operador abre com `ai-cluster enrollment open`",
+            ));
+        }
+        let response = self.enrollments.announce(request.into_inner(), host, now)?;
         Ok(Response::new(response))
     }
 }
@@ -536,6 +561,18 @@ mod tests {
         assert!(e.list(0).is_empty());
     }
 
+    #[test]
+    fn a_janela_abre_por_minutos_tem_teto_e_fecha_sozinha() {
+        let e = Enrollments::default();
+        assert!(!e.is_open(1_000), "fechada é o normal");
+        let until = e.open_for(5, 1_000);
+        assert_eq!(until, 1_000 + 5 * 60_000);
+        assert!(e.is_open(until - 1) && !e.is_open(until));
+        assert_eq!(e.open_for(10_000, 0), u64::from(MAX_OPEN_MINUTES) * 60_000);
+        e.open_for(0, 2_000);
+        assert!(!e.is_open(2_001));
+    }
+
     #[tokio::test]
     async fn a_porta_anonima_atende_o_announce_e_enxerga_o_endereco_do_cliente() {
         use ai_cluster_protocol::cluster::enrollment_client::EnrollmentClient;
@@ -543,6 +580,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let enrollments = Arc::new(Enrollments::default());
+        enrollments.open_for(5, crate::registry::unix_ms());
         let service = EnrollmentServer::new(EnrollmentService::new(enrollments.clone()));
         tokio::spawn(
             tonic::transport::Server::builder()
@@ -552,6 +590,9 @@ mod tests {
         let mut client = EnrollmentClient::connect(format!("http://{addr}"))
             .await
             .unwrap();
+        // Fechada (o normal): o aparelho recebe "indisponível" e nada entra na lista.
+        let closed = Arc::new(Enrollments::default());
+        assert!(!closed.is_open(crate::registry::unix_ms()));
         let reply = client.announce(hello(1, MAC)).await.unwrap().into_inner();
         assert!(!reply.approved);
         let listed = enrollments.list(crate::registry::unix_ms());

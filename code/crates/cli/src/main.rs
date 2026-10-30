@@ -29,6 +29,18 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+enum EnrollmentAction {
+    /// Aceita aparelhos por um tempo; depois fecha sozinha.
+    Open {
+        /// Minutos (1 a 120).
+        #[arg(long, default_value_t = 15)]
+        minutes: u32,
+    },
+    /// Fecha agora.
+    Close,
+}
+
+#[derive(Subcommand, Debug)]
 enum Command {
     Status,
     Nodes,
@@ -123,6 +135,11 @@ enum Command {
     },
     /// Aparelhos na etapa de espera, aguardando aprovação para instalar (ADR-023).
     Installs,
+    /// Abre ou fecha a porta em que os aparelhos se apresentam para instalar (ADR-023).
+    Enrollment {
+        #[command(subcommand)]
+        action: EnrollmentAction,
+    },
     /// Aprova a instalação de um aparelho da lista, apagando o disco informado.
     ApproveInstall {
         /// Impressão digital que o aparelho mostra na tela (e `installs` lista).
@@ -369,6 +386,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => approve_node(&cli.controller, &node, fingerprint, trust_listed).await?,
         Command::Revoke { node } => revoke_node(&cli.controller, &node).await?,
         Command::Installs => print_installs(&cli.controller).await?,
+        Command::Enrollment { action } => {
+            let minutes = match action {
+                EnrollmentAction::Open { minutes } => minutes,
+                EnrollmentAction::Close => 0,
+            };
+            let mut client = connect_operator(cli.controller.clone()).await?;
+            let until = client
+                .set_enrollment(ai_cluster_protocol::cluster::SetEnrollmentRequest { minutes })
+                .await?
+                .into_inner()
+                .open_until_unix_ms;
+            if until == 0 {
+                println!("INSTALAÇÃO porta fechada");
+            } else {
+                println!("INSTALAÇÃO porta aberta minutos={minutes}");
+            }
+        }
         Command::ApproveInstall { fingerprint, disk } => {
             let mut client = connect_operator(cli.controller.clone()).await?;
             let approved = client
