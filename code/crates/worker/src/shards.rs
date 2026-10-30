@@ -44,6 +44,8 @@ pub async fn run(mut client: MetadataClient, node_id: String, store: Arc<ShardSt
             Ok(response) => {
                 println!("canal de fatias aberto");
                 last_error.clear();
+                // Os ids do controller recomeçam a cada boot: avisos de outra sessão não valem nesta.
+                lock(&cancelled).clear();
                 let mut frames = response.into_inner();
                 while let Ok(Some(frame)) = frames.message().await {
                     if frame.cancel {
