@@ -1624,6 +1624,12 @@ async fn print_dashboard(
             }
         };
 
+        let model = client
+            .model_status(ModelStatusRequest {})
+            .await
+            .ok()
+            .map(|response| response.into_inner());
+
         if watch_secs > 0 {
             // Home + limpa a tela, para a volta seguinte sobrescrever a anterior.
             print!("\x1b[2J\x1b[H");
@@ -1639,6 +1645,7 @@ async fn print_dashboard(
                 &reservations,
                 &gateways,
                 gateways_now,
+                model.as_ref(),
             ) {
                 println!("{line}");
             }
@@ -1697,6 +1704,9 @@ async fn print_dashboard(
                 metrics.avg_storage_read_score,
                 metrics.avg_storage_latency_ms
             );
+            for line in api_lines(&gateways, model.as_ref()) {
+                println!("{line}");
+            }
             for line in gateway_lines(&gateways, gateways_now) {
                 println!("{line}");
             }
@@ -1731,6 +1741,7 @@ fn pretty_dashboard(
     reservations: &[ai_cluster_protocol::cluster::Reservation],
     gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
     now_ms: u64,
+    model: Option<&ai_cluster_protocol::cluster::ModelStatusResponse>,
 ) -> Vec<String> {
     use ai_cluster_common::brand::{self, Tone, paint, rule, state_tone};
     const WIDTH: usize = 78;
@@ -1831,6 +1842,10 @@ fn pretty_dashboard(
         metrics.avg_storage_latency_ms
     ));
 
+    out.push(String::new());
+    out.push(rule("API", WIDTH));
+    out.extend(pretty_api(gateways, model));
+
     if !gateways.is_empty() {
         out.push(String::new());
         out.push(rule("Inferencia", WIDTH));
@@ -1883,6 +1898,110 @@ fn pretty_dashboard(
             ),
         ));
     }
+    out
+}
+
+/// O endereço da API de um gateway, ou o aviso de que ele não o informou.
+fn api_address(gateway: &ai_cluster_protocol::cluster::GatewayInfo) -> String {
+    let url = clean(&gateway.url);
+    if url.is_empty() {
+        "(endereço não informado: defina AI_CLUSTER_GATEWAY_URL no gateway)".to_string()
+    } else {
+        url
+    }
+}
+
+/// O modelo ativo: (palavra, descrição, tom). Sem modelo pedido, diz como subir um.
+fn active_model(
+    model: Option<&ai_cluster_protocol::cluster::ModelStatusResponse>,
+) -> (&'static str, String, ai_cluster_common::brand::Tone) {
+    use ai_cluster_common::brand::Tone;
+    let Some(model) = model else {
+        return (
+            "SEM DADOS",
+            "o controller não informou o modelo".into(),
+            Tone::Dim,
+        );
+    };
+    let Some(desired) = model.desired.as_ref().filter(|d| !d.model_id.is_empty()) else {
+        return (
+            "NENHUM",
+            "sem modelo ativo: ai-cluster model start <id>".into(),
+            Tone::Warn,
+        );
+    };
+    let id = clean(&desired.model_id);
+    let running = model.running.clone().unwrap_or_default();
+    match ModelState::try_from(running.state) {
+        Ok(ModelState::ModelReady) => (
+            "PRONTO",
+            format!("{id}  {:.1} tok/s", running.tokens_per_second),
+            Tone::Ok,
+        ),
+        Ok(ModelState::ModelLoading) => ("CARREGANDO", id, Tone::Warn),
+        Ok(ModelState::ModelFailed) => (
+            "FALHOU",
+            format!("{id}: {}", clean(&running.reason)),
+            Tone::Bad,
+        ),
+        _ => (
+            "PEDIDO",
+            format!("{id} (o gateway ainda não aplicou)"),
+            Tone::Warn,
+        ),
+    }
+}
+
+/// A seção API do painel bonito: onde chamar e que modelo responde.
+fn pretty_api(
+    gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
+    model: Option<&ai_cluster_protocol::cluster::ModelStatusResponse>,
+) -> Vec<String> {
+    use ai_cluster_common::brand::{self, Tone, paint};
+    let mut out = Vec::new();
+    if gateways.is_empty() {
+        out.push(paint("    nenhum gateway conectado", Tone::Dim));
+        return out;
+    }
+    for gateway in gateways {
+        let (word, tone) = if gateway.alive {
+            ("NO AR", Tone::Ok)
+        } else {
+            ("SEM SINAL", Tone::Bad)
+        };
+        out.push(format!(
+            "  {} {}  {}",
+            paint(brand::glyphs().node, tone),
+            api_address(gateway),
+            paint(word, tone)
+        ));
+    }
+    let (word, text, tone) = active_model(model);
+    out.push(format!("    modelo  {}  {text}", paint(word, tone)));
+    out.push(paint(
+        "    POST /v1/chat/completions   GET /v1/models   GET /health",
+        Tone::Dim,
+    ));
+    out
+}
+
+/// A API no formato de máquina: uma linha por gateway e uma do modelo.
+fn api_lines(
+    gateways: &[ai_cluster_protocol::cluster::GatewayInfo],
+    model: Option<&ai_cluster_protocol::cluster::ModelStatusResponse>,
+) -> Vec<String> {
+    let mut out: Vec<String> = gateways
+        .iter()
+        .map(|gateway| {
+            format!(
+                "API url={} estado={}",
+                clean(&gateway.url),
+                if gateway.alive { "no_ar" } else { "sem_sinal" }
+            )
+        })
+        .collect();
+    let (word, text, _) = active_model(model);
+    out.push(format!("MODELO_ATIVO estado={word} {text}"));
     out
 }
 
@@ -2248,10 +2367,11 @@ mod tests {
             slots: 2,
             ..Default::default()
         };
-        let lines = pretty_dashboard("http://c:1", &nodes, &metrics, &[reservation], &[], 0).join(
-            "
+        let lines = pretty_dashboard("http://c:1", &nodes, &metrics, &[reservation], &[], 0, None)
+            .join(
+                "
 ",
-        );
+            );
         for expected in [
             "Real.AI.Cluster painel",
             "1/2 nos disponiveis",
@@ -2331,5 +2451,60 @@ mod tests {
         assert_eq!(tree[3], "└─ Gateway de inferência (1)");
         assert!(tree[4].contains("gw1  http://gw:8080  VIVO"));
         assert!(tree[4].contains("gpt2 (inteiro no gateway); smollm2 → fatias em a,b"));
+    }
+
+    #[test]
+    fn a_api_mostra_o_endereco_e_o_modelo_ativo_ou_como_subir_um() {
+        use ai_cluster_protocol::cluster::{
+            DesiredModel, GatewayInfo, ModelStatus, ModelStatusResponse,
+        };
+        let gateway = GatewayInfo {
+            gateway_id: "gw".into(),
+            url: "http://10.0.0.1:8080".into(),
+            alive: true,
+            ..Default::default()
+        };
+        // Sem modelo pedido: diz como subir um.
+        let none = ModelStatusResponse::default();
+        let lines = pretty_api(std::slice::from_ref(&gateway), Some(&none)).join(
+            "
+",
+        );
+        assert!(
+            lines.contains("http://10.0.0.1:8080") && lines.contains("NO AR"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("NENHUM") && lines.contains("ai-cluster model start"),
+            "{lines}"
+        );
+        assert!(lines.contains("/v1/chat/completions"), "{lines}");
+        // Modelo pronto: o id e a velocidade.
+        let ready = ModelStatusResponse {
+            desired: Some(DesiredModel {
+                model_id: "qwen".into(),
+                ..Default::default()
+            }),
+            running: Some(ModelStatus {
+                state: ModelState::ModelReady as i32,
+                tokens_per_second: 12.34,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let lines = api_lines(std::slice::from_ref(&gateway), Some(&ready));
+        assert_eq!(lines[0], "API url=http://10.0.0.1:8080 estado=no_ar");
+        assert_eq!(lines[1], "MODELO_ATIVO estado=PRONTO qwen  12.3 tok/s");
+        // Sem gateway e sem endereço informado.
+        assert!(pretty_api(&[], None).join("").contains("nenhum gateway"));
+        let silent = GatewayInfo {
+            alive: false,
+            ..Default::default()
+        };
+        assert!(
+            pretty_api(&[silent], None)
+                .join("")
+                .contains("AI_CLUSTER_GATEWAY_URL")
+        );
     }
 }
