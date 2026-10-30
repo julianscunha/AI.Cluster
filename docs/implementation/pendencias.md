@@ -132,7 +132,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Imagens do SO sem o `aic` novo | Os rootfs ARM e x86 não foram reconstruídos com o `aic` atual e não foram testados em hardware real. | código, hardware |
 | Ajuda do clap em inglês | A ajuda do `aic` ainda mostra `[possible values: pt, en]` em inglês, na opção `--lang`. | código |
 | `aic worker change` sem `--token-file` | Só aceita `--token` na linha de comando, sem o token por arquivo que o `bootstrap.sh` tem. | código |
-| Empurrão só para AI Cluster OS | O controller empurra só a release assinada, e só para nós com AI Cluster OS. Workers e gateways em Linux comum não recebem empurrão: cada máquina roda `aic update apply`. | decisão |
+| Gatilho de atualização assinado para Linux | O controller já aciona a atualização dos nós com AI Cluster OS (a release assinada vai no heartbeat e o worker, com `AI_CLUSTER_UPDATE_CMD`, drena, sai e roda o comando). Para worker e gateway em Linux falta: (1) assinar o `SHA256SUMS` de cada release com a chave do operador e gravar a pública no `install.sh` e em `/etc/ai-cluster` (fecha o limite do `SHA256SUMS` sem assinatura e permite recusar versão mais antiga); (2) um comando de atualização do worker Linux que confere a assinatura e roda `aic update apply`, configurado como `AI_CLUSTER_UPDATE_CMD`; (3) o mesmo gatilho para o gateway, pelo canal que ele já usa com o controller. Decisão antes: qual chave assina os pacotes Linux (a das imagens do SO serve?). | código, decisão |
 | Migração de servidor antigo | A atualização de um servidor instalado com a ferramenta de nome antigo (`setup update apply --force`, vindo do `tools.tar.gz`) não foi testada. | código |
 
 ## Marcos

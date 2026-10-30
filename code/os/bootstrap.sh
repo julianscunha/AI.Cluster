@@ -48,6 +48,10 @@ HEALTH_TIMEOUT=90
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --controller|--token|--token-file|--binary|--node-id|--prefix|--model-dir|--rpc-server-bin|--rpc-tls-dir|--health-timeout)
+      [ $# -ge 2 ] || { echo "$(t "$1 pede um valor" "$1 needs a value")" >&2; exit 2; } ;;
+  esac
+  case "$1" in
     --controller) CONTROLLER=$2; shift 2 ;;
     --token) JOIN_TOKEN=$2; shift 2 ;;
     --token-file) TOKEN_FILE=$2; shift 2 ;;
@@ -165,6 +169,9 @@ if [ -f "$PREFIX/bin/ai-cluster-worker" ]; then
 fi
 mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
 
+# Guarda o ambiente anterior: se o worker novo não ficar saudável, o ambiente antigo volta junto com o binário.
+ENV_HAD=0
+if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
 # O ambiente é do root e legível pelo grupo do worker: o serviço lê o token, não o reescreve.
 {
   echo "AI_CLUSTER_CONTROLLER=$CONTROLLER"
@@ -184,6 +191,77 @@ mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
 chown root:ai-cluster "$ENV_FILE.new"
 chmod 0640 "$ENV_FILE.new"
 mv -f "$ENV_FILE.new" "$ENV_FILE"
+
+RE="registrado node_id=.* aceito=true"
+PIDFILE="$PREFIX/state/worker.pid"
+LOGFILE="$PREFIX/state/worker.log"
+# Registros de entrada no log de arquivo (sem systemd, ou quando o journal não responde).
+conta_log() { grep -c "$RE" "$LOGFILE" 2>/dev/null || true; }
+
+# Sobe o worker: com systemd pela unit; sem, em segundo plano com o mesmo ambiente (log e pid em state/).
+sobe() {
+  if [ -d /run/systemd/system ]; then
+    systemctl restart ai-cluster-worker
+  else
+    # O pid vem de um arquivo que o worker pode escrever: só vale se o processo é mesmo o worker.
+    OLD=$(cat "$PIDFILE" 2>/dev/null || true)
+    case "$OLD" in ''|*[!0-9]*|0|1) OLD="" ;; esac
+    if [ -n "$OLD" ] && grep -q '^ai-cluster-work' "/proc/$OLD/comm" 2>/dev/null; then
+      kill "$OLD" 2>/dev/null || true
+      # Espera sair de verdade (um zumbi sem init que o recolha já está parado).
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        grep -q '^State:.*[RSD]' "/proc/$OLD/status" 2>/dev/null || break
+        sleep 0.5
+      done
+    fi
+    # Os valores seguem como argumentos do `su`, nunca dentro da string do comando. Linha vazia não entra;
+    # a última sem quebra de linha conta.
+    set --
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -z "$line" ] || set -- "$@" "$line"
+    done < "$ENV_FILE"
+    su -s /bin/sh ai-cluster -c 'state=$1; bin=$2; shift 2; cd "$state"; \
+      setsid env "$@" "$bin" >> "$state/worker.log" 2>&1 < /dev/null & \
+      echo $! > "$state/worker.pid"' sh "$PREFIX/state" "$PREFIX/bin/ai-cluster-worker" "$@"
+  fi
+}
+
+# Saudável: ativo e registrado no controller DEPOIS deste reinício. Um binário que cai em laço de reinício
+# nunca chega ao registro.
+saudavel() {
+  if [ -d /run/systemd/system ]; then
+    systemctl is-active --quiet ai-cluster-worker || return 1
+    if j=$(journalctl -u ai-cluster-worker --since "$SINCE" --no-pager 2>/dev/null); then
+      printf '%s\n' "$j" | grep -q "$RE"
+      return
+    fi
+    # Sem journalctl: o serviço ativo e um registro novo no log de arquivo.
+    [ "$(conta_log)" -gt "$N0" ]
+    return
+  fi
+  pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
+  grep -q '^ai-cluster-work' "/proc/$pid/comm" 2>/dev/null || return 1
+  [ "$(conta_log)" -gt "$N0" ]
+}
+
+# Volta o binário e o ambiente anteriores e reinicia com eles. Sem o ambiente anterior não há o que voltar.
+desfaz() {
+  if [ "$HAS_PREV" = 1 ]; then
+    install -o root -g root -m 0755 "$PREFIX/bin/ai-cluster-worker.prev" "$PREFIX/bin/ai-cluster-worker.new"
+    mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
+  fi
+  if [ "$ENV_HAD" = 1 ]; then mv -f "$ENV_FILE.prev" "$ENV_FILE"; fi
+  SINCE=$(date '+%Y-%m-%d %H:%M:%S'); N0=$(conta_log)
+  sobe
+  waited=0
+  until saudavel || [ "$waited" -ge "$HEALTH_TIMEOUT" ]; do sleep 2; waited=$((waited + 2)); done
+  if saudavel; then
+    echo "$(t 'rollback feito: a versão anterior está de volta' 'rollback done: the previous version is back')" >&2
+  else
+    echo "$(t 'rollback feito, mas a versão anterior também não ficou saudável; veja o log' 'rollback done, but the previous version did not become healthy either; see the log')" >&2
+  fi
+}
 
 if [ -d /run/systemd/system ]; then
   cat > /etc/systemd/system/ai-cluster-worker.service <<UNIT
@@ -217,61 +295,38 @@ ReadWritePaths=$PREFIX/state
 WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
-  systemctl enable ai-cluster-worker
+  if ! systemctl enable ai-cluster-worker >/dev/null 2>&1; then
+    echo "$(t 'AVISO: systemctl enable falhou; o worker não volta sozinho depois de um reinício' 'WARNING: systemctl enable failed; the worker does not come back on its own after a restart')" >&2
+  fi
   SINCE=$(date '+%Y-%m-%d %H:%M:%S')
-  systemctl restart ai-cluster-worker
+  N0=$(conta_log)
+  sobe
   echo "$(t "worker $NODE_ID instalado e iniciado pelo systemd" "worker $NODE_ID installed and started by systemd")"
-  # Saudável é: ativo e registrado no controller depois deste restart. Um binário que cai em
-  # laço de reinício nunca chega ao registro.
-  healthy() {
-    systemctl is-active --quiet ai-cluster-worker       && journalctl -u ai-cluster-worker --since "$SINCE" --no-pager 2>/dev/null         | grep -q "registrado node_id=.* aceito=true"
-  }
-  if [ "$HEALTH_TIMEOUT" -gt 0 ]; then
-    waited=0
-    until healthy; do
-      if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
-        if [ "$HAS_PREV" = 1 ]; then
-          echo "$(t "a versão nova não ficou saudável em ${HEALTH_TIMEOUT}s; voltando à anterior" "the new version was not healthy in ${HEALTH_TIMEOUT}s; rolling back to the previous one")" >&2
-          install -o root -g root -m 0755 "$PREFIX/bin/ai-cluster-worker.prev" "$PREFIX/bin/ai-cluster-worker.new"
-          mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
-          systemctl restart ai-cluster-worker
-          echo "$(t 'rollback feito' 'rollback done')" >&2
-        else
-          echo "$(t "o worker não ficou saudável em ${HEALTH_TIMEOUT}s e não há versão anterior para voltar" "the worker was not healthy in ${HEALTH_TIMEOUT}s and there is no previous version to roll back to")" >&2
-        fi
-        exit 3
-      fi
-      sleep 2
-      waited=$((waited + 2))
-    done
-    echo "$(t 'worker saudável (registrado no controller)' 'worker healthy (registered with the controller)')"
-  fi
 else
-  # Sem systemd (contêiner, sistema mínimo): sobe em segundo plano, com o mesmo ambiente. Log e
-  # pid ficam em `state/`, a única pasta que o usuário do worker pode escrever.
-  PIDFILE="$PREFIX/state/worker.pid"
-  # O pid vem de um arquivo que o worker pode escrever: só vale se o processo é mesmo o worker.
-  OLD=$(cat "$PIDFILE" 2>/dev/null || true)
-  case "$OLD" in
-    ''|*[!0-9]*) OLD="" ;;
-  esac
-  if [ -n "$OLD" ] && grep -q '^ai-cluster-work' "/proc/$OLD/comm" 2>/dev/null; then
-    kill "$OLD" 2>/dev/null || true
-    # Espera sair de verdade (um zumbi sem init que o recolha já está parado).
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-      grep -q '^State:.*[RSD]' "/proc/$OLD/status" 2>/dev/null || break
-      sleep 0.5
-    done
-  fi
-  # Os valores seguem como argumentos do `su`, nunca dentro da string do comando.
-  set --
-  while IFS= read -r line; do
-    set -- "$@" "$line"
-  done < "$ENV_FILE"
-  su -s /bin/sh ai-cluster -c 'state=$1; bin=$2; shift 2; cd "$state"; \
-    setsid env "$@" "$bin" >> "$state/worker.log" 2>&1 < /dev/null & \
-    echo $! > "$state/worker.pid"' sh "$PREFIX/state" "$PREFIX/bin/ai-cluster-worker" "$@"
-  echo "$(t "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $PREFIX/state/worker.log" "worker $NODE_ID started in the background (no systemd); log in $PREFIX/state/worker.log")"
+  # Sem systemd (contêiner, sistema mínimo): sobe em segundo plano. Não há como saber se voltará sozinho.
+  SINCE=""; N0=$(conta_log)
+  sobe
+  echo "$(t "worker $NODE_ID iniciado em segundo plano (sem systemd); log em $LOGFILE" "worker $NODE_ID started in the background (no systemd); log in $LOGFILE")"
   echo "$(t 'sem systemd: não volta sozinho depois de um reinício' 'without systemd: it does not come back on its own after a restart')" >&2
+fi
+
+# Verificação de saúde real: processo vivo e registro novo no log, dentro de --health-timeout segundos.
+if [ "$HEALTH_TIMEOUT" -gt 0 ]; then
+  waited=0
+  until saudavel; do
+    if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
+      if [ "$HAS_PREV" = 1 ] || [ "$ENV_HAD" = 1 ]; then
+        echo "$(t "a versão nova não ficou saudável em ${HEALTH_TIMEOUT}s; voltando à anterior" "the new version was not healthy in ${HEALTH_TIMEOUT}s; rolling back to the previous one")" >&2
+        desfaz
+      else
+        echo "$(t "o worker não ficou saudável em ${HEALTH_TIMEOUT}s e não há versão anterior para voltar" "the worker was not healthy in ${HEALTH_TIMEOUT}s and there is no previous version to roll back to")" >&2
+      fi
+      exit 3
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  rm -f "$ENV_FILE.prev"
+  echo "$(t 'worker saudável (registrado no controller)' 'worker healthy (registered with the controller)')"
 fi
 [ "${AIC_INVITED:-0}" = 1 ] || echo "$(t "falta, se o controller exige aprovação: aic cluster node approve $NODE_ID --fingerprint <impressão que o worker imprime>" "missing, if the controller requires approval: aic cluster node approve $NODE_ID --fingerprint <fingerprint the worker prints>")"

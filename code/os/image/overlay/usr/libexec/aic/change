@@ -1,16 +1,23 @@
 #!/bin/sh
 # aic worker change - muda este no para outro controller, sem regravar a imagem.
 #
-#   aic worker change --server IP[:8099] --code CODIGO [--controller URL]
+#   aic worker change --server IP[:8099] --code CODIGO [--controller URL] [--yes]
 #       usa o convite do novo controller (sudo aic cluster invite la): baixa o token e a CA, pede um
 #       certificado novo do tunel com a chave que nasce aqui e troca tudo de uma vez
-#   aic worker change --controller URL --token TOKEN
+#   aic worker change --controller URL --token TOKEN [--yes]
 #       so o endereco e o token (nao mexe no certificado do tunel)
 #
-# Nada e trocado antes de tudo ter sido baixado e conferido: se algo falhar, o no continua como estava.
+# Antes de trocar, mostra o controller de destino e pede confirmacao (--yes ou AIC_ASSUME_YES=1 pula).
+# Nada e trocado antes de tudo ter sido baixado e conferido. Depois de trocar, so se da por feito quando o
+# worker se registra no novo controller (ate 30 s); se nao subir ou nao registrar, volta tudo o que estava.
+#
+# AIC_TESTING=1 libera os caminhos de teste (AIC_DATA, AIC_RC, AIC_WORKER_LOG); sem ele valem os reais.
 
-DATA=${AIC_DATA:-/data}
-RC=${AIC_RC:-rc-service}
+if [ "${AIC_TESTING:-0}" = 1 ]; then
+	DATA=${AIC_DATA:-/data}; RC=${AIC_RC:-rc-service}; LOGW=${AIC_WORKER_LOG:-/var/log/ai-cluster-worker.log}
+else
+	DATA=/data; RC=rc-service; LOGW=/var/log/ai-cluster-worker.log
+fi
 ENV_FILE="$DATA/worker.env"
 
 usage() {
@@ -18,24 +25,26 @@ usage() {
 aic worker change - muda este no para outro controller
 
 uso:
-  aic worker change --server IP[:8099] --code CODIGO [--controller URL]
-      pelo convite do novo controller (rode 'sudo aic cluster invite' la). Troca o token, a CA e o
+  aic worker change --server IP[:8099] --code CODIGO [--controller URL] [--yes]
+      pelo convite do novo controller (rode 'sudo aic cluster invite la'). Troca o token, a CA e o
       certificado do tunel. --controller sobrepoe o endereco que o convite informa (use se o
       controller aparece com outro IP para este no, por exemplo atras de NAT)
-  aic worker change --controller URL --token TOKEN
+  aic worker change --controller URL --token TOKEN [--yes]
       so o endereco do controller e o token de join
   aic worker change --help
 
+--yes pula a pergunta de confirmacao (AIC_ASSUME_YES=1 faz o mesmo).
 O no precisa ser aprovado no novo controller depois (o convite aprova sozinho enquanto aberto).
 USO
 }
 
 die() { echo "aic worker change: $1" >&2; exit 1; }
 
-SERVER=""; CODE=""; CONTROLLER=""; TOKEN=""
+SERVER=""; CODE=""; CONTROLLER=""; TOKEN=""; YES=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
+	--yes | -y) YES=1; shift ;;
 	--server | --code | --controller | --token)
 		[ $# -ge 2 ] || die "$1 pede um valor"
 		case "$1" in
@@ -85,35 +94,75 @@ fi
 case "$CONTROLLER" in http://* | https://*) ;; *) die "o controller precisa comecar com http:// ou https://" ;; esac
 case "$CONTROLLER$TOKEN" in *[!A-Za-z0-9.:/_@-]*) die "controller ou token com caracteres invalidos" ;; esac
 
-# Tudo baixado e conferido: agora sim troca, guardando o anterior.
-BK="$DATA/.change-backup"
-rm -rf "$BK"; mkdir -p "$BK"
-cp "$ENV_FILE" "$BK/worker.env"
-[ -d "$DATA/rpc-tls" ] && cp -r "$DATA/rpc-tls" "$BK/rpc-tls"
-[ -f "$DATA/state/credential" ] && cp "$DATA/state/credential" "$BK/credential"
-
-"$RC" ai-cluster-worker stop >/dev/null 2>&1
-set_key() { # set_key CHAVE VALOR: troca a linha ou acrescenta
-	if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
-}
-set_key AI_CLUSTER_CONTROLLER "$CONTROLLER"
-set_key AI_CLUSTER_JOIN_TOKEN "$TOKEN"
-rm -f "$DATA/state/credential"
-if [ -n "$SERVER" ]; then
-	mkdir -p "$DATA/rpc-tls"
-	cp "$T/pki/ca.crt" "$DATA/rpc-tls/ca.crt"; cp "$T/worker.crt" "$DATA/rpc-tls/worker.crt"; cp "$T/worker.key" "$DATA/rpc-tls/worker.key"
-	chmod 644 "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt"; chmod 600 "$DATA/rpc-tls/worker.key"
-	chown ai-cluster:ai-cluster "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt" "$DATA/rpc-tls/worker.key" 2>/dev/null
+# Tudo baixado e conferido. Antes de mexer, mostra o destino e pergunta.
+echo "no $NODE vai para o controller: $CONTROLLER"
+if [ "$YES" != 1 ] && [ "${AIC_ASSUME_YES:-0}" != 1 ]; then
+	[ -t 0 ] || die "sem terminal para confirmar; use --yes"
+	printf 'Trocar o controller deste no? [S/n] '
+	read -r a || a=n
+	case "$a" in n | N | nao | NAO) die "cancelado" ;; esac
 fi
-"$RC" ai-cluster-worker start >/dev/null 2>&1 || {
-	echo "aic worker change: o worker nao subiu; restaurando o estado anterior" >&2
-	cp "$BK/worker.env" "$ENV_FILE"
-	[ -d "$BK/rpc-tls" ] && cp -r "$BK/rpc-tls/." "$DATA/rpc-tls/"
-	[ -f "$BK/credential" ] && cp "$BK/credential" "$DATA/state/credential"
-	"$RC" ai-cluster-worker start >/dev/null 2>&1
+
+# Guarda o estado atual (acesso só do root). Se algo falhar daqui em diante, ele volta.
+BK="$DATA/.change-backup"
+rm -rf "$BK"; mkdir -m 700 "$BK" || die "nao consegui criar o backup em $BK"
+cp -p "$ENV_FILE" "$BK/worker.env" || die "nao consegui guardar o worker.env"
+if [ -d "$DATA/rpc-tls" ]; then cp -rp "$DATA/rpc-tls" "$BK/rpc-tls" || die "nao consegui guardar o rpc-tls"; fi
+if [ -f "$DATA/state/credential" ]; then cp -p "$DATA/state/credential" "$BK/credential" || die "nao consegui guardar a credencial"; fi
+chmod -R go-rwx "$BK"
+
+conta_registros() { # quantos registros de entrada o log do worker tem agora
+	n=$(grep -c "registrado node_id=.* aceito=true" "$LOGW" 2>/dev/null); echo "${n:-0}"
+}
+
+# Volta ao que estava no backup e sobe o worker com ele (sem conferir o registro: é o caminho de falha).
+restaura() {
+	"$RC" ai-cluster-worker stop >/dev/null 2>&1
+	cp -p "$BK/worker.env" "$ENV_FILE" 2>/dev/null
+	rm -rf "$DATA/rpc-tls"
+	if [ -d "$BK/rpc-tls" ]; then cp -rp "$BK/rpc-tls" "$DATA/rpc-tls" 2>/dev/null; fi
+	rm -f "$DATA/state/credential"
+	if [ -f "$BK/credential" ]; then cp -p "$BK/credential" "$DATA/state/credential" 2>/dev/null; fi
+	"$RC" ai-cluster-worker start >/dev/null 2>&1 || echo "aic worker change: o estado anterior tambem nao subiu; veja $LOGW" >&2
+}
+
+falha() { # falha <motivo>: volta o backup e sai com erro
+	echo "aic worker change: $1; restaurando o estado anterior" >&2
+	restaura
+	echo "o estado anterior ficou em $BK" >&2
 	exit 1
 }
 
-echo "no $NODE agora aponta para $CONTROLLER"
-echo "falta aprovar no novo controller: aic cluster nodes  (e aic cluster node approve $NODE --fingerprint ...)"
+set_key() { # set_key CHAVE VALOR: troca a linha ou acrescenta
+	if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE" || return 1
+	else echo "$1=$2" >> "$ENV_FILE" || return 1; fi
+}
+
+"$RC" ai-cluster-worker stop >/dev/null 2>&1
+set_key AI_CLUSTER_CONTROLLER "$CONTROLLER" || falha "nao consegui gravar o controller no worker.env"
+set_key AI_CLUSTER_JOIN_TOKEN "$TOKEN" || falha "nao consegui gravar o token no worker.env"
+rm -f "$DATA/state/credential"
+if [ -n "$SERVER" ]; then
+	mkdir -p "$DATA/rpc-tls" || falha "nao consegui criar $DATA/rpc-tls"
+	cp "$T/pki/ca.crt" "$DATA/rpc-tls/ca.crt" || falha "nao consegui copiar a CA"
+	cp "$T/worker.crt" "$DATA/rpc-tls/worker.crt" || falha "nao consegui copiar o certificado"
+	cp "$T/worker.key" "$DATA/rpc-tls/worker.key" || falha "nao consegui copiar a chave"
+	chmod 644 "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt" || falha "nao consegui ajustar as permissoes do certificado"
+	chmod 600 "$DATA/rpc-tls/worker.key" || falha "nao consegui ajustar as permissoes da chave"
+	chown ai-cluster:ai-cluster "$DATA/rpc-tls/ca.crt" "$DATA/rpc-tls/worker.crt" "$DATA/rpc-tls/worker.key" \
+		|| falha "nao consegui dar o dono ao certificado (usuario ai-cluster)"
+fi
+
+# Sobe e so se da por feito com o registro NOVO no log (até 30 s).
+n0=$(conta_registros)
+"$RC" ai-cluster-worker start >/dev/null 2>&1 || falha "o worker nao subiu"
+i=0
+while [ "$(conta_registros)" -le "$n0" ]; do
+	i=$((i + 1))
+	[ "$i" -le 30 ] || falha "o worker nao se registrou no novo controller em 30 s (veja $LOGW)"
+	sleep 1
+done
+
+echo "no $NODE agora aponta para $CONTROLLER (registrado no novo controller)"
+echo "falta aprovar no novo controller, se ele exigir: aic cluster nodes  (e aic cluster node approve $NODE --fingerprint ...)"
 echo "o estado anterior ficou em $BK"

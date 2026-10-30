@@ -13,14 +13,18 @@
   Os tokens são contados pelos pedaços que o gateway envia (cerca de um por token). -TimeoutSec (padrão
   900) é quanto o script espera por uma resposta; enquanto não chega a primeira palavra ele mostra pontos.
 
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Key SUA_CHAVE
+  Prefira a variável de ambiente AIC_API_KEY à linha de comando: -Key fica no histórico do PowerShell.
+  Sem -Key nem AIC_API_KEY, o script pede a chave escondida (não aparece na tela).
 
 .EXAMPLE
-  .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Key SUA_CHAVE -Runs 5 -Prompt "Conte até 10"
+  $env:AIC_API_KEY = "SUA_CHAVE"
+  powershell -ExecutionPolicy Bypass -File .\aic-test-api.ps1 -Url http://192.168.1.25:8080
 
 .EXAMPLE
-  .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Key SUA_CHAVE -Chat
+  .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Runs 5 -Prompt "Conte até 10"
+
+.EXAMPLE
+  .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Chat
 #>
 param(
   [string]$Url = "",
@@ -82,9 +86,16 @@ if (-not $Url) {
 # Aceita "192.168.1.25", "192.168.1.25:8080" ou o endereço completo.
 if ($Url -notmatch "^https?://") { $Url = "http://$Url" }
 if ($Url -match "^https?://[^/:]+$") { $Url = "${Url}:8080" }
+# A chave é pedida escondida (SecureString) e só vira texto aqui, para o cabeçalho HTTP.
 if (-not $Key) {
-  $Key = (Read-Host (T "  Chave de API (no servidor: /etc/ai-cluster/gateway.env, linha AI_CLUSTER_API_KEY)" "  API key (on the server: /etc/ai-cluster/gateway.env, line AI_CLUSTER_API_KEY)")).Trim()
+  $seguro = Read-Host -AsSecureString (T "  Chave de API (no servidor: /etc/ai-cluster/gateway.env, linha AI_CLUSTER_API_KEY)" "  API key (on the server: /etc/ai-cluster/gateway.env, line AI_CLUSTER_API_KEY)")
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($seguro)
+  try { $Key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
   if ($Key -match "^AI_CLUSTER_API_KEY=") { $Key = $Key.Substring("AI_CLUSTER_API_KEY=".Length) }
+}
+if ($Url -match "^http://") {
+  Write-Host "  [!] $(T 'o endereço é http: a chave vai sem criptografia pela rede. Use só em rede de confiança.' 'the address is http: the key travels unencrypted over the network. Use only on a trusted network.')" -ForegroundColor Yellow
 }
 if ($guided -and -not $Chat) {
   $mode = Read-Host (T "  [M]edir a velocidade ou [C]onversar? [M]" "  [M]easure speed or [C]hat? [M]")

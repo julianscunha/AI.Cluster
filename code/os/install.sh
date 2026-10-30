@@ -38,6 +38,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$LANG_AIC" in pt|en) ;; *) echo "idioma inválido: $LANG_AIC (use pt ou en) / invalid language: $LANG_AIC (use pt or en)" >&2; exit 2 ;; esac
+case "$VERSION" in ''|*[!0-9A-Za-z.+-]*) [ -z "$VERSION" ] || { echo "--version aceita só letras, dígitos e . + - / --version accepts only letters, digits and . + -" >&2; exit 2; } ;; esac
 export AIC_LANG=$LANG_AIC
 
 # ---------- apresentação (a mesma do setup) ----------
@@ -338,6 +339,8 @@ fetch() { # fetch <arquivo> : baixa para $STAGE e confere o SHA-256
 curl -fsSL $PROTO -o "$STAGE/SHA256SUMS" "$BASE/SHA256SUMS" || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
 curl -fsSL $PROTO -o "$STAGE/VERSION" "$BASE/VERSION" || die "$(t 'a release não tem VERSION' 'the release has no VERSION')"
 REL=$(cat "$STAGE/VERSION")
+# A versão entra na tela e no arquivo de release: só letras, dígitos e . + - (nada que quebre o sed do setup).
+case "$REL" in ''|*[!0-9A-Za-z.+-]*) die "$(t 'a release traz uma versão inválida' 'the release has an invalid version')" ;; esac
 printf '\n'; banner instalador "$REL" "$(t "Baixando a versão $REL" "Downloading version $REL")"
 
 mkdir -p "$STAGE/aic"
