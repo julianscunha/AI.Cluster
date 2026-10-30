@@ -41,6 +41,7 @@ echo "=== A) servidor completo baixa só controller, gateway e tools ==="
 OUT=$(inst aic-srv --role server --arch x86_64) || { echo "$OUT"; fail "install.sh server"; }
 echo "$OUT" | grep -q "✔ gateway-linux-x86_64" || fail "o gateway deveria ter sido baixado"
 echo "$OUT" | grep -q "worker-linux" && fail "o servidor não deveria baixar o worker"
+docker exec aic-srv sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(cat /etc/ai-cluster/server-ip):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway do servidor deveria anunciar http://<ip>:8080 (e não 0.0.0.0)"
 echo "OK: servidor instalado"
 
 echo "=== B) o convite entrega o worker e o nó fica READY e aprovado ==="
@@ -115,6 +116,7 @@ inst aic-gw --role gateway --arch x86_64 --server "$CIP" >/dev/null 2>&1 && fail
 docker exec aic-gw sh -c "AIC_CODE=$GCODE AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role gateway --arch x86_64 --server $CIP" >/dev/null 2>&1 || fail "install.sh gateway"
 docker exec aic-gw sh -c "ss -ltn | grep -q ':8080 '" || fail "o gateway não abriu a porta 8080"
 docker exec aic-gw grep -q "controller http://$CIP:50051" /var/log/ai-cluster/gateway.log || fail "o gateway deveria apontar para o controller"
+docker exec aic-gw sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(hostname -i | cut -d" " -f1):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway noutro computador deveria anunciar o IP dele"
 echo "OK: controller e gateway em computadores separados"
 
 echo "=== D) combinações recusadas ==="

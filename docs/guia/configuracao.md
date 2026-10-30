@@ -99,7 +99,7 @@ Convenções:
 |---|---|---|
 | `AI_CLUSTER_GATEWAY_STATE` | `AI_CLUSTER_DATA_DIR/gateway-<id>.state` | Arquivo onde o gateway grava os contadores de inferência para sobreviverem ao reinício. Sem ele e sem o diretório de dados, os contadores partem de zero. |
 | `AI_CLUSTER_GATEWAY_ID` | `gateway-<endereço>` | Nome com que o gateway aparece em `ai-cluster topology`. |
-| `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia. |
+| `AI_CLUSTER_GATEWAY_URL` | `http://<endereço>` | URL pela qual os clientes chegam ao gateway, mostrada na topologia e no painel. O `aic-setup` a define com o IP do computador. Sem ela, um gateway que escuta em `0.0.0.0` não anuncia endereço nenhum (o painel avisa), em vez de anunciar `http://0.0.0.0:8080`. |
 | `AI_CLUSTER_GATEWAY_ADDR` | `127.0.0.1:8080` | Endereço HTTP. Fora de loopback exige TLS (as duas variáveis abaixo) ou `AI_CLUSTER_INSECURE`. |
 | `AI_CLUSTER_GATEWAY_TLS_CERT` / `AI_CLUSTER_GATEWAY_TLS_KEY` | — | Certificado (cadeia) e chave privada em PEM: a perna HTTP passa a ser HTTPS (HTTP/1.1) e o texto puro deixa de ser atendido. Vêm juntas. |
 | `AI_CLUSTER_API_KEY` | — | Chave do tenant `default`: todos os modelos, sem cota. Obrigatória se `AI_CLUSTER_TENANTS` estiver vazio. |

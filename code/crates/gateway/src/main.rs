@@ -299,7 +299,15 @@ fn announce_gateway(
     llama: Arc<llama::Manager>,
 ) {
     let id = std::env::var("AI_CLUSTER_GATEWAY_ID").unwrap_or_else(|_| format!("gateway-{addr}"));
-    let url = std::env::var("AI_CLUSTER_GATEWAY_URL").unwrap_or_else(|_| format!("http://{addr}"));
+    // Escutando em 0.0.0.0 não há endereço que o cliente possa usar: melhor vazio (o painel avisa para
+    // definir AI_CLUSTER_GATEWAY_URL) do que anunciar um `http://0.0.0.0:8080`.
+    let url = std::env::var("AI_CLUSTER_GATEWAY_URL").unwrap_or_else(|_| {
+        if addr.ip().is_unspecified() {
+            String::new()
+        } else {
+            format!("http://{addr}")
+        }
+    });
     let models: Vec<GatewayModel> = llms
         .iter()
         .map(|llm| GatewayModel {

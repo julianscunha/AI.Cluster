@@ -64,6 +64,36 @@ pub struct Sampler {
     tokens: usize,
 }
 
+/// Registra uma requisição que o gateway apenas repassou ao `llama-server` (ADR-022): sem o laço de
+/// geração própria não há um `Sampler`, então as medidas vêm do que o repasse viu. `ttft` é o tempo
+/// até o primeiro pedaço da resposta; o ritmo de geração só existe quando a resposta veio em
+/// pedaços (stream) e teve mais de um token. O intervalo entre tokens (ITL) não é medido aqui.
+pub fn record_proxied(
+    ok: bool,
+    prompt_tokens: u64,
+    generated_tokens: u64,
+    ttft: Option<std::time::Duration>,
+    total: std::time::Duration,
+    streamed: bool,
+) {
+    let mut inner = lock();
+    inner.requests += 1;
+    if !ok {
+        inner.failed += 1;
+    }
+    inner.prompt_tokens += prompt_tokens;
+    inner.generated_tokens += generated_tokens;
+    if let Some(ttft) = ttft {
+        push(&mut inner.ttft_us, ttft.as_micros() as u64);
+        if streamed && generated_tokens > 1 && total > ttft {
+            push(
+                &mut inner.tokens_per_second,
+                (generated_tokens - 1) as f64 / (total - ttft).as_secs_f64(),
+            );
+        }
+    }
+}
+
 impl Sampler {
     pub fn start() -> Self {
         Self {

@@ -439,6 +439,7 @@ impl Llama {
     /// cobrada pelo `usage` que o próprio servidor devolve; o `permit` (a vaga única) só volta quando
     /// a resposta termina ou o cliente desiste.
     pub async fn forward(&self, body: Bytes, tenant: Arc<Tenant>, permit: Permit) -> Response {
+        let started = Instant::now();
         let streaming = serde_json::from_slice::<serde_json::Value>(&body)
             .ok()
             .is_some_and(|v| v["stream"].as_bool().unwrap_or(false));
@@ -460,6 +461,10 @@ impl Llama {
             seen: 0,
             tenant,
             charged: false,
+            started,
+            first: None,
+            ok: parts.status.is_success(),
+            streamed: streaming,
             _permit: permit,
         };
         let mut response = Response::from_parts(parts, Body::from_stream(stream));
@@ -485,16 +490,23 @@ fn with_usage(body: &Bytes) -> Bytes {
     serde_json::to_vec(&value).map_or_else(|_| body.clone(), Bytes::from)
 }
 
-/// `total_tokens` do último `usage` num texto (o fim de um stream, ou uma resposta inteira).
-pub fn total_tokens(text: &[u8]) -> Option<u64> {
+/// O número que vem depois de `"campo":` no último `usage` de um texto (o fim de um stream, ou uma
+/// resposta inteira).
+fn usage_field(text: &[u8], field: &str) -> Option<u64> {
     let text = std::str::from_utf8(text).ok()?;
-    let at = text.rfind("\"total_tokens\"")?;
-    let rest = text[at + "\"total_tokens\"".len()..]
+    let key = format!("\"{field}\"");
+    let at = text.rfind(&key)?;
+    let rest = text[at + key.len()..]
         .trim_start_matches([' ', ':'])
         .chars()
         .take_while(char::is_ascii_digit)
         .collect::<String>();
     rest.parse().ok()
+}
+
+/// `total_tokens` do último `usage` num texto.
+pub fn total_tokens(text: &[u8]) -> Option<u64> {
+    usage_field(text, "total_tokens")
 }
 
 /// Repassa a resposta e, no fim, cobra os tokens do tenant. Segura a vaga até lá.
@@ -506,6 +518,12 @@ struct Tap {
     seen: u64,
     tenant: Arc<Tenant>,
     charged: bool,
+    /// Quando o gateway recebeu o pedido, e quando saiu o primeiro pedaço da resposta: as medidas do
+    /// painel (TTFT, ritmo de geração) de uma requisição que só passa por aqui.
+    started: Instant,
+    first: Option<Instant>,
+    ok: bool,
+    streamed: bool,
     _permit: Permit,
 }
 
@@ -519,6 +537,14 @@ impl Tap {
             return;
         }
         self.charged = true;
+        crate::metrics::record_proxied(
+            self.ok,
+            usage_field(&self.tail, "prompt_tokens").unwrap_or(0),
+            usage_field(&self.tail, "completion_tokens").unwrap_or(0),
+            self.first.map(|first| first.duration_since(self.started)),
+            self.started.elapsed(),
+            self.streamed,
+        );
         let tokens = total_tokens(&self.tail).unwrap_or(self.seen.div_ceil(4));
         if tokens > 0 {
             self.tenant.charge(tokens);
@@ -539,6 +565,7 @@ impl Stream for Tap {
         let this = &mut *self;
         match this.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
+                this.first.get_or_insert_with(Instant::now);
                 this.tail.extend_from_slice(&chunk);
                 if this.tail.len() > TAIL * 2 {
                     let cut = this.tail.len() - TAIL;
@@ -1220,6 +1247,10 @@ data: [DONE]
             seen: 0,
             tenant: tenant.clone(),
             charged: false,
+            started: Instant::now(),
+            first: None,
+            ok: true,
+            streamed: true,
             _permit: permit,
         };
         // Lê só o primeiro pedaço e desiste.
@@ -1227,6 +1258,29 @@ data: [DONE]
         assert!(first.is_some());
         drop(tap);
         assert_eq!(tenant.charged_total(), 100, "400 bytes ≈ 100 tokens");
+    }
+
+    #[test]
+    fn o_repasse_le_os_tokens_do_usage_e_entra_nas_medidas_do_painel() {
+        let fim =
+            br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}"#;
+        assert_eq!(usage_field(fim, "prompt_tokens"), Some(12));
+        assert_eq!(usage_field(fim, "completion_tokens"), Some(7));
+        assert_eq!(usage_field(fim, "nao_existe"), None);
+
+        let antes = crate::metrics::stats();
+        crate::metrics::record_proxied(
+            true,
+            12,
+            7,
+            Some(Duration::from_millis(300)),
+            Duration::from_millis(900),
+            true,
+        );
+        let depois = crate::metrics::stats();
+        assert!(depois.requests > antes.requests);
+        assert!(depois.generated_tokens >= antes.generated_tokens + 7);
+        assert!(depois.prompt_tokens >= antes.prompt_tokens + 12);
     }
 
     /// Um stream pronto, sem depender de uma biblioteca de streams nos testes.

@@ -156,6 +156,7 @@ make_credentials() {
     echo "AI_CLUSTER_INSECURE=1"
     echo "AI_CLUSTER_CONTROLLER=http://127.0.0.1:$GRPC_PORT"
     echo "AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:$HTTP_PORT"
+    echo "AI_CLUSTER_GATEWAY_URL=http://$IP:$HTTP_PORT"
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
     echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
     echo "AI_CLUSTER_LLAMA_TLS_CA=$CONF/pki/ca.crt"
@@ -400,6 +401,8 @@ fetch_gateway_kit() {
   cp "$t/ca.crt" "$t/gateway.crt" "$t/gateway.key" "$CONF/pki/"
   cp "$t/gateway.env" "$CONF/gateway.env"
   sed -i "s#^AI_CLUSTER_MODELS_DIR=.*#AI_CLUSTER_MODELS_DIR=$MODELS#" "$CONF/gateway.env"
+  sed -i '/^AI_CLUSTER_GATEWAY_URL=/d' "$CONF/gateway.env"
+  own_ip=$(lan_ip); [ -z "$own_ip" ] || echo "AI_CLUSTER_GATEWAY_URL=http://$own_ip:$HTTP_PORT" >> "$CONF/gateway.env"
   rm -rf "$t"
   chown ai-cluster:ai-cluster "$CONF/pki/gateway.key" "$CONF/pki/gateway.crt" "$CONF/pki/ca.crt"
   chown root:ai-cluster "$CONF" "$CONF/pki"; chmod 750 "$CONF" "$CONF/pki"
@@ -524,7 +527,7 @@ cmd_invite() {
   tar -C "$CONF/pki" -czf "$WEB/pki-worker.tar.gz" ca.crt
   g=$(mktemp -d)
   cp "$CONF/pki/ca.crt" "$CONF/pki/gateway.crt" "$CONF/pki/gateway.key" "$g/"
-  sed "s#^AI_CLUSTER_CONTROLLER=.*#AI_CLUSTER_CONTROLLER=http://$IP:$GRPC_PORT#" "$CONF/gateway.env" > "$g/gateway.env"
+  sed -e "s#^AI_CLUSTER_CONTROLLER=.*#AI_CLUSTER_CONTROLLER=http://$IP:$GRPC_PORT#" -e '/^AI_CLUSTER_GATEWAY_URL=/d' "$CONF/gateway.env" > "$g/gateway.env"
   tar -C "$g" -czf "$WEB/gw-$GCODE.tar.gz" .
   rm -rf "$g"
   BSUM=$(sha256sum "$WEB/bootstrap.sh" | cut -d' ' -f1); PSUM=$(sha256sum "$WEB/pki-worker.tar.gz" | cut -d' ' -f1)
