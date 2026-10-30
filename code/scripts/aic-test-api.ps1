@@ -10,7 +10,8 @@
       vem com as mesmas medidas.
   Sem -Model usa o primeiro modelo de linguagem da lista. A chave está em /etc/ai-cluster/gateway.env,
   no servidor (AI_CLUSTER_API_KEY), ou é a que o `ai-cluster model start` mostrou.
-  Os tokens são contados pelos pedaços que o gateway envia (cerca de um por token).
+  Os tokens são contados pelos pedaços que o gateway envia (cerca de um por token). -TimeoutSec (padrão
+  900) é quanto o script espera por uma resposta; enquanto não chega a primeira palavra ele mostra pontos.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\aic-test-api.ps1 -Url http://192.168.1.25:8080 -Key SUA_CHAVE
@@ -28,6 +29,7 @@ param(
   [string]$Prompt = "",
   [int]$MaxTokens = 200,
   [int]$Runs = 1,
+  [int]$TimeoutSec = 900,
   [switch]$Chat,
   [string]$System = "",
   [ValidateSet("pt", "en")][string]$Lang = "pt"
@@ -86,7 +88,8 @@ $Url = $Url.TrimEnd("/")
 if (-not $Prompt) { $Prompt = T "Responda em uma frase: o que é um cluster?" "Answer in one sentence: what is a cluster?" }
 
 $http = New-Object System.Net.Http.HttpClient
-$http.Timeout = [TimeSpan]::FromSeconds(600)
+# Quem manda no tempo é o -TimeoutSec (padrão 900 s): um modelo num Pi leva minutos.
+$http.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
 $http.DefaultRequestHeaders.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", $Key)
 
 # Devolve @{ Code; Body } sem lançar exceção por código HTTP de erro.
@@ -103,26 +106,44 @@ function Ask($messages, [bool]$live) {
   $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, "$Url/v1/chat/completions")
   $req.Content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, "application/json")
   $clock = [Diagnostics.Stopwatch]::StartNew()
-  try { $res = $http.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult() }
-  catch { return @{ Ok = $false; Error = $_.Exception.InnerException.Message } }
-  if ([int]$res.StatusCode -ne 200) {
-    $raw = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-    $detail = try { ($raw | ConvertFrom-Json).error.message } catch { $raw }
-    return @{ Ok = $false; Error = "HTTP $([int]$res.StatusCode): $detail" }
-  }
-  $reader = New-Object System.IO.StreamReader($res.Content.ReadAsStreamAsync().GetAwaiter().GetResult(), [Text.Encoding]::UTF8)
-  $text = New-Object System.Text.StringBuilder
-  $chunks = 0; $ttft = $null
-  while (($line = $reader.ReadLine()) -ne $null) {
-    if (-not $line.StartsWith("data:")) { continue }
-    $data = $line.Substring(5).Trim()
-    if ($data -eq "[DONE]") { break }
-    try { $piece = ($data | ConvertFrom-Json).choices[0].delta.content } catch { continue }
-    if (-not $piece) { continue }
-    if ($null -eq $ttft) { $ttft = $clock.Elapsed.TotalSeconds }
-    $chunks++
-    [void]$text.Append($piece)
-    if ($live) { Write-Host $piece -NoNewline }
+  $cts = New-Object System.Threading.CancellationTokenSource
+  $cts.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec))
+  $limit = T "passou de $TimeoutSec s sem terminar (um modelo num Pi pode levar minutos; use -TimeoutSec maior ou -MaxTokens menor)" "did not finish within $TimeoutSec s (a model on a Pi can take minutes; raise -TimeoutSec or lower -MaxTokens)"
+  try {
+    $sending = $http.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cts.Token)
+    while (-not $sending.Wait(5000)) { if ($live) { Write-Host "." -NoNewline -ForegroundColor DarkGray } }
+    $res = $sending.GetAwaiter().GetResult()
+    if ([int]$res.StatusCode -ne 200) {
+      $raw = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      $detail = try { ($raw | ConvertFrom-Json).error.message } catch { $raw }
+      return @{ Ok = $false; Error = "HTTP $([int]$res.StatusCode): $detail" }
+    }
+    $reader = New-Object System.IO.StreamReader($res.Content.ReadAsStreamAsync().GetAwaiter().GetResult(), [Text.Encoding]::UTF8)
+    $text = New-Object System.Text.StringBuilder
+    $chunks = 0; $ttft = $null
+    while ($true) {
+      $next = $reader.ReadLineAsync()
+      while (-not $next.Wait(5000)) {
+        if ($cts.IsCancellationRequested) { return @{ Ok = $false; Error = $limit } }
+        if ($live -and $null -eq $ttft) { Write-Host "." -NoNewline -ForegroundColor DarkGray }
+      }
+      $line = $next.Result
+      if ($null -eq $line) { break }
+      if ($clock.Elapsed.TotalSeconds -gt $TimeoutSec) { return @{ Ok = $false; Error = $limit } }
+      if (-not $line.StartsWith("data:")) { continue }
+      $data = $line.Substring(5).Trim()
+      if ($data -eq "[DONE]") { break }
+      try { $piece = ($data | ConvertFrom-Json).choices[0].delta.content } catch { continue }
+      if (-not $piece) { continue }
+      if ($null -eq $ttft) { $ttft = $clock.Elapsed.TotalSeconds }
+      $chunks++
+      [void]$text.Append($piece)
+      if ($live) { Write-Host $piece -NoNewline }
+    }
+  } catch {
+    $why = $_.Exception.GetBaseException()
+    if ($cts.IsCancellationRequested -or $why -is [System.OperationCanceledException]) { return @{ Ok = $false; Error = $limit } }
+    return @{ Ok = $false; Error = (T "a conexão com o gateway caiu: $($why.Message)" "the connection to the gateway dropped: $($why.Message)") }
   }
   $total = $clock.Elapsed.TotalSeconds
   if ($null -eq $ttft) { $ttft = $total }
