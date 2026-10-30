@@ -97,7 +97,6 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Item | O que falta | Dependência |
 |---|---|---|
 | Console no monitor | Ver o `aic-console` e `F2`/`F12` no HDMI do Orange Pi com teclado real. | hardware |
-| Imagem fora da release | Fluxo documentado para gerar a imagem com a própria chave. | código, documentação |
 | J1, x86 real | Firmware de rede e vídeo, watchdog, redimensionar o ext4 num disco real, Secure Boot, PXE. | hardware |
 | J2 a J4 | Imagem de SO além do contêiner, `bootstrap.sh` em VM com systemd, reimage automático pelo controller. | código, hardware |
 | J5, J6, assinatura de boot | A/B em mais placas, ARM64, u-boot que verifique a imagem (TPM/secure boot). | hardware |

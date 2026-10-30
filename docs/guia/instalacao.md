@@ -198,6 +198,19 @@ Para o nó chegar ao ambiente de recuperação pela rede, `os/netboot/` traz `bu
 
 Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh`. Veja [[operacao]].
 
+## Imagem com a sua própria chave (fora da release)
+
+A imagem do AI Cluster OS só instala atualização assinada por uma chave cuja **pública está dentro da própria imagem** ([[adr-018-release-assinada-e-medida-do-slot]]). Por isso uma imagem da release do projeto não aceita atualizações que você assinar, e vice-versa: para atualizar pelo seu controller, gere a imagem com a sua chave.
+
+1. **Gere o par Ed25519** (uma vez). A privada fica em `~/.aic/release.key` (0600) e **nunca** vai para o repositório nem para a imagem; a pública, em `release.pub`:
+   `bash os/image/release-keys.sh` (outro diretório: `AIC_KEYS=/cofre bash os/image/release-keys.sh`).
+2. **Monte a imagem com a sua pública.** `os/image/build-rootfs.sh` (armv7) e `os/image/x86/build-rootfs.sh` copiam as públicas de `AIC_PUBS` (padrão `~/.aic/release.pub`) para `/etc/aic-release.d/` da imagem. Depois siga os passos das seções acima (`mk-disk-image.sh` ou `mk-disk.sh`, e a gravação).
+3. **Assine cada versão nova e publique:**
+   `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]` imprime os argumentos de `ai-cluster rollout`. A placa é `armv7-opipc` (padrão) ou `x86_64-uefi`; a versão só cresce (números e pontos). Hospede o `rootfs.gz` num endereço que os nós alcancem e rode `ai-cluster rollout <argumentos impressos> --url <endereço>` ([[operacao]]).
+4. **Troque a chave sem perder os nós:** `bash os/image/release-keys.sh nova` gera `nova.key` e `nova.pub`. Monte uma imagem com `AIC_PUBS="~/.aic/release.pub ~/.aic/nova.pub"` (qualquer uma das duas confere), publique-a assinada com a antiga e, na imagem seguinte, só com a `nova.pub`, a antiga deixa de valer. A versão só cresce, então uma release antiga não volta.
+
+Perder a chave privada significa não poder mais atualizar os nós por rollout: eles só voltam a aceitar atualização regravando a imagem com uma pública nova. Guarde a privada fora da máquina de build quando puder.
+
 ## Outras arquiteturas
 
 Para um Linux ARM64 qualquer, compile o binário para essa arquitetura e use `bootstrap.sh` ou o contêiner. Não há imagem de disco nem atualização A/B para ARM64.
