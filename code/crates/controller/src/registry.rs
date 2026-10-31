@@ -138,6 +138,8 @@ pub struct Registry {
     path: Option<std::path::PathBuf>,
     /// Whether a node that registers for the first time is trusted at once.
     auto_approve: bool,
+    /// Ids pré-aprovados pelo claim de instalação (ADR-023): id -> até quando (ms). Um só registro gasta.
+    preapproved: Mutex<HashMap<String, u64>>,
 }
 
 impl Default for Registry {
@@ -154,7 +156,28 @@ impl Registry {
             known: Mutex::new(HashMap::new()),
             path: None,
             auto_approve: true,
+            preapproved: Mutex::default(),
         }
+    }
+
+    /// Pré-aprova `node_id` até `until_ms` para o aparelho que acabou de consumir o token de instalação
+    /// (ADR-023). Recusa id que já tem dono (aprovado ou vivo, ou aprovado antes e fora do ar) e id com
+    /// lápide de remoção (ADR-027). Pré-aprovações vencidas saem ao inserir.
+    pub fn pre_approve(&self, node_id: &str, now: u64, until_ms: u64) -> bool {
+        let nodes = self.lock();
+        let known = self.lock_known();
+        let removed = known.get(node_id).is_some_and(|entry| entry.removed);
+        let taken = match nodes.get(node_id) {
+            Some(record) => record.trusted || record.state != NodeState::Offline,
+            None => known.get(node_id).is_some_and(|entry| entry.trusted),
+        };
+        if taken || removed {
+            return false;
+        }
+        let mut preapproved = self.preapproved.lock().unwrap_or_else(|e| e.into_inner());
+        preapproved.retain(|_, until| now < *until);
+        preapproved.insert(node_id.to_string(), until_ms);
+        true
     }
 
     /// Keeps approvals and credentials in `path`, one `node_id<TAB>credential<TAB>0|1` line per
@@ -436,7 +459,14 @@ impl Registry {
         now: u64,
         presented: &[u8],
     ) -> Option<NodeRecord> {
-        let trusted = self.auto_approve;
+        // Pré-aprovado pelo claim de instalação (ADR-023): confiável no primeiro registro, uma vez só.
+        let preapproved = self
+            .preapproved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&identity.node_id)
+            .is_some_and(|until| now < *until);
+        let trusted = self.auto_approve || preapproved;
         // Drawn before the lock: if entropy fails the panic must not poison the registry.
         let fresh = new_credential();
         let mut nodes = self.lock();
@@ -516,6 +546,12 @@ impl Registry {
                 last_heartbeat_unix_ms: now,
             })
             .clone();
+        if preapproved {
+            self.preapproved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&identity.node_id);
+        }
         self.remember(&identity.node_id, &record.credential, record.trusted);
         Some(record)
     }
@@ -981,6 +1017,39 @@ mod tests {
             )
             .unwrap();
         assert!(registry.is_available("node-a"));
+    }
+
+    #[test]
+    fn um_id_pre_aprovado_nasce_confiavel_so_uma_vez_e_id_com_dono_nao_se_pre_aprova() {
+        let registry = Registry::requiring_approval();
+        assert!(registry.pre_approve("x86-ddee01", 900, 5_000));
+        // A pré-aprovação é gasta no primeiro registro; depois o id tem dono confiável e não se reserva de novo.
+        let first = registry.register(identity("x86-ddee01"), CapabilityReport::default(), 1_000);
+        assert!(first.trusted);
+        assert!(!registry.pre_approve("x86-ddee01", 1_100, 9_000));
+        // Vencida a pré-aprovação, o registro volta a esperar o operador.
+        let registry = Registry::requiring_approval();
+        assert!(registry.pre_approve("novo", 1_000, 2_000));
+        let late = registry.register(identity("novo"), CapabilityReport::default(), 3_000);
+        assert!(!late.trusted);
+        // Um id vivo e pendente, e um confiável, não se pré-aprovam.
+        registry.register(identity("vivo"), CapabilityReport::default(), 1_000);
+        assert!(!registry.pre_approve("vivo", 1_100, 9_000));
+    }
+
+    #[test]
+    fn pre_aprovacao_recusa_id_com_lapide_e_limpa_as_vencidas() {
+        let registry = Registry::requiring_approval();
+        registry.register(identity("velho"), CapabilityReport::default(), 1_000);
+        assert!(registry.forget("velho"));
+        // Lápide de remoção (ADR-027): o id não se reserva por esta via.
+        assert!(!registry.pre_approve("velho", 2_000, 9_000));
+        assert!(registry.pre_approve("novo", 2_000, 3_000));
+        // Ao inserir outra depois de vencida ("novo" venceu em 3_000), a entrada antiga sai.
+        assert!(registry.pre_approve("outro", 4_000, 9_000));
+        let kept = registry.preapproved.lock().unwrap();
+        assert!(!kept.contains_key("novo"));
+        assert!(kept.contains_key("outro"));
     }
 
     #[test]

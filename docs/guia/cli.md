@@ -44,6 +44,7 @@ aic <recurso> <ação> [alvo] [--opções]
 | `aic cluster install reject <impressão>` | Tira o aparelho da lista de espera. |
 | `aic cluster install open [--minutes N]` | Abre a porta em que os aparelhos se apresentam (1 a 120 min, padrão 15). Ela se fecha sozinha. |
 | `aic cluster install close` | Fecha a porta agora. |
+| `aic-wait <url-da-espera> --claim-file <arquivo\|-> --out worker.env [--name <nome>]` | Não é `aic`: roda no aparelho aprovado. Consome o token de instalação (uso único) e grava `worker.env` (600, por `.tmp` e `rename`) com `AI_CLUSTER_CONTROLLER`, `AI_CLUSTER_JOIN_TOKEN` e `AI_CLUSTER_NODE_ID`; o worker já nasce pré-aprovado por 2 min. O token pode vir também em `AIC_INSTALL_TOKEN`. `--claim <token>` funciona, mas expõe o token a `ps`. Token usado, vencido ou inventado falha sem gravar nada. Sem `--name` o id é `x86-` + os 6 últimos hex do MAC. Exige a porta de espera com TLS (ou `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1` no controller, porque o claim entrega o join token) e `AI_CLUSTER_PUBLIC_URL` no controller. |
 
 ### Reservas
 

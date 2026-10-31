@@ -274,11 +274,14 @@ bash os/image/x86/mk-disk.sh --controller https://controller.exemplo:50051 \
   --token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img
 ```
 
-A imagem leva a identidade do worker (`worker.env`), então é uma por worker. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:
+Sem `--controller`, `--token` e `--node-id` (ou com `--insecure` sozinho, o que é recusado) a imagem é **genérica**: sai sem `/worker.env`, e a identidade entra depois, na gravação. Com as três opções, a imagem leva a identidade do worker, então é uma por worker. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:
 
 ```bash
 sudo sh os/image/x86/install-disk.sh build/disk-x86.img /dev/sdX --yes   # APAGA o disco inteiro
+sudo sh os/image/x86/install-disk.sh build/disk-x86.img /dev/sdX --yes   --env worker.env --efi-entry   # opcionais: grava worker.env no /data e cria a entrada de boot
 ```
+
+`--env <arquivo>` grava o arquivo como `/worker.env` (modo 0600, dono root) na partição de dados, com `debugfs`, sem montar; precisa de `debugfs` e `cmp` (e2fsprogs). `--efi-entry` cria a entrada "AI Cluster OS" com `efibootmgr` na NVRAM **da máquina que roda o script**: serve quando ela é o próprio PC; num pendrive de recuperação, a entrada não vai para o PC de destino. Sem `efibootmgr` só avisa. O caminho `EFI/BOOT/BOOTX64.EFI` já dá boot sem entrada.
 
 O script grava a imagem, move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados até o fim do disco. Depois, dê boot pelo disco em modo UEFI. As releases para atualizar o worker são assinadas com a placa `x86_64-uefi`: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> x86_64-uefi` (o `.gz` e o `.ext4` são o `build/rootfs-x86.ext4` comprimido e sem comprimir).
 

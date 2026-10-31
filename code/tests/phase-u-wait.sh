@@ -14,7 +14,7 @@ set -u
 cargo build -q -p ai-cluster-controller -p ai-cluster-cli -p ai-cluster-wait || exit 1
 B=/t/debug
 export AI_CLUSTER_INSECURE=1 AI_CLUSTER_JOIN_TOKEN=u-join AI_CLUSTER_OPERATOR_TOKEN=u-op AI_CLUSTER_INFERENCE_TOKEN=u-inf
-export AI_CLUSTER_CONTROLLER=http://127.0.0.1:50051 AI_CLUSTER_METRICS_ADDR=127.0.0.1:19101
+export AI_CLUSTER_CONTROLLER=http://127.0.0.1:50051 AI_CLUSTER_METRICS_ADDR=127.0.0.1:19101 AI_CLUSTER_PUBLIC_URL=http://127.0.0.1:50051 AI_CLUSTER_ALLOW_PLAIN_CLAIM=1
 AI_CLUSTER_ADDR=127.0.0.1:50051 AI_CLUSTER_ENROLL_ADDR=127.0.0.1:50052 $B/ai-cluster-controller >/tmp/controller.log 2>&1 &
 CTRL=$!
 fail() { echo "FALHA: $1"; cat /tmp/controller.log | tail -5; kill $CTRL 2>/dev/null; exit 1; }
@@ -59,6 +59,13 @@ grep -q "\"disk\":\"$DISK\"" /tmp/install.json || fail "disco errado no arquivo"
 TOKEN=$(sed -n "s/.*\"token\":\"\([0-9a-f]*\)\".*/\1/p" /tmp/install.json)
 [ ${#TOKEN} -eq 32 ] || fail "token inesperado: $TOKEN"
 echo "OK C) o dono do segredo recebeu o token e o disco ($DISK)"
+
+# C2) o token de uso único vira worker.env (600); a segunda troca é recusada e não grava nada
+$B/aic-wait http://127.0.0.1:50052 --claim "$TOKEN" --out /tmp/worker.env >/tmp/claim.log 2>&1 || fail "claim: $(cat /tmp/claim.log)"
+grep -q "AI_CLUSTER_JOIN_TOKEN=u-join" /tmp/worker.env && grep -q "AI_CLUSTER_NODE_ID=x86-" /tmp/worker.env || fail "worker.env: $(cat /tmp/worker.env)"
+$B/aic-wait http://127.0.0.1:50052 --claim "$TOKEN" --out /tmp/worker2.env >/dev/null 2>&1 && fail "token reusado foi aceito"
+[ -e /tmp/worker2.env ] && fail "gravou worker.env com token já usado"
+echo "OK C2) token de uso único: vira worker.env e a segunda troca é recusada"
 
 # D) quem aparece depois com o mesmo MAC (outro segredo) não derruba a aprovação
 OUT=$($B/aic-wait http://127.0.0.1:50052 --once 2>&1)

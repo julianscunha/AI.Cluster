@@ -1093,6 +1093,22 @@ message AnnounceResponse {
   uint32 retry_after_secs = 5;
 }
 
+message ClaimInstallRequest {
+  /// Token de instalação de uso único, recebido na aprovação (`AnnounceResponse.install_token`).
+  string token = 1;
+  /// Nome do worker; vazio usa `x86-` mais os últimos 6 hex do MAC.
+  string node_name = 2;
+}
+
+message ClaimInstallResponse {
+  /// URL do controller (RPC) que o worker usa.
+  string controller_url = 1;
+  /// Join token do cluster; sai só para quem consumiu o token de instalação.
+  string join_token = 2;
+  /// Id do worker, pré-aprovado: o primeiro registro com ele nasce confiável.
+  string node_id = 3;
+}
+
 message PendingInstall {
   string fingerprint = 1;
   string mac = 2;
@@ -1150,6 +1166,7 @@ message SetEnrollmentResponse {
 /// à etapa de espera.
 service Enrollment {
   rpc Announce(AnnounceRequest) returns (AnnounceResponse);
+  rpc ClaimInstall(ClaimInstallRequest) returns (ClaimInstallResponse);
 }
 
 service LinkProbe {

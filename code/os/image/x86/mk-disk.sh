@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Monta a imagem de disco x86_64 UEFI do AI Cluster OS (GPT, A/B) a partir de build/rootfs-x86.ext4.
 #
-#   bash code/os/image/x86/mk-disk.sh --controller URL --token T --node-id ID [--insecure] [--ssh-key arq.pub]
+#   bash code/os/image/x86/mk-disk.sh [--controller URL --token T --node-id ID [--insecure]] [--ssh-key arq.pub]
+#
+# Sem --controller/--token/--node-id a imagem é genérica: sem /worker.env (a identidade entra depois,
+# com install-disk.sh --env). Com as três opções, grava /worker.env como antes.
 #
 # Layout (GPT): p1 ESP FAT32 64 MiB (BOOTX64.EFI + EFI/aic/grubenv) | p2 slot A 1 GiB | p3 slot B 1 GiB |
 # p4 `aic-data` o resto (identidade do worker, sobrevive à troca de slot). A identidade do slot é o número
@@ -16,20 +19,26 @@ while [ $# -gt 0 ]; do
     --insecure) INSECURE=1; shift;; --ssh-key) SSHKEY=$2; shift 2;; *) echo "argumento desconhecido: $1" >&2; exit 2;;
   esac
 done
-[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] && [ -n "$NODE" ] || { echo "falta --controller, --token ou --node-id" >&2; exit 2; }
-# os valores entram num arquivo que o root carrega no boot: só caracteres seguros
-for v in "$CONTROLLER" "$TOKEN" "$NODE"; do case "$v" in *[!A-Za-z0-9._:/@%+=-]*) echo "valor com caractere não permitido: $v" >&2; exit 2;; esac; done
+ID=0; { [ -n "$CONTROLLER$TOKEN$NODE" ] || [ "$INSECURE" = 1 ]; } && ID=1
+if [ "$ID" = 1 ]; then
+  [ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] && [ -n "$NODE" ] || { echo "falta --controller, --token ou --node-id (sem as três, a imagem é genérica)" >&2; exit 2; }
+  # os valores entram num arquivo que o root carrega no boot: só caracteres seguros
+  for v in "$CONTROLLER" "$TOKEN" "$NODE"; do case "$v" in *[!A-Za-z0-9._:/@%+=-]*) echo "valor com caractere não permitido: $v" >&2; exit 2;; esac; done
+fi
 umask 077   # o .env temporário e a imagem carregam o token de join
 trap 'rm -f build/worker-x86.env build/authorized_keys-x86' EXIT
+rm -f build/worker-x86.env build/authorized_keys-x86   # sobra de build anterior não pode entrar na imagem
 [ -f build/rootfs-x86.ext4 ] || { echo "falta build/rootfs-x86.ext4 (rode x86/build-rootfs.sh)" >&2; exit 2; }
 cp x86/grub.cfg build/grub-x86.cfg
-{
-  echo "AI_CLUSTER_CONTROLLER=$CONTROLLER"; echo "AI_CLUSTER_JOIN_TOKEN=$TOKEN"; echo "AI_CLUSTER_NODE_ID=$NODE"
-  echo "AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential"; echo "AI_CLUSTER_MODEL_DIR=/data/models"
-  echo "AI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request"
-  [ "$INSECURE" = 1 ] && echo "AI_CLUSTER_INSECURE=1"
-  true
-} > build/worker-x86.env
+if [ "$ID" = 1 ]; then
+  {
+    echo "AI_CLUSTER_CONTROLLER=$CONTROLLER"; echo "AI_CLUSTER_JOIN_TOKEN=$TOKEN"; echo "AI_CLUSTER_NODE_ID=$NODE"
+    echo "AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential"; echo "AI_CLUSTER_MODEL_DIR=/data/models"
+    echo "AI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request"
+    [ "$INSECURE" = 1 ] && echo "AI_CLUSTER_INSECURE=1"
+    true
+  } > build/worker-x86.env
+fi
 [ -z "$SSHKEY" ] || cp "$SSHKEY" build/authorized_keys-x86
 docker image inspect aic-x86-tools:1 >/dev/null 2>&1 || docker build -q -f x86/Dockerfile.tools -t aic-x86-tools:1 x86 >/dev/null
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" aic-x86-tools:1 sh -c "
@@ -48,7 +57,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" ai
   mcopy -i esp.img grubenv ::EFI/aic/grubenv
   # dados
   mkdir -p d/state d/ssh d/models
-  cp /b/worker-x86.env d/worker.env; chmod 600 d/worker.env
+  [ ! -f /b/worker-x86.env ] || { cp /b/worker-x86.env d/worker.env; chmod 600 d/worker.env; }
   [ ! -f /b/authorized_keys-x86 ] || { cp /b/authorized_keys-x86 d/ssh/authorized_keys; chmod 700 d/ssh; chmod 600 d/ssh/authorized_keys; }
   mke2fs -q -t ext4 -O ^orphan_file -L aic-data -d d data.img \$(((P4N-16)/2))K
   # disco

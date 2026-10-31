@@ -134,6 +134,7 @@ dependencies = [
  "ai-cluster-common",
  "ai-cluster-protocol",
  "getrandom 0.4.3",
+ "libc",
  "tokio",
  "tonic",
 ]

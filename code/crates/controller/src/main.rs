@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ai_cluster_controller::enrollment::EnrollmentService;
+use ai_cluster_controller::enrollment::{ClaimSetup, EnrollmentService};
 use ai_cluster_controller::events::EventLog;
 use ai_cluster_controller::registry::{Registry, unix_ms};
 use ai_cluster_controller::service::{ClusterControlService, LinkProbeService, MAX_PROBE_BYTES};
@@ -306,8 +306,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(identity) = identity.clone() {
             enroll_server = enroll_server.tls_config(ServerTlsConfig::new().identity(identity))?;
         }
-        let service = EnrollmentServer::new(EnrollmentService::new(enrollments))
-            .max_decoding_message_size(16 * 1024);
+        // ClaimInstall entrega a URL do controller e o join token: a URL é a que o worker alcança.
+        let public_url = std::env::var("AI_CLUSTER_PUBLIC_URL")
+            .ok()
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
+        // O join token só sai pela porta TLS, salvo com AI_CLUSTER_ALLOW_PLAIN_CLAIM=1 (ADR-023).
+        let setup = ClaimSetup {
+            public_url,
+            join_token: token.clone(),
+            tls: identity.is_some(),
+            plain_allowed: std::env::var("AI_CLUSTER_ALLOW_PLAIN_CLAIM")
+                .is_ok_and(|value| value.trim() == "1"),
+        };
+        let service =
+            EnrollmentServer::new(EnrollmentService::new(enrollments, registry.clone(), setup))
+                .max_decoding_message_size(16 * 1024);
         println!("etapa de espera de instalação em {enroll_addr} (sem token)");
         tokio::spawn(async move {
             let incoming = ai_cluster_controller::enrollment::limited_incoming(listener);

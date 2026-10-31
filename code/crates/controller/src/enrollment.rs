@@ -11,10 +11,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use ai_cluster_protocol::cluster::enrollment_server::Enrollment;
 use ai_cluster_protocol::cluster::{
-    AnnounceRequest, AnnounceResponse, InstallDisk, PendingInstall,
+    AnnounceRequest, AnnounceResponse, ClaimInstallRequest, ClaimInstallResponse, InstallDisk,
+    PendingInstall,
 };
 use sha2::{Digest, Sha256};
 use tonic::{Request, Response, Status};
+
+use crate::registry::Registry;
 
 /// Aparelhos na lista ao mesmo tempo; acima disso quem chega é ignorado até alguém sair.
 pub const MAX_PENDING: usize = 32;
@@ -25,6 +28,10 @@ pub const TTL_MS: u64 = 15 * 60_000;
 /// De quanto em quanto tempo o aparelho volta a perguntar.
 pub const RETRY_SECS: u32 = 5;
 const MAX_DISKS: usize = 16;
+/// Quanto tempo o id fica reservado para o aparelho que consumiu o token (2 min). Curto de propósito:
+/// quem tem o join token pode registrar o id antes; a credencial de registro amarrada ao aparelho não
+/// é viável sem mudar o worker (limite documentado no ADR-023).
+pub const PREAPPROVAL_MS: u64 = 2 * 60_000;
 /// Teto da janela em que a porta fica aberta.
 pub const MAX_OPEN_MINUTES: u32 = 120;
 
@@ -34,8 +41,10 @@ struct Candidate {
     /// A cota é por balde: o IPv4 inteiro, ou o /64 de um IPv6 (quem tem uma sub-rede dessas tem
     /// bilhões de endereços). Endereço desconhecido cai num balde só, em vez de escapar da cota.
     bucket: Option<IpAddr>,
-    /// Token já gerado e ainda não entregue.
+    /// Token de instalação, dado ao dono do segredo depois da aprovação.
     token: Option<String>,
+    /// O token foi consumido pelo `ClaimInstall` (uso único): a entrada fica só para recusar o reuso.
+    claimed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -105,6 +114,15 @@ fn valid_mac(mac: &str) -> bool {
             .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+/// Nome de worker dado no claim: o mesmo conjunto de caracteres que o id tem no registro e nos logs.
+fn valid_node_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 fn valid_disk_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 32
@@ -170,6 +188,11 @@ impl Enrollments {
             // A chave é o hash inteiro: quem chega aqui repetiu o segredo, é o mesmo aparelho.
             known.info.last_seen_unix_ms = now;
             known.bucket = bucket;
+            if known.claimed {
+                return Err(Status::failed_precondition(
+                    "este aparelho já consumiu o token de instalação",
+                ));
+            }
             // O token fica disponível ao dono do segredo até a entrada vencer: se a resposta se
             // perder, a próxima pergunta o traz de novo. Quem o consumir o invalida (etapa futura).
             return Ok(AnnounceResponse {
@@ -227,6 +250,7 @@ impl Enrollments {
                 },
                 bucket,
                 token: None,
+                claimed: false,
             },
         );
         Ok(AnnounceResponse {
@@ -256,7 +280,7 @@ impl Enrollments {
         let mut list: Vec<PendingInstall> = self
             .lock()
             .values()
-            .filter(|c| now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS)
+            .filter(|c| !c.claimed && now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS)
             .map(|c| c.info.clone())
             .collect();
         list.sort_by_key(|a| a.first_seen_unix_ms);
@@ -271,7 +295,7 @@ impl Enrollments {
         let Some(candidate) = waiting
             .values_mut()
             .find(|c| c.info.fingerprint == wanted)
-            .filter(|c| now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS)
+            .filter(|c| !c.claimed && now.saturating_sub(c.info.last_seen_unix_ms) <= TTL_MS)
         else {
             return Ok(false);
         };
@@ -291,6 +315,54 @@ impl Enrollments {
         Ok(true)
     }
 
+    /// Consome o token de instalação (uso único) e devolve o id do worker, já pré-aprovado. `reserve`
+    /// pré-aprova o id no registro: se recusar (id com dono), o token não é gasto. Tudo sob o lock desta
+    /// lista, então dois claims com o mesmo token não passam juntos.
+    pub fn claim(
+        &self,
+        token: &str,
+        node_name: &str,
+        now: u64,
+        reserve: impl FnOnce(&str) -> bool,
+    ) -> Result<String, Status> {
+        if !node_name.is_empty() && !valid_node_name(node_name) {
+            return Err(Status::invalid_argument(
+                "nome de worker: até 64 letras, números, ponto, traço ou sublinhado",
+            ));
+        }
+        let mut waiting = self.lock();
+        let Some(candidate) = waiting
+            .values_mut()
+            .find(|c| c.token.as_deref() == Some(token))
+        else {
+            return Err(Status::not_found(
+                "token de instalação inválido, expirado ou já usado",
+            ));
+        };
+        if candidate.claimed {
+            return Err(Status::failed_precondition("token de instalação já usado"));
+        }
+        if now.saturating_sub(candidate.info.last_seen_unix_ms) > TTL_MS {
+            return Err(Status::failed_precondition(
+                "token de instalação expirado: o aparelho precisa se apresentar de novo",
+            ));
+        }
+        // Sem nome, o id sai do MAC (`x86-` + os três últimos octetos, sem dois-pontos).
+        let node_id = if node_name.is_empty() {
+            let tail: String = candidate.info.mac.split(':').skip(3).collect();
+            format!("x86-{tail}")
+        } else {
+            node_name.to_string()
+        };
+        if !reserve(&node_id) {
+            return Err(Status::already_exists(
+                "id de worker já em uso; dê outro nome ao claim",
+            ));
+        }
+        candidate.claimed = true;
+        Ok(node_id)
+    }
+
     pub fn reject(&self, fingerprint: &str) -> bool {
         let mut waiting = self.lock();
         let wanted = normalize(fingerprint);
@@ -300,15 +372,34 @@ impl Enrollments {
     }
 }
 
-/// O lado sem credencial: só `Announce`, na porta própria.
+/// O que o `ClaimInstall` entrega e em que condição: o join token só sai por uma porta TLS, ou em claro
+/// se o operador disser `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`.
+#[derive(Debug, Clone)]
+pub struct ClaimSetup {
+    /// URL do controller que o worker usa (`AI_CLUSTER_PUBLIC_URL`). Sem ela o claim é recusado.
+    pub public_url: Option<String>,
+    pub join_token: String,
+    /// A porta de espera tem TLS (certificado do controller).
+    pub tls: bool,
+    /// `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`: aceita o claim sem TLS, com aviso no log a cada uso.
+    pub plain_allowed: bool,
+}
+
+/// O lado sem credencial: `Announce` e `ClaimInstall`, na porta própria.
 #[derive(Debug)]
 pub struct EnrollmentService {
     enrollments: Arc<Enrollments>,
+    registry: Arc<Registry>,
+    setup: ClaimSetup,
 }
 
 impl EnrollmentService {
-    pub fn new(enrollments: Arc<Enrollments>) -> Self {
-        Self { enrollments }
+    pub fn new(enrollments: Arc<Enrollments>, registry: Arc<Registry>, setup: ClaimSetup) -> Self {
+        Self {
+            enrollments,
+            registry,
+            setup,
+        }
     }
 }
 
@@ -325,6 +416,40 @@ impl Enrollment for EnrollmentService {
             .enrollments
             .announce_if(request.into_inner(), host, now, open)?;
         Ok(Response::new(response))
+    }
+
+    async fn claim_install(
+        &self,
+        request: Request<ClaimInstallRequest>,
+    ) -> Result<Response<ClaimInstallResponse>, Status> {
+        let request = request.into_inner();
+        // Tudo isto antes de gastar o token: recusado aqui, o token continua valendo.
+        if !self.setup.tls {
+            if !self.setup.plain_allowed {
+                return Err(Status::failed_precondition(
+                    "porta de espera sem TLS: o claim entregaria o join token em claro (use TLS ou AI_CLUSTER_ALLOW_PLAIN_CLAIM=1)",
+                ));
+            }
+            println!(
+                "AVISO: ClaimInstall sem TLS (AI_CLUSTER_ALLOW_PLAIN_CLAIM=1): o join token sai em claro"
+            );
+        }
+        let Some(url) = self.setup.public_url.clone() else {
+            return Err(Status::failed_precondition(
+                "controller sem AI_CLUSTER_PUBLIC_URL: o aparelho não sabe onde se ligar",
+            ));
+        };
+        let now = crate::registry::unix_ms();
+        let node_id =
+            self.enrollments
+                .claim(request.token.trim(), request.node_name.trim(), now, |id| {
+                    self.registry.pre_approve(id, now, now + PREAPPROVAL_MS)
+                })?;
+        Ok(Response::new(ClaimInstallResponse {
+            controller_url: url,
+            join_token: self.setup.join_token.clone(),
+            node_id,
+        }))
     }
 }
 
@@ -640,7 +765,16 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let enrollments = Arc::new(Enrollments::default());
         enrollments.open_for(5, crate::registry::unix_ms());
-        let service = EnrollmentServer::new(EnrollmentService::new(enrollments.clone()));
+        let service = EnrollmentServer::new(EnrollmentService::new(
+            enrollments.clone(),
+            Arc::new(Registry::new()),
+            ClaimSetup {
+                public_url: None,
+                join_token: String::new(),
+                tls: false,
+                plain_allowed: false,
+            },
+        ));
         tokio::spawn(
             tonic::transport::Server::builder()
                 .add_service(service)
@@ -657,5 +791,154 @@ mod tests {
         let listed = enrollments.list(crate::registry::unix_ms());
         assert_eq!(listed[0].fingerprint, reply.fingerprint);
         assert_eq!(listed[0].host, "127.0.0.1");
+    }
+
+    /// Anuncia, aprova e devolve o token de instalação que o aparelho receberia.
+    fn aprovado(e: &Enrollments, secret: u8, mac: &str, now: u64) -> String {
+        let fp = e
+            .announce(hello(secret, mac), None, now)
+            .unwrap()
+            .fingerprint;
+        assert!(e.approve(&fp, "mmcblk0", now).unwrap());
+        e.announce(hello(secret, mac), None, now)
+            .unwrap()
+            .install_token
+    }
+
+    #[test]
+    fn o_token_de_instalacao_vale_uma_vez() {
+        let e = Enrollments::default();
+        let token = aprovado(&e, 1, MAC, 1_000);
+        let mut reserved = Vec::new();
+        let node = e
+            .claim(&token, "", 2_000, |id| {
+                reserved.push(id.to_string());
+                true
+            })
+            .unwrap();
+        assert_eq!(node, "x86-ddee01");
+        assert_eq!(reserved, ["x86-ddee01"]);
+        let again = e.claim(&token, "", 3_000, |_| true).unwrap_err();
+        assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+        // O aparelho que já consumiu não recebe o token de novo nem volta à lista.
+        let back = e.announce(hello(1, MAC), None, 4_000).unwrap_err();
+        assert_eq!(back.code(), tonic::Code::FailedPrecondition);
+        assert!(e.list(4_000).is_empty());
+    }
+
+    #[test]
+    fn token_vencido_ou_inventado_nao_reserva_nem_gasta_nada() {
+        let e = Enrollments::default();
+        let token = aprovado(&e, 1, MAC, 1_000);
+        let late = 1_000 + TTL_MS + 1;
+        let expired = e
+            .claim(&token, "", late, |_| {
+                panic!("não reserva com token vencido")
+            })
+            .unwrap_err();
+        assert_eq!(expired.code(), tonic::Code::FailedPrecondition);
+        let made_up = e.claim("00", "", 2_000, |_| true).unwrap_err();
+        assert_eq!(made_up.code(), tonic::Code::NotFound);
+    }
+
+    #[test]
+    fn id_recusado_pela_reserva_nao_gasta_o_token_e_nome_invalido_nem_chega_la() {
+        let e = Enrollments::default();
+        let token = aprovado(&e, 1, MAC, 1_000);
+        let taken = e.claim(&token, "lab-1", 2_000, |_| false).unwrap_err();
+        assert_eq!(taken.code(), tonic::Code::AlreadyExists);
+        let bad = e.claim(&token, "../x", 2_000, |_| true).unwrap_err();
+        assert_eq!(bad.code(), tonic::Code::InvalidArgument);
+        // Com outro nome o mesmo token ainda serve.
+        assert_eq!(
+            e.claim(&token, "lab-2", 3_000, |id| id == "lab-2").unwrap(),
+            "lab-2"
+        );
+    }
+
+    #[tokio::test]
+    async fn claim_install_entrega_url_join_e_id_pre_aprovado_sem_url_recusa() {
+        let enrollments = Arc::new(Enrollments::default());
+        let registry = Arc::new(Registry::requiring_approval());
+        let now = crate::registry::unix_ms();
+        let token = aprovado(&enrollments, 1, MAC, now);
+        let claim = |url: Option<&str>| {
+            EnrollmentService::new(
+                enrollments.clone(),
+                registry.clone(),
+                ClaimSetup {
+                    public_url: url.map(String::from),
+                    join_token: "join-secreto".into(),
+                    tls: true,
+                    plain_allowed: false,
+                },
+            )
+        };
+        let request = || {
+            Request::new(ClaimInstallRequest {
+                token: token.clone(),
+                node_name: String::new(),
+            })
+        };
+        // Sem URL o claim é recusado antes de gastar o token.
+        let refused = claim(None).claim_install(request()).await.unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
+        let got = claim(Some("https://ctl:50051"))
+            .claim_install(request())
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.controller_url, "https://ctl:50051");
+        assert_eq!(got.join_token, "join-secreto");
+        assert_eq!(got.node_id, "x86-ddee01");
+        let again = claim(Some("https://ctl:50051"))
+            .claim_install(request())
+            .await
+            .unwrap_err();
+        assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn claim_sem_tls_so_sai_com_a_permissao_e_recusa_sem_gastar_o_token() {
+        let enrollments = Arc::new(Enrollments::default());
+        let registry = Arc::new(Registry::requiring_approval());
+        let now = crate::registry::unix_ms();
+        let plain = aprovado(&enrollments, 1, MAC, now);
+        let tls = aprovado(&enrollments, 2, "aa:bb:cc:dd:ee:02", now);
+        let setup = |tls: bool, plain_allowed: bool| ClaimSetup {
+            public_url: Some("https://ctl:50051".into()),
+            join_token: "join-secreto".into(),
+            tls,
+            plain_allowed,
+        };
+        let service = |setup: ClaimSetup| {
+            EnrollmentService::new(enrollments.clone(), registry.clone(), setup)
+        };
+        let request = |token: &str| {
+            Request::new(ClaimInstallRequest {
+                token: token.into(),
+                node_name: String::new(),
+            })
+        };
+        // Porta sem TLS e sem a permissão: recusa, e o token continua valendo.
+        let refused = service(setup(false, false))
+            .claim_install(request(&plain))
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
+        assert!(refused.message().contains("em claro"));
+        // Com a permissão explícita, o mesmo token sai (com aviso no log).
+        let ok = service(setup(false, true))
+            .claim_install(request(&plain))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(ok.join_token, "join-secreto");
+        // Com TLS não precisa de permissão.
+        let ok_tls = service(setup(true, false))
+            .claim_install(request(&tls))
+            .await
+            .unwrap();
+        assert_eq!(ok_tls.into_inner().node_id, "x86-ddee02");
     }
 }

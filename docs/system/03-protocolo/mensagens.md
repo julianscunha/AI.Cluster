@@ -45,6 +45,8 @@ Autorização: **join** = token de join (todo worker e cliente); **op** = token 
 | `Reserve` | `ClusterControl` | `ReserveRequest` → `ReserveResponse` | operador | op | retém um worker para uma requisição |
 | `ListReservations` | `ClusterControl` | `ListReservationsRequest` → `ListReservationsResponse` | operador ou CLI | join | reservas vivas |
 | `ReleaseReservation` | `ClusterControl` | `ReleaseReservationRequest` → `ReleaseReservationResponse` | operador | op | libera a reserva do worker |
+| `Announce` | `Enrollment` | `AnnounceRequest` → `AnnounceResponse` | aparelho na etapa de espera | nenhuma (porta de espera aberta) | entra na lista de pendentes; depois da aprovação devolve o token de instalação a quem repete o segredo (ADR-023) |
+| `ClaimInstall` | `Enrollment` | `ClaimInstallRequest` → `ClaimInstallResponse` | aparelho na etapa de espera | token de instalação de uso único | consome o token (uma vez), pré-aprova o id do worker por 2 min (`x86-` + 6 hex do MAC, ou o nome dado) e devolve a URL do controller (`AI_CLUSTER_PUBLIC_URL`) e o join token; só por porta TLS (ou com `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`); token usado, vencido ou inventado recebe recusa e nada sai (ADR-023) |
 
 Total: 2 serviços e 24 RPCs.
 

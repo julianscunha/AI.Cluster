@@ -9,7 +9,7 @@ type: sistema/adr
 
 Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
 
-Status: decidido · registro de pendentes e aprovação implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`); faltam a etapa de espera, o uso do token e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
+Status: decidido · registro de pendentes, aprovação e consumo do token (`ClaimInstall`) implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`, `AI_CLUSTER_PUBLIC_URL`); faltam a imagem de espera, o uso do `worker.env` na instalação e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -38,6 +38,10 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 - A porta anônima tem teto de 64 conexões (a excedente é fechada), vida máxima de 120 s por conexão, timeout de 10 s por chamada e mensagens de até 16 KiB, para não gastar os descritores do plano de controle. A cota por origem vale por IPv4 ou por /64 de IPv6, e endereço desconhecido divide um balde só. Os textos do aparelho entram só em ASCII imprimível.
 - Limite conhecido: sem TLS (certificado do controller ainda não fixado na etapa de espera) o segredo e o token trafegam em claro na rede local; quem espiona a rede pode disputar o token com o aparelho. O desenho completo deve fixar a CA do controller na imagem de espera.
 
+- Consumo do token (`ClaimInstall`, mesma porta): o token é de uso único e vale enquanto a entrada não vence (15 min sem o aparelho aparecer); o consumo acontece sob o lock da lista e só depois o id é reservado no registro. O id (`x86-` + 6 hex do MAC, ou o nome dado) recebe pré-aprovação de 2 min: o primeiro registro com ele nasce confiável, sem o operador. A reserva é recusada se o id já tem dono vivo ou confiável, ou se tem lápide de remoção (ADR-027), e nesse caso o token não é gasto. Pré-aprovações vencidas saem ao inserir uma nova.
+- Transporte do claim: o `ClaimInstall` devolve o join token do cluster, então só sai por porta TLS (`AI_CLUSTER_TLS_CERT/KEY` na espera). Sem TLS o claim é recusado, salvo com `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`, que avisa no log a cada uso. O controller também exige `AI_CLUSTER_PUBLIC_URL`, que é a URL devolvida ao worker.
+- Limite conhecido: a pré-aprovação não amarra o id ao aparelho. Quem tiver o join token pode registrar esse id antes dele, em até 2 min. Amarrar com uma credencial de registro entregue no claim e gravada no `worker.env` exige que o worker apresente essa credencial no primeiro registro; o worker hoje só apresenta a credencial que já salvou, então fica para uma etapa com mudança no worker. Sem a amarração, o prazo curto é a única proteção.
+- Token fora do argv: `aic-wait` aceita o token por `AIC_INSTALL_TOKEN` ou `--claim-file <arquivo|->`. `--claim <token>` continua por compatibilidade, mas o token fica visível a `ps`. A entrada consumida fica na lista só para recusar reuso e não aparece em `install list`. `worker.env` é gravado num `.tmp` novo (sem seguir link), com 600, e trocado por `rename`.
 - Cliente da etapa de espera: o binário `aic-wait` (`crates/wait`), estático e pequeno. Lê o resumo de `/proc` e `/sys`, gera o segredo na memória, mostra a tela e pergunta de novo até ser aprovado. Com `https://` exige a CA em `AI_CLUSTER_TLS_CA` (caminho ainda não exercitado).
 
 - Identidade: todo componente que fala com uma pessoa abre com o logotipo e o nome do produto (`ai_cluster_common::brand`: `banner`, `rule`, `dot`), inclusive a etapa de espera. Sem terminal (log, arquivo) a abertura vira uma linha só.

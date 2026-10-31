@@ -2,17 +2,19 @@
 //! impressão digital na tela e aguarda o operador aprovar. Nada é instalado nem apagado aqui.
 //!
 //!   aic-wait http://controller:50052 [--once]
+//!   aic-wait http://controller:50052 --claim-file token.txt --out worker.env [--name <nome>]  (ou AIC_INSTALL_TOKEN; --claim <token> expõe o token no ps)
 //!
 //! Com `https://` a CA vem de `AI_CLUSTER_TLS_CA` (e o nome do servidor de `AI_CLUSTER_TLS_DOMAIN`).
 //! Aprovado, grava `/run/aic-install.json` (ou `AIC_INSTALL_OUT`) com o token e o disco, e sai 0.
 //! Enter pergunta de novo na hora. `--once` pergunta uma vez e sai (teste).
+//! `--claim` troca o token de uso único por `worker.env` (600): URL, join token e id do worker.
 
 mod hardware;
 
 use std::time::Duration;
 
-use ai_cluster_protocol::cluster::AnnounceRequest;
 use ai_cluster_protocol::cluster::enrollment_client::EnrollmentClient;
+use ai_cluster_protocol::cluster::{AnnounceRequest, ClaimInstallRequest};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
 fn size_text(bytes: u64) -> String {
@@ -103,6 +105,86 @@ fn write_install(path: &str, token: &str, disk: &str) -> std::io::Result<()> {
     writeln!(file, "{{\"token\":\"{token}\",\"disk\":\"{disk}\"}}")
 }
 
+/// `worker.env` com os três valores do worker. O join token é segredo: o arquivo fica 600 mesmo se já
+/// existia com outra permissão.
+fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    // Escreve num .tmp novo e troca de uma vez: quem lê nunca vê o arquivo pela metade. Um .tmp de
+    // antes (ou um link no lugar dele) sai antes; create_new e O_NOFOLLOW recusam seguir link.
+    let tmp = format!("{path}.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(&tmp)?;
+    writeln!(
+        file,
+        "AI_CLUSTER_CONTROLLER={controller}\nAI_CLUSTER_JOIN_TOKEN={join}\nAI_CLUSTER_NODE_ID={node}"
+    )?;
+    file.sync_all()?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Token de uso único: `--claim-file` (ou `-` para a entrada padrão), depois `--claim`, depois
+/// `AIC_INSTALL_TOKEN`. Fora de `--claim-file`/env, o token fica no argv, visível a `ps`.
+fn claim_token(
+    file: Option<String>,
+    arg: Option<String>,
+    env: Option<String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let token = match (file, arg, env) {
+        (Some(path), _, _) if path == "-" => std::io::read_to_string(std::io::stdin())?,
+        (Some(path), _, _) => std::fs::read_to_string(path)?,
+        (None, Some(arg), _) => arg,
+        (None, None, Some(env)) => env,
+        (None, None, None) => return Err("token de instalação ausente".into()),
+    };
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err("token de instalação vazio".into());
+    }
+    Ok(token)
+}
+
+/// `--claim`: consome o token de uso único. Recusado, não grava nada.
+async fn claim(
+    url: &str,
+    token: &str,
+    node_name: &str,
+    out: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect(url)?;
+    let reply = client
+        .claim_install(ClaimInstallRequest {
+            token: token.into(),
+            node_name: node_name.into(),
+        })
+        .await
+        .map_err(|status| match status.code() {
+            tonic::Code::Unavailable => failure_text(&status),
+            _ => status.message().to_string(),
+        })?
+        .into_inner();
+    write_env(
+        out,
+        &reply.controller_url,
+        &reply.join_token,
+        &reply.node_id,
+    )
+    .map_err(|err| {
+        format!("o token já foi usado e {out} não foi gravado ({err}); aprove o aparelho de novo")
+    })?;
+    println!(
+        "Worker {} pré-aprovado; configuração em {out}",
+        reply.node_id
+    );
+    Ok(())
+}
+
 /// Motivo de uma falha do controller, em português. Porta fechada pede ação do operador, não espera.
 fn failure_text(status: &tonic::Status) -> String {
     if status.code() == tonic::Code::Unavailable && status.message().contains("instalação fechada")
@@ -115,11 +197,28 @@ fn failure_text(status: &tonic::Status) -> String {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
-    let url = args
-        .next()
-        .ok_or("uso: aic-wait <url do controller> [--once]")?;
-    let once = args.next().as_deref() == Some("--once");
+    let args = std::env::args().skip(1);
+    let argv: Vec<String> = args.collect();
+    let flag = |name: &str| {
+        argv.iter()
+            .position(|arg| arg == name)
+            .and_then(|at| argv.get(at + 1))
+            .cloned()
+    };
+    let url = argv
+        .first()
+        .filter(|arg| !arg.starts_with("--"))
+        .cloned()
+        .ok_or("uso: aic-wait <url do controller> [--once] | --claim-file <arquivo|-> (ou AIC_INSTALL_TOKEN) --out <arquivo>")?;
+    let env_token = std::env::var("AIC_INSTALL_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    if flag("--claim").is_some() || flag("--claim-file").is_some() || env_token.is_some() {
+        let token = claim_token(flag("--claim-file"), flag("--claim"), env_token)?;
+        let out = flag("--out").ok_or("--claim exige --out <arquivo>")?;
+        return claim(&url, &token, &flag("--name").unwrap_or_default(), &out).await;
+    }
+    let once = argv.iter().any(|arg| arg == "--once");
     let mut client = connect(&url)?;
     let mut request = hardware::collect();
     // Só existe na memória deste aparelho: dele deriva a impressão digital e só ele recebe o token.
@@ -201,6 +300,60 @@ mod tests {
         assert_eq!(mode, 0o600);
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(text, "{\"token\":\"abc123\",\"disk\":\"mmcblk0\"}\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn o_worker_env_sai_com_os_tres_valores_e_fica_600_mesmo_se_ja_existia() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aic-claim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("worker.env");
+        std::fs::write(&path, "velho").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_env(
+            path.to_str().unwrap(),
+            "https://c:50051",
+            "join",
+            "x86-ddee01",
+        )
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            "AI_CLUSTER_CONTROLLER=https://c:50051\nAI_CLUSTER_JOIN_TOKEN=join\nAI_CLUSTER_NODE_ID=x86-ddee01\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn o_worker_env_nao_escreve_pelo_link_deixado_no_lugar_do_tmp() {
+        let dir = std::env::temp_dir().join(format!("aic-claim-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("alvo.txt");
+        std::fs::write(&victim, "intocado").unwrap();
+        let path = dir.join("worker.env");
+        let tmp = dir.join("worker.env.tmp");
+        let _ = std::fs::remove_file(&tmp);
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+        write_env(
+            path.to_str().unwrap(),
+            "https://c:50051",
+            "join",
+            "x86-ddee01",
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "intocado");
+        assert!(tmp.symlink_metadata().is_err(), "o .tmp não deve sobrar");
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("AI_CLUSTER_NODE_ID=x86-ddee01")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
