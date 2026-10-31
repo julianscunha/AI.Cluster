@@ -8,7 +8,7 @@ use std::process::{Command, exit};
 
 use clap::{Args, Subcommand};
 
-use crate::idioma::t;
+use crate::idioma::{ingles, t};
 
 /// Pastas procuradas quando `AIC_LIBEXEC` não aponta para um instalador.
 const PADROES: [&str; 2] = ["/opt/ai-cluster/libexec", "/usr/libexec/aic"];
@@ -58,9 +58,28 @@ impl Convite {
     }
 }
 
+/// Arquivos da pasta de dedicado (`/opt/ai-cluster/dedicado`, do root, ADR-023) que o convite serve. Os mesmos
+/// nomes que o `setup` confere (`dedicado_completo`): sem todos, não há pendrive nem imagem para mostrar.
+const DEDICADO: [&str; 8] = [
+    "disk-x86.img.gz",
+    "SHA256SUMS",
+    "SHA256SUMS.sig",
+    "VERSION",
+    "BOOTX64.EFI",
+    "vmlinuz",
+    "initramfs.gz",
+    "mkusb.py",
+];
+
+/// Verdadeiro se a pasta tem a imagem x86 e o pendrive desta release (o `usb.zip` sai daqui no convite).
+pub fn dedicado_completo(pasta: &Path) -> bool {
+    DEDICADO.iter().all(|f| pasta.join(f).is_file())
+}
+
 /// Bloco "Dedicar um computador" do `cluster invite` (ADR-023), impresso antes do instalador. Só sai como
-/// root num controller instalado, que é quando o instalador também roda. Pendrive e rede ainda não existem,
-/// então saem como "em breve"; a linha do Linux é a mesma que o instalador mostra logo depois.
+/// root num controller instalado, que é quando o instalador também roda. O pendrive aparece com a URL real
+/// quando a release trouxe a imagem; a rede ainda não existe, então sai como "em breve". A linha do Linux é
+/// a mesma que o instalador mostra logo depois.
 pub fn dedicar_bloco(porta: u16) {
     const CONF: &str = "/etc/ai-cluster";
     if !raiz() || !Path::new(CONF).join(".installed").is_file() {
@@ -70,6 +89,20 @@ pub fn dedicar_bloco(porta: u16) {
         return;
     };
     let ip = ip.trim();
+    let pendrive = if dedicado_completo(Path::new("/opt/ai-cluster/dedicado")) {
+        let url = format!("http://{ip}:{porta}/usb.zip");
+        if ingles() {
+            format!("download in the browser {url} (check the SHA-256 shown below the invitation)")
+        } else {
+            format!("baixe no navegador {url} (confira o SHA-256 mostrado abaixo do convite)")
+        }
+    } else {
+        t(
+            "indisponível nesta release (ela não traz a imagem x86)",
+            "not available in this release (it has no x86 image)",
+        )
+        .to_string()
+    };
     println!(
         "\n  {}",
         t(
@@ -77,13 +110,7 @@ pub fn dedicar_bloco(porta: u16) {
             "Dedicate a computer to AI Cluster OS (the disk is only erased after your approval):",
         )
     );
-    println!(
-        "    {}",
-        t(
-            "pendrive (em breve)  grava o instalador num pendrive para dar boot nele",
-            "USB stick (soon)     writes the installer to a USB stick to boot from",
-        )
-    );
+    println!("    {}: {pendrive}", t("pendrive", "USB stick"));
     println!(
         "    {}",
         t(
@@ -476,5 +503,21 @@ mod tests {
         std::fs::set_permissions(dir.join("setup"), std::fs::Permissions::from_mode(0o777))
             .unwrap();
         assert!(!confiavel(&dir));
+    }
+
+    #[test]
+    fn pendrive_so_aparece_com_a_pasta_dedicado_completa() {
+        let dir = std::env::temp_dir().join(format!("aic-dedicado-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!dedicado_completo(&dir));
+        // Falta um: não serve pendrive nem imagem pela metade.
+        for f in DEDICADO.iter().take(DEDICADO.len() - 1) {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+        assert!(!dedicado_completo(&dir));
+        std::fs::write(dir.join("mkusb.py"), "x").unwrap();
+        assert!(dedicado_completo(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

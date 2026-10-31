@@ -9,7 +9,7 @@ type: sistema/adr
 
 Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
 
-Status: decidido · registro de pendentes, aprovação e consumo do token (`ClaimInstall`) implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`, `AI_CLUSTER_PUBLIC_URL`); o ambiente de espera e de instalação existe (`os/image/x86/build-installer.sh`, testado sem hardware); faltam a mídia de boot (pendrive e netboot), o controller servir a imagem e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
+Status: decidido · registro de pendentes, aprovação e consumo do token (`ClaimInstall`) implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`, `AI_CLUSTER_PUBLIC_URL`); o ambiente de espera e de instalação existe (`os/image/x86/build-installer.sh`, testado sem hardware); pendrive `usb.zip` pelo navegador e o controller servindo a imagem e as somas assinadas implementados (`code/os/mkusb.py`, `setup`, `phase-u-usb.sh`), com a porta de espera (50052) para o `aic-wait` e o convite (8099) para a imagem; falta o boot desse pendrive em hardware e o netboot · Limite conhecido do pendrive: o `usb.zip` e a imagem saem por HTTP na LAN e o pendrive não é assinado, então sem Secure Boot um MITM na rede pode trocar o pendrive. A defesa é o SHA-256 do `usb.zip` conferido fora da rede (o convite o mostra) e a assinatura da imagem conferida pelo instalador com a chave pinada, antes de apagar qualquer disco. A pasta `dedicado/` fica em `/opt/ai-cluster/dedicado` (root) e é conferida pela assinatura antes de cada convite · Data: 2026-10-30 · Voltar para [[decisoes]].
 
 ## Contexto
 

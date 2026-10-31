@@ -372,6 +372,17 @@ for f in $need; do
   ok "$f"
   [ "$f" != tools ] || verifica_release
 done
+# Modo dedicado (ADR-023): a release traz dedicado.tar.gz quando tem a imagem x86. O setup o instala no controller.
+if [ "$ROLE" = server ] || [ "$ROLE" = controller ]; then
+  if awk '$2=="dedicado.tar.gz" {f=1} END {exit !f}' "$STAGE/SHA256SUMS"; then
+    fetch dedicado.tar.gz
+    # Sem links no pacote (l = simbólico, h = físico): um link poderia apontar para fora da pasta ao copiar.
+    LST=$(tar -tvzf "$STAGE/dedicado.tar.gz") || die "$(t 'o pacote dedicado não abre (corrompido?)' 'the dedicated package does not open (corrupted?)')"
+    if printf '%s\n' "$LST" | cut -c1 | grep -q '[lh]'; then die "$(t 'o pacote dedicado traz links: recusado' 'the dedicated package has links: refused')"; fi
+    mkdir -p "$STAGE/aic/dedicado"; tar -C "$STAGE/aic/dedicado" -xzf "$STAGE/dedicado.tar.gz"
+    ok "$(t 'modo dedicado (imagem x86 e pendrive)' 'dedicated mode (x86 image and USB stick)')"
+  fi
+fi
 
 # ---------- instalação ----------
 AIC_RELEASE_SUMS=$(sha256sum "$STAGE/SHA256SUMS" | cut -d' ' -f1)

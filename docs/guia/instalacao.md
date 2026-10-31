@@ -110,7 +110,30 @@ Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o clust
 
 **Como a imagem chega ao computador (previsto para o instalador guiado):**
 - **Pela rede (boot de rede):** restrito. O usuário informa o **MAC** de cada worker e só esses endereços recebem a imagem; o boot de rede é só instalador e recuperação, nunca modo de operação. Hoje o servidor TFTP já limita as origens por IP (`--allow`), com limite de boots; falta o filtro por MAC.
-- **Por pendrive:** quando a rede não tem DHCP ou o computador não é visível nela, o instalador gera o pendrive de instalação, guiado por perguntas.
+- **Por pendrive:** quando a rede não tem DHCP ou o computador não é visível nela, o controller entrega um `usb.zip` pelo navegador (passo a passo abaixo). Nenhum dd, Rufus ou terminal no computador novo.
+
+### Pendrive pelo navegador (Windows, Linux ou Mac)
+
+Precisa de um controller instalado com uma release que traz a imagem x86 (`install.sh` mostra "modo dedicado (imagem x86 e pendrive)"). Sem ela, o bloco "Dedicar um computador" diz que o pendrive está indisponível nesta release.
+
+No controller, abra o convite (ele mostra o endereço do pendrive):
+
+```bash
+sudo aic cluster invite        # ex.: http://192.168.1.10:8099/usb.zip
+```
+
+No computador novo (Windows, por exemplo), com um pendrive de **até 32 GB** (ele é apagado):
+
+1. No navegador, abra o endereço do `usb.zip` e salve o arquivo. Confira o **SHA-256** dele com o que o convite mostra (no Windows: `certutil -hashfile usb.zip SHA256`). Se não bater, não use o arquivo: alguém na rede pode ter trocado o pendrive.
+2. Formate o pendrive: Explorador de Arquivos > clique com o botão direito na unidade > **Formatar** > Sistema de arquivos **FAT32** > Rótulo do volume **AIC** > Iniciar. (A janela do Windows não oferece FAT32 em pendrives acima de 32 GB.)
+3. Dê dois cliques em `usb.zip`, selecione tudo (Ctrl+A) e copie para a **raiz** do pendrive (a unidade, não uma pasta). Devem aparecer as pastas `EFI` e `aic`, e o `LEIAME.txt`.
+4. Na BIOS/UEFI do computador, **desligue o Secure Boot**. Desligue o computador, ligue o pendrive e abra o menu de boot (F12, F11, F9, F8 ou Esc, conforme a placa). Escolha a opção com **UEFI** no nome.
+5. A tela mostra a impressão digital do aparelho e "aguardando aprovação". No controller, confira a impressão e aprove com o disco a apagar (o convite já mostra a linha pronta): `sudo aic cluster install approve <impressão> --disk <disco>`.
+6. Depois da sua aprovação, o disco escolhido é apagado (contagem de 10 s), a imagem é gravada e a tela pede para tirar o pendrive. O computador reinicia pelo disco, já como worker do cluster.
+
+O pendrive não é assinado: a proteção contra troca é o SHA-256 conferido fora da rede e a assinatura da imagem, que o instalador confere com a chave pinada antes de apagar qualquer disco. A pasta da imagem fica em `/opt/ai-cluster/dedicado`, do root, fora da pasta que o serviço grava.
+
+O pendrive guarda o endereço do controller na linha do kernel (`aic/grub.cfg`), então ele serve para aquele convite. Pendrive com o rótulo errado, ou sem o `usb.zip` extraído na raiz, não dá boot no instalador: o `LEIAME.txt` do zip traz o mesmo passo a passo.
 
 ## Em um computador só, com Docker
 
@@ -291,7 +314,9 @@ Para experimentar sem hardware, `bash os/image/x86/run-qemu.sh` sobe o disco num
 
 `bash os/image/x86/build-installer.sh [chave-pública]` monta `build/installer/vmlinuz` e `build/installer/initramfs.gz` ([[adr-023-instalacao-com-aprovacao-do-controller]]): um ambiente que roda em RAM, com o `linux-lts`, busybox, `aic-wait`, `install-disk.sh` e a chave de release pinada (`/etc/aic/release.pub`). Ao dar boot, ele sobe a rede por DHCP (mostra o IP e o MAC de cada placa), lê o controller de `aic.controller=` na linha do kernel ou de `/aic/installer.conf`, mostra a impressão digital e espera a aprovação (`aic cluster install approve <impressão> --disk <disco>`). Aprovado, baixa `disk-x86.img.gz` e o `SHA256SUMS` assinado e confere a assinatura e o SHA-256 **antes de qualquer escrita**. Confere o disco aprovado com o anunciado (nome, tamanho e modelo), deixa de fora o pendrive de instalação (rótulo AIC) e os discos removíveis, mostra 10 s para desligar, pega o token de uso único e grava com `install-disk.sh --env --efi-entry`. A imagem comprimida fica na RAM, então a máquina precisa de RAM para ela. Em qualquer falha, o ambiente diz o que fazer e para; não reinicia sozinho.
 
-Ainda não existe: a mídia que dá boot esse ambiente (pendrive com GRUB ou netboot), e o controller servindo `disk-x86.img.gz` e o `SHA256SUMS` assinado no endereço `<controller>/imagem` (ou o de `aic.image=`). Testado só sem hardware (`code/tests/phase-u-x86-installer.sh`).
+A mídia de boot é o `usb.zip` do convite (seção acima): `build-installer.sh` gera também `build/installer/BOOTX64.EFI` (GRUB com o cfg que acha o pendrive pelo rótulo AIC). O controller serve `/imagem/disk-x86.img.gz`, `SHA256SUMS`, `SHA256SUMS.sig` e `VERSION` enquanto o convite está aberto. Para isso, a release precisa de `dedicado.tar.gz`: `AIC_RELEASE=<versão> bash os/image/x86/build-installer.sh`, `os/image/x86/mk-disk.sh` (com `build/disk-x86.img.gz` ou `.img`) e depois `bash code/scripts/package-release.sh`, que assina a pasta com a chave de Linux. Controllers já instalados só ganham o modo dedicado com uma instalação nova (ver [[pendencias]]).
+
+Testado sem hardware: `code/tests/phase-u-usb.sh` (estrutura do zip, chave de teste, servidor do convite e conferência do `aic-install.sh`). **O boot do pendrive num PC real (GRUB com o rótulo AIC, Secure Boot desligado) ainda não foi visto.**
 
 ## Pesos dos modelos
 

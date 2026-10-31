@@ -45,6 +45,8 @@ struct Candidate {
     token: Option<String>,
     /// O token foi consumido pelo `ClaimInstall` (uso único): a entrada fica só para recusar o reuso.
     claimed: bool,
+    /// Aprovado com `force_removable`: vai ao aparelho (`AnnounceResponse.forced`) para ele aceitar o removível.
+    forced: bool,
 }
 
 #[derive(Debug, Default)]
@@ -202,6 +204,7 @@ impl Enrollments {
                 install_token: known.token.clone().unwrap_or_default(),
                 disk: known.info.approved_disk.clone(),
                 retry_after_secs: if known.token.is_some() { 0 } else { RETRY_SECS },
+                forced: known.forced,
             });
         }
 
@@ -252,6 +255,7 @@ impl Enrollments {
                 bucket,
                 token: None,
                 claimed: false,
+                forced: false,
             },
         );
         Ok(AnnounceResponse {
@@ -324,6 +328,7 @@ impl Enrollments {
             )));
         }
         candidate.info.approved_disk = disk.to_string();
+        candidate.forced = force_removable;
         candidate.token.get_or_insert_with(new_token);
         Ok(true)
     }
@@ -584,6 +589,15 @@ mod tests {
         so_pen.disks[0].removable = true;
         let fp2 = e.announce(so_pen, None, 3).unwrap().fingerprint;
         assert!(e.approve(&fp2, "mmcblk0", true, 4).unwrap());
+        // A permissão viaja até o aparelho: sem ela o instalador não aceita o removível.
+        assert!(e.announce(so_pen_hello(), None, 5).unwrap().forced);
+        assert!(!e.announce(hello(1, MAC), None, 5).unwrap().forced);
+    }
+
+    fn so_pen_hello() -> AnnounceRequest {
+        let mut h = hello(2, "aa:bb:cc:dd:ee:02");
+        h.disks[0].removable = true;
+        h
     }
 
     fn hello(secret: u8, mac: &str) -> AnnounceRequest {

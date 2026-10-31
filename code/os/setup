@@ -259,6 +259,37 @@ prepara_models() {
   fi
 }
 
+# Modo dedicado (ADR-023): a pasta fica em $PREFIX/dedicado, do root (o serviço grava só em $DATA). Só serve o
+# que confere agora: assinatura do SHA256SUMS com a chave pinada e cada arquivo dele, sem links.
+dedicado_ok() { # o que o convite serve (pendrive e imagem): tudo presente e conferido; senão, nada é servido
+  [ -d "$PREFIX/dedicado" ] || return 1
+  for f in disk-x86.img.gz SHA256SUMS SHA256SUMS.sig VERSION BOOTX64.EFI vmlinuz initramfs.gz mkusb.py; do
+    [ -f "$PREFIX/dedicado/$f" ] && [ ! -L "$PREFIX/dedicado/$f" ] || return 1
+  done
+  confere_assinatura "$PREFIX/dedicado/SHA256SUMS" "$PREFIX/dedicado/SHA256SUMS.sig" || return 1
+  ( cd "$PREFIX/dedicado" && sha256sum -c --quiet SHA256SUMS ) >/dev/null 2>&1
+}
+
+# A release traz dedicado/ quando foi montada com a imagem x86. Copia só os nomes listados no SHA256SUMS dela
+# (arquivo comum, sem link), confere a assinatura e as somas da cópia, e só então troca a pasta instalada.
+instala_dedicado() {
+  rm -rf "$DATA/dedicado"   # cópia antiga, na pasta que o serviço grava: sai
+  [ -d "$HERE/dedicado" ] || return 0
+  src=$HERE/dedicado; new=$PREFIX/dedicado.novo
+  rm -rf "$new"; mkdir -p "$new"
+  recusa() { warn "$(t "modo dedicado não instalado: $1" "dedicated mode not installed: $2")"; rm -rf "$new"; return 0; }
+  [ ! -L "$src/SHA256SUMS" ] && [ -f "$src/SHA256SUMS" ] || { recusa "SHA256SUMS ausente ou link" "SHA256SUMS missing or a link"; return 0; }
+  for n in $(awk '{print $2}' "$src/SHA256SUMS") SHA256SUMS SHA256SUMS.sig; do
+    case $n in ''|.*|*[!A-Za-z0-9._-]*) recusa "nome estranho no SHA256SUMS: $n" "odd name in SHA256SUMS: $n"; return 0;; esac
+    [ -f "$src/$n" ] && [ ! -L "$src/$n" ] || { recusa "$n não é um arquivo comum" "$n is not a regular file"; return 0; }
+    cp "$src/$n" "$new/$n" || { recusa "não consegui copiar $n" "could not copy $n"; return 0; }
+  done
+  confere_assinatura "$new/SHA256SUMS" "$new/SHA256SUMS.sig" || { recusa "$SIG_MOTIVO" "$SIG_MOTIVO"; return 0; }
+  ( cd "$new" && sha256sum -c --quiet SHA256SUMS ) >/dev/null 2>&1 || { recusa "um arquivo não confere com o SHA256SUMS assinado" "a file does not match the signed SHA256SUMS"; return 0; }
+  chmod 755 "$new"; chmod 644 "$new"/*; chown -R root:root "$new"
+  rm -rf "$PREFIX/dedicado"; mv "$new" "$PREFIX/dedicado"
+}
+
 install_files() {
   id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir "$DATA" \
     --shell /usr/sbin/nologin ai-cluster
@@ -513,6 +544,7 @@ cmd_controller_install() {
   : > "$SETUP_LOG"; chmod 600 "$SETUP_LOG"
   step "$(t 'Verificando o sistema' 'Checking the system')" check_system
   step "$(t 'Instalando os programas' 'Installing the programs')" install_files
+  instala_dedicado
   step "$(t 'Gerando credenciais e o comando aic' 'Generating credentials and the aic command')" make_credentials
   step "$(t 'Criando a CA e os certificados do túnel RPC' 'Creating the CA and the RPC tunnel certificates')" make_pki
   step "$(t 'Configurando os serviços' 'Configuring the services')" write_units
@@ -802,6 +834,28 @@ cmd_invite() {
   done
   cp "$PREFIX/bootstrap.sh" "$WEB/bootstrap.sh"
   cp "$PREFIX/libexec/setup" "$WEB/setup"
+  # Modo dedicado (ADR-023): com a imagem desta release instalada, o convite serve o pendrive (usb.zip, com o
+  # IP deste controller) e a imagem em /imagem/. Sem ela, o convite segue como antes.
+  # Só serve o que confere agora (dedicado_ok: assinatura e somas); senão, o convite segue sem pendrive.
+  IMG_DIR=""; USB=""; USB_SHA=""
+  if dedicado_ok; then
+    IMG_DIR=$PREFIX/dedicado
+    if python3 "$PREFIX/dedicado/mkusb.py" "$PREFIX/dedicado" "$WEB/usb.zip" "$IP" "$ENROLL_PORT" "$PORT"; then
+      USB=1; USB_SHA=$(sha256sum "$WEB/usb.zip" | cut -d' ' -f1)
+    else warn "$(t 'não consegui montar o pendrive (usb.zip) desta release; o convite segue sem ele' 'could not build the pendrive (usb.zip) of this release; the invitation goes on without it')"; fi
+  elif [ -e "$PREFIX/dedicado" ]; then
+    warn "$(t 'pasta do modo dedicado não confere com a assinatura da release: pendrive não servido' 'dedicated folder does not match the release signature: USB stick not served')"
+  fi
+  if [ -n "$USB" ]; then
+    PEN_PT="Pendrive (sem terminal): baixe no navegador http://$IP:$PORT/usb.zip"
+    PEN_EN="USB stick (no terminal): download in the browser at http://$IP:$PORT/usb.zip"
+    SHA_PT="SHA-256 do usb.zip: $USB_SHA  (confira depois de baixar: certutil -hashfile usb.zip SHA256)"
+    SHA_EN="usb.zip SHA-256: $USB_SHA  (check after download: certutil -hashfile usb.zip SHA256)"
+  else
+    PEN_PT="Pendrive: indisponível nesta release (ela não traz a imagem x86)"
+    PEN_EN="USB stick: not available in this release (it has no x86 image)"
+    SHA_PT=""; SHA_EN=""
+  fi
   # Credenciais do túnel RPC dos workers e o kit do gateway (só dentro da janela do convite).
   tar -C "$CONF/pki" -czf "$WEB/pki-worker.tar.gz" ca.crt
   g=$(mktemp -d)
@@ -1064,6 +1118,9 @@ TTL = int(os.environ["AIC_TTL"])
 MAX_IP = 30       # chutes errados por IP de origem: passou disso, o IP fica travado até o convite acabar
 MAX_TOTAL = 300   # teto global: passou disso, ninguém mais é atendido
 WEB = os.getcwd()
+# Modo dedicado (ADR-023): a pasta da imagem serve só estes nomes, em /imagem/ (vazia = sem imagem nesta release)
+IMG = os.path.abspath(os.environ["AIC_IMG_DIR"]) if os.environ.get("AIC_IMG_DIR") else ""
+IMG_FILES = ("disk-x86.img.gz", "SHA256SUMS", "SHA256SUMS.sig", "VERSION")
 LOCK = threading.Lock()  # o ca.srl é lido e regravado pelo openssl: um pedido por vez
 done = set()      # nomes já assinados nesta janela
 guesses = {}      # IP -> chutes errados
@@ -1090,6 +1147,8 @@ def served(path):
     # Só arquivo comum na raiz do convite conta como servido; o caminho já vem normalizado por translate_path
     # (%6A vira j, ./ e ../ saem), então /%6Aoin-X e /./join-X caem aqui como qualquer outro caminho.
     p = os.path.abspath(path)
+    if IMG and os.path.dirname(p) == IMG:  # translate_path só leva até aqui os nomes de IMG_FILES
+        return os.path.basename(p) in IMG_FILES and os.path.isfile(p)
     return os.path.dirname(p) == WEB and os.path.isfile(p)
 
 
@@ -1114,6 +1173,12 @@ class H(http.server.SimpleHTTPRequestHandler):
     def do_HEAD(self):
         if self.gate():
             super().do_HEAD()
+
+    def translate_path(self, path):
+        u = path.split("?", 1)[0].split("#", 1)[0]
+        if IMG and u.startswith("/imagem/") and u[len("/imagem/"):] in IMG_FILES:
+            return os.path.join(IMG, u[len("/imagem/"):])
+        return super().translate_path(path)
 
     def list_directory(self, path):
         self.send_error(404)
@@ -1163,7 +1228,7 @@ http.server.ThreadingHTTPServer((sys.argv[1], int(sys.argv[2])), H).serve_foreve
 PYSERVER
   : > "$HD/signed"; : > "$HD/events"
   # Dez segundos a mais que a janela: quem encerra é o laço abaixo; o temporizador do Python é a rede de segurança.
-  AIC_CA_DIR="$CONF/pki" AIC_INVITE_CODE="$GCODE" AIC_SIGNED_LOG="$HD/signed" AIC_EVENTS_LOG="$HD/events" \
+  AIC_CA_DIR="$CONF/pki" AIC_INVITE_CODE="$GCODE" AIC_SIGNED_LOG="$HD/signed" AIC_EVENTS_LOG="$HD/events" AIC_IMG_DIR="$IMG_DIR" \
     AIC_TTL=$((MIN * 60 + 10)) python3 "$HD/invite.py" "$IP" "$PORT" >/dev/null 2>"$HD/py.log" &
   SRV=$!
   MSG_CLOSED=$(t "Convite encerrado." "Invitation closed.")
@@ -1189,6 +1254,8 @@ PYSERVER
         "Gateway on another computer: sudo aic gateway install --server $IP:$PORT --code $GCODE" "" \
         "Install the AI Cluster OS (dedicated mode) on a computer that already has Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
+        "$PEN_EN" "" \
+        "$SHA_EN" "" \
         "Valid for $MIN min. Linux with systemd and, on x86_64, libgomp1."
     printf '\n  %sWaiting for computers… (Ctrl+C ends the invitation)%s\n\n' "$D" "$Z"
   else
@@ -1197,6 +1264,8 @@ PYSERVER
         "Gateway noutro computador: sudo aic gateway install --server $IP:$PORT --code $GCODE" "" \
         "Instalar o AI Cluster OS (modo dedicado) num computador que já tem Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
+        "$PEN_PT" "" \
+        "$SHA_PT" "" \
         "Válido por $MIN min. Linux com systemd e, no x86_64, libgomp1."
     printf '\n  %sAguardando computadores… (Ctrl+C encerra o convite)%s\n\n' "$D" "$Z"
   fi
@@ -1665,6 +1734,8 @@ sub_cluster() {
   esac
 }
 
+# AIC_SETUP_LIB=1 carrega só as funções (code/tests/phase-u-usb.sh as testa); sem ele, o comando roda.
+[ "${AIC_SETUP_LIB:-0}" != 1 ] || return 0 2>/dev/null || true
 case "${1:-}" in
   controller) shift; sub_controller "$@" ;;
   gateway) shift; sub_gateway "$@" ;;

@@ -1093,6 +1093,8 @@ message AnnounceResponse {
   string disk = 4;
   /// Quando perguntar de novo.
   uint32 retry_after_secs = 5;
+  /// A aprovação foi com `--force-removable`: o instalador só apaga disco removível se isto vier.
+  bool forced = 6;
 }
 
 message ClaimInstallRequest {

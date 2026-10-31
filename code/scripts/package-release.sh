@@ -8,6 +8,8 @@
 #
 # Saída: install.sh, VERSION, tools.tar.gz, controller-linux-{x86_64,armv7}.tar.gz,
 # gateway-linux-x86_64.tar.gz, worker-linux-{x86_64,armv7}.tar.gz, SHA256SUMS e SHA256SUMS.sig.
+# Com a imagem x86 montada (os/image/build: disk-x86.img(.gz) e installer/, de build-installer.sh), sai também
+# dedicado.tar.gz (modo dedicado, ADR-023): a imagem, o pendrive e as somas assinadas que o controller serve.
 # O gateway só existe em x86_64 porque o llama-server não está compilado para ARM.
 # SHA256SUMS.sig é a assinatura Ed25519 (base64) do SHA256SUMS com a chave de Linux comum
 # (~/.aic/linux.key, de os/image/release-keys.sh linux). A pública (os/linux.pub) vai no tools.tar.gz
@@ -87,6 +89,25 @@ cp "$HERE/os/setup" "$HERE/os/bootstrap.sh" "$STAGE/tools/"
 cp "$HERE/os/linux.pub" "$STAGE/tools/release.pub"   # a chave que o instalador pina (ADR-025)
 sed -i 's/\r$//' "$STAGE/tools/setup" "$STAGE/tools/bootstrap.sh"
 pack tools
+
+# Modo dedicado (ADR-023): com o instalador x86 e a imagem montados (build-installer.sh, mk-disk.sh), a release
+# leva dedicado.tar.gz: a imagem que o controller serve no convite, o pendrive (usb.zip) e o instalador. Sem eles,
+# a release sai como antes. Assinado com a mesma chave de Linux; o controller confere antes de servir.
+DEDI=$HERE/os/image/build
+if [ -f "$DEDI/installer/BOOTX64.EFI" ] && [ -f "$DEDI/installer/vmlinuz" ] && [ -f "$DEDI/installer/initramfs.gz" ] \
+  && { [ -f "$DEDI/disk-x86.img.gz" ] || [ -f "$DEDI/disk-x86.img" ]; }; then
+  D="$STAGE/dedicado"; mkdir -p "$D"
+  if [ -f "$DEDI/disk-x86.img.gz" ]; then cp "$DEDI/disk-x86.img.gz" "$D/"; else gzip -1 -c "$DEDI/disk-x86.img" > "$D/disk-x86.img.gz"; fi
+  cp "$DEDI/installer/BOOTX64.EFI" "$DEDI/installer/vmlinuz" "$DEDI/installer/initramfs.gz" "$D/"
+  cp "$HERE/os/mkusb.py" "$D/"
+  printf '%s\n' "$VERSION" > "$D/VERSION"
+  (cd "$D" && for f in disk-x86.img.gz VERSION BOOTX64.EFI vmlinuz initramfs.gz mkusb.py; do
+    printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done > SHA256SUMS)
+  SIG_D=$(mktemp)
+  openssl pkeyutl -sign -inkey "$(win "$LINUX_KEY")" -rawin -in "$(win "$D/SHA256SUMS")" -out "$(win "$SIG_D")"
+  base64 -w0 < "$SIG_D" > "$D/SHA256SUMS.sig"; rm -f "$SIG_D"
+  pack dedicado
+fi
 
 cp "$HERE/os/install.sh" "$OUT/install.sh"
 sed -i 's/\r$//' "$OUT/install.sh"

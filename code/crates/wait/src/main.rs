@@ -97,7 +97,7 @@ fn connect(url: &str) -> Result<EnrollmentClient<Channel>, Box<dyn std::error::E
 }
 
 /// O token é segredo: o arquivo nasce 0600 (no unix) e o conteúdo não passa por aqui em claro.
-fn write_install(path: &str, token: &str, disk: &str) -> std::io::Result<()> {
+fn write_install(path: &str, token: &str, disk: &str, forced: bool) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -107,7 +107,10 @@ fn write_install(path: &str, token: &str, disk: &str) -> std::io::Result<()> {
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    writeln!(file, "{{\"token\":\"{token}\",\"disk\":\"{disk}\"}}")
+    writeln!(
+        file,
+        "{{\"token\":\"{token}\",\"disk\":\"{disk}\",\"forced\":{forced}}}"
+    )
 }
 
 /// `worker.env` com os três valores do worker. O join token é segredo: o arquivo fica 600 mesmo se já
@@ -248,7 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if reply.approved && !reply.install_token.is_empty() {
                     let out = std::env::var("AIC_INSTALL_OUT")
                         .unwrap_or_else(|_| "/run/aic-install.json".into());
-                    write_install(&out, &reply.install_token, &reply.disk)?;
+                    write_install(&out, &reply.install_token, &reply.disk, reply.forced)?;
                     println!("\n  APROVADO. Disco a apagar: {}.", reply.disk);
                     return Ok(());
                 }
@@ -300,11 +303,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("install.json");
         let _ = std::fs::remove_file(&path);
-        write_install(path.to_str().unwrap(), "abc123", "mmcblk0").unwrap();
+        write_install(path.to_str().unwrap(), "abc123", "mmcblk0", true).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(text, "{\"token\":\"abc123\",\"disk\":\"mmcblk0\"}\n");
+        assert_eq!(
+            text,
+            "{\"token\":\"abc123\",\"disk\":\"mmcblk0\",\"forced\":true}\n"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
