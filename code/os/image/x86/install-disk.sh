@@ -2,7 +2,9 @@
 # Grava a imagem x86_64 do AI Cluster OS (build/disk-x86.img, de mk-disk.sh) num disco e usa o disco
 # inteiro: move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados.
 #
-#   x86/install-disk.sh <imagem> <dispositivo> --yes [--env <arquivo>] [--efi-entry]
+#   x86/install-disk.sh <imagem[.gz]> <dispositivo> --yes [--env <arquivo>] [--efi-entry]
+#
+# Com .gz (o instalador do pendrive/rede baixa comprimido) a imagem vai descomprimida direto para o disco.
 #
 # --env grava o arquivo como /worker.env na partição de dados (p4), com debugfs, sem montar.
 # --efi-entry cria a entrada de boot "AI Cluster OS" na NVRAM de quem roda o script (só com efibootmgr).
@@ -35,7 +37,11 @@ for t in dd sgdisk e2fsck resize2fs; do command -v "$t" >/dev/null || { echo "fa
 if [ -n "$ENVF" ]; then for t in debugfs cmp; do command -v "$t" >/dev/null || { echo "falta $t (--env)" >&2; exit 2; }; done; fi
 # nunca no disco que está em uso
 if grep -q "^$DEV" /proc/mounts || grep -q "^${DEV}p\?[0-9]" /proc/mounts; then echo "$DEV tem partição montada; abortando" >&2; exit 2; fi
-SIZE=$(blockdev --getsize64 "$DEV"); NEED=$(stat -c %s "$IMG")
+# .gz (o instalador baixa comprimido): tamanho sem compactar é o ISIZE do gzip (módulo 4 GiB, a imagem é menor)
+case $IMG in *.gz) GZ=1; NEED=$(tail -c 4 "$IMG" | od -An -tu4 | tr -d ' ');; *) GZ=0; NEED=$(stat -c %s "$IMG");; esac
+# ISIZE é módulo 4 GiB: se der menos que o próprio .gz, o número está errado (imagem >= 4 GiB); recusa
+if [ "$GZ" = 1 ] && [ "$NEED" -lt "$(stat -c %s "$IMG")" ]; then echo "tamanho descompactado de $IMG parece errado (ISIZE, módulo 4 GiB): imagem acima de 4 GiB não é suportada" >&2; exit 2; fi
+SIZE=$(blockdev --getsize64 "$DEV")
 [ "$SIZE" -ge "$NEED" ] || { echo "disco menor que a imagem" >&2; exit 2; }
 [ "$(blockdev --getss "$DEV")" = 512 ] || { echo "setor lógico de $DEV não é 512 B; a imagem não serve para esse disco" >&2; exit 2; }
 
@@ -54,7 +60,9 @@ entrada_efi() {
 	efibootmgr -c -d "$1" -p 1 -l '\EFI\BOOT\BOOTX64.EFI' -L "AI Cluster OS" >/dev/null
 }
 
-dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+# gzip -t antes de tocar no disco: falha de descompressão não pode passar como gravação bem-sucedida
+if [ "$GZ" = 1 ]; then gzip -t "$IMG" || { echo "$IMG está corrompido (gzip -t); nada foi gravado" >&2; exit 2; }; fi
+if [ "$GZ" = 1 ]; then gzip -dc "$IMG" | dd of="$DEV" bs=4M conv=fsync; else dd if="$IMG" of="$DEV" bs=4M conv=fsync; fi
 sgdisk -e "$DEV" >/dev/null                     # GPT de backup no fim do disco
 sgdisk -G "$DEV" >/dev/null                     # GUIDs novos: dois discos com a mesma imagem não colidem
 # partição de dados (4): mesmo início, até o fim do disco

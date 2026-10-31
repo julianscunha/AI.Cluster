@@ -8,6 +8,8 @@ use std::process::{Command, exit};
 
 use clap::{Args, Subcommand};
 
+use crate::idioma::t;
+
 /// Pastas procuradas quando `AIC_LIBEXEC` não aponta para um instalador.
 const PADROES: [&str; 2] = ["/opt/ai-cluster/libexec", "/usr/libexec/aic"];
 
@@ -49,6 +51,54 @@ impl Convite {
         valor(&mut out, "--port", self.port);
         out
     }
+
+    /// Porta do convite; o padrão é o do instalador (8099).
+    pub fn porta(&self) -> u16 {
+        self.port.unwrap_or(8099)
+    }
+}
+
+/// Bloco "Dedicar um computador" do `cluster invite` (ADR-023), impresso antes do instalador. Só sai como
+/// root num controller instalado, que é quando o instalador também roda. Pendrive e rede ainda não existem,
+/// então saem como "em breve"; a linha do Linux é a mesma que o instalador mostra logo depois.
+pub fn dedicar_bloco(porta: u16) {
+    const CONF: &str = "/etc/ai-cluster";
+    if !raiz() || !Path::new(CONF).join(".installed").is_file() {
+        return;
+    }
+    let Ok(ip) = std::fs::read_to_string(Path::new(CONF).join("server-ip")) else {
+        return;
+    };
+    let ip = ip.trim();
+    println!(
+        "\n  {}",
+        t(
+            "Dedicar um computador ao AI Cluster OS (o disco só é apagado depois da sua aprovação):",
+            "Dedicate a computer to AI Cluster OS (the disk is only erased after your approval):",
+        )
+    );
+    println!(
+        "    {}",
+        t(
+            "pendrive (em breve)  grava o instalador num pendrive para dar boot nele",
+            "USB stick (soon)     writes the installer to a USB stick to boot from",
+        )
+    );
+    println!(
+        "    {}",
+        t(
+            "rede (em breve)      instala pela rede, sem mexer no computador",
+            "network (soon)       installs over the network, without touching the computer",
+        )
+    );
+    println!(
+        "    {}: curl -fsSL http://{ip}:{porta}/wait | sudo sh  ({})",
+        t("a partir de um Linux", "from Linux"),
+        t(
+            "confere o computador e o deixa esperando sua aprovação",
+            "checks the computer and leaves it waiting for your approval",
+        )
+    );
 }
 
 #[derive(Subcommand, Debug)]

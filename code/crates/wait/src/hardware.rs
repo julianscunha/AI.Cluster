@@ -82,6 +82,12 @@ fn first_mac() -> String {
         .unwrap_or_default()
 }
 
+/// Removível se o kernel diz (`removable` = 1) ou se o disco está no barramento USB (o caminho real
+/// passa por `/usb`): pendrive e HD externo são o que o operador não quer apagar por engano.
+pub fn removivel(flag: &str, caminho_real: &str) -> bool {
+    flag.trim() == "1" || caminho_real.contains("/usb")
+}
+
 /// Discos de verdade: sem loop, ram, zram, dispositivo óptico nem mapeado.
 fn disks() -> Vec<InstallDisk> {
     let mut found: Vec<InstallDisk> = fs::read_dir("/sys/block")
@@ -102,7 +108,10 @@ fn disks() -> Vec<InstallDisk> {
                 .parse()
                 .ok()?;
             let model = fs::read_to_string(entry.path().join("device/model")).unwrap_or_default();
+            let flag = fs::read_to_string(entry.path().join("removable")).unwrap_or_default();
+            let real = fs::canonicalize(entry.path()).unwrap_or_default();
             Some(InstallDisk {
+                removable: removivel(&flag, &real.to_string_lossy()),
                 name,
                 size_bytes: sectors * 512,
                 model: model.trim().to_string(),
@@ -130,5 +139,15 @@ mod tests {
             1024 * 1024
         );
         assert_eq!(parse_ram(""), 0);
+    }
+
+    #[test]
+    fn disco_removivel_pela_flag_ou_pelo_usb() {
+        let interno = "/sys/devices/pci0000:00/ata1/host0/target0:0:0/block/sda";
+        let usb = "/sys/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.0/host6/target6:0:0/6:0:0:0/block/sdb";
+        assert!(!removivel("0\n", interno));
+        assert!(removivel("1\n", interno), "flag do kernel");
+        assert!(removivel("0", usb), "barramento USB, mesmo com a flag em 0");
+        assert!(!removivel("", interno), "sem sysfs legível cai no interno");
     }
 }

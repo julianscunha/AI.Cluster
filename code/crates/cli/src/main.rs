@@ -10,7 +10,9 @@ use ai_cluster_protocol::cluster::{
     WatchEventsRequest, WorkReportRequest, WorkReportResponse,
 };
 use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
+mod aparelhos;
 mod delegados;
+mod idioma;
 mod ptbr;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -217,13 +219,22 @@ enum NodeAction {
 enum InstallAction {
     /// Aparelhos em espera, aguardando aprovação para instalar (ADR-023).
     List,
-    /// Aprova a instalação de um aparelho da lista, apagando o disco informado.
+    /// Aprova a instalação de um aparelho da lista, apagando o disco. Sem argumentos, escolhe o único
+    /// aparelho pendente e o único disco interno, ou pergunta qual; pede confirmação antes de apagar.
     Approve {
-        /// Impressão digital que o aparelho mostra na tela (e `install list` lista).
-        fingerprint: String,
-        /// Disco que será apagado (`sda`, `mmcblk0`); precisa ser um dos que o aparelho informou.
+        /// Impressão digital que o aparelho mostra na tela (e `install list` lista). Sem ela, o único
+        /// pendente ou a pergunta de qual.
+        fingerprint: Option<String>,
+        /// Disco que será apagado (`sda`, `mmcblk0`); precisa ser um dos que o aparelho informou. Sem
+        /// ele, o único disco interno ou a pergunta de qual.
         #[arg(long)]
-        disk: String,
+        disk: Option<String>,
+        /// Não pergunta nada: aprova (automação). Sem ele, mostra o disco e pede confirmação.
+        #[arg(long)]
+        yes: bool,
+        /// Permite apagar um disco removível (pendrive, USB), que pode ser o do próprio operador.
+        #[arg(long)]
+        force_removable: bool,
     },
     /// Tira um aparelho da lista de espera.
     Reject {
@@ -444,23 +455,13 @@ async fn run_cluster(
             }
         },
         ClusterAction::Install { action } => match action {
-            InstallAction::List => print_installs(controller).await?,
-            InstallAction::Approve { fingerprint, disk } => {
-                let mut client = connect_operator(controller.to_string()).await?;
-                let approved = client
-                    .approve_install(ai_cluster_protocol::cluster::ApproveInstallRequest {
-                        fingerprint: fingerprint.clone(),
-                        disk: disk.clone(),
-                    })
-                    .await?
-                    .into_inner()
-                    .approved;
-                if approved {
-                    println!("INSTALAÇÃO aprovada fingerprint={fingerprint} apaga={disk}");
-                } else {
-                    println!("INSTALAÇÃO não encontrada fingerprint={fingerprint}");
-                }
-            }
+            InstallAction::List => aparelhos::lista(controller).await?,
+            InstallAction::Approve {
+                fingerprint,
+                disk,
+                yes,
+                force_removable,
+            } => aparelhos::aprova(controller, fingerprint, disk, yes, force_removable).await?,
             InstallAction::Reject { fingerprint } => {
                 let mut client = connect_operator(controller.to_string()).await?;
                 let rejected = client
@@ -598,7 +599,10 @@ async fn run_cluster(
             );
         }
         ClusterAction::Dashboard { watch } => print_dashboard(controller, watch).await?,
-        ClusterAction::Invite(convite) => delegados::encaminha("cluster", convite.args()),
+        ClusterAction::Invite(convite) => {
+            delegados::dedicar_bloco(convite.porta());
+            delegados::encaminha("cluster", convite.args())
+        }
     }
     Ok(())
 }
@@ -769,43 +773,6 @@ async fn approve_node(
         println!("WORKER aprovado no={node}");
     } else {
         println!("WORKER não encontrado no={node}");
-    }
-    Ok(())
-}
-
-async fn print_installs(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect_operator(endpoint.to_string()).await?;
-    let reply = client
-        .list_pending_installs(ai_cluster_protocol::cluster::ListPendingInstallsRequest {})
-        .await?
-        .into_inner();
-    if reply.pending.is_empty() {
-        println!("nenhum aparelho aguardando");
-    }
-    for item in reply.pending {
-        let disks = item
-            .disks
-            .iter()
-            .map(|d| format!("{}={}GB", d.name, d.size_bytes / 1_000_000_000))
-            .collect::<Vec<_>>()
-            .join(",");
-        let waiting = reply.now_unix_ms.saturating_sub(item.first_seen_unix_ms) / 1000;
-        let state = if item.approved_disk.is_empty() {
-            "aguardando".to_string()
-        } else {
-            format!("aprovado apaga={}", item.approved_disk)
-        };
-        println!(
-            "INSTALAÇÃO fingerprint={} {state} mac={} host={} arch={} firmware={} cpu=\"{}\" núcleos={} ram={}MB discos={disks} espera={waiting}s",
-            item.fingerprint,
-            item.mac,
-            item.host,
-            item.arch,
-            item.firmware,
-            item.cpu_model,
-            item.cpu_cores,
-            item.ram_bytes / 1_000_000,
-        );
     }
     Ok(())
 }
@@ -2464,6 +2431,19 @@ mod tests {
             &["aic", "cluster", "install", "list"],
             &[
                 "aic", "cluster", "install", "approve", "ab", "--disk", "sda",
+            ],
+            &["aic", "cluster", "install", "approve"],
+            &["aic", "cluster", "install", "approve", "--yes"],
+            &[
+                "aic",
+                "cluster",
+                "install",
+                "approve",
+                "ab",
+                "--disk",
+                "sdb",
+                "--yes",
+                "--force-removable",
             ],
             &["aic", "cluster", "install", "reject", "ab"],
             &["aic", "cluster", "install", "open", "--minutes", "5"],

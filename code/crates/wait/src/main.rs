@@ -43,8 +43,13 @@ fn screen(request: &AnnounceRequest, fingerprint: &str) {
     println!("  Memória            {}", size_text(request.ram_bytes));
     println!("  Firmware           {}", request.firmware);
     for disk in &request.disks {
+        let marca = if disk.removable {
+            " (removível: o operador precisa de --force-removable)"
+        } else {
+            ""
+        };
         println!(
-            "  Disco {:<10}   {} {}",
+            "  Disco {:<10}   {} {}{marca}",
             disk.name,
             size_text(disk.size_bytes),
             disk.model

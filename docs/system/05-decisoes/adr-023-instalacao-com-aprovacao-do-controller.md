@@ -9,7 +9,7 @@ type: sistema/adr
 
 Os comandos citados seguem a sintaxe do [[adr-024-interface-de-comandos-unica-aic]].
 
-Status: decidido · registro de pendentes, aprovação e consumo do token (`ClaimInstall`) implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`, `AI_CLUSTER_PUBLIC_URL`); faltam a imagem de espera, o uso do `worker.env` na instalação e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
+Status: decidido · registro de pendentes, aprovação e consumo do token (`ClaimInstall`) implementados (`enrollment.rs`, `AI_CLUSTER_ENROLL_ADDR`, `AI_CLUSTER_PUBLIC_URL`); o ambiente de espera e de instalação existe (`os/image/x86/build-installer.sh`, testado sem hardware); faltam a mídia de boot (pendrive e netboot), o controller servir a imagem e o comando gerado · Data: 2026-10-30 · Voltar para [[decisoes]].
 
 ## Contexto
 
@@ -42,6 +42,7 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 - Transporte do claim: o `ClaimInstall` devolve o join token do cluster, então só sai por porta TLS (`AI_CLUSTER_TLS_CERT/KEY` na espera). Sem TLS o claim é recusado, salvo com `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`, que avisa no log a cada uso. O controller também exige `AI_CLUSTER_PUBLIC_URL`, que é a URL devolvida ao worker.
 - Limite conhecido: a pré-aprovação não amarra o id ao aparelho. Quem tiver o join token pode registrar esse id antes dele, em até 2 min. Amarrar com uma credencial de registro entregue no claim e gravada no `worker.env` exige que o worker apresente essa credencial no primeiro registro; o worker hoje só apresenta a credencial que já salvou, então fica para uma etapa com mudança no worker. Sem a amarração, o prazo curto é a única proteção.
 - Token fora do argv: `aic-wait` aceita o token por `AIC_INSTALL_TOKEN` ou `--claim-file <arquivo|->`. `--claim <token>` continua por compatibilidade, mas o token fica visível a `ps`. A entrada consumida fica na lista só para recusar reuso e não aparece em `install list`. `worker.env` é gravado num `.tmp` novo (sem seguir link), com 600, e trocado por `rename`.
+- Escolha assistida: `aic cluster install approve` sem argumentos aprova o único pendente e sugere o único disco interno, com confirmação (`--yes` para automação). Discos removíveis (flag `removable` do sysfs ou barramento USB) vão marcados no `InstallDisk.removable`; o controller recusa apagá-los sem `ApproveInstallRequest.force_removable`.
 - Cliente da etapa de espera: o binário `aic-wait` (`crates/wait`), estático e pequeno. Lê o resumo de `/proc` e `/sys`, gera o segredo na memória, mostra a tela e pergunta de novo até ser aprovado. Com `https://` exige a CA em `AI_CLUSTER_TLS_CA` (caminho ainda não exercitado).
 
 - Identidade: todo componente que fala com uma pessoa abre com o logotipo e o nome do produto (`ai_cluster_common::brand`: `banner`, `rule`, `dot`), inclusive a etapa de espera. Sem terminal (log, arquivo) a abertura vira uma linha só.

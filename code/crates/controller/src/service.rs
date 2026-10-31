@@ -2244,14 +2244,26 @@ impl ClusterControl for ClusterControlService {
                 "fingerprint e disco são obrigatórios: a aprovação apaga o disco",
             ));
         }
-        let approved =
-            self.enrollments
-                .approve(&request.fingerprint, request.disk.trim(), unix_ms())?;
+        let approved = self.enrollments.approve(
+            &request.fingerprint,
+            request.disk.trim(),
+            request.force_removable,
+            unix_ms(),
+        )?;
         if approved {
+            let forca = if request.force_removable {
+                " (removível, forçado)"
+            } else {
+                ""
+            };
             self.audit(
                 &peer,
                 "approve-install",
-                &format!("{} disco {}", request.fingerprint, request.disk.trim()),
+                &format!(
+                    "{} disco {}{forca}",
+                    request.fingerprint,
+                    request.disk.trim()
+                ),
             );
         }
         Ok(Response::new(ApproveInstallResponse { approved }))
@@ -3983,6 +3995,7 @@ mod tests {
                         name: "sda".into(),
                         size_bytes: 1,
                         model: String::new(),
+                        removable: false,
                     }],
                     ..Default::default()
                 },
@@ -4000,6 +4013,7 @@ mod tests {
             op(ApproveInstallRequest {
                 fingerprint: fingerprint.clone(),
                 disk: disk.into(),
+                force_removable: false,
             })
         };
         assert!(
@@ -4021,6 +4035,7 @@ mod tests {
                 .approve_install(op(ApproveInstallRequest {
                     fingerprint: fingerprint.clone(),
                     disk: String::new(),
+                    force_removable: false,
                 }))
                 .await
                 .is_err(),

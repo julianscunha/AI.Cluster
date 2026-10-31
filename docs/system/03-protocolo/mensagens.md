@@ -18,6 +18,7 @@ Autorização: **join** = token de join (todo worker e cliente); **op** = token 
 | `ProbeLink` | `LinkProbe` | `ProbeLinkRequest` → `ProbeLinkResponse` | worker | join | recebe o payload e devolve quantos bytes chegaram |
 | `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o worker e devolve `cluster_id` e `node_credential`; credencial de worker removido recebe `PermissionDenied` (ADR-027) |
 | `ApproveNode` | `ClusterControl` | `ApproveNodeRequest` → `ApproveNodeResponse` | operador | op | torna confiável um worker registrado; tira o worker de quarentena |
+| `ApproveInstall` | `ClusterControl` | `ApproveInstallRequest` → `ApproveInstallResponse` | operador | op | aprova a instalação de um aparelho e apaga o disco `disk`; disco com `removable` (InstallDisk, campo 4) só sai com `force_removable` (campo 3), senão recusa (ADR-023) |
 | `RetireNode` | `ClusterControl` | `RetireNodeRequest` → `RetireNodeResponse` | operador | op | tira o worker do trabalho e mantém a identidade (ADR-027) |
 | `RemoveNode` | `ClusterControl` | `RemoveNodeRequest` → `RemoveNodeResponse` | operador | op | esquece o worker e deixa a credencial como lápide: quem a apresenta é recusado (ADR-027) |
 | `RevokeNode` | `ClusterControl` | `RevokeNodeRequest` → `RevokeNodeResponse` | operador | op | retira a confiança e a credencial; devolve à fila o que estava em voo |

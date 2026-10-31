@@ -21,6 +21,7 @@ aic <recurso> <ação> [alvo] [--opções]
 - **Opções com um nome só.** `--controller URL` é o endereço gRPC do controller (porta 50051) e vai depois do grupo (`aic cluster nodes --controller https://ip:50051`); também vale a variável `AI_CLUSTER_CONTROLLER`. `--server IP[:porta]` é o endereço do convite (porta 8099), `--code` é o código do convite, `--minutes` mede janelas, `--lang pt|en` escolhe o idioma do instalador. Um nome antigo não é aceito como apelido.
 - **Comandos que falam com o controller** pedem o token de operador (`AI_CLUSTER_OPERATOR_TOKEN`). Exceções: `cluster model manifest` e `cluster model verify`, que trabalham em arquivos locais.
 - Endereço sem TLS é recusado, salvo `AI_CLUSTER_INSECURE=1` numa rede fechada.
+- **Idioma.** As mensagens da instalação de aparelhos (`install list`, `install approve`, o bloco de `cluster invite`) saem em português; `AIC_LANG=en` troca para inglês, como no instalador. A ajuda continua em português.
 
 ## Cluster (`aic cluster`)
 
@@ -39,8 +40,8 @@ aic <recurso> <ação> [alvo] [--opções]
 
 | Comando | O que faz |
 |---|---|
-| `aic cluster install list` | Aparelhos na espera de instalação: impressão digital, MAC, IP, CPU, RAM, discos e há quanto tempo esperam. |
-| `aic cluster install approve <impressão> --disk <disco>` | Aprova a instalação, apagando o disco informado (precisa ser um dos que o aparelho listou). Gera o token de instalação, que só o aparelho dono do segredo recebe. |
+| `aic cluster install list` | Aparelhos na espera de instalação, em tabela: impressão digital, MAC, IP, CPU, RAM, cada disco (nome, tamanho, modelo, interno ou removível) e há quanto tempo esperam. Num pipe ou arquivo sai a linha `INSTALAÇÃO fingerprint=…` de sempre (o instalador a lê). |
+| `aic cluster install approve [impressão] [--disk D] [--yes] [--force-removable]` | Aprova a instalação, apagando o disco. Sem a impressão: se houver um só aparelho pendente, ele; senão, lista numerado e pergunta qual. Sem `--disk`: o único disco interno, sugerido; com vários, lista e pergunta. Antes de apagar mostra `vai apagar <disco> <modelo> <tamanho>` e pede confirmação (`s`/`N`). `--yes` pula a pergunta (automação; sem terminal e sem `--yes` recusa). Disco removível (pendrive, USB) só é apagado com `--force-removable`; o controller recusa sem ele. O `--disk` precisa ser um dos que o aparelho listou. Gera o token de instalação, que só o aparelho dono do segredo recebe. |
 | `aic cluster install reject <impressão>` | Tira o aparelho da lista de espera. |
 | `aic cluster install open [--minutes N]` | Abre a porta em que os aparelhos se apresentam (1 a 120 min, padrão 15). Ela se fecha sozinha. |
 | `aic cluster install close` | Fecha a porta agora. |
@@ -91,7 +92,7 @@ Uma reserva retém um worker para uma requisição futura.
 |---|---|
 | `aic cluster rollout <versão> --url URL --sha256 HEX --image-sha256 HEX --signature B64` ou `aic cluster rollout <versão> --url DIR --linux-signature B64` | Define a release que os workers devem rodar. Com `--signature` (AI Cluster OS) o canário atualiza primeiro; com `--linux-signature` (Linux comum, o `SHA256SUMS.sig`) o `--url` é o diretório da release. Pode levar as duas. Os argumentos saem de `os/image/sign-release.sh` e de `scripts/package-release.sh`. O controller confere só o formato; a assinatura é conferida no worker. |
 | `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
-| `aic cluster invite [--minutes N] [--port P]` | Abre o convite para computadores novos entrarem (instalador). Mostra o código de 8 caracteres e a linha de instalação; fecha ao sair. |
+| `aic cluster invite [--minutes N] [--port P]` | Abre o convite para computadores novos entrarem (instalador). Mostra o código de 8 caracteres e a linha de instalação; fecha ao sair. Antes disso, quando roda como root num controller instalado, mostra o bloco "Dedicar um computador ao AI Cluster OS" com as três formas: pendrive e rede (ainda em breve) e a partir de um Linux (`curl … /wait \| sudo sh`). |
 
 ## Controller, gateway e worker deste Linux
 

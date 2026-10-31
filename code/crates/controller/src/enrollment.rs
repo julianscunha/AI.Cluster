@@ -175,6 +175,7 @@ impl Enrollments {
                 name: disk.name.clone(),
                 size_bytes: disk.size_bytes,
                 model: clean(&disk.model, 40),
+                removable: disk.removable,
             })
             .collect();
         let secret_hash = hash(&request.secret);
@@ -287,9 +288,16 @@ impl Enrollments {
         list
     }
 
-    /// Aprova a instalação apagando `disk`, que precisa ser um dos que o aparelho informou.
+    /// Aprova a instalação apagando `disk`, que precisa ser um dos que o aparelho informou. Disco
+    /// removível (pendrive, USB) só com `force_removable`: pode ser o pendrive do próprio operador.
     /// `Ok(false)`: a impressão digital não está (mais) na lista.
-    pub fn approve(&self, fingerprint: &str, disk: &str, now: u64) -> Result<bool, Status> {
+    pub fn approve(
+        &self,
+        fingerprint: &str,
+        disk: &str,
+        force_removable: bool,
+        now: u64,
+    ) -> Result<bool, Status> {
         let mut waiting = self.lock();
         let wanted = normalize(fingerprint);
         let Some(candidate) = waiting
@@ -299,10 +307,15 @@ impl Enrollments {
         else {
             return Ok(false);
         };
-        if !candidate.info.disks.iter().any(|d| d.name == disk) {
+        let Some(found) = candidate.info.disks.iter().find(|d| d.name == disk) else {
             return Err(Status::invalid_argument(
                 "o disco não é um dos que o aparelho informou",
             ));
+        };
+        if found.removable && !force_removable {
+            return Err(Status::failed_precondition(format!(
+                "o disco {disk} é removível (pendrive ou USB): só apaga com --force-removable"
+            )));
         }
         if !candidate.info.approved_disk.is_empty() && candidate.info.approved_disk != disk {
             return Err(Status::already_exists(format!(
@@ -551,7 +564,26 @@ mod tests {
             name: name.into(),
             size_bytes: 16_000_000_000,
             model: "SD".into(),
+            removable: false,
         }
+    }
+
+    #[test]
+    fn disco_removivel_so_e_apagado_com_force_removable() {
+        let e = Enrollments::default();
+        let mut pen = hello(1, MAC);
+        pen.disks[0].removable = true;
+        pen.disks.push(disk("sda"));
+        let fp = e.announce(pen, None, 0).unwrap().fingerprint;
+        let recusa = e.approve(&fp, "mmcblk0", false, 1).unwrap_err();
+        assert_eq!(recusa.code(), tonic::Code::FailedPrecondition);
+        assert!(recusa.message().contains("--force-removable"));
+        // O interno continua aprovável sem a permissão.
+        assert!(e.approve(&fp, "sda", false, 2).unwrap());
+        let mut so_pen = hello(2, "aa:bb:cc:dd:ee:02");
+        so_pen.disks[0].removable = true;
+        let fp2 = e.announce(so_pen, None, 3).unwrap().fingerprint;
+        assert!(e.approve(&fp2, "mmcblk0", true, 4).unwrap());
     }
 
     fn hello(secret: u8, mac: &str) -> AnnounceRequest {
@@ -577,7 +609,10 @@ mod tests {
         assert_eq!(e.list(1_000).len(), 1);
         assert_eq!(e.list(1_000)[0].fingerprint, first.fingerprint);
 
-        assert!(e.approve(&first.fingerprint, "mmcblk0", 2_000).unwrap());
+        assert!(
+            e.approve(&first.fingerprint, "mmcblk0", false, 2_000)
+                .unwrap()
+        );
         // Outro segredo com o mesmo MAC (um intruso) não leva o token nem derruba a aprovação.
         let intruder = e.announce(hello(2, MAC), None, 3_000);
         assert_eq!(intruder.unwrap_err().code(), tonic::Code::AlreadyExists);
@@ -589,7 +624,7 @@ mod tests {
     fn o_dono_do_segredo_recebe_o_token_e_pode_pedir_de_novo() {
         let e = Enrollments::default();
         let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
-        assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
+        assert!(e.approve(&fp, "mmcblk0", false, 1).unwrap());
         let got = e.announce(hello(1, MAC), None, 2).unwrap();
         assert!(got.approved && got.disk == "mmcblk0");
         assert_eq!(got.install_token.len(), 32);
@@ -609,8 +644,8 @@ mod tests {
     fn o_disco_precisa_ser_um_dos_que_o_aparelho_informou() {
         let e = Enrollments::default();
         let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
-        assert!(e.approve(&fp, "sda", 1).is_err());
-        assert!(!e.approve("0000-0000-0000", "mmcblk0", 1).unwrap());
+        assert!(e.approve(&fp, "sda", false, 1).is_err());
+        assert!(!e.approve("0000-0000-0000", "mmcblk0", false, 1).unwrap());
     }
 
     #[test]
@@ -619,12 +654,12 @@ mod tests {
         let mut two = hello(1, MAC);
         two.disks.push(disk("sda"));
         let fp = e.announce(two, None, 0).unwrap().fingerprint;
-        assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
+        assert!(e.approve(&fp, "mmcblk0", false, 1).unwrap());
         let token = e.announce(hello(1, MAC), None, 2).unwrap().install_token;
-        let err = e.approve(&fp, "sda", 3).unwrap_err();
+        let err = e.approve(&fp, "sda", false, 3).unwrap_err();
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
         assert!(err.message().contains("já aprovado com o disco mmcblk0"));
-        assert!(e.approve(&fp, "mmcblk0", 4).unwrap());
+        assert!(e.approve(&fp, "mmcblk0", false, 4).unwrap());
         assert_eq!(
             e.announce(hello(1, MAC), None, 5).unwrap().install_token,
             token
@@ -635,7 +670,7 @@ mod tests {
     fn com_a_porta_fechada_o_aprovado_recebe_o_token_e_o_novo_e_recusado() {
         let e = Enrollments::default();
         let fp = e.announce(hello(1, MAC), None, 0).unwrap().fingerprint;
-        assert!(e.approve(&fp, "mmcblk0", 1).unwrap());
+        assert!(e.approve(&fp, "mmcblk0", false, 1).unwrap());
         // Operador aprovou e fechou (ou a janela venceu): o aparelho aprovado ainda recebe o token.
         let got = e.announce_if(hello(1, MAC), None, 2, false).unwrap();
         assert!(got.approved && got.install_token.len() == 32);
@@ -799,7 +834,7 @@ mod tests {
             .announce(hello(secret, mac), None, now)
             .unwrap()
             .fingerprint;
-        assert!(e.approve(&fp, "mmcblk0", now).unwrap());
+        assert!(e.approve(&fp, "mmcblk0", false, now).unwrap());
         e.announce(hello(secret, mac), None, now)
             .unwrap()
             .install_token

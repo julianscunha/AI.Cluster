@@ -1064,6 +1064,8 @@ message InstallDisk {
   string name = 1;
   uint64 size_bytes = 2;
   string model = 3;
+  /// Removível (USB ou flag `removable` do kernel). O controller só aprova com `force_removable`.
+  bool removable = 4;
 }
 
 /// O que a etapa de espera conta sobre o aparelho. Chega sem credencial: nada aqui é confiável até
@@ -1137,6 +1139,8 @@ message ApproveInstallRequest {
   string fingerprint = 1;
   /// Disco que será apagado; precisa ser um dos que o aparelho informou.
   string disk = 2;
+  /// Permite apagar um disco removível (pendrive, USB). Sem isto o controller recusa.
+  bool force_removable = 3;
 }
 
 message ApproveInstallResponse {
