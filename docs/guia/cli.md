@@ -32,7 +32,7 @@ aic <recurso> <ação> [alvo] [--opções]
 | `aic cluster node show <id>` | Tudo que o controller sabe sobre um nó: capacidade, saúde, confiança e reserva. |
 | `aic cluster node approve <id> --fingerprint <fp>` | Aprova um nó pendente para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a impressão que o controller mostra agora, sem conferir (anula a proteção). Também tira um nó da quarentena. |
 | `aic cluster node retire <id>` | Tira o worker do trabalho **mantendo a identidade**: as unidades em voo voltam à fila, e a credencial e a impressão continuam as mesmas. Volta com `approve` e a impressão de antes. Registra `node_retired`. |
-| `aic cluster node revoke <id>` | **Revoga a credencial**: retira a aprovação, invalida a credencial, devolve as unidades em voo à fila e registra `node_revoked`. O worker revogado encerra e só volta com um novo join. |
+| `aic cluster node revoke <id>` | **Revoga a credencial**: retira a aprovação, invalida a credencial, devolve as unidades em voo à fila e registra `node_revoked`. O worker revogado encerra e só volta com um novo join; o certificado do túnel RPC dele deixa de ser renovado (ADR-026). |
 | `aic cluster node remove <id>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e credencial). Se o processo continuar rodando, ele se apresenta de novo como nó novo e pendente. Registra `node_removed`. |
 
 ### Instalação com aprovação (ADR-023)

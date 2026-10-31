@@ -43,7 +43,7 @@ aic cluster model status                  # estado (CARREGANDO, PRONTO), workers
    recarrega o modelo e o `model status` mostra o benchmark novo. `model stop` tira o modelo da API; a
    chave continua valendo no próximo `start`.
 
-Limites de hoje: uma geração por vez, o certificado do túnel não é por nó e os binários do llama.cpp
+Limites de hoje: uma geração por vez, a renovação do certificado do túnel depende da CA no controller (ADR-026) e os binários do llama.cpp
 ainda não vão nas imagens do SO (veja [[pendencias]]).
 
 ## Texto e visão

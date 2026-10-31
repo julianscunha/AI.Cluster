@@ -21,13 +21,13 @@ use ai_cluster_protocol::cluster::{
     ListReservationsResponse, MetricsResponse, ModelEntry, ModelStatus, ModelStatusRequest,
     ModelStatusResponse, NodeShardCapacity, ProbeLinkRequest, ProbeLinkResponse,
     RegisterNodeRequest, RegisterNodeResponse, ReleaseReservationRequest,
-    ReleaseReservationResponse, RequestWorkRequest, RequestWorkResponse, Reservation,
-    ReserveRequest, ReserveResponse, RevokeNodeRequest, RevokeNodeResponse, RpcEndpoint,
-    SetReleaseRequest, SetReleaseResponse, ShardCapacityRequest, ShardCapacityResponse,
-    ShardCompute, ShardMatmulRequest, ShardMatmulResponse, ShardOutput, ShardResult,
-    StartModelRequest, StartModelResponse, StopModelRequest, StopModelResponse,
-    SubmitWorkResultRequest, SubmitWorkResultResponse, WorkReportEntry, WorkReportRequest,
-    WorkReportResponse, WorkUnit,
+    ReleaseReservationResponse, RenewNodeCertificateRequest, RenewNodeCertificateResponse,
+    RequestWorkRequest, RequestWorkResponse, Reservation, ReserveRequest, ReserveResponse,
+    RevokeNodeRequest, RevokeNodeResponse, RpcEndpoint, SetReleaseRequest, SetReleaseResponse,
+    ShardCapacityRequest, ShardCapacityResponse, ShardCompute, ShardMatmulRequest,
+    ShardMatmulResponse, ShardOutput, ShardResult, StartModelRequest, StartModelResponse,
+    StopModelRequest, StopModelResponse, SubmitWorkResultRequest, SubmitWorkResultResponse,
+    WorkReportEntry, WorkReportRequest, WorkReportResponse, WorkUnit,
 };
 use ai_cluster_protocol::cluster::{
     Event, GatewayInfo, ListGatewaysRequest, ListGatewaysResponse, NodeIdentity, Release,
@@ -91,6 +91,8 @@ pub struct ClusterControlService {
     rollout: Rollout,
     /// Pasta de modelos (`AI_CLUSTER_MODELS_DIR`) que `ListModels` varre.
     models_dir: Option<std::path::PathBuf>,
+    /// CA do cluster para renovar o certificado do túnel RPC (ADR-026); `None` = renovação desligada.
+    ca: Option<std::sync::Arc<crate::certs::CaSigner>>,
     /// O modelo pedido, as chaves (hash) e o plano de workers do llama.cpp (ADR-022).
     orchestrator: crate::models::Orchestrator,
     /// De que endereço (só o IP) cada nó se registrou: o gateway chega ao túnel RPC por ele.
@@ -344,6 +346,7 @@ impl ClusterControlService {
                     })
                     .map(Into::into),
             ),
+            ca: None,
             node_hosts: Arc::default(),
             llama_version: Arc::default(),
             llama_slots: Arc::default(),
@@ -359,6 +362,12 @@ impl ClusterControlService {
                         .unwrap_or(0),
                 ),
         }
+    }
+
+    /// Liga a renovação do certificado do túnel RPC com a CA do cluster (ADR-026).
+    pub fn with_ca(mut self, ca: crate::certs::CaSigner) -> Self {
+        self.ca = Some(std::sync::Arc::new(ca));
+        self
     }
 
     /// A lista que o serviço `Enrollment` (sem credencial) alimenta e o operador aprova.
@@ -810,6 +819,47 @@ impl ClusterControl for ClusterControlService {
             );
         }
         Ok(Response::new(RemoveNodeResponse { removed, requeued }))
+    }
+
+    /// Renova o certificado do túnel RPC de um nó aprovado (ADR-026). A credencial do nó prova quem
+    /// pede: um nó pendente, revogado ou sem credencial recebe recusa, e o token de join sozinho não basta.
+    async fn renew_node_certificate(
+        &self,
+        request: Request<RenewNodeCertificateRequest>,
+    ) -> Result<Response<RenewNodeCertificateResponse>, Status> {
+        let presented = node_credential(&request).to_vec();
+        let request = request.into_inner();
+        if !self.registry.renews(&request.node_id, &presented) {
+            return Err(Status::permission_denied(
+                "credencial do nó ausente, inválida, pendente ou revogada: sem renovação",
+            ));
+        }
+        let Some(ca) = &self.ca else {
+            return Err(Status::failed_precondition(
+                "este controller não tem a CA do cluster (AI_CLUSTER_RPC_CA_KEY): renovação desligada",
+            ));
+        };
+        // A chave do pedido tem de ser a que este nó já usou (fixada na primeira renovação, ADR-026).
+        let fingerprint = crate::certs::CaSigner::key_fingerprint(&request.csr_pem)
+            .map_err(Status::invalid_argument)?;
+        if !self.registry.bind_key(&request.node_id, &fingerprint) {
+            return Err(Status::permission_denied(
+                "a chave do pedido não é a que este nó já tem: sem renovação",
+            ));
+        }
+        let cert_pem = ca
+            .sign_worker(
+                &request.node_id,
+                &request.csr_pem,
+                time::OffsetDateTime::now_utc(),
+            )
+            .map_err(Status::invalid_argument)?;
+        self.events.record(
+            unix_ms(),
+            "cert_renewed",
+            format!("{} recebeu certificado novo", request.node_id),
+        );
+        Ok(Response::new(RenewNodeCertificateResponse { cert_pem }))
     }
 
     /// Strips a node of trust and its credential, and hands its in-flight units back (S5).
@@ -3046,6 +3096,131 @@ mod tests {
             credential.parse().unwrap(),
         );
         request
+    }
+
+    /// Uma CA de teste (a do cluster é lida de arquivos em `CaSigner::from_env`).
+    fn test_ca() -> crate::certs::CaSigner {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "ai-cluster-ca");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let cert = params.self_signed(&key).unwrap();
+        crate::certs::CaSigner::from_pem(&cert.pem(), &key.serialize_pem()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_renovacao_exige_a_credencial_do_no_e_recusa_o_revogado() {
+        let (service, registry, _) = service_with_registry_and_work();
+        let credential = service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+                replica: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .node_credential;
+        let csr = rcgen::CertificateParams::new(vec![])
+            .unwrap()
+            .serialize_request(&rcgen::KeyPair::generate().unwrap())
+            .unwrap()
+            .pem()
+            .unwrap();
+        let ask = |credential: &str| {
+            let mut request = Request::new(RenewNodeCertificateRequest {
+                node_id: "node-a".into(),
+                csr_pem: csr.clone(),
+            });
+            request.metadata_mut().insert(
+                ai_cluster_protocol::metadata::NODE_AUTH_HEADER,
+                credential.parse().unwrap(),
+            );
+            request
+        };
+        // sem credencial ou com outra: recusa
+        for wrong in ["", "outra"] {
+            let err = service
+                .renew_node_certificate(ask(wrong))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        }
+        // sem a CA neste controller: a renovação fica desligada, com erro claro
+        let err = service
+            .renew_node_certificate(ask(&credential))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        let service = service.with_ca(test_ca());
+        let cert = service
+            .renew_node_certificate(ask(&credential))
+            .await
+            .unwrap()
+            .into_inner()
+            .cert_pem;
+        assert!(cert.starts_with("-----BEGIN CERTIFICATE-----"));
+        // revogado: a credencial antiga não renova mais
+        assert!(registry.revoke("node-a"));
+        let err = service
+            .renew_node_certificate(ask(&credential))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn a_renovacao_recusa_outra_chave_do_mesmo_no() {
+        let (service, _, _) = service_with_registry_and_work();
+        let service = service.with_ca(test_ca());
+        let credential = service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(identity("node-a")),
+                capability: None,
+                replica: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .node_credential;
+        let csr_for = |key: &rcgen::KeyPair| {
+            rcgen::CertificateParams::new(vec![])
+                .unwrap()
+                .serialize_request(key)
+                .unwrap()
+                .pem()
+                .unwrap()
+        };
+        let ask = |csr: String| {
+            let mut request = Request::new(RenewNodeCertificateRequest {
+                node_id: "node-a".into(),
+                csr_pem: csr,
+            });
+            request.metadata_mut().insert(
+                ai_cluster_protocol::metadata::NODE_AUTH_HEADER,
+                credential.parse().unwrap(),
+            );
+            request
+        };
+        let first = rcgen::KeyPair::generate().unwrap();
+        service
+            .renew_node_certificate(ask(csr_for(&first)))
+            .await
+            .expect("a primeira chave fixa e renova");
+        // a mesma chave renova de novo
+        service
+            .renew_node_certificate(ask(csr_for(&first)))
+            .await
+            .expect("a chave fixada renova");
+        // outra chave, com a credencial certa: recusa
+        let other = rcgen::KeyPair::generate().unwrap();
+        let err = service
+            .renew_node_certificate(ask(csr_for(&other)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
 
     #[tokio::test]

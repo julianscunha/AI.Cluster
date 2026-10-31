@@ -19,6 +19,7 @@ Autorização: **join** = token de join (todo nó e cliente); **op** = token de 
 | `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o nó e devolve `cluster_id` e `node_credential` |
 | `ApproveNode` | `ClusterControl` | `ApproveNodeRequest` → `ApproveNodeResponse` | operador | op | torna confiável um nó registrado; tira o nó de quarentena |
 | `RevokeNode` | `ClusterControl` | `RevokeNodeRequest` → `RevokeNodeResponse` | operador | op | retira a confiança e a credencial; devolve à fila o que estava em voo |
+| `RenewNodeCertificate` | `ClusterControl` | `RenewNodeCertificateRequest` → `RenewNodeCertificateResponse` | worker | credencial do nó | emite o certificado do túnel RPC para o CSR do nó (SAN `aic-worker-<nó>`); recusa nó pendente ou revogado (ADR-026) |
 | `SetRelease` | `ClusterControl` | `SetReleaseRequest` → `SetReleaseResponse` | operador | op | define a release desejada do cluster; `version` em branco cancela o rollout |
 | `GetOutput` | `ClusterControl` | `GetOutputRequest` → `GetOutputResponse` | operador | op | devolve a saída guardada de uma requisição com `keep_result` |
 | `ShardChannel` | `ClusterControl` | stream `ShardResult` → stream `ShardCompute` | worker | join + nó | canal residente de fatias; o worker abre |
@@ -77,6 +78,7 @@ Total: 2 serviços e 24 RPCs.
 | `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6), `llama_slots` (7), `memory_available_bytes` (8) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
 | `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
 | `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
+| `RenewNodeCertificateRequest` / `RenewNodeCertificateResponse` | `node_id` (1), `csr_pem` (2) / `cert_pem` (1) | CSR assinado pela chave do nó; a prova é a credencial, não o token de join |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |
 | `ProbeLinkRequest` / `ProbeLinkResponse` | `payload` (1) / `received_bytes` (1) | payload de até 4 MiB |
 

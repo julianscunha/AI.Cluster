@@ -124,6 +124,8 @@ struct Known {
     trusted: bool,
     /// Survives `leave_node` and a restart, so neither is a way out of a quarantine.
     quarantined: bool,
+    /// SHA-256 da chave pública do certificado de túnel já renovado (ADR-026); vazio = ainda não fixada.
+    key: String,
 }
 
 #[derive(Debug)]
@@ -185,6 +187,7 @@ impl Registry {
                             trusted: trusted == "1",
                             // Optional fourth column; files from before G1 do not have it.
                             quarantined: fields.next() == Some("1"),
+                            key: fields.next().unwrap_or("").to_string(),
                         },
                     );
                 }
@@ -200,13 +203,16 @@ impl Registry {
 
     fn remember(&self, node_id: &str, credential: &str, trusted: bool) {
         let mut known = self.lock_known();
-        let quarantined = known.get(node_id).is_some_and(|prior| prior.quarantined);
+        let (quarantined, key) = known.get(node_id).map_or((false, String::new()), |prior| {
+            (prior.quarantined, prior.key.clone())
+        });
         known.insert(
             node_id.to_string(),
             Known {
                 credential: credential.to_string(),
                 trusted,
                 quarantined,
+                key,
             },
         );
         self.save(&known);
@@ -231,10 +237,11 @@ impl Registry {
             .map(|id| {
                 let entry = &known[id];
                 format!(
-                    "{id}\t{}\t{}\t{}\n",
+                    "{id}\t{}\t{}\t{}\t{}\n",
                     entry.credential,
                     u8::from(entry.trusted),
-                    u8::from(entry.quarantined)
+                    u8::from(entry.quarantined),
+                    entry.key
                 )
             })
             .collect();
@@ -487,6 +494,31 @@ impl Registry {
         self.lock()
             .get(node_id)
             .is_some_and(|record| record.trusted)
+    }
+
+    /// Whether `node_id` may renew its tunnel certificate (ADR-026): it must still be approved and
+    /// hold its credential. A revoked node is refused, and so is an unknown one (revoke forgets it
+    /// when it is not live), so the join token alone never renews anything.
+    pub fn renews(&self, node_id: &str, presented: &[u8]) -> bool {
+        self.lock_known().get(node_id).is_some_and(|known| {
+            known.trusted && same_token(known.credential.as_bytes(), presented)
+        })
+    }
+
+    /// Fixa a chave pública do certificado do nó na primeira renovação e recusa outra nas seguintes
+    /// (ADR-026). Quem chama já confirmou `renews`. Um nó esquecido ou revogado offline perde a fixação.
+    pub fn bind_key(&self, node_id: &str, key_fingerprint: &str) -> bool {
+        let mut known = self.lock_known();
+        let Some(entry) = known.get_mut(node_id) else {
+            return false;
+        };
+        if entry.key.is_empty() {
+            entry.key = key_fingerprint.to_string();
+        } else {
+            return entry.key == key_fingerprint;
+        }
+        self.save(&known);
+        true
     }
 
     /// Whether a call that speaks for `node_id` may proceed. An unknown node has no secret to
@@ -1127,6 +1159,41 @@ mod tests {
             restarted.register_as(identity("node-a"), CapabilityReport::default(), 4_000, b"");
         assert!(stranger.is_none());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn renewal_needs_an_approved_node_with_its_credential_and_revoke_refuses_it() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        let credential = first.credential.clone();
+        // pendente: nem o token de join nem a credencial renovam
+        assert!(!registry.renews("node-a", credential.as_bytes()));
+        registry.approve("node-a");
+        assert!(registry.renews("node-a", credential.as_bytes()));
+        assert!(!registry.renews("node-a", b"outra"));
+        assert!(!registry.renews("ghost", b""));
+        assert!(registry.revoke("node-a"));
+        assert!(!registry.renews("node-a", credential.as_bytes()));
+        // revogado e saiu: o id foi esquecido, e um desconhecido também não renova
+        registry.approve("node-a");
+        registry.remove("node-a");
+        assert!(registry.revoke("node-a"));
+        assert!(!registry.renews("node-a", credential.as_bytes()));
+    }
+
+    #[test]
+    fn a_renewal_key_is_pinned_on_first_use_and_kept_through_a_live_revoke() {
+        let registry = Registry::requiring_approval();
+        registry.register(identity("node-a"), CapabilityReport::default(), 1_000);
+        registry.approve("node-a");
+        assert!(registry.bind_key("node-a", "chave-1"));
+        assert!(registry.bind_key("node-a", "chave-1"));
+        assert!(!registry.bind_key("node-a", "chave-2"));
+        // revogar (nó vivo) não solta a fixação: a chave antiga não volta a ser aceita como nova
+        assert!(registry.revoke("node-a"));
+        registry.approve("node-a");
+        assert!(!registry.bind_key("node-a", "chave-2"));
+        assert!(!registry.bind_key("ghost", "chave-1"));
     }
 
     #[test]

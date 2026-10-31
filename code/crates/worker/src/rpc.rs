@@ -5,9 +5,14 @@
 //! Ligado por `AI_CLUSTER_RPC_SERVER_BIN`. Sem certificado do worker e CA dos clientes o túnel não
 //! sobe e o nó não anuncia RPC: a falha é fechada, nunca em texto puro.
 
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::Duration;
+
+use ai_cluster_protocol::metadata::MetadataClient;
+
+use crate::cert;
 
 /// A configuração do `rpc-server` deste nó, lida do ambiente uma única vez.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +33,8 @@ pub struct RpcConfig {
     /// `LLAMA_CACHE` do `rpc-server`: onde o cache mora (`AI_CLUSTER_RPC_CACHE_DIR`). Sem ele, o
     /// llama.cpp usa o diretório do usuário, que num contêiner some junto com ele.
     pub cache_dir: Option<String>,
+    /// Pasta dos certificados renovados (ADR-026), gravável pelo worker. `None` = sem renovação.
+    pub renewed_dir: Option<String>,
     /// `AI_CLUSTER_RPC_CACHE` foi dado: vale como está. Sem ele, com `cache_dir`, quem sobe o
     /// `rpc-server` decide pela razão entre a leitura do disco e a velocidade do enlace.
     pub cache_explicit: bool,
@@ -157,6 +164,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
         key,
         client_ca,
         client_role,
+        renewed_dir: var("AI_CLUSTER_RPC_TLS_RENEWED_DIR"),
         threads,
         cache,
         cache_dir,
@@ -211,30 +219,120 @@ pub fn config(threads: usize) -> Option<&'static RpcConfig> {
         .as_ref()
 }
 
-/// Sobe o túnel mTLS e mantém o `rpc-server` vivo. Só retorna se o túnel não puder subir.
-pub async fn run(config: RpcConfig) -> Result<(), String> {
-    wait_for_valid_clock().await;
-    let tls = ai_cluster_tunnel::server_config(
-        &config.cert,
-        &config.key,
-        &config.client_ca,
-        &config.client_role,
-    )?;
-    let listener = tokio::net::TcpListener::bind(&config.listen)
-        .await
-        .map_err(|e| format!("túnel RPC em {}: {e}", config.listen))?;
-    println!(
-        "túnel RPC (mTLS) em {} para o rpc-server em 127.0.0.1:{}",
-        config.listen, config.local_port
-    );
-    let upstream = format!("127.0.0.1:{}", config.local_port);
-    tokio::spawn(async move {
-        if let Err(error) = ai_cluster_tunnel::serve(listener, upstream, tls).await {
-            eprintln!("túnel RPC encerrou: {error}");
-        }
-    });
+/// Sobe o túnel mTLS e mantém o `rpc-server` vivo. Só retorna se o `rpc-server` não puder ser supervisionado.
+/// O túnel e a renovação do certificado (ADR-026) rodam à parte: se o túnel não sobe, a renovação segue.
+pub async fn run(config: RpcConfig, client: MetadataClient, node_id: String) -> Result<(), String> {
+    tokio::spawn(tunnel(config.clone(), client, node_id));
     supervise(&config).await;
     Ok(())
+}
+
+/// Carrega o certificado em uso: o primeiro candidato que carrega com a chave (o renovado, o anterior
+/// renovado, o do convite). `broken` marca um renovado que existe e não carrega: pede renovação já.
+fn choose(config: &RpcConfig) -> (Option<(ai_cluster_tunnel::Tls, String, bool)>, bool) {
+    let mut broken = false;
+    for (path, renewed) in cert::candidates(&config.cert, config.renewed_dir.as_deref()) {
+        if !Path::new(&path).exists() {
+            continue;
+        }
+        match load(config, &path) {
+            Ok(tls) => return (Some((tls, path, renewed)), broken),
+            Err(error) => {
+                broken |= path.ends_with("worker.crt") && renewed;
+                eprintln!("certificado {path} não carrega: {error}");
+            }
+        }
+    }
+    (None, broken)
+}
+
+fn load(config: &RpcConfig, cert: &str) -> Result<ai_cluster_tunnel::Tls, String> {
+    ai_cluster_tunnel::server_config(cert, &config.key, &config.client_ca, &config.client_role)
+}
+
+/// Túnel mTLS: sobe com um certificado que carregue, troca o certificado quando a renovação grava um novo
+/// e pede renovação quando o que está em uso vence ou quando o renovado existe e está quebrado.
+async fn tunnel(config: RpcConfig, client: MetadataClient, node_id: String) {
+    wait_for_valid_clock().await;
+    let mut client = client;
+    let mut reload: Option<tokio::sync::watch::Sender<ai_cluster_tunnel::Tls>> = None;
+    let mut served = String::new();
+    let mut warned = false;
+    loop {
+        let (mut chosen, broken) = choose(&config);
+        let stale = broken || chosen.as_ref().is_none_or(|(_, path, _)| cert::due(path));
+        let mut changed = false;
+        if stale {
+            match config.renewed_dir.as_deref() {
+                Some(dir) => {
+                    let key = config.key.clone();
+                    let renewed = async {
+                        let pem = cert::fetch(&mut client, &node_id, &key).await?;
+                        let (ca, role) = (config.client_ca.clone(), config.client_role.clone());
+                        cert::install(dir, &pem, |path| {
+                            ai_cluster_tunnel::server_config(path, &key, &ca, &role).is_ok()
+                        })
+                    };
+                    match renewed.await {
+                        Ok(()) => {
+                            println!("certificado do túnel RPC renovado");
+                            changed = true;
+                            chosen = choose(&config).0;
+                        }
+                        // Falha de renovação nunca derruba o túnel: o certificado atual segue até vencer.
+                        Err(error) => eprintln!(
+                            "renovação do certificado do túnel RPC falhou (o atual segue válido até vencer): {error}"
+                        ),
+                    }
+                }
+                None if !warned => {
+                    eprintln!(
+                        "sem AI_CLUSTER_RPC_TLS_RENEWED_DIR o certificado do túnel não é renovado"
+                    );
+                    warned = true;
+                }
+                None => {}
+            }
+        }
+        if let Some((tls, path, _)) = chosen {
+            match &reload {
+                None => {
+                    let bound = tokio::net::TcpListener::bind(&config.listen).await;
+                    match bound {
+                        Ok(listener) => {
+                            println!(
+                                "túnel RPC (mTLS) em {} para o rpc-server em 127.0.0.1:{}",
+                                config.listen, config.local_port
+                            );
+                            let (tx, rx) = tokio::sync::watch::channel(tls);
+                            let upstream = format!("127.0.0.1:{}", config.local_port);
+                            tokio::spawn(async move {
+                                if let Err(error) =
+                                    ai_cluster_tunnel::serve(listener, upstream, rx).await
+                                {
+                                    eprintln!("túnel RPC encerrou: {error}");
+                                }
+                            });
+                            reload = Some(tx);
+                            served = path;
+                        }
+                        Err(error) => eprintln!("túnel RPC em {}: {error}", config.listen),
+                    }
+                }
+                Some(tx) if changed || served != path => {
+                    let _ = tx.send(tls);
+                    served = path;
+                }
+                Some(_) => {}
+            }
+        }
+        let wait = if reload.is_some() {
+            cert::CHECK_EVERY
+        } else {
+            cert::RETRY_EVERY
+        };
+        tokio::time::sleep(wait).await;
+    }
 }
 
 /// Antes disto (2026-01-01) o relógio é o de uma placa sem RTC que ainda não sincronizou: o

@@ -13,6 +13,13 @@ tonic = "0.14"
 # Encodes and decodes the copy of the controller state this node keeps on disk (I4).
 # Already in the tree through ai-cluster-protocol, so this adds no new crate.
 prost = "0.14"
+# Renovação do certificado do túnel RPC (ADR-026): o CSR sai com a chave deste nó e o prazo se lê do PEM.
+# rcgen e x509-parser são as versões do controller (o lock já tem o rcgen pelo túnel).
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "x509-parser"] }
+x509-parser = "0.16"
 # O_DIRECT da sonda de leitura de disco. Já está na árvore pelo tokio, então não traz crate novo.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+time = "0.3"

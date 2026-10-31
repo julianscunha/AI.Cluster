@@ -199,7 +199,8 @@ enum NodeAction {
         /// Nó a retirar.
         id: String,
     },
-    /// Revoga a credencial do worker: ele fica offline e só volta com um novo join (S5).
+    /// Revoga a credencial do worker: ele fica offline, perde a renovação do certificado do túnel
+    /// (ADR-026) e não recebe mais o túnel RPC; só volta com um novo join (S5).
     Revoke {
         /// Nó a revogar.
         id: String,

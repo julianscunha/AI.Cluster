@@ -1,3 +1,4 @@
+pub mod certs;
 pub mod enrollment;
 pub mod events;
 pub mod exporter;

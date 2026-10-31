@@ -116,7 +116,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Revogação | Lista de revogação de chaves de release e certificados; revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). | código |
+| Revogação | Lista de revogação de chaves de release e de certificados de worker (o controller já não renova nem anuncia o nó revogado, ADR-026; falta CRL para quem não é o controller); revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). | código |
 | mTLS | Ligar o certificado ao `node_id`; rotação, CRL e emissão automática; TLS no exportador de métricas. | código |
 | Rollout | HTTPS no download (hoje HTTP, segue redirecionamento); marca guarda uma versão só; downgrade legítimo (decisão); ondas com mais de um nó. | código, decisão, hardware |
 | Integridade de boot | dm-verity com root hash assinado; TPM e secure boot; medida de 512 MiB leva 25 a 40 s no SD. | hardware |
@@ -145,4 +145,4 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Certificado por nó | Cada worker gera a própria chave e o convite (`aic cluster invite`) assina o certificado, com o SAN `aic-worker-<nó>`. Falta renovar (825 dias), revogar e emitir sem convite aberto; a CA mora no servidor do convite, não no controller em si. | código |
+| Certificado por nó | Renovação e revogação prontas (ADR-026): o controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do nó, com chave fixada por nó e escrita atômica no worker. Falta: rotação da CA; trocar a chave do nó na renovação; CRL para quem não é o controller; nó esquecido ou revogado offline volta só com novo convite (regra de operação, sem imposição no código); entrada de nó novo, que ainda passa pelo convite; sem systemd e em instalação antiga a renovação fica desligada; renovação ainda não exercitada ponta a ponta nem em hardware. | código, decisão |

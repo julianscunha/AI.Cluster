@@ -194,6 +194,17 @@ message RevokeNodeRequest {
   string node_id = 1;
 }
 
+// Renovação do certificado do túnel RPC (ADR-026). Prova a credencial do nó, não o token de join.
+message RenewNodeCertificateRequest {
+  string node_id = 1;
+  // CSR em PEM com a chave deste nó; o controller emite com o SAN aic-worker-<node_id>.
+  string csr_pem = 2;
+}
+
+message RenewNodeCertificateResponse {
+  string cert_pem = 1;
+}
+
 message RevokeNodeResponse {
   // Falso quando o nó é desconhecido.
   bool revoked = 1;
@@ -1146,6 +1157,7 @@ service ClusterControl {
   rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
   rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
   rpc RevokeNode(RevokeNodeRequest) returns (RevokeNodeResponse);
+  rpc RenewNodeCertificate(RenewNodeCertificateRequest) returns (RenewNodeCertificateResponse);
   rpc RetireNode(RetireNodeRequest) returns (RetireNodeResponse);
   rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
   rpc SetRelease(SetReleaseRequest) returns (SetReleaseResponse);

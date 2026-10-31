@@ -21,3 +21,8 @@ prost = "0.14"
 # tonic dependency, so this adds no new crate; the features are trimmed to the
 # ones the exporter actually uses.
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# Renovação do certificado do túnel RPC (ADR-026): a CA do cluster assina o pedido do worker. O x509-parser
+# é o que o rcgen usa para ler o CSR e a CA; ele traz crates novos (asn1-rs e afins) ao lock.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "x509-parser"] }
+time = "0.3"
+x509-parser = "0.16"

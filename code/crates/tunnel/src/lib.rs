@@ -286,14 +286,17 @@ async fn report_traffic() {
     }
 }
 
+/// Configuração TLS do servidor do túnel. Trocar o certificado é montar outra e enviá-la pelo `watch`.
+pub type Tls = Arc<ServerConfig>;
+
 /// Servidor: aceita TLS em `listener` e repassa cada conexão a `upstream` (o `rpc-server` local).
-/// Não retorna.
+/// A configuração TLS vem de um `watch`: cada conexão nova usa a que estiver lá no momento, então um
+/// certificado renovado (ADR-026) vale sem derrubar o túnel. Não retorna.
 pub async fn serve(
     listener: TcpListener,
     upstream: String,
-    config: Arc<ServerConfig>,
+    config: tokio::sync::watch::Receiver<Arc<ServerConfig>>,
 ) -> std::io::Result<()> {
-    let acceptor = TlsAcceptor::from(config);
     let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     let handshakes = Arc::new(tokio::sync::Semaphore::new(MAX_HANDSHAKES));
     tokio::spawn(report_traffic());
@@ -311,7 +314,8 @@ pub async fn serve(
             continue;
         };
         nodelay(&tcp);
-        let (acceptor, upstream, open) = (acceptor.clone(), upstream.clone(), open.clone());
+        let acceptor = TlsAcceptor::from(config.borrow().clone());
+        let (upstream, open) = (upstream.clone(), open.clone());
         tokio::spawn(async move {
             let Ok(Ok(mut tls)) = tokio::time::timeout(SETUP, acceptor.accept(tcp)).await else {
                 return;
@@ -485,6 +489,10 @@ mod tests {
         addr
     }
 
+    fn watch_config(config: Arc<ServerConfig>) -> tokio::sync::watch::Receiver<Arc<ServerConfig>> {
+        tokio::sync::watch::channel(config).1
+    }
+
     async fn start_server(pki: &Pki, upstream: std::net::SocketAddr) -> std::net::SocketAddr {
         let config = server_config(
             &pki.p("worker.crt"),
@@ -495,7 +503,7 @@ mod tests {
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(serve(listener, upstream.to_string(), config));
+        tokio::spawn(serve(listener, upstream.to_string(), watch_config(config)));
         addr
     }
 
@@ -547,6 +555,42 @@ mod tests {
         assert!(BYTES_OUT.load(Ordering::Relaxed) >= before_out + 7);
         assert_eq!(clock().len(), 8);
         assert_eq!(kib(2048), "2.0 KiB");
+    }
+
+    #[tokio::test]
+    async fn a_renewed_server_certificate_is_used_by_the_next_connection() {
+        let pki = pki("reload");
+        let good = server_config(
+            &pki.p("worker.crt"),
+            &pki.p("worker.key"),
+            &pki.p("ca.crt"),
+            "aic-gateway",
+        )
+        .unwrap();
+        // Um certificado de outra CA: o gateway (que confia só na CA do cluster) tem de recusá-lo.
+        let bad = server_config(
+            &pki.p("intruso.crt"),
+            &pki.p("intruso.key"),
+            &pki.p("ca.crt"),
+            "aic-gateway",
+        )
+        .unwrap();
+        let (renew, current) = tokio::sync::watch::channel(good);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = listener.local_addr().unwrap();
+        tokio::spawn(serve(listener, echo().await.to_string(), current));
+        let client = start_client(&pki, server, "gateway").await;
+        assert_eq!(
+            roundtrip(client).await.as_deref(),
+            Some(&b"ola rpc"[..]),
+            "antes da troca, o certificado bom passa"
+        );
+        renew.send(bad).unwrap();
+        assert_eq!(
+            roundtrip(client).await,
+            None,
+            "depois da troca, o novo é o usado"
+        );
     }
 
     #[tokio::test]

@@ -82,7 +82,7 @@ Com `AI_CLUSTER_AUTO_APPROVE`, todo nó é aprovado no registro. Isso é para re
 
 Sem `AI_CLUSTER_TLS_CLIENT_CA`, o cliente não apresenta certificado, e a credencial do nó é o único segredo em jogo.
 
-> Planejado: CA do cluster emitindo e renovando certificado por nó, com o controller associando o certificado ao `node_id`.
+> Planejado: certificado de cliente do plano de controle emitido e renovado por nó, associado ao `node_id`. O certificado do túnel RPC já é por nó e renovado pelo controller (ver Certificado por nó).
 
 ## Atestação de software
 
@@ -129,7 +129,7 @@ Limites da revogação:
 
 - Com `AI_CLUSTER_AUTO_APPROVE`, o nó revogado volta aprovado ao se registrar de novo. A revogação só vale com aprovação manual.
 - A revogação não envia nada ao worker. Fatias e modelos que ele já guardou continuam no disco dele.
-- Não há revogação de certificado, porque não há emissão de certificado por nó.
+- Revogar também corta o certificado do túnel RPC do nó (ADR-026): o controller não renova o certificado de um nó revogado e não o anuncia ao gateway. O certificado já emitido segue válido na criptografia até vencer; não há CRL que o TLS consulte.
 
 ## Túnel do `rpc-server` (llama.cpp)
 
@@ -149,7 +149,11 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 
 **Código do convite:** o token de join só sai no script `/join-<CÓDIGO>` e o `/sign` exige o mesmo código (comparação em tempo constante). O código tem 8 caracteres de um alfabeto de 32 símbolos (40 bits), único por convite, e cada IP que errar 30 vezes (pedido de arquivo inexistente sob `/join-*`, `/gw-*` ou `/node-*`, em GET ou HEAD e já com o caminho normalizado pelo servidor, ou `/sign` com código errado) é travado com 429; um teto global de 300 chutes protege contra quem troca de endereço. O convite avisa o operador quando trava um IP e expira sozinho no fim da janela. Nas units systemd o gateway não enxerga `controller.env` nem `cli.env` (token de operador) e o controller não enxerga `gateway.env`; sem systemd (contêiner) os dois serviços rodam sob o mesmo usuário e isso não se aplica. O convite é HTTP puro: quem escuta a rede vê o código.
 
-**Certificado por nó:** o instalador não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. O certificado vale só como servidor (`extendedKeyUsage=serverAuth`), o servidor assina um por nome em cada convite e mostra cada emissão no terminal do operador. **Limite:** o `/sign` não tem outra autenticação além de estar na janela do convite (quem alcança a porta também lê o `join` e o token de join), e não há renovação nem revogação do certificado (825 dias).
+**Certificado por nó:** o instalador não distribui mais uma chave de worker. Cada worker gera a própria chave ao entrar pelo convite e o servidor assina só o pedido (CSR), com o SAN `aic-worker-<nó>`; o gateway espera esse nome (`AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}`). A chave nunca sai do worker. O certificado vale só como servidor (`extendedKeyUsage=serverAuth`), o servidor assina um por nome em cada convite e mostra cada emissão no terminal do operador.
+
+**Renovação (ADR-026):** perto de vencer (30 dias antes) o worker manda ao controller um CSR feito com a própria chave, autenticado pela credencial do nó aprovado (o token de join sozinho não renova). O controller emite com o SAN `aic-worker-<nó>` e 825 dias, usando a CA (`AI_CLUSTER_RPC_CA_CERT` e `_KEY`, a chave só com o grupo `ai-cluster`, escondida da unit do gateway). O certificado novo só entra depois de carregar com a chave: é gravado como `worker.crt.new`, sincronizado, e troca o atual (que vira `.prev`). No boot o túnel usa o primeiro que carrega (renovado, `.prev`, o do convite); a renovação roda mesmo se o túnel não sobe. Falha de renovação só gera aviso. A chave pública fica fixada por nó na primeira renovação; outra chave é recusada. Nó revogado ou pendente recebe recusa. Sem systemd, ou sem a CA no controller, a renovação fica desligada.
+
+**Limites:** o `/sign` do convite não tem outra autenticação além de estar na janela do convite (quem alcança a porta também lê o `join` e o token de join). A renovação reaproveita a chave do nó. Não há CRL nem rotação da CA. Um controller comprometido pode assinar certificados de worker. Nó esquecido ou revogado offline perde a chave fixada: volta só com novo convite (regra de operação; o código não impede o retorno com a chave antiga). Instalações anteriores e instalações sem systemd não renovam.
 
 ## Chaves de API do controller
 

@@ -38,6 +38,7 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-023-instalacao-com-aprovacao-do-controller]] | decidido | 2026-10-30 | Nenhuma instalação começa sozinha: etapa de espera com resumo, aprovação do operador no controller (impressão digital, disco a apagar) e token de uso único; MAC só como atalho |
 | [[adr-024-interface-de-comandos-unica-aic]] | decidido | 2026-10-30 | Um único comando de usuário, `aic <recurso> <ação>` (cluster, controller, gateway, worker, update); nomes antigos removidos sem apelidos; `status` sempre da máquina; opções com nome único; cabeçalho e cores iguais |
 | [[adr-025-gatilho-de-atualizacao-assinada-linux]] | decidido | 2026-10-30 | Chave de Linux comum (separada da do AI Cluster OS) assina o SHA256SUMS; a pública é pinada na instalação e o `update` confere antes de qualquer hash; worker Linux recebe o gatilho pelo rollout e aplica por unit root |
+| [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do nó (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
 
 ## Notas
 

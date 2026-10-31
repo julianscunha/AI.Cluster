@@ -288,6 +288,12 @@ make_credentials() {
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
     echo "AI_CLUSTER_MODELS_STATE=$DATA/state/models.state"
     echo "AI_CLUSTER_ENROLL_ADDR=$IP:$ENROLL_PORT"
+    # ADR-026: o controller renova o certificado dos workers com a CA. Só com systemd: sem ele o gateway
+    # roda como o mesmo usuário e leria a chave da CA, então a renovação fica desligada.
+    if have_systemd; then
+      echo "AI_CLUSTER_RPC_CA_CERT=$CONF/pki/ca.crt"
+      echo "AI_CLUSTER_RPC_CA_KEY=$CONF/pki/ca.key"
+    fi
   } > "$CONF/controller.env"
   {
     echo "AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE"
@@ -335,7 +341,10 @@ make_pki() {
   # O gateway (usuário ai-cluster) lê a própria chave; a CA e a chave do worker só o root.
   chown ai-cluster:ai-cluster gateway.key gateway.crt ca.crt
   chown root:ai-cluster "$CONF" "$CONF/pki"; chmod 750 "$CONF" "$CONF/pki"
-  chmod 644 ca.crt gateway.crt; chmod 600 ca.key gateway.key
+  chmod 644 ca.crt gateway.crt; chmod 600 gateway.key
+  # Com systemd, a chave da CA é do grupo ai-cluster: o controller (ADR-026) assina a renovação e a unit do
+  # gateway esconde o arquivo. Sem systemd o gateway é o mesmo usuário: a chave fica 600 root (renovação desligada).
+  if have_systemd; then chown root:ai-cluster ca.key; chmod 640 ca.key; fi
 }
 
 # Units systemd: Restart=always e WantedBy=multi-user.target, para voltar sozinhas depois de um reinício.
@@ -347,7 +356,7 @@ write_units() {
       # Cada serviço não lê o ambiente do outro: o gateway não vê o token de operador (controller.env, cli.env),
       # o controller não vê o do gateway (gateway.env). O systemd lê o EnvironmentFile como root, antes.
       oculta=""
-      if [ "$svc" = gateway ]; then for f in controller.env cli.env; do [ -e "$CONF/$f" ] && oculta="$oculta $CONF/$f"; done; fi
+      if [ "$svc" = gateway ]; then for f in controller.env cli.env pki/ca.key; do [ -e "$CONF/$f" ] && oculta="$oculta $CONF/$f"; done; fi
       if [ "$svc" = controller ] && [ -e "$CONF/gateway.env" ]; then oculta="$CONF/gateway.env"; fi
       cat > "/etc/systemd/system/ai-cluster-$svc.service" <<UNIT
 [Unit]

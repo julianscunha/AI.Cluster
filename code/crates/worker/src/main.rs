@@ -1,3 +1,4 @@
+mod cert;
 mod rpc;
 mod shards;
 
@@ -479,6 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // rpc-server do llama.cpp (ADR-022): filho supervisionado atrás do túnel mTLS.
     if let Some(shared) = rpc::config(cores) {
         let mut rpc = shared.clone();
+        let (rpc_client, rpc_node) = (client.clone(), node_id.clone());
         tokio::spawn(async move {
             // Sem AI_CLUSTER_RPC_CACHE, o cache liga sozinho se há diretório para ele e o disco dele lê
             // bem mais rápido que o enlace. Na própria tarefa, para a sonda não atrasar a subida do nó.
@@ -499,7 +501,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if rpc.cache { "ligado" } else { "desligado" }
                 );
             }
-            if let Err(error) = rpc::run(rpc).await {
+            if let Err(error) = rpc::run(rpc, rpc_client, rpc_node).await {
                 eprintln!("rpc-server desligado: {error}");
             }
         });

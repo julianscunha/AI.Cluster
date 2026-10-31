@@ -165,6 +165,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let service =
         ClusterControlService::new(registry.clone(), work.clone(), events.clone(), "local");
+    // ADR-026: com a CA do cluster o controller renova o certificado dos workers. Sem ela, ou com a CA
+    // ilegível, a renovação fica desligada (aviso) e o controller sobe mesmo assim: o certificado atual
+    // de cada worker segue válido até vencer.
+    let service = match ai_cluster_controller::certs::CaSigner::from_env() {
+        Ok(Some(ca)) => {
+            println!("renovação de certificado de worker ligada (CA do cluster)");
+            service.with_ca(ca)
+        }
+        Ok(None) => {
+            println!(
+                "AVISO: sem AI_CLUSTER_RPC_CA_CERT/KEY a renovação do certificado de worker fica desligada"
+            );
+            service
+        }
+        Err(error) => {
+            println!("AVISO: renovação do certificado de worker desligada: {error}");
+            service
+        }
+    };
     let enrollments = service.enrollments().clone();
 
     // ponytail: single sweep interval for all nodes; per-node timers only if grace must vary.

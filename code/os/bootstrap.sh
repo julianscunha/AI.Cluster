@@ -190,6 +190,8 @@ if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
     echo "AI_CLUSTER_RPC_TLS_CERT=$RPC_TLS_DIR/worker.crt"
     echo "AI_CLUSTER_RPC_TLS_KEY=$RPC_TLS_DIR/worker.key"
     echo "AI_CLUSTER_RPC_TLS_CLIENT_CA=$RPC_TLS_DIR/ca.crt"
+    # ADR-026: o certificado renovado mora numa pasta do usuário do worker; a pasta do convite (com a CA e a chave) não muda.
+    echo "AI_CLUSTER_RPC_TLS_RENEWED_DIR=$RPC_TLS_DIR/renovado"
   fi
   # Sem systemd não há quem aplique o pedido: o nó não se declara atualizável (fica fora do rollout).
   if [ -n "$UPDATE_CMD" ] && [ -d /run/systemd/system ]; then
@@ -202,6 +204,8 @@ if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
 chown root:ai-cluster "$ENV_FILE.new"
 chmod 0640 "$ENV_FILE.new"
 mv -f "$ENV_FILE.new" "$ENV_FILE"
+# ADR-026: a pasta dos renovados é do usuário do worker; o resto da pasta do convite segue root (a CA e a chave não são graváveis por ele).
+if [ -n "$RPC_TLS_DIR" ]; then mkdir -p "$RPC_TLS_DIR/renovado" && chown ai-cluster "$RPC_TLS_DIR/renovado" && chmod 0700 "$RPC_TLS_DIR/renovado"; fi
 
 RE="registrado node_id=.* aceito=true"
 PIDFILE="$PREFIX/state/worker.pid"
@@ -303,7 +307,7 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictSUIDSGID=true
 LockPersonality=true
 CapabilityBoundingSet=
-ReadWritePaths=$PREFIX/state
+ReadWritePaths=$PREFIX/state$([ -n "$RPC_TLS_DIR" ] && echo " $RPC_TLS_DIR/renovado")
 
 [Install]
 WantedBy=multi-user.target

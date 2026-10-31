@@ -32,5 +32,5 @@ O TLS de um sentido prova o controller ao cliente, mas qualquer um que alcance a
 ## Limites
 
 - O certificado prova que o cliente faz parte do cluster, não que é um nó específico. Associar o certificado ao `node_id` é planejado.
-- Não há rotação nem revogação de certificados (sem CRL), e a emissão automática pela CA do cluster também é planejada.
+- Não há rotação nem revogação de certificados (sem CRL), e a emissão automática pela CA do cluster também é planejada. A renovação e a revogação do certificado do túnel por nó vieram depois, em [[adr-026-renovacao-e-revogacao-do-certificado-do-no]].
 - O exportador de métricas precisa de TLS próprio ou de um token só de leitura; ambos são pendentes.

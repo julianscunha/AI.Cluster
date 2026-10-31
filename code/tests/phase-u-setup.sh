@@ -149,7 +149,12 @@ docker exec aic-srv sh -c 'test -x /opt/ai-cluster/libexec/setup && test -x /usr
 [ "$(docker exec aic-srv sha256sum /etc/ai-cluster/release.pub | cut -d' ' -f1)" = "$(sha256sum "$(dirname "$0")/../os/linux.pub" | cut -d' ' -f1)" ] \
   || fail "a instalação deveria gravar /etc/ai-cluster/release.pub (a chave de Linux comum)"
 [ -s "$DISTU/SHA256SUMS.sig" ] || fail "a release deveria trazer SHA256SUMS.sig"
-echo "OK: servidor instalado, com a chave de release pinada"
+# ADR-026 sem systemd: o gateway roda como o mesmo usuário do controller, então a chave da CA fica 600 root
+# e a renovação fica desligada (AI_CLUSTER_RPC_CA_KEY não é gravado).
+docker exec aic-srv sh -c '[ "$(stat -c %U:%G:%a /etc/ai-cluster/pki/ca.key)" = root:root:600 ]' \
+  || fail "sem systemd a chave da CA deveria ficar 600 root (o gateway é o mesmo usuário)"
+docker exec aic-srv grep -q '^AI_CLUSTER_RPC_CA_KEY=' /etc/ai-cluster/controller.env && fail "sem systemd não deveria gravar AI_CLUSTER_RPC_CA_KEY"
+echo "OK: servidor instalado, com a chave de release pinada e a CA fora do alcance do gateway sem systemd"
 
 echo "=== B) o convite entrega o worker e o nó fica READY e aprovado ==="
 docker exec -d aic-srv sh -c "aic cluster invite --minutes 4 > /tmp/invite.log 2>&1"
@@ -450,8 +455,12 @@ docker exec aic-sdc grep -qx 'enable ai-cluster-controller' /var/log/fake-system
 docker exec aic-sdc grep -qx 'enable ai-cluster-gateway' /var/log/fake-systemctl.log || fail "o gateway deveria ser habilitado no boot"
 docker exec aic-sdc sh -c 'for s in controller gateway; do f=/etc/systemd/system/ai-cluster-$s.service; grep -qx "Restart=always" $f && grep -qx "WantedBy=multi-user.target" $f || exit 1; done' \
   || fail "as units do controller e do gateway deveriam ter Restart=always e WantedBy=multi-user.target"
-docker exec aic-sdc grep -qx 'InaccessiblePaths=/etc/ai-cluster/controller.env /etc/ai-cluster/cli.env' /etc/systemd/system/ai-cluster-gateway.service \
-  || fail "a unit do gateway deveria esconder controller.env e cli.env (token de operador)"
+docker exec aic-sdc grep -qx 'InaccessiblePaths=/etc/ai-cluster/controller.env /etc/ai-cluster/cli.env /etc/ai-cluster/pki/ca.key' /etc/systemd/system/ai-cluster-gateway.service \
+  || fail "a unit do gateway deveria esconder controller.env, cli.env (token de operador) e a chave da CA (ADR-026)"
+docker exec aic-sdc sh -c '[ "$(stat -c %U:%G:%a /etc/ai-cluster/pki/ca.key)" = root:ai-cluster:640 ]' \
+  || fail "a chave da CA deveria ser root:ai-cluster 640 (o controller lê, o gateway não vê)"
+docker exec aic-sdc grep -qx 'AI_CLUSTER_RPC_CA_KEY=/etc/ai-cluster/pki/ca.key' /etc/ai-cluster/controller.env \
+  || fail "o controller deveria receber a chave da CA para renovar certificados de worker (ADR-026)"
 docker exec aic-sdc grep -qx 'InaccessiblePaths=/etc/ai-cluster/gateway.env' /etc/systemd/system/ai-cluster-controller.service \
   || fail "a unit do controller deveria esconder gateway.env"
 docker exec aic-sdc grep -qx 'EnvironmentFile=/etc/ai-cluster/gateway.env' /etc/systemd/system/ai-cluster-gateway.service || fail "o EnvironmentFile do gateway deveria continuar"
