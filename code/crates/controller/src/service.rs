@@ -57,7 +57,7 @@ const MAX_SHARD_OUT: usize = 8 * 1024 * 1024;
 /// token that is used by more callers than the gateway's single slot allows.
 const MAX_SHARD_CALLS: usize = 8;
 /// Prazo de uma chamada `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`, 1 s a 5 min, padrão 8 s): um
-/// nó lento, como um Pi, pede mais que um PC.
+/// worker lento, como um Pi, pede mais que um PC.
 fn shard_timeout() -> std::time::Duration {
     let ms = std::env::var("AI_CLUSTER_SHARD_TIMEOUT_MS")
         .ok()
@@ -95,7 +95,7 @@ pub struct ClusterControlService {
     ca: Option<std::sync::Arc<crate::certs::CaSigner>>,
     /// O modelo pedido, as chaves (hash) e o plano de workers do llama.cpp (ADR-022).
     orchestrator: crate::models::Orchestrator,
-    /// De que endereço (só o IP) cada nó se registrou: o gateway chega ao túnel RPC por ele.
+    /// De que endereço (só o IP) cada worker se registrou: o gateway chega ao túnel RPC por ele.
     node_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     /// A versão do llama.cpp que o gateway reportou: workers com outra versão ficam fora do plano.
     llama_version: Arc<std::sync::Mutex<String>>,
@@ -109,7 +109,7 @@ pub struct ClusterControlService {
     enrollments: Arc<crate::enrollment::Enrollments>,
 }
 
-/// `host:porta` do túnel RPC de um nó, ou `None` se o host não presta. O host pode vir do próprio nó
+/// `host:porta` do túnel RPC de um worker, ou `None` se o host não presta. O host pode vir do próprio worker
 /// (`rpc_host`) e o gateway conecta nele: só IP ou nome DNS simples, nunca loopback, não especificado
 /// ou link-local. Um IPv6 vai entre colchetes.
 fn rpc_address(host: &str, port: u32) -> Option<String> {
@@ -158,7 +158,7 @@ fn clean_status(mut status: ModelStatus) -> Option<ModelStatus> {
     Some(status)
 }
 
-/// Quantos endereços de nó o controller guarda (um por nó registrado).
+/// Quantos endereços de worker o controller guarda (um por worker registrado).
 const MAX_NODE_HOSTS: usize = 4096;
 
 /// O id do modelo na API a partir do id do catálogo (`pasta/arquivo.gguf`): sem a extensão e com `-` no
@@ -312,7 +312,7 @@ const MAX_EVENT_WATCHERS: usize = 16;
 /// unbounded `u32` would make a low class wait effectively forever.
 const MAX_PRIORITY: u32 = 9;
 /// Teto aproximado de unidades enfileiradas que exigem atestado (só a fila, e a checagem não é atômica
-/// com o enqueue; basta para o operador único): cada rodada refaz os atestados (O(nós)).
+/// com o enqueue; basta para o operador único): cada rodada refaz os atestados (O(workers)).
 const MAX_ATTESTED_QUEUED: usize = 256;
 
 /// Invalid results in a row that quarantine a node (G1).
@@ -580,7 +580,7 @@ fn authorize_node<T>(
         Ok(())
     } else {
         Err(Status::unauthenticated(
-            "credencial do nó ausente ou inválida",
+            "credencial do worker ausente ou inválida",
         ))
     }
 }
@@ -690,7 +690,7 @@ impl ClusterControl for ClusterControlService {
             &presented,
         ) else {
             return Err(Status::failed_precondition(
-                "nó já registrado com outra credencial; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um nó pendente fica livre quando para de responder)",
+                "worker já registrado com outra credencial; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um worker pendente fica livre quando para de responder)",
             ));
         };
         // S2: an unapproved node must not be able to write controller state, so its copy is
@@ -710,7 +710,7 @@ impl ClusterControl for ClusterControlService {
         }
         self.events.record(now, "node_registered", node_id.clone());
         println!(
-            "nó {node_id} entrou ({seen}){}",
+            "worker {node_id} entrou ({seen}){}",
             if record.trusted {
                 ""
             } else {
@@ -721,9 +721,9 @@ impl ClusterControl for ClusterControlService {
             accepted: true,
             cluster_id: self.cluster_id.clone(),
             message: if record.trusted {
-                format!("nó {node_id} registrado")
+                format!("worker {node_id} registrado")
             } else {
-                format!("nó {node_id} registrado, aguardando aprovação")
+                format!("worker {node_id} registrado, aguardando aprovação")
             },
             node_credential: record.credential,
         }))
@@ -742,7 +742,7 @@ impl ClusterControl for ClusterControlService {
         }
         if request.fingerprint.trim().is_empty() {
             return Err(Status::invalid_argument(
-                "fingerprint é obrigatória: use a que `aic cluster nodes` mostra e o nó imprime ao registrar-se",
+                "fingerprint é obrigatória: use a que `aic cluster nodes` mostra e o worker imprime ao registrar-se",
             ));
         }
         self.audit(&peer, "approve", &node_id);
@@ -754,7 +754,7 @@ impl ClusterControl for ClusterControlService {
             Approval::Unknown => false,
             Approval::Mismatch => {
                 return Err(Status::failed_precondition(
-                    "a impressão digital não confere com a credencial atual do nó; o id pode ter sido tomado por outro registro",
+                    "a impressão digital não confere com a credencial atual do worker; o id pode ter sido tomado por outro registro",
                 ));
             }
         };
@@ -803,7 +803,7 @@ impl ClusterControl for ClusterControlService {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
         self.audit(&peer, "remove", &node_id);
-        // Antes de esquecer: as unidades em voo voltam para a fila com o nó ainda conhecido.
+        // Antes de esquecer: as unidades em voo voltam para a fila com o worker ainda conhecido.
         let requeued = self.work.requeue_for_node(&node_id).requeued as u32;
         let removed = self.registry.forget(&node_id);
         self.shards.drop_node(&node_id);
@@ -821,8 +821,8 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RemoveNodeResponse { removed, requeued }))
     }
 
-    /// Renova o certificado do túnel RPC de um nó aprovado (ADR-026). A credencial do nó prova quem
-    /// pede: um nó pendente, revogado ou sem credencial recebe recusa, e o token de join sozinho não basta.
+    /// Renova o certificado do túnel RPC de um worker aprovado (ADR-026). A credencial do worker prova quem
+    /// pede: um worker pendente, revogado ou sem credencial recebe recusa, e o token de join sozinho não basta.
     async fn renew_node_certificate(
         &self,
         request: Request<RenewNodeCertificateRequest>,
@@ -831,7 +831,7 @@ impl ClusterControl for ClusterControlService {
         let request = request.into_inner();
         if !self.registry.renews(&request.node_id, &presented) {
             return Err(Status::permission_denied(
-                "credencial do nó ausente, inválida, pendente ou revogada: sem renovação",
+                "credencial do worker ausente, inválida, pendente ou revogada: sem renovação",
             ));
         }
         let Some(ca) = &self.ca else {
@@ -839,12 +839,12 @@ impl ClusterControl for ClusterControlService {
                 "este controller não tem a CA do cluster (AI_CLUSTER_RPC_CA_KEY): renovação desligada",
             ));
         };
-        // A chave do pedido tem de ser a que este nó já usou (fixada na primeira renovação, ADR-026).
+        // A chave do pedido tem de ser a que este worker já usou (fixada na primeira renovação, ADR-026).
         let fingerprint = crate::certs::CaSigner::key_fingerprint(&request.csr_pem)
             .map_err(Status::invalid_argument)?;
         if !self.registry.bind_key(&request.node_id, &fingerprint) {
             return Err(Status::permission_denied(
-                "a chave do pedido não é a que este nó já tem: sem renovação",
+                "a chave do pedido não é a que este worker já tem: sem renovação",
             ));
         }
         let cert_pem = ca
@@ -890,7 +890,7 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RevokeNodeResponse { revoked, requeued }))
     }
 
-    /// Define a release que os nós devem rodar (F19); version em branco cancela.
+    /// Define a release que os workers devem rodar (F19); version em branco cancela.
     async fn set_release(
         &self,
         request: Request<SetReleaseRequest>,
@@ -952,7 +952,7 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(HeartbeatResponse {
             acknowledged,
             replica,
-            // o nó de recuperação não recebe a release nem a cópia do estado
+            // o worker de recuperação não recebe a release nem a cópia do estado
             release: release.filter(|_| !recovery),
             cancel_work_ids: self.work.take_cancels(&request.node_id),
         }))
@@ -1193,7 +1193,7 @@ impl ClusterControl for ClusterControlService {
         }))
     }
 
-    /// OK ou NOK de um modelo da pasta contra a RAM dos nós aprovados e vivos (ADR-022, E2). Só o operador.
+    /// OK ou NOK de um modelo da pasta contra a RAM dos workers aprovados e vivos (ADR-022, E2). Só o operador.
     async fn check_model(
         &self,
         request: Request<CheckModelRequest>,
@@ -1357,7 +1357,7 @@ impl ClusterControl for ClusterControlService {
         self.registry.remove(&request.node_id);
         self.shards.drop_node(&request.node_id);
         println!(
-            "nó {} saiu; {} unidades em voo reenfileiradas, {} falharam",
+            "worker {} saiu; {} unidades em voo reenfileiradas, {} falharam",
             request.node_id, outcome.requeued, outcome.failed
         );
         self.events.record(
@@ -1389,7 +1389,7 @@ impl ClusterControl for ClusterControlService {
         // Unknown, leaving or dead nodes get no work.
         if !self.registry.is_available(&request.node_id) {
             return Err(Status::failed_precondition(
-                "nó não está disponível para trabalho",
+                "worker não está disponível para trabalho",
             ));
         }
         // Candidate filtering: the unit's declared requirement and its own footprint
@@ -1539,7 +1539,7 @@ impl ClusterControl for ClusterControlService {
         // Sem release publicada ninguém é atestado: a unidade esperaria para sempre sem aviso.
         if request.require_attested && self.rollout.desired().is_none() {
             return Err(Status::failed_precondition(
-                "require_attested exige uma release publicada (aic cluster rollout): sem ela nenhum nó é atestado",
+                "require_attested exige uma release publicada (aic cluster rollout): sem ela nenhum worker é atestado",
             ));
         }
         self.audit(
@@ -1746,14 +1746,14 @@ impl ClusterControl for ClusterControlService {
             .unwrap_or("")
             .to_string();
         if node_id.is_empty() {
-            return Err(Status::invalid_argument("falta o nó do canal"));
+            return Err(Status::invalid_argument("falta o worker do canal"));
         }
         if !self
             .registry
             .channel_allowed(&node_id, node_credential(&request))
         {
             return Err(Status::unauthenticated(
-                "nó desconhecido, não aprovado, indisponível ou com credencial inválida",
+                "worker desconhecido, não aprovado, indisponível ou com credencial inválida",
             ));
         }
         let credential = node_credential(&request).to_vec();
@@ -1763,7 +1763,7 @@ impl ClusterControl for ClusterControlService {
         // revoked node never keeps a session.
         if !self.registry.channel_allowed(&node_id, &credential) {
             self.shards.detach(&node_id, session);
-            return Err(Status::unauthenticated("o nó deixou de ser aprovado"));
+            return Err(Status::unauthenticated("o worker deixou de ser aprovado"));
         }
         self.events
             .record(unix_ms(), "shard_channel_opened", node_id.clone());
@@ -1915,8 +1915,8 @@ impl ClusterControl for ClusterControlService {
         }))
     }
 
-    /// Quanto cada nó nomeado aceita guardar de fatias (admissão por capacidade). Só diz o que o
-    /// próprio nó reportou; nó desconhecido ou fora do ar volta como indisponível.
+    /// Quanto cada worker nomeado aceita guardar de fatias (admissão por capacidade). Só diz o que o
+    /// próprio worker reportou; worker desconhecido ou fora do ar volta como indisponível.
     async fn shard_capacity(
         &self,
         request: Request<ShardCapacityRequest>,
@@ -1924,7 +1924,7 @@ impl ClusterControl for ClusterControlService {
         require_inference(&request)?;
         let ids = request.into_inner().node_ids;
         if ids.is_empty() || ids.len() > MAX_SHARD_OPS {
-            return Err(Status::invalid_argument("lista de nós inválida"));
+            return Err(Status::invalid_argument("lista de workers inválida"));
         }
         let nodes = ids
             .into_iter()
@@ -1985,7 +1985,7 @@ impl ClusterControl for ClusterControlService {
             .find(|op| !self.registry.serves_inference(&op.node_id))
         {
             return Err(blame(
-                Status::failed_precondition(format!("nó {} indisponível", op.node_id)),
+                Status::failed_precondition(format!("worker {} indisponível", op.node_id)),
                 &op.node_id,
             ));
         }
@@ -2270,11 +2270,11 @@ impl ClusterControl for ClusterControlService {
         Ok(Response::new(RejectInstallResponse { rejected }))
     }
 
-    /// Retém um nó para uma requisição futura (G6).
+    /// Retém um worker para uma requisição futura (G6).
     ///
-    /// O nó precisa existir e estar disponível: reservar um nó que o controller não
+    /// O worker precisa existir e estar disponível: reservar um worker que o controller não
     /// entregaria trabalho nenhum não protege nada, então isso é recusado em vez de
-    /// aceito e ignorado. Uma reserva nova sobre o mesmo nó substitui a anterior.
+    /// aceito e ignorado. Uma reserva nova sobre o mesmo worker substitui a anterior.
     async fn reserve(
         &self,
         request: Request<ReserveRequest>,
@@ -2296,7 +2296,10 @@ impl ClusterControl for ClusterControlService {
             return Ok(Response::new(ReserveResponse {
                 granted: false,
                 expires_at_unix_ms: 0,
-                message: format!("nó {} não está disponível para reserva", request.node_id),
+                message: format!(
+                    "worker {} não está disponível para reserva",
+                    request.node_id
+                ),
             }));
         }
         let now = unix_ms();
@@ -2477,7 +2480,7 @@ mod tests {
             .into_inner()
             .release;
         assert_eq!(got.unwrap().version, "2");
-        // o nó volta já na versão desejada: nada mais a anunciar
+        // o worker volta já na versão desejada: nada mais a anunciar
         service.register_node(register("2")).await.unwrap();
         assert!(
             service
@@ -2742,7 +2745,7 @@ mod tests {
             }))
             .await;
         assert_eq!(missing.unwrap_err().code(), tonic::Code::NotFound);
-        // Sem nós: NOK.
+        // Sem workers: NOK.
         let none = service.check_model(op(ask())).await.unwrap().into_inner();
         assert!(!none.ok && none.nodes == 0);
     }
@@ -2856,7 +2859,7 @@ mod tests {
         let id = |nodes: &[NodeMemory], wanted: &str| {
             service.pick_model(&found, wanted, 0, nodes).map(|m| m.id)
         };
-        // 3 nós de 4 GiB (~9,2 GB úteis) comportam o q8; 2 nós (~6,1 GB) só o q4.
+        // 3 workers de 4 GiB (~9,2 GB úteis) comportam o q8; 2 workers (~6,1 GB) só o q4.
         assert_eq!(
             id(&[node(4), node(4), node(4)], "m").as_deref(),
             Some("m-q8.gguf")
@@ -3312,7 +3315,7 @@ mod tests {
         let server =
             ai_cluster_protocol::metadata::ServerMetadata::new("token-secreto", "op-secreto");
         assert!(!format!("{server:?}").contains("secreto"));
-        // só nó aprovado recebe estado do controller
+        // só worker aprovado recebe estado do controller
         assert!(registry.is_trusted("node-a"));
         assert!(!Registry::requiring_approval().is_trusted("node-a"));
     }
@@ -3676,7 +3679,7 @@ mod tests {
                 replica: None,
             })
         };
-        // não registra (nem troca a credencial de) um nó real
+        // não registra (nem troca a credencial de) um worker real
         let err = service
             .register_node(register_as("node-a"))
             .await
@@ -3686,7 +3689,7 @@ mod tests {
             .register_node(register_as("node-a-rec"))
             .await
             .unwrap();
-        // heartbeat de nó alheio ou desconhecido: negado, sem vazar a cópia do estado
+        // heartbeat de worker alheio ou desconhecido: negado, sem vazar a cópia do estado
         for id in ["node-a", "inventado"] {
             let beat = recovery(HeartbeatRequest {
                 node_id: id.into(),
@@ -3859,7 +3862,7 @@ mod tests {
         assert_eq!(
             work.pending(),
             0,
-            "nó pendente não escreve o estado do controller"
+            "worker pendente não escreve o estado do controller"
         );
         // confiável desde o registro (sem exigir aprovação), a mesma cópia vale
         let trusted_dir = dir.join("confiavel");

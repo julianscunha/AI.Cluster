@@ -11,8 +11,8 @@ Entidades, relações e o modelo de grafo do cluster, com a representação de c
 
 ## Notas
 
-- [[entidades]]: nó, capacidade, saúde, release, unidade de trabalho, fatia, estado, reserva, métrica, evento e trace, com onde cada uma vive e os estados de nó e de unidade.
+- [[entidades]]: worker, capacidade, saúde, release, unidade de trabalho, fatia, estado, reserva, métrica, evento e trace, com onde cada uma vive e os estados de worker e de unidade.
 - [[relacoes]]: como as entidades se referem umas às outras, com cardinalidade, posse, timestamps e a réplica de estado.
-- [[modelo-de-grafo]]: tipos de nó e de aresta do grafo-projeção, planejado, e a origem de cada tipo nas entidades atuais.
+- [[modelo-de-grafo]]: tipos de worker e de aresta do grafo-projeção, planejado, e a origem de cada tipo nas entidades atuais.
 
 Decisões relacionadas: [[adr-004-grafo-como-projecao]], [[adr-005-camadas-de-storage]], [[adr-013-estado-do-controller-e-recuperacao]].

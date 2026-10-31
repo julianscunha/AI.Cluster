@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Fatia da Fase C (C3): capability "current + confidence".
 #
-# Critério verificado: o perfil de capability deixa de ser só o baseline do registro. Um nó
+# Critério verificado: o perfil de capability deixa de ser só o baseline do registro. Um worker
 # que remede o próprio compute enquanto ocioso reporta a medida nova ao lado da antiga, e
 # uma medida instável carrega uma confiança menor que uma estável. Tudo isso viaja no
 # `HealthStreamRequest`, não só no registro.
 #
 # Sequência:
-#   A) nó ocioso: o detalhe mostra `current_compute_score` preenchido e `compute_confidence`
+#   A) worker ocioso: o detalhe mostra `current_compute_score` preenchido e `compute_confidence`
 #      dentro de (0,1], ao lado do `compute_score` do registro, da `compute_median_score`
 #      (o valor central que a previsão calibra) e do `compute_deviation` (quanto as execuções
 #      discordaram).
-#   B) `AI_CLUSTER_COMPUTE_SCORE` fixado: o nó não remede — o pin manda no número — então o
+#   B) `AI_CLUSTER_COMPUTE_SCORE` fixado: o worker não remede — o pin manda no número — então o
 #      detalhe mostra `current_compute_score=-` e `compute_median_score=-`, que é "não
 #      medido", não "compute zero".
 #
-# O nó do passo A não fixa o score, então a remedida é uma leitura real do host. O passo B
+# O worker do passo A não fixa o score, então a remedida é uma leitura real do host. O passo B
 # prova que o pin continua valendo para a remedida: sem isso, um teste de determinismo
 # ficaria não-determinístico.
 set -uo pipefail
@@ -38,7 +38,7 @@ teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== A) nó ocioso remede o compute enquanto espera trabalho ==="
+echo "=== A) worker ocioso remede o compute enquanto espera trabalho ==="
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-cur --network "$NET" -v aic-target:/t \
@@ -72,7 +72,7 @@ if [ "$CURRENT" = "-" ] || [ -z "$CURRENT" ]; then
   exit 1
 fi
 if awk -v s="$CURRENT" 'BEGIN { exit !(s+0 > 0) }'; then
-  echo "OK: o current foi remedido com o nó ocioso"
+  echo "OK: o current foi remedido com o worker ocioso"
 else
   echo "FALHA: current_compute_score deveria ser > 0 (veio '$CURRENT')"
   teardown
@@ -111,7 +111,7 @@ else
 fi
 
 teardown
-echo "=== B) score fixado: o nó não remede, então current fica '-' ==="
+echo "=== B) score fixado: o worker não remede, então current fica '-' ==="
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-cur --network "$NET" -v aic-target:/t \

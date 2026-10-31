@@ -51,16 +51,16 @@ impl Weight {
     ) -> Result<Self, String> {
         if extent < nodes.len() {
             return Err(format!(
-                "{tensor}: {extent} linhas para {} nós",
+                "{tensor}: {extent} linhas para {} workers",
                 nodes.len()
             ));
         }
-        // A faixa de um nó vira uma fatia residente de uma vez só: acima do teto o worker a recusaria
+        // A faixa de um worker vira uma fatia residente de uma vez só: acima do teto o worker a recusaria
         // na primeira chamada, então o modelo é recusado já na carga.
         let widest = extent.div_ceil(nodes.len()) as u64 * width as u64 * size_of::<f64>() as u64;
         if widest > MAX_SLICE_BYTES as u64 {
             return Err(format!(
-                "{tensor}: a faixa de cada nó teria {} MiB, acima do teto de {} MiB por fatia; use mais nós",
+                "{tensor}: a faixa de cada worker teria {} MiB, acima do teto de {} MiB por fatia; use mais workers",
                 widest >> 20,
                 MAX_SLICE_BYTES >> 20
             ));
@@ -295,7 +295,7 @@ impl ShardStore {
         let mut cache = lock();
         let bytes = loaded.data.len() * 8;
         if bytes > self.cap_bytes {
-            return Err("fatia maior que a memória de fatias deste nó".into());
+            return Err("fatia maior que a memória de fatias deste worker".into());
         }
         // Make room by dropping the least recently used slices; one still being multiplied lives
         // on in its caller's `Arc` and is merely loaded again on its next use.
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn resident_bytes_soma_o_que_cada_no_guarda() {
-        // 10 linhas em 3 nós (3, 3, 4 pela divisão), 5 elementos por linha, duas projeções
+        // 10 linhas em 3 workers (3, 3, 4 pela divisão), 5 elementos por linha, duas projeções
         let nodes: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
         let w = Weight::split(&nodes, "t", 10, 5, false).unwrap();
         let need = resident_bytes([&w, &w]);
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn faixa_acima_do_teto_por_fatia_e_recusada_na_carga() {
         let nodes: Vec<String> = ["a", "b"].map(String::from).to_vec();
-        // 8192 linhas x 8192 colunas x 8 bytes = 512 MiB no total, 256 MiB por nó: no teto
+        // 8192 linhas x 8192 colunas x 8 bytes = 512 MiB no total, 256 MiB por worker: no teto
         assert!(Weight::split(&nodes, "t", 8192, 8192, false).is_ok());
         assert!(Weight::split(&nodes, "t", 8194, 8192, false).is_err());
     }

@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Operação do cluster visto do controller: nós, instalação, reservas, modelos e diagnósticos.
+    /// Operação do cluster visto do controller: workers, instalação, reservas, modelos e diagnósticos.
     Cluster {
         /// Endereço gRPC do controller.
         #[arg(
@@ -66,9 +66,9 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum ClusterAction {
-    /// Tabela dos nós: estado, recursos, saúde, confiança e a versão de cada um.
+    /// Tabela dos workers: estado, recursos, saúde, confiança e a versão de cada um.
     Nodes,
-    /// Um nó: `show` mostra tudo; `approve`, `retire`, `revoke` e `remove` mudam o estado dele.
+    /// Um worker: `show` mostra tudo; `approve`, `retire`, `revoke` e `remove` mudam o estado dele.
     Node {
         #[command(subcommand)]
         action: NodeAction,
@@ -78,16 +78,16 @@ enum ClusterAction {
         #[command(subcommand)]
         action: InstallAction,
     },
-    /// Reservas: um nó retido para uma requisição futura (G6).
+    /// Reservas: um worker retido para uma requisição futura (G6).
     Reservation {
         #[command(subcommand)]
         action: ReservationAction,
     },
-    /// A estrutura do cluster em árvore: o controller e, abaixo, os nós agrupados por papel.
+    /// A estrutura do cluster em árvore: o controller e, abaixo, os workers agrupados por papel.
     Topology,
-    /// Resumo do cluster: nós por estado, fila de trabalho e tempos das unidades concluídas.
+    /// Resumo do cluster: workers por estado, fila de trabalho e tempos das unidades concluídas.
     Metrics,
-    /// Eventos recentes, do mais antigo ao mais novo: entradas, saídas, nós dados como offline,
+    /// Eventos recentes, do mais antigo ao mais novo: entradas, saídas, workers dados como offline,
     /// trabalho enfileirado e concluído.
     Events {
         /// Os N eventos mais recentes. 0 mostra tudo o que o controller ainda guarda.
@@ -118,18 +118,18 @@ enum ClusterAction {
         /// Calcula a mesma carga no próprio processo, sem despachar.
         #[arg(long)]
         local: bool,
-        /// Não entrega a unidade a um nó que informe menos threads de CPU que isto.
+        /// Não entrega a unidade a um worker que informe menos threads de CPU que isto.
         /// 0 não exige nada.
         #[arg(long, default_value_t = 0)]
         min_threads: u32,
         /// Enfileira com este id de requisição, em vez de o controller criar um.
-        /// Passe o id de uma reserva para as unidades irem ao nó retido (G6).
+        /// Passe o id de uma reserva para as unidades irem ao worker retido (G6).
         #[arg(long, default_value = "")]
         request_id: String,
         /// Classe de prioridade das unidades: maior despacha primeiro, 0 é o padrão (G4).
         #[arg(long, default_value_t = 0)]
         priority: u32,
-        /// Só nós atestados (release desejada, medida do slot assinada) podem rodar as unidades.
+        /// Só workers atestados (release desejada, medida do slot assinada) podem rodar as unidades.
         #[arg(long)]
         require_attested: bool,
     },
@@ -139,7 +139,7 @@ enum ClusterAction {
         #[arg(long, default_value_t = 128)]
         size: u32,
     },
-    /// Define a release que os nós devem rodar: um canário primeiro, os demais depois (F19).
+    /// Define a release que os workers devem rodar: um canário primeiro, os demais depois (F19).
     Rollout {
         /// Versão (ex.: 1.2.0). Vazia, com --cancel, encerra o rollout.
         #[arg(default_value = "")]
@@ -164,7 +164,7 @@ enum ClusterAction {
         #[arg(long)]
         cancel: bool,
     },
-    /// Painel de uma tela: nós, fila de trabalho e reservas (H4).
+    /// Painel de uma tela: workers, fila de trabalho e reservas (H4).
     Dashboard {
         /// Atualiza a cada N segundos até Ctrl-C. 0 imprime uma vez e sai.
         #[arg(long, default_value_t = 0)]
@@ -176,38 +176,38 @@ enum ClusterAction {
 
 #[derive(Subcommand, Debug)]
 enum NodeAction {
-    /// Um nó pelo id, com tudo que o controller sabe sobre ele.
+    /// Um worker pelo id, com tudo que o controller sabe sobre ele.
     Show {
-        /// Id do nó, como `aic cluster nodes` o imprime.
+        /// Id do worker, como `aic cluster nodes` o imprime.
         id: String,
     },
-    /// Aprova um nó novo para que ele receba trabalho (S2).
+    /// Aprova um worker novo para que ele receba trabalho (S2).
     Approve {
-        /// Nó a aprovar.
+        /// Worker a aprovar.
         id: String,
-        /// Impressão digital que o nó imprime ao registrar-se (e `nodes` mostra). Obrigatória, salvo
+        /// Impressão digital que o worker imprime ao registrar-se (e `nodes` mostra). Obrigatória, salvo
         /// `--trust-listed`.
         #[arg(long)]
         fingerprint: Option<String>,
-        /// Aceita a impressão que o controller mostra agora, sem conferi-la com a do nó. Anula a proteção
+        /// Aceita a impressão que o controller mostra agora, sem conferi-la com a do worker. Anula a proteção
         /// contra um id tomado por outro registro.
         #[arg(long, conflicts_with = "fingerprint")]
         trust_listed: bool,
     },
     /// Tira o worker do trabalho mantendo a identidade dele: volta com `approve` e a impressão de antes.
     Retire {
-        /// Nó a retirar.
+        /// Worker a retirar.
         id: String,
     },
     /// Revoga a credencial do worker: ele fica offline, perde a renovação do certificado do túnel
     /// (ADR-026) e não recebe mais o túnel RPC; só volta com um novo join (S5).
     Revoke {
-        /// Nó a revogar.
+        /// Worker a revogar.
         id: String,
     },
     /// Remove o worker do cluster: o controller o esquece por inteiro.
     Remove {
-        /// Nó a remover.
+        /// Worker a remover.
         id: String,
     },
 }
@@ -241,24 +241,24 @@ enum InstallAction {
 
 #[derive(Subcommand, Debug)]
 enum ReservationAction {
-    /// Reservas ativas: nó, requisição dona e vencimento.
+    /// Reservas ativas: worker, requisição dona e vencimento.
     List,
-    /// Retém um nó para uma requisição futura (G6).
+    /// Retém um worker para uma requisição futura (G6).
     Add {
-        /// Nó a reter.
+        /// Worker a reter.
         node: String,
-        /// Requisição para quem o nó fica retido.
+        /// Requisição para quem o worker fica retido.
         request_id: String,
         /// Minutos que a reserva vale. 0 usa o padrão do controller.
         #[arg(long, default_value_t = 0)]
         minutes: u32,
-        /// Quantos slots de trabalho do nó guardar para a requisição. 0 retém o nó inteiro.
+        /// Quantos slots de trabalho do worker guardar para a requisição. 0 retém o worker inteiro.
         #[arg(long, default_value_t = 0)]
         slots: u32,
     },
-    /// Libera a reserva de um nó antes do vencimento.
+    /// Libera a reserva de um worker antes do vencimento.
     Remove {
-        /// Nó a liberar.
+        /// Worker a liberar.
         node: String,
     },
 }
@@ -416,11 +416,11 @@ async fn run_cluster(
                     .into_inner();
                 if reply.retired {
                     println!(
-                        "NÓ retirado no={id} reenfileiradas={}; para devolvê-lo: aic cluster node approve {id} --fingerprint <a impressão de antes>",
+                        "WORKER retirado no={id} reenfileiradas={}; para devolvê-lo: aic cluster node approve {id} --fingerprint <a impressão de antes>",
                         reply.requeued
                     );
                 } else {
-                    println!("NÓ não encontrado no={id}");
+                    println!("WORKER não encontrado no={id}");
                 }
             }
             NodeAction::Revoke { id } => revoke_node(controller, &id).await?,
@@ -433,9 +433,9 @@ async fn run_cluster(
                     .await?
                     .into_inner();
                 if reply.removed {
-                    println!("NÓ removido no={id} reenfileiradas={}", reply.requeued);
+                    println!("WORKER removido no={id} reenfileiradas={}", reply.requeued);
                 } else {
-                    println!("NÓ não encontrado no={id}");
+                    println!("WORKER não encontrado no={id}");
                 }
             }
         },
@@ -653,11 +653,11 @@ async fn run_graph(endpoint: &str, size: u32) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Retém um nó para uma requisição futura (G6).
+/// Retém um worker para uma requisição futura (G6).
 ///
-/// A reserva é criada antes de o trabalho existir: o cliente diz "este nó é meu para a
+/// A reserva é criada antes de o trabalho existir: o cliente diz "este worker é meu para a
 /// requisição X" e depois enfileira a requisição X com esse mesmo id. Um `granted=false`
-/// significa que o nó não está disponível para reserva — normalmente porque saiu ou está
+/// significa que o worker não está disponível para reserva — normalmente porque saiu ou está
 /// drenando — e é reportado sem erro, porque não reservar não é uma falha de transporte.
 async fn run_reserve(
     endpoint: &str,
@@ -683,12 +683,12 @@ async fn run_reserve(
         );
     } else {
         println!("RESERVA recusada no={node} motivo={}", response.message);
-        return Err(format!("nó {node} não está disponível para reserva").into());
+        return Err(format!("worker {node} não está disponível para reserva").into());
     }
     Ok(())
 }
 
-/// Lista as reservas ativas: nó, requisição dona e vencimento.
+/// Lista as reservas ativas: worker, requisição dona e vencimento.
 async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let reservations = client
@@ -699,7 +699,7 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
     println!("RESERVAS {}", reservations.len());
     println!(
         "{:<20} {:<16} {:>14} {:>6}",
-        "NÓ", "REQUISIÇÃO", "EXPIRA_EM_MS", "SLOTS"
+        "WORKER", "REQUISIÇÃO", "EXPIRA_EM_MS", "SLOTS"
     );
     for reservation in reservations {
         println!(
@@ -707,7 +707,7 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
             clean(&reservation.node_id),
             clean(&reservation.request_id),
             reservation.expires_at_unix_ms,
-            // 0 guarda o nó inteiro
+            // 0 guarda o worker inteiro
             if reservation.slots == 0 {
                 "todos".to_string()
             } else {
@@ -718,7 +718,7 @@ async fn print_reservations(endpoint: &str) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// Libera a reserva de um nó antes do vencimento. Um nó sem reserva não é erro.
+/// Libera a reserva de um worker antes do vencimento. Um worker sem reserva não é erro.
 async fn approve_node(
     endpoint: &str,
     node: &str,
@@ -730,13 +730,13 @@ async fn approve_node(
         Some(given) => given.trim().to_ascii_lowercase(),
         None if !trust_listed => {
             return Err(
-                "informe --fingerprint (a que o nó imprimiu ao registrar-se) ou --trust-listed"
+                "informe --fingerprint (a que o worker imprimiu ao registrar-se) ou --trust-listed"
                     .into(),
             );
         }
         None => {
             eprintln!(
-                "AVISO: --trust-listed; aprovando a credencial que o controller mostra agora. Confira com a impressão que o nó imprimiu ao registrar-se."
+                "AVISO: --trust-listed; aprovando a credencial que o controller mostra agora. Confira com a impressão que o worker imprimiu ao registrar-se."
             );
             client
                 .list_nodes(ListNodesRequest {})
@@ -750,8 +750,8 @@ async fn approve_node(
         }
     };
     if fingerprint.is_empty() {
-        println!("NÓ não encontrado no={node}");
-        return Err("nó não encontrado".into());
+        println!("WORKER não encontrado no={node}");
+        return Err("worker não encontrado".into());
     }
     let approved = client
         .approve_node(ApproveNodeRequest {
@@ -762,9 +762,9 @@ async fn approve_node(
         .into_inner()
         .approved;
     if approved {
-        println!("NÓ aprovado no={node}");
+        println!("WORKER aprovado no={node}");
     } else {
-        println!("NÓ não encontrado no={node}");
+        println!("WORKER não encontrado no={node}");
     }
     Ok(())
 }
@@ -815,9 +815,12 @@ async fn revoke_node(endpoint: &str, node: &str) -> Result<(), Box<dyn std::erro
         .await?
         .into_inner();
     if reply.revoked {
-        println!("NÓ revogado no={node} reenfileiradas={}", reply.requeued);
+        println!(
+            "WORKER revogado no={node} reenfileiradas={}",
+            reply.requeued
+        );
     } else {
-        println!("NÓ não encontrado no={node}");
+        println!("WORKER não encontrado no={node}");
     }
     Ok(())
 }
@@ -840,7 +843,7 @@ async fn release_reservation(endpoint: &str, node: &str) -> Result<(), Box<dyn s
 }
 
 /// Texto vindo do controller, seguro para a tela do operador: controle (ESC, CSI, OSC) e os
-/// caracteres invisíveis que reordenam ou escondem texto viram `?`. O nó escolhe o próprio id e a
+/// caracteres invisíveis que reordenam ou escondem texto viram `?`. O worker escolhe o próprio id e a
 /// própria versão ao se registrar, mesmo pendente, então a CLI não pode confiar neles.
 fn clean(text: &str) -> String {
     text.chars()
@@ -1137,7 +1140,7 @@ async fn check_model(
         );
     }
     println!(
-        "pesos {:.2} GB + contexto {:.2} GB + margem {:.2} GB = {:.2} GB; disponível {:.2} GB em {} nós",
+        "pesos {:.2} GB + contexto {:.2} GB + margem {:.2} GB = {:.2} GB; disponível {:.2} GB em {} workers",
         gb(reply.weights_bytes),
         gb(reply.kv_bytes),
         gb(reply.margin_bytes),
@@ -1194,10 +1197,10 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .map(sanitize_node)
         .collect::<Vec<_>>();
-    println!("NÓS {}", nodes.len());
+    println!("WORKERS {}", nodes.len());
     println!(
         "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6}",
-        "NÓ",
+        "WORKER",
         "ESTADO",
         "ARQ",
         "THREADS",
@@ -1267,8 +1270,8 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// O papel de um nó, pelo que o controller sabe: o id de recuperação (`-rec`) é o boot de rede,
-/// que só marca presença; um cache de fatias maior que zero é um nó que guarda partes de modelo.
+/// O papel de um worker, pelo que o controller sabe: o id de recuperação (`-rec`) é o boot de rede,
+/// que só marca presença; um cache de fatias maior que zero é um worker que guarda partes de modelo.
 fn node_role(node_id: &str, shard_cache_bytes: u64) -> &'static str {
     if node_id.ends_with(RECOVERY_NODE_SUFFIX) {
         "Recuperação (só presença, não recebe trabalho)"
@@ -1279,7 +1282,7 @@ fn node_role(node_id: &str, shard_cache_bytes: u64) -> &'static str {
     }
 }
 
-/// A árvore do cluster: o controller na raiz, um ramo por papel, um nó por folha. Linhas puras para
+/// A árvore do cluster: o controller na raiz, um ramo por papel, um worker por folha. Linhas puras para
 /// poder testar. Papéis vazios não aparecem. O gateway não se registra no controller, então não
 /// entra aqui.
 fn topology_lines(
@@ -1319,7 +1322,7 @@ fn topology_lines(
             None => groups.push((role, vec![line])),
         }
     }
-    // O gateway entra como mais um ramo: o que ele serve e em que nós ficam as fatias.
+    // O gateway entra como mais um ramo: o que ele serve e em que workers ficam as fatias.
     if !gateways.is_empty() {
         let lines = gateways
             .iter()
@@ -1355,7 +1358,10 @@ fn topology_lines(
             .collect();
         groups.push(("Gateway de inferência", lines));
     }
-    let mut out = vec![format!("controller {controller}  ({} nós)", nodes.len())];
+    let mut out = vec![format!(
+        "controller {controller}  ({} workers)",
+        nodes.len()
+    )];
     let last_group = groups.len().saturating_sub(1);
     for (g, (role, lines)) in groups.iter().enumerate() {
         let (branch, pad) = if g == last_group {
@@ -1413,13 +1419,13 @@ async fn print_topology(endpoint: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// Um nó só, com tudo que o controller sabe sobre ele (B4).
+/// Um worker só, com tudo que o controller sabe sobre ele (B4).
 ///
-/// A tabela de `nodes` cabe numa linha por nó, então deixa de fora o que não cabe: o compute
-/// medido, as classes de armazenamento, a pressão de memória e a reserva do nó. Este é o
+/// A tabela de `nodes` cabe numa linha por worker, então deixa de fora o que não cabe: o compute
+/// medido, as classes de armazenamento, a pressão de memória e a reserva do worker. Este é o
 /// lugar onde esses campos aparecem juntos.
 ///
-/// Sem RPC de nó único: `ListNodes` já traz todos numa chamada só, então filtrar aqui não
+/// Sem RPC de worker único: `ListNodes` já traz todos numa chamada só, então filtrar aqui não
 /// custa uma ida a mais ao controller. Um id desconhecido é informativo, não erro — o mesmo
 /// tratamento de um trace de requisição desconhecida.
 ///
@@ -1440,7 +1446,7 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
                 .is_some_and(|identity| identity.node_id == id)
         });
     let Some(node) = node else {
-        println!("NÓ {} não encontrado", clean(id));
+        println!("WORKER {} não encontrado", clean(id));
         return Ok(());
     };
     let node = sanitize_node(node);
@@ -1455,7 +1461,7 @@ async fn print_node(endpoint: &str, id: &str) -> Result<(), Box<dyn std::error::
         .into_iter()
         .find(|reservation| reservation.node_id == id);
 
-    println!("NÓ {}", identity.node_id);
+    println!("WORKER {}", identity.node_id);
     println!(
         "  estado={} arquitetura={} confianca={}",
         node.state,
@@ -1720,7 +1726,7 @@ async fn print_metrics(endpoint: &str) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-/// Painel de uma tela (H4): nós, fila de trabalho e reservas ativas no mesmo lugar.
+/// Painel de uma tela (H4): workers, fila de trabalho e reservas ativas no mesmo lugar.
 ///
 /// Junta o que o controlador já expõe. Os campos do painel da spec que ainda não têm
 /// fonte — TTFT, ITL, tokens/s, tokens evitados, KV cache, previsto vs real — não
@@ -1797,7 +1803,7 @@ async fn print_dashboard(
             println!();
             println!(
                 "{:<20} {:<12} {:>7} {:>9} {:>8} {:>8} {:>7} {:>7}",
-                "NÓ", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C"
+                "WORKER", "ESTADO", "THREADS", "RAM_GB", "COMPUTE", "SAÚDE", "CPU_%", "TEMP_C"
             );
             for node in nodes {
                 let identity = node.identity.unwrap_or_default();
@@ -2257,7 +2263,7 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
     }
     println!(
         "{:<10} {:<14} {:<11} {:>12} {:>12} {:>12} {:>12}",
-        "TRABALHO", "NÓ", "ESTADO", "COMPUTE_US", "PREDITO_US", "TRANSFER_US", "TOTAL_US"
+        "TRABALHO", "WORKER", "ESTADO", "COMPUTE_US", "PREDITO_US", "TRANSFER_US", "TOTAL_US"
     );
     let mut compute_total = 0_u64;
     let mut predicted_total = 0_u64;
@@ -2290,7 +2296,7 @@ async fn print_trace(endpoint: &str, request_id: &str) -> Result<(), Box<dyn std
         transfer_total,
         latency_total,
     );
-    // H5: previsto vs real. Só faz sentido quando algo foi previsto: um nó sem compute
+    // H5: previsto vs real. Só faz sentido quando algo foi previsto: um worker sem compute
     // score reporta zero, e zero ali significa "não previsto", não "instantâneo". Uma
     // unidade não concluída também conta zero dos dois lados e sai da conta sozinha.
     if predicted_total > 0 {
@@ -2364,7 +2370,7 @@ async fn run_benchmark(
 fn print_report(report: &WorkReportResponse) {
     println!(
         "{:<10} {:<14} {:>12} {:>12} {:>12}",
-        "TRABALHO", "NÓ", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
+        "TRABALHO", "WORKER", "COMPUTE_US", "TRANSFER_US", "TOTAL_US"
     );
     let mut compute_total = 0_u64;
     let mut transfer_total = 0_u64;
@@ -2800,7 +2806,7 @@ mod tests {
 ",
             );
         for expected in [
-            "Real.AI.Cluster painel",
+            "AI.Cluster painel",
             "1/2 nos disponiveis",
             "orangepi-ab",
             "pendente de aprovacao",
@@ -2845,14 +2851,17 @@ mod tests {
             node("c", 0, true),
         ];
         let tree = topology_lines("http://x:1", &nodes, &[]);
-        assert_eq!(tree[0], "controller http://x:1  (3 nós)");
+        assert_eq!(tree[0], "controller http://x:1  (3 workers)");
         assert_eq!(tree[1], "├─ Computação + fatias de modelo (1)");
         assert!(tree[2].starts_with("│  └─ a  READY arm 4t"));
         assert!(tree[2].contains("cache=2048MB"));
         assert_eq!(tree[3], "└─ Computação (2)");
         assert!(tree[4].starts_with("   ├─ b ") && tree[4].contains("PENDENTE"));
         assert!(tree[5].starts_with("   └─ c "));
-        assert_eq!(topology_lines("u", &[], &[]), vec!["controller u  (0 nós)"]);
+        assert_eq!(
+            topology_lines("u", &[], &[]),
+            vec!["controller u  (0 workers)"]
+        );
     }
 
     #[test]

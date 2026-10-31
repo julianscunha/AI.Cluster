@@ -5,7 +5,7 @@
 # registra compute e transferência por unidade. O compute cresce com o cubo da aresta
 # e a transferência com o quadrado. O tamanho em que o compute supera a transferência
 # é o cruzamento: abaixo dele, mover o trabalho custa mais que o próprio trabalho, então
-# nós extras não se pagam.
+# workers extras não se pagam.
 #
 # Os tamanhos ficam abaixo do teto de mensagem do gRPC. Uma unidade de tamanho S carrega duas matrizes f64 SxS,
 # então S=512 já é ~4MB, no limite de decode padrão do tonic.
@@ -46,7 +46,7 @@ for nodes in $NODES; do
   sleep 8
 
   for size in $SIZES; do
-    echo "=== nós=$nodes tamanho=$size reps=$REPS ==="
+    echo "=== workers=$nodes tamanho=$size reps=$REPS ==="
     start=$(date +%s)
     run "$R/aic cluster benchmark --size "$size" --repetitions $REPS"
     end=$(date +%s)

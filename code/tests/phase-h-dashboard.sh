@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Fatia da Fase H (H4): o painel de uma tela.
 #
-# Critério verificado: o painel lê o estado do cluster e reflete o que muda — nó
+# Critério verificado: o painel lê o estado do cluster e reflete o que muda — worker
 # disponível, trabalho concluído e reserva ativa — numa vista só. O painel não inventa
 # número: cada seção vem de uma chamada que o controlador já expõe (`ListNodes`,
 # `GetMetrics`, `ListReservations`), então o teste é que as três seções aparecem e
 # acompanham o cluster.
 #
 # Sequência:
-#   A) cluster ocioso: 1 nó disponível, nada concluído, nenhuma reserva.
+#   A) cluster ocioso: 1 worker disponível, nada concluído, nenhuma reserva.
 #   B) depois de 2 unidades: concluídas=2 no painel.
-#   C) com uma reserva ativa: RESERVAS 1 e o nó retido aparecem.
+#   C) com uma reserva ativa: RESERVAS 1 e o worker retido aparecem.
 set -uo pipefail
 
 NET=aic-net
@@ -56,7 +56,7 @@ echo "=== A) cluster ocioso ==="
 PANEL=$(run "$R/aic cluster dashboard")
 echo "$PANEL"
 expect_contains "cabeçalho" "PAINEL nós_disponíveis=1/1" "$PANEL"
-expect_contains "nó listado" "node-d" "$PANEL"
+expect_contains "worker listado" "node-d" "$PANEL"
 expect_contains "nada concluído" "TRABALHO concluídas=0" "$PANEL"
 expect_contains "sem reservas" "RESERVAS 0" "$PANEL"
 

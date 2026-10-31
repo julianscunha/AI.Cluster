@@ -21,15 +21,15 @@ O worker é o processo que roda em cada máquina do cluster. Ele recebe Work Uni
 1. O worker pede uma unidade ao controller (`RequestWork`).
 2. Sem unidade, espera 200 ms e pede de novo. Depois de concluir uma, pede de novo na hora.
 3. Executa a unidade com os núcleos concedidos e devolve o resultado (`SubmitWorkResult`) com checksum e tempo de cálculo.
-4. Um heartbeat separado roda a cada 5 s, em tarefa própria. Uma unidade longa não deixa o nó parecer morto.
+4. Um heartbeat separado roda a cada 5 s, em tarefa própria. Uma unidade longa não deixa o worker parecer morto.
 
-O worker valida o tamanho das matrizes antes de multiplicar. Uma unidade incoerente volta marcada como inválida, e o controller não tenta outro nó por causa dela.
+O worker valida o tamanho das matrizes antes de multiplicar. Uma unidade incoerente volta marcada como inválida, e o controller não tenta outro worker por causa dela.
 
 ## Execução local
 
 - **Concorrência.** `AI_CLUSTER_WORK_SLOTS` define quantas unidades rodam ao mesmo tempo (padrão 1, limite 64). O worker só pede trabalho quando há slot livre, e segura o slot até entregar o resultado.
 - **Núcleos.** O orçamento é `min(threads reportadas, núcleos do host)`, dividido entre os slots (no mínimo 1 núcleo por unidade). O produto de matrizes é dividido por linhas de saída, e o resultado é igual, bit a bit, ao do caminho serial. O checksum não muda com o número de threads.
-- **Remedições.** Medidas de compute, armazenamento e rede só rodam com o nó vazio, para não roubar núcleos de unidade em voo.
+- **Remedições.** Medidas de compute, armazenamento e rede só rodam com o worker vazio, para não roubar núcleos de unidade em voo.
 - **Falha de execução.** Se o cálculo entra em pânico ou o resultado não chega ao controller após três tentativas, o worker sai do cluster. Sua unidade volta à fila pelo caminho de saída.
 
 ## Canal residente de fatias
@@ -37,7 +37,7 @@ O worker valida o tamanho das matrizes antes de multiplicar. Uma unidade incoere
 Usado só por inferência, e só quando o worker recebe `AI_CLUSTER_MODEL_DIR`.
 
 - O worker abre um stream `ShardChannel` com o controller, identificando-se pelo `node_id`. Se a conexão cai ou é recusada, tenta de novo a cada 2 s.
-- As fatias de peso ficam no worker. Só ativações e saídas cruzam a rede. Os pesos não saem do disco do nó.
+- As fatias de peso ficam no worker. Só ativações e saídas cruzam a rede. Os pesos não saem do disco do worker.
 - O cache de fatias tem teto de `AI_CLUSTER_SHARD_CACHE_MB` (padrão 2048 MiB), com despejo LRU.
 - Até 2 cálculos em paralelo, fila de resposta de 64 quadros.
 - Só tensores de projeção de camada são lidos do disco. Caminho fora da raiz do modelo é recusado. Uma fatia tem no máximo 256 MiB de entrada e a saída no máximo 64 MiB.
@@ -46,19 +46,19 @@ Detalhes do protocolo em [[canal-de-fatias]].
 
 ## Cópia do estado do controller
 
-Com `AI_CLUSTER_STATE_REPLICA` definido, o worker guarda uma cópia do estado de trabalho do controller. A cópia chega junto de um heartbeat, quando a época do controller avançou além da que o nó tem. Ela é reoferecida no re-registro. Ver [[state-manager]].
+Com `AI_CLUSTER_STATE_REPLICA` definido, o worker guarda uma cópia do estado de trabalho do controller. A cópia chega junto de um heartbeat, quando a época do controller avançou além da que o worker tem. Ela é reoferecida no re-registro. Ver [[state-manager]].
 
 ## Variáveis de ambiente
 
 | Variável | Padrão | Efeito |
 |---|---|---|
 | `AI_CLUSTER_CONTROLLER` | Endereço padrão do controller | Endereço do controller. |
-| `AI_CLUSTER_NODE_ID` | Conteúdo de `/etc/hostname` | Identidade do nó. |
-| `AI_CLUSTER_NODE_CREDENTIAL_FILE` | | Arquivo com a credencial do nó. |
+| `AI_CLUSTER_NODE_ID` | Conteúdo de `/etc/hostname` | Identidade do worker. |
+| `AI_CLUSTER_NODE_CREDENTIAL_FILE` | | Arquivo com a credencial do worker. |
 | `AI_CLUSTER_WORK_SLOTS` | 1 (limite 1 a 64) | Unidades concorrentes. |
 | `AI_CLUSTER_MODEL_DIR` | | Raiz dos modelos. Liga o canal de fatias. |
 | `AI_CLUSTER_SHARD_CACHE_MB` | 2048 | Teto do cache de fatias. |
-| `AI_CLUSTER_STATE_REPLICA` | | Arquivo onde o nó guarda a cópia do estado do controller. |
+| `AI_CLUSTER_STATE_REPLICA` | | Arquivo onde o worker guarda a cópia do estado do controller. |
 | `AI_CLUSTER_RECOMPUTE_INTERVAL_SECS` | 60 | Cadência das remedições no ocioso. |
 
 ## Prioridade

@@ -15,13 +15,13 @@ atacante; para isso, isole o boot pela rede numa VLAN própria (ver o ADR de rei
 --boots N limita quantas vezes cada IP recebe a imagem inteira (a conta fecha no dtb, o último
 arquivo); depois disso o servidor o
 recusa e o u-boot cai no cartão local. É o que torna a imagem da rede um slot em teste: passado
-o prazo, o nó reinicia e volta ao slot local sozinho em vez de rebootar na rede para sempre.
+o prazo, o worker reinicia e volta ao slot local sozinho em vez de rebootar na rede para sempre.
 
 Parar este processo é a alavanca de recuperação do boot pela rede: sem servidor, o u-boot desiste
-e o nó sobe do cartão local.
+e o worker sobe do cartão local.
 
 shortcut: uma thread por transferência e sem janela deslizante (windowsize), o que basta para
-um nó por vez; trocar por um servidor de verdade (dnsmasq, tftpd-hpa) para uma frota.
+um worker por vez; trocar por um servidor de verdade (dnsmasq, tftpd-hpa) para uma frota.
 """
 import argparse
 import os

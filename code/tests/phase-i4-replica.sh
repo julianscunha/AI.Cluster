@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Fatia da Fase I (I4): promoção de réplica — o volume do controller morre, a cópia num nó não.
+# Fatia da Fase I (I4): promoção de réplica — o volume do controller morre, a cópia num worker não.
 #
 # Critério verificado: a fila sobrevive à perda dos DOIS arquivos locais do controller, porque
-# um nó guarda uma cópia do estado e a oferece de volta ao (re-)registrar. Nenhum roteiro
+# um worker guarda uma cópia do estado e a oferece de volta ao (re-)registrar. Nenhum roteiro
 # cobria isto: `phase-i-state.sh` cobre a cópia local ao lado do primário, e as duas moram no
-# mesmo volume — quando o volume morre, morrem juntas. É essa a falha que a cópia num nó cobre.
+# mesmo volume — quando o volume morre, morrem juntas. É essa a falha que a cópia num worker cobre.
 #
 # Sequência:
 #   A) controller com estado + worker com `AI_CLUSTER_STATE_REPLICA`: o worker guarda a cópia.
-#   B) uma requisição é enfileirada: a gravação data o estado e a batida leva a cópia ao nó.
+#   B) uma requisição é enfileirada: a gravação data o estado e a batida leva a cópia ao worker.
 #   C) o controller morre; os dois arquivos locais são apagados — o volume morreu com eles.
 #   D) o controller volta vazio; o worker re-registra, oferece a cópia, e a fila volta.
 #   E) um worker novo drena o trabalho recuperado.
 #
-# Nota de honestidade: o volume é compartilhado, então o arquivo do nó está no mesmo disco do
+# Nota de honestidade: o volume é compartilhado, então o arquivo do worker está no mesmo disco do
 # que os arquivos do controller — o que este roteiro prova é que a *fonte* da fila recuperada
-# é a cópia do nó e não um arquivo do controller. Em produção a cópia fica no disco do nó, e é
+# é a cópia do worker e não um arquivo do controller. Em produção a cópia fica no disco do worker, e é
 # isso que a faz sobreviver à morte do volume do controller. Ver "Teto conhecido" em
 # `docs/system/02-subsistemas/dados/state-manager.md`.
 set -uo pipefail
@@ -26,7 +26,7 @@ R=/t/release
 CONTROLLER=http://aic-controller:50051
 STATE_DIR=/t/state-i4r
 STATE=$STATE_DIR/state.bin
-# O arquivo do nó. Distinto do par do controller de propósito: é o que prova de onde a fila
+# O arquivo do worker. Distinto do par do controller de propósito: é o que prova de onde a fila
 # recuperada veio.
 NODE_REPLICA=$STATE_DIR/node-a.bin
 GRACE_MS=${GRACE_MS:-6000}
@@ -73,7 +73,7 @@ start_controller
 worker aic-worker-a node-a "$HOLD_MS" "$NODE_REPLICA"
 sleep 8
 
-echo "=== B) enfileira: a gravação leva a cópia até o nó ==="
+echo "=== B) enfileira: a gravação leva a cópia até o worker ==="
 # Em segundo plano: com o worker segurando a unidade, a fila não drena e o cliente ficaria
 # esperando até o próprio deadline.
 run "$R/aic cluster benchmark --size 64 --repetitions 3" >/dev/null 2>&1 &
@@ -81,9 +81,9 @@ CLI=$!
 sleep 12
 
 if in_vol "test -s $NODE_REPLICA"; then
-  echo "OK: o nó guardou a cópia em $NODE_REPLICA ($(in_vol "stat -c %s $NODE_REPLICA") bytes)"
+  echo "OK: o worker guardou a cópia em $NODE_REPLICA ($(in_vol "stat -c %s $NODE_REPLICA") bytes)"
 else
-  echo "FALHA: esperado o nó guardar uma cópia em $NODE_REPLICA"
+  echo "FALHA: esperado o worker guardar uma cópia em $NODE_REPLICA"
   docker logs aic-worker-a 2>&1 | tail -20
   teardown
   exit 1
@@ -100,13 +100,13 @@ if in_vol "test -e $STATE"; then
 fi
 echo "OK: o volume do controller morreu (primário e cópia local apagados)"
 
-echo "=== D) o controller volta vazio e o nó oferece a cópia ==="
+echo "=== D) o controller volta vazio e o worker oferece a cópia ==="
 start_controller
-# O worker está morto; quem oferece a cópia é um nó novo que lê o arquivo que ficou.
+# O worker está morto; quem oferece a cópia é um worker novo que lê o arquivo que ficou.
 worker aic-worker-b node-b 0 "$NODE_REPLICA"
 sleep 12
 
-RESTORED=$(docker logs aic-controller 2>&1 | grep "estado restaurado da réplica de um nó")
+RESTORED=$(docker logs aic-controller 2>&1 | grep "estado restaurado da réplica de um worker")
 echo "$RESTORED"
 LOADED=$(docker logs aic-controller 2>&1 | grep "estado carregado de" || true)
 if [ -n "$LOADED" ]; then
@@ -114,10 +114,10 @@ if [ -n "$LOADED" ]; then
   teardown
   exit 1
 fi
-if echo "$RESTORED" | grep -q "estado restaurado da réplica de um nó"; then
-  echo "OK: o controller recuperou a fila da cópia de um nó"
+if echo "$RESTORED" | grep -q "estado restaurado da réplica de um worker"; then
+  echo "OK: o controller recuperou a fila da cópia de um worker"
 else
-  echo "FALHA: esperado 'estado restaurado da réplica de um nó' no log"
+  echo "FALHA: esperado 'estado restaurado da réplica de um worker' no log"
   docker logs aic-controller 2>&1 | tail -20
   docker logs aic-worker-b 2>&1 | tail -20
   teardown

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Fatia da Fase C (C2): benchmark de capability — o worker mede o próprio compute.
 #
-# Critério verificado: adicionar um nó produz um capability profile com o compute
+# Critério verificado: adicionar um worker produz um capability profile com o compute
 # medido, não apenas a contagem de threads. Antes desta fatia o worker reportava
 # compute_score=0 e o modelo de placement caía na contagem de threads; agora ele
 # mede o matmul no próprio kernel que executa as unidades e reporta a taxa por core.
 #
 # Sequência:
-#   A) com benchmark: o nó reporta COMPUTE > 0, coerente entre duas leituras (reproduzível).
+#   A) com benchmark: o worker reporta COMPUTE > 0, coerente entre duas leituras (reproduzível).
 #   B) com AI_CLUSTER_COMPUTE_SCORE=2.0: o valor fixado aparece no relatório — prova que
 #      a medição é a fonte do número, sem depender da velocidade do host.
 #
@@ -41,7 +41,7 @@ teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== A) benchmark medido: o nó reporta o compute que mediu ==="
+echo "=== A) benchmark medido: o worker reporta o compute que mediu ==="
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-worker-bench --network "$NET" -v aic-target:/t \
@@ -60,7 +60,7 @@ else
   exit 1
 fi
 
-# Reproduzível: uma segunda leitura do mesmo nó não pode mudar o perfil reportado.
+# Reproduzível: uma segunda leitura do mesmo worker não pode mudar o perfil reportado.
 SCORE2=$(run "$R/aic cluster nodes" | compute_of node-bench)
 echo "compute_score relido  = $SCORE2"
 if [ "$SCORE" = "$SCORE2" ]; then

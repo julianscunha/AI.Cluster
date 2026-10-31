@@ -98,12 +98,12 @@ impl ShardHub {
         let mut state = self.lock();
         let Some(session) = state.sessions.get(node) else {
             return Err(Status::failed_precondition(format!(
-                "nó {node} sem canal de fatias aberto"
+                "worker {node} sem canal de fatias aberto"
             )));
         };
         if state.pending.values().filter(|p| p.node == node).count() >= max_pending_per_node() {
             return Err(Status::resource_exhausted(
-                "operações demais em voo neste nó",
+                "operações demais em voo neste worker",
             ));
         }
         let op = self.next.fetch_add(1, Ordering::Relaxed) + 1;
@@ -114,7 +114,7 @@ impl ShardHub {
                 return Err(Status::resource_exhausted("fila do canal cheia"));
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                return Err(Status::unavailable("canal do nó fechado"));
+                return Err(Status::unavailable("canal do worker fechado"));
             }
         }
         let (reply, answer) = oneshot::channel();

@@ -2,7 +2,7 @@
 # Catálogo de modelos e veredito OK/NOK (ADR-022, E1 e E2).
 #
 # Critério verificado: o controller lê os cabeçalhos da pasta AI_CLUSTER_MODELS_DIR e `model list`
-# diz o que é cada modelo e se o motor o roda; `model check` compara o modelo com a RAM dos nós
+# diz o que é cada modelo e se o motor o roda; `model check` compara o modelo com a RAM dos workers
 # aprovados e vivos: OK quando cabe, NOK com o motivo e quanto falta quando não cabe.
 #
 # Precisa dos pesos em code/models/{gpt2,smollm2} (ignorados pelo git) e dos binários de release
@@ -11,7 +11,7 @@
 # Sequência:
 #   A) `model list` mostra gpt2 e smollm2 como Llama/GPT-2 suportados e um GGUF inválido com motivo.
 #   B) `model check` de um modelo que cabe na RAM do worker de teste: OK.
-#   C) `model check` com a RAM do nó reduzida (AI_CLUSTER_MEMORY_BYTES): NOK com "faltam".
+#   C) `model check` com a RAM do worker reduzida (AI_CLUSTER_MEMORY_BYTES): NOK com "faltam".
 #   D) token de join não lista nem verifica modelos.
 set -uo pipefail
 
@@ -75,15 +75,15 @@ echo "OK: catálogo lido dos cabeçalhos"
 echo "=== B) model check cabe ==="
 OUT=$(cli cluster model check gpt2)
 echo "$OUT"
-echo "$OUT" | grep -q "^OK" || fail "gpt2 deveria caber na RAM do nó de teste"
+echo "$OUT" | grep -q "^OK" || fail "gpt2 deveria caber na RAM do worker de teste"
 
 echo "=== C) model check não cabe: NOK com o que falta ==="
-start_controller_and_worker 134217728   # 128 MiB: abaixo da reserva por nó
+start_controller_and_worker 134217728   # 128 MiB: abaixo da reserva por worker
 OUT=$(cli cluster model check smollm2)
 echo "$OUT"
 echo "$OUT" | grep -q "^NOK" || fail "smollm2 não deveria caber em 128 MiB"
 echo "$OUT" | grep -q "faltam" || fail "o NOK deveria dizer quanto falta"
-echo "$OUT" | grep -q "acrescente" || fail "o NOK deveria dizer quantos nós acrescentar"
+echo "$OUT" | grep -q "acrescente" || fail "o NOK deveria dizer quantos workers acrescentar"
 
 echo "=== D) token de join não lista modelos ==="
 DENIED=$(CLI_TOKEN=$JOIN cli cluster model list)

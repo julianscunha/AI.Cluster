@@ -26,7 +26,7 @@ Três limites da observabilidade (F05): os traces e o roll-up de unidades conclu
 
 - Um registro sem `work_id` (o tamanho zero de um arquivo estendido com zeros após uma queda) é tratado como corrupção: a leitura para ali, em vez de povoar o histórico com unidades fantasmas.
 - A reescrita na abertura faz `fsync` antes do `rename`. Se ela falha, o log fica desligado nessa execução em vez de acrescentar atrás de lixo. Um `work_id` repetido é ignorado, o que protege de um `.1` que não pôde ser removido.
-- O acréscimo acontece fora do lock da fila, e uma rotação que não consegue reabrir o arquivo tenta de novo no próximo registro.
+- O acréscimo acontece fora do lock da fila, e uma rotação que não consegue reabrir o arquivo tenta de novo worker próximo registro.
 
 ## Consequências
 

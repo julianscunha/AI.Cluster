@@ -435,19 +435,19 @@ mod tests {
         let mut unit = unit(64, 64, 64);
         unit.request_id = "req-b".to_string();
         let mut pool = pool();
-        // 4 slots em cada nó; o rápido tem 1 guardado para req-a
+        // 4 slots em cada worker; o rápido tem 1 guardado para req-a
         for (_, capability, _) in &mut pool {
             capability.work_slots = 4;
         }
         let idle = |_: &str| 0;
         let partial = |id: &str| hold_of(id, "fast", "req-a", 1);
-        // sobra slot além do guardado: o nó rápido continua sendo o melhor lugar para req-b
+        // sobra slot além do guardado: o worker rápido continua sendo o melhor lugar para req-b
         assert!(decide(&unit, "fast", &pool, idle, partial, 0.1));
-        // três em voo + um guardado = quatro: sem folga, o nó sai e o lento assume
+        // três em voo + um guardado = quatro: sem folga, o worker sai e o lento assume
         let three = |id: &str| u32::from(id == "fast") * 3;
         assert!(!decide(&unit, "fast", &pool, three, partial, 0.1));
         assert!(decide(&unit, "slow", &pool, three, partial, 0.1));
-        // reserva do nó inteiro: o rápido nunca é candidato para req-b
+        // reserva do worker inteiro: o rápido nunca é candidato para req-b
         let whole = |id: &str| hold_of(id, "fast", "req-a", 0);
         assert!(!decide(&unit, "fast", &pool, idle, whole, 0.1));
     }
@@ -587,7 +587,7 @@ mod tests {
         one.memory_bandwidth_score = 1.0;
         one.memory_bandwidth_loaded_score = 0.1;
         assert_eq!(effective_threads(&one), 1.0);
-        // o piso evita que uma medida ruim zere o nó
+        // o piso evita que uma medida ruim zere o worker
         let mut bad = capability(4, 1.0, 1.0);
         bad.memory_bandwidth_score = 1.0;
         bad.memory_bandwidth_loaded_score = 0.01;

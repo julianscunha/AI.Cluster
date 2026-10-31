@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Fatia da Fase G (G4): o scheduler local decide os cores e a unidade realmente os usa.
 #
-# Critério verificado: a mesma unidade, no mesmo host, roda mais rápido quando o nó
+# Critério verificado: a mesma unidade, no mesmo host, roda mais rápido quando o worker
 # reporta mais threads — porque o worker passa a executar a unidade em N threads em vez
 # de uma. Antes disso o worker anunciava N threads e computava com uma só: o cpu_threads
 # reportado era decorativo.
 #
 # Sequência, com a mesma unidade 512x512 em cada fase, um worker por vez para não
 # disputar CPU:
-#   A) nó reporta 1 thread  -> o scheduler local concede 1  -> compute lento
-#   B) nó reporta 8 threads -> concede min(8, cores do host) -> compute muito menor
+#   A) worker reporta 1 thread  -> o scheduler local concede 1  -> compute lento
+#   B) worker reporta 8 threads -> concede min(8, cores do host) -> compute muito menor
 # O checksum tem de ser idêntico nas duas: a divisão por linhas preserva a ordem de
 # acumulação, então paralelizar não muda o resultado, só o tempo.
 #
 # O host precisa estar ocioso: a comparação é de tempo de parede, e qualquer carga
-# concorrente tira cores do nó que reporta mais threads, que é justamente o lado que
+# concorrente tira cores do worker que reporta mais threads, que é justamente o lado que
 # depende de paralelismo.
 set -uo pipefail
 
@@ -55,7 +55,7 @@ measure() {
   out=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1")
 
   {
-    echo "--- fase $name: o nó reporta $threads threads ---"
+    echo "--- fase $name: o worker reporta $threads threads ---"
     echo "--- quantos cores o worker recebeu do scheduler local ---"
     docker logs "aic-worker-$name" 2>&1 | grep "compute_done" \
       || echo "(o worker não registrou o grant — binário antigo?)"
@@ -96,7 +96,7 @@ elif [ "$NARROW_CK" != "$WIDE_CK" ]; then
 else
   echo "OK: checksum idêntico com $NARROW_THREADS e com $WIDE_THREADS threads reportadas"
   if [ "$WIDE_US" -ge "$NARROW_US" ]; then
-    echo "FALHA: o nó que reporta mais threads não computou mais rápido"
+    echo "FALHA: o worker que reporta mais threads não computou mais rápido"
     RC=1
   else
     echo "OK: compute caiu de ${NARROW_US}us para ${WIDE_US}us ao conceder mais cores"

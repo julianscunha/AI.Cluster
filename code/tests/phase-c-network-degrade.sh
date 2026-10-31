@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Fatia da Fase C4: a degradação REAL de um link muda a decisão de placement.
 #
-# Critério verificado: um nó cujo link é estrangulado depois de entrar (tc tbf no egress do
+# Critério verificado: um worker cujo link é estrangulado depois de entrar (tc tbf no egress do
 # contêiner) passa a reportar `rede_atual` abaixo do baseline, e o escalonador manda a unidade
-# para o nó de link intacto. Até aqui a degradação só era coberta por teste unitário.
+# para o worker de link intacto. Até aqui a degradação só era coberta por teste unitário.
 #
-# Os dois nós reportam a mesma capability (threads, memória, compute e saúde de storage
-# fixados); o nó degradado é o primeiro (node-a), para a unidade ir ao outro só se o custo
+# Os dois workers reportam a mesma capability (threads, memória, compute e saúde de storage
+# fixados); o worker degradado é o primeiro (node-a), para a unidade ir ao outro só se o custo
 # de transferência decidir e não a ordem de chegada. O estrangulamento só começa depois do
 # registro, então o baseline de node-a é limpo e a queda aparece só na sonda ociosa.
 #
 # Sequência:
-#   A) antes do tc, a sonda ociosa já preencheu rede_atual nos dois nós;
+#   A) antes do tc, a sonda ociosa já preencheu rede_atual nos dois workers;
 #   B) depois do tc, rede_atual de node-a cai bem abaixo da de node-b;
 #   C) o placement manda a unidade para node-b.
 set -uo pipefail
@@ -56,7 +56,7 @@ start_worker aic-worker-a node-a
 start_worker aic-worker-b node-b
 sleep 12
 
-echo "=== A) antes do tc, a sonda ociosa já preencheu rede_atual nos dois nós ==="
+echo "=== A) antes do tc, a sonda ociosa já preencheu rede_atual nos dois workers ==="
 A0=$(current node-a); B0=$(current node-b)
 echo "rede_atual node-a=$A0 node-b=$B0"
 if [ "$A0" = "-" ] || [ "$B0" = "-" ]; then
@@ -91,12 +91,12 @@ else
   exit 1
 fi
 
-echo "=== C) o placement manda a unidade para o nó de link intacto ==="
+echo "=== C) o placement manda a unidade para o worker de link intacto ==="
 BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')
 if [ "$RAN" = "node-b" ]; then
-  echo "OK: a unidade rodou em node-b, o nó de link intacto"
+  echo "OK: a unidade rodou em node-b, o worker de link intacto"
 else
   echo "FALHA: esperado node-b, veio '$RAN'"
   teardown

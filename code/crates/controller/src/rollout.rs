@@ -1,4 +1,4 @@
-//! Rollout de release (F19): o operador define a versão desejada e o controller a anuncia aos nós
+//! Rollout de release (F19): o operador define a versão desejada e o controller a anuncia aos workers
 //! pelo heartbeat. Um canário recebe primeiro; os demais só depois que ele reporta a versão nova.
 //! Se o canário não chega lá no prazo, o rollout pausa (nada mais é anunciado).
 
@@ -16,7 +16,7 @@ struct State {
     canary: Option<String>,
     canary_since_ms: u64,
     paused: bool,
-    /// Nós liberados depois do canário que ainda não chegaram à versão (nó → quando foi liberado).
+    /// Workers liberados depois do canário que ainda não chegaram à versão (worker → quando foi liberado).
     wave: std::collections::HashMap<String, u64>,
 }
 
@@ -25,7 +25,7 @@ pub struct Rollout {
     state: Mutex<State>,
     /// Arquivo de uma linha com a release desejada (sobrevive a reinício do controller).
     path: Option<PathBuf>,
-    /// Quantos nós atualizam ao mesmo tempo depois do canário (0 = todos).
+    /// Quantos workers atualizam ao mesmo tempo depois do canário (0 = todos).
     wave_limit: usize,
 }
 
@@ -38,7 +38,7 @@ fn palavra(text: &str, extra: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
 }
 
-/// Ed25519 tem 64 bytes: 88 caracteres em base64. Quem confere a assinatura é o nó.
+/// Ed25519 tem 64 bytes: 88 caracteres em base64. Quem confere a assinatura é o worker.
 fn assinatura_ok(text: &str) -> bool {
     text.len() == 88
         && text
@@ -46,8 +46,8 @@ fn assinatura_ok(text: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
 }
 
-/// Valida o que vai ser repassado a todos os nós e, depois, a um comando do worker. Uma release
-/// leva a assinatura de AI Cluster OS, a de Linux comum, ou as duas: cada nó confere a sua (ADR-025).
+/// Valida o que vai ser repassado a todos os workers e, depois, a um comando do worker. Uma release
+/// leva a assinatura de AI Cluster OS, a de Linux comum, ou as duas: cada worker confere a sua (ADR-025).
 pub fn validate(release: &Release) -> Result<(), String> {
     if !palavra(&release.version, "._-+") {
         return Err("versão inválida".into());
@@ -73,7 +73,7 @@ pub fn validate(release: &Release) -> Result<(), String> {
     if !release.linux_signature.is_empty() && !assinatura_ok(&release.linux_signature) {
         return Err("linux_signature deve ser base64 de 64 bytes (Ed25519)".into());
     }
-    // Sem userinfo nem query: o URL vai para o log de auditoria e para todos os nós (e o worker Linux
+    // Sem userinfo nem query: o URL vai para o log de auditoria e para todos os workers (e o worker Linux
     // busca a lista de hashes nele).
     let rest = release
         .url
@@ -122,7 +122,7 @@ impl Rollout {
         }
     }
 
-    /// Limita a quantos nós atualizam ao mesmo tempo depois do canário (`AI_CLUSTER_ROLLOUT_WAVE`).
+    /// Limita a quantos workers atualizam ao mesmo tempo depois do canário (`AI_CLUSTER_ROLLOUT_WAVE`).
     pub fn with_wave(mut self, limit: usize) -> Self {
         self.wave_limit = limit;
         self
@@ -164,7 +164,7 @@ impl Rollout {
         self.lock().desired.clone()
     }
 
-    /// O que anunciar ao nó `node` que roda `version`. `canary_version` diz o que o canário
+    /// O que anunciar ao worker `node` que roda `version`. `canary_version` diz o que o canário
     /// atual roda (o registro sabe). Devolve também um evento quando o rollout pausa ou conclui.
     pub fn announce(
         &self,
@@ -178,7 +178,7 @@ impl Rollout {
         let Some(desired) = state.desired.clone() else {
             return (None, None);
         };
-        // um nó sem comando de atualização não entra no rollout nem vira canário
+        // um worker sem comando de atualização não entra no rollout nem vira canário
         if version == desired.version {
             state.wave.remove(node);
         }
@@ -295,11 +295,11 @@ mod tests {
         let rollout = Rollout::new(None);
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
-        // nó que não sabe atualizar não vira canário
+        // worker que não sabe atualizar não vira canário
         assert!(rollout.announce(false, "x", "1", none, 0).0.is_none());
-        // o primeiro nó vira canário
+        // o primeiro worker vira canário
         assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
-        // outro nó espera enquanto o canário não reporta a versão nova
+        // outro worker espera enquanto o canário não reporta a versão nova
         assert!(rollout.announce(true, "b", "1", none, 1).0.is_none());
         // o canário reporta "2": libera os demais
         let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), "b".repeat(64)));

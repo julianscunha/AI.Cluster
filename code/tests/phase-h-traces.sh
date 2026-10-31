@@ -2,7 +2,7 @@
 # Fatia da Fase H (H3): correlacionar a requisição do cliente com as unidades que ela gerou.
 #
 # Critério verificado: dado o id de uma requisição, o cliente vê todas as unidades que ela
-# produziu, em que nó cada uma rodou e quanto custou de compute, transferência e ida e volta
+# produziu, em que worker cada uma rodou e quanto custou de compute, transferência e ida e volta
 # total. É a resposta a "por que essa requisição demorou?".
 #
 # Sequência:

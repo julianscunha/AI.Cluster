@@ -4,7 +4,7 @@
 #   bash code/os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]
 #
 # A chave privada (Ed25519) fica fora do repositório, por padrão em ~/.aic/release.key (gere com
-# release-keys.sh). A mensagem assinada é a mesma que o aic-updater monta no nó:
+# release-keys.sh). A mensagem assinada é a mesma que o aic-updater monta no worker:
 #   aic-release-v1 \n placa \n versão \n sha256(gz) \n sha256(ext4) \n
 set -euo pipefail
 VERSION=$1; GZ=$2; EXT4=$3; BOARD=${4:-armv7-opipc}; KEY=${5:-$HOME/.aic/release.key}

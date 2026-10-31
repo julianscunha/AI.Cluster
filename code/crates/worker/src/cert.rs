@@ -1,4 +1,4 @@
-//! Renovação do certificado do túnel RPC deste nó (ADR-026). Perto de vencer, o nó manda ao controller um
+//! Renovação do certificado do túnel RPC deste worker (ADR-026). Perto de vencer, o worker manda ao controller um
 //! CSR feito com a chave que já tem, autenticado pela credencial (não pelo token de join). O certificado novo
 //! só entra depois de carregar com a chave, e a troca é atômica: `worker.crt.new` no diretório dos renovados,
 //! o atual vira `worker.crt.prev`, e o `rename` põe o novo. Sem renovação, o túnel segue com o certificado do
@@ -20,9 +20,9 @@ pub const RETRY_EVERY: Duration = Duration::from_secs(60);
 /// Renova quando faltar menos que isto para o certificado vencer (a emissão dá 825 dias).
 const RENEW_BEFORE_SECS: i64 = 30 * 24 * 3600;
 
-/// O CSR do nó: a chave dele, com o nome do nó. O controller põe o SAN por conta própria.
+/// O CSR do worker: a chave dele, com o nome do worker. O controller põe o SAN por conta própria.
 pub fn csr_pem(key_pem: &str, node_id: &str) -> Result<String, String> {
-    let key = KeyPair::from_pem(key_pem).map_err(|e| format!("chave do nó: {e}"))?;
+    let key = KeyPair::from_pem(key_pem).map_err(|e| format!("chave do worker: {e}"))?;
     let mut params = CertificateParams::default();
     params.distinguished_name.push(DnType::CommonName, node_id);
     params
@@ -67,8 +67,8 @@ pub fn candidates(cert: &str, renewed_dir: Option<&str>) -> Vec<(String, bool)> 
     list
 }
 
-/// Pede ao controller um certificado novo para a chave deste nó. Só devolve o PEM se ele confere com a
-/// chave, ainda vale e é do nó; quem grava é `install`.
+/// Pede ao controller um certificado novo para a chave deste worker. Só devolve o PEM se ele confere com a
+/// chave, ainda vale e é do worker; quem grava é `install`.
 pub async fn fetch(
     client: &mut MetadataClient,
     node_id: &str,
@@ -92,7 +92,7 @@ pub async fn fetch(
     let (_, cert) =
         x509_parser::parse_x509_certificate(&pem.contents).map_err(|e| e.to_string())?;
     let key_public = KeyPair::from_pem(&key_pem)
-        .map_err(|e| format!("chave do nó: {e}"))?
+        .map_err(|e| format!("chave do worker: {e}"))?
         .public_key_der();
     if cert.public_key().raw != key_public.as_slice() {
         return Err("certificado recebido não é desta chave".into());
@@ -102,7 +102,7 @@ pub async fn fetch(
 }
 
 /// Grava `pem` como o certificado renovado de `dir` (ver o topo do módulo). `loads` diz se um caminho
-/// carrega com a chave deste nó; o `.new` só vira `worker.crt` se carregar, e o anterior só vira `.prev`
+/// carrega com a chave deste worker; o `.new` só vira `worker.crt` se carregar, e o anterior só vira `.prev`
 /// se também carregava (um certificado quebrado não substitui um bom).
 pub fn install(dir: &str, pem: &str, loads: impl Fn(&str) -> bool) -> Result<(), String> {
     let (current, previous, new) = (
@@ -118,7 +118,7 @@ pub fn install(dir: &str, pem: &str, loads: impl Fn(&str) -> bool) -> Result<(),
     write().map_err(|e| format!("não consegui gravar {new}: {e}"))?;
     if !loads(&new) {
         let _ = std::fs::remove_file(&new);
-        return Err("o certificado novo não carrega com a chave deste nó".into());
+        return Err("o certificado novo não carrega com a chave deste worker".into());
     }
     if Path::new(&current).exists() && loads(&current) {
         std::fs::rename(&current, &previous).map_err(|e| format!("guardar o anterior: {e}"))?;

@@ -1,21 +1,21 @@
-//! Veredito OK/NOK de um modelo contra a RAM do cluster (ADR-022, E2): soma o que os nós aprovados e
+//! Veredito OK/NOK de um modelo contra a RAM do cluster (ADR-022, E2): soma o que os workers aprovados e
 //! vivos oferecem e compara com pesos, cache de contexto e margem. Não há teto de tamanho: um modelo
-//! cabe se a soma dos nós comportar; quando não cabe, o veredito diz quanto falta.
+//! cabe se a soma dos workers comportar; quando não cabe, o veredito diz quanto falta.
 
 use crate::ModelEntry;
 
 /// Contexto usado na estimativa quando o chamador não escolhe: o menor entre o do modelo e este.
 pub const DEFAULT_CONTEXT: u64 = 4096;
-/// Fração da RAM de um nó que o cluster pode ocupar: o resto fica para o sistema.
+/// Fração da RAM de um worker que o cluster pode ocupar: o resto fica para o sistema.
 const USABLE_FRACTION: f64 = 0.8;
-/// Reserva fixa por nó para o processo do worker e buffers de execução.
+/// Reserva fixa por worker para o processo do worker e buffers de execução.
 const NODE_OVERHEAD: u64 = 128 << 20;
 /// Margem sobre os pesos para buffers de cálculo e fragmentação.
 const WEIGHT_MARGIN: f64 = 0.10;
-/// Abaixo disto a média por nó não serve para contar quantos nós faltam (a divisão dispara).
+/// Abaixo disto a média por worker não serve para contar quantos workers faltam (a divisão dispara).
 const MIN_USEFUL_NODE: u64 = 64 << 20;
 
-/// A RAM de um nó aprovado e vivo, como ele a reportou.
+/// A RAM de um worker aprovado e vivo, como ele a reportou.
 #[derive(Debug, Clone)]
 pub struct NodeMemory {
     pub total_bytes: u64,
@@ -32,17 +32,17 @@ pub struct Verdict {
     pub required_bytes: u64,
     pub available_bytes: u64,
     pub nodes: u32,
-    /// Ainda cabe sem o maior nó; só informa, não muda `ok` (com 2 nós em casa quase nada passaria).
+    /// Ainda cabe sem o maior worker; só informa, não muda `ok` (com 2 workers em casa quase nada passaria).
     pub survives_one_loss: bool,
     /// RAM estimada do `llama-server` no gateway (0,1 GB + 30% dos pesos, medido com três modelos).
     pub gateway_bytes: u64,
     pub message: String,
 }
 
-/// RAM que um nó oferece: o menor entre o que está livre e a fração utilizável, menos a reserva.
+/// RAM que um worker oferece: o menor entre o que está livre e a fração utilizável, menos a reserva.
 pub fn usable_bytes(node: &NodeMemory) -> u64 {
     let total = node.total_bytes as f64;
-    // Uma medida inválida (NaN, infinita) conta como nó cheio, nunca como nó livre.
+    // Uma medida inválida (NaN, infinita) conta como worker cheio, nunca como worker livre.
     let used = if node.used_fraction.is_finite() {
         node.used_fraction.clamp(0.0, 1.0)
     } else {
@@ -82,9 +82,9 @@ pub fn kv_bytes(model: &ModelEntry, context: u64) -> u64 {
 
 fn plural(count: u32) -> String {
     if count == 1 {
-        "o 1 nó aprovado e vivo oferece".to_string()
+        "o 1 worker aprovado e vivo oferece".to_string()
     } else {
-        format!("os {count} nós aprovados e vivos oferecem")
+        format!("os {count} workers aprovados e vivos oferecem")
     }
 }
 
@@ -149,11 +149,11 @@ pub fn check(
             if survives_one_loss {
                 ""
             } else {
-                " (sem folga se um nó cair)"
+                " (sem folga se um worker cair)"
             }
         )
     } else if count == 0 {
-        "nenhum nó aprovado e vivo para receber o modelo".to_string()
+        "nenhum worker aprovado e vivo para receber o modelo".to_string()
     } else if available_bytes >= required_bytes {
         format!(
             "não cabe no gateway: o llama-server precisa de cerca de {:.2} GB e a máquina dele tem {:.2} GB livres",
@@ -164,10 +164,11 @@ pub fn check(
         let missing = required_bytes - available_bytes;
         let average = available_bytes / u64::from(count);
         let advice = if average < MIN_USEFUL_NODE {
-            "os nós atuais quase não têm RAM utilizável; acrescente nós com mais RAM".to_string()
+            "os workers atuais quase não têm RAM utilizável; acrescente workers com mais RAM"
+                .to_string()
         } else {
             format!(
-                "acrescente cerca de {} nós como o médio atual ({:.2} GB cada)",
+                "acrescente cerca de {} workers como o médio atual ({:.2} GB cada)",
                 missing.div_ceil(average),
                 gb(average)
             )
@@ -271,7 +272,7 @@ mod tests {
         assert!(!verdict.ok);
         assert!(verdict.message.contains("faltam"), "{}", verdict.message);
         assert!(verdict.message.contains("acrescente cerca de"));
-        // Mais nós do mesmo tamanho resolvem: o veredito deixa de ser NOK.
+        // Mais workers do mesmo tamanho resolvem: o veredito deixa de ser NOK.
         let more: Vec<_> = (0..8).map(|_| node(4)).collect();
         assert!(check(&model(16), 0, 1, &more, None).ok);
     }
@@ -306,7 +307,7 @@ mod tests {
             used_fraction: 0.0,
         };
         assert!(check(&model(1), 0, 1, &[huge.clone(), huge], None).ok);
-        // Medida inválida: o nó conta como cheio.
+        // Medida inválida: o worker conta como cheio.
         let nan = NodeMemory {
             total_bytes: 8 * GIB,
             used_fraction: f64::NAN,
@@ -329,7 +330,7 @@ mod tests {
     fn no_node_is_a_nok_with_its_own_reason() {
         let verdict = check(&model(1), 0, 1, &[], None);
         assert!(!verdict.ok);
-        assert!(verdict.message.contains("nenhum nó"));
+        assert!(verdict.message.contains("nenhum worker"));
     }
 
     #[test]

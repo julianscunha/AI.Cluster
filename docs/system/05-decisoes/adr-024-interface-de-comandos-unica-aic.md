@@ -25,20 +25,20 @@ Os comandos cresceram em ferramentas separadas (`ai-cluster`, `aic-setup`, `aic`
 
 | Comando | Faz | Era |
 |---|---|---|
-| `aic cluster nodes` | tabela de nós (inclui `VELOC` e `VERSÃO`) | `ai-cluster nodes`, `ai-cluster status`, `aic-setup status` |
-| `aic cluster node show <id>` | um nó | `node show`, `node <id>` |
+| `aic cluster nodes` | tabela de workers (inclui `VELOC` e `VERSÃO`) | `ai-cluster nodes`, `ai-cluster status`, `aic-setup status` |
+| `aic cluster node show <id>` | um worker | `node show`, `node <id>` |
 | `aic cluster node approve <id> --fingerprint F` | aprova | `approve` |
 | `aic cluster node retire <id>` | tira do trabalho, mantém a identidade | `retire` |
 | `aic cluster node revoke <id>` | invalida a credencial | `revoke` |
-| `aic cluster node remove <id>` | esquece o nó | `remove` |
+| `aic cluster node remove <id>` | esquece o worker | `remove` |
 | `aic cluster install list` | aparelhos em espera | `installs` |
 | `aic cluster install approve <impressão> --disk D` / `reject <impressão>` | aprova (apaga o disco) / recusa | `approve-install`, `reject-install` |
 | `aic cluster install open [--minutes N]` / `close` | abre/fecha a porta de espera | `enrollment open/close` |
-| `aic cluster reservation list` / `add <nó> <req> [--minutes --slots]` / `remove <nó>` | reservas | `reservations`, `reserve`, `release` |
+| `aic cluster reservation list` / `add <worker> <req> [--minutes --slots]` / `remove <worker>` | reservas | `reservations`, `reserve`, `release` |
 | `aic cluster model list|check|start|stop|status|key|manifest|verify` | modelos | `model …` |
 | `aic cluster request trace|cancel <id>` | requisições | `request …` |
 | `aic cluster topology|metrics|events|dashboard|benchmark|graph` | leituras e diagnósticos | igual |
-| `aic cluster rollout <versão> …` | publica uma release assinada (o controller **empurra** a atualização aos nós com AI Cluster OS) | `rollout` |
+| `aic cluster rollout <versão> …` | publica uma release assinada (o controller **empurra** a atualização aos workers com AI Cluster OS) | `rollout` |
 | `aic cluster invite [--minutes N] [--port P]` | abre o convite para novos computadores | `aic-setup invite` |
 | `aic controller install [--with-gateway] [--ip] [--models-dir]` / `status` / `logs` | controller deste Linux | `aic-setup server` |
 | `aic gateway install --server S --code C` / `status` / `logs` | gateway deste Linux | `aic-setup gateway` |
@@ -52,7 +52,7 @@ Os comandos cresceram em ferramentas separadas (`ai-cluster`, `aic-setup`, `aic`
 - **Controller e gateway (Linux)**: `aic update apply` baixa os pacotes do papel da release de origem, confere o SHA-256, guarda os binários anteriores, troca, acrescenta a configuração nova, reinicia e volta sozinho se não subir.
 - **Worker (Linux)**: o `join` grava `/etc/ai-cluster/release` (papel, origem, versão); `aic update apply` baixa `worker-linux-<arq>` da mesma origem, confere, troca `ai-cluster-worker` e `ggml-rpc-server` e reinicia o serviço.
 - **Worker (AI Cluster OS)**: a atualização é a assinada, em slots A/B, **empurrada pelo controller** (`aic cluster rollout`); `aic update status` mostra o resultado e `aic update apply` pede ao `aic-updater` que cheque agora.
-- **O controller empurra** apenas a release assinada para nós com AI Cluster OS. Para Linux comum não há empurrão: cada máquina roda `aic update apply`, e `aic cluster nodes` mostra a `VERSÃO` de cada uma para o operador ver quem está para trás.
+- **O controller empurra** apenas a release assinada para workers com AI Cluster OS. Para Linux comum não há empurrão: cada máquina roda `aic update apply`, e `aic cluster nodes` mostra a `VERSÃO` de cada uma para o operador ver quem está para trás.
 
 ### Serviços sobem sozinhos
 
@@ -60,7 +60,7 @@ Depois de `install`/`join` os serviços ficam habilitados no boot (`systemctl en
 
 ### Cabeçalho e cores iguais em todo componente
 
-Toda saída que abre para uma pessoa começa com o logotipo da malha de 7 nós e a linha `Real.AI.Cluster <componente> v<versão>`, nas cores do `ai_cluster_common::brand` (título em negrito, logotipo em ciano, apoio em cinza). Rust usa `brand::banner`; os scripts de shell e o PowerShell reproduzem o mesmo desenho e as mesmas cores. Sem terminal (log, pipe) o cabeçalho vira uma linha só.
+Toda saída que abre para uma pessoa começa com o logotipo da malha de 7 workers e a linha `AI.Cluster <componente> v<versão>`, nas cores do `ai_cluster_common::brand` (título em negrito, logotipo em ciano, apoio em cinza). Rust usa `brand::banner`; os scripts de shell e o PowerShell reproduzem o mesmo desenho e as mesmas cores. Sem terminal (log, pipe) o cabeçalho vira uma linha só.
 
 ## Consequências
 

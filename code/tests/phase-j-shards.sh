@@ -105,14 +105,14 @@ cli() { # cli <token> <comando>: o CLI como quem tem esse token
     -e AI_CLUSTER_OPERATOR_TOKEN="$1" -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" \
     sh -c "$R/aic $2" 2>&1
 }
-cli "$OPERATOR" cluster nodes | grep -q worker-1 || fail "o operador deveria listar os nós"
+cli "$OPERATOR" cluster nodes | grep -q worker-1 || fail "o operador deveria listar os workers"
 DENIED=$(cli "$INFERENCE" cluster nodes)
-echo "$DENIED" | grep -q worker-1 && fail "o token de inferência vazou a lista de nós"
+echo "$DENIED" | grep -q worker-1 && fail "o token de inferência vazou a lista de workers"
 echo "$DENIED" | grep -qi "PermissionDenied\|permission" || fail "o token de inferência deveria ser recusado: $DENIED"
 EMB=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"model":"matmul-diamond-v0","input":"oi"}' $GATEWAY/v1/embeddings)
 [ "$EMB" = 503 ] || fail "sem token de operador os embeddings deveriam dar 503, deu: $EMB"
-echo "OK: o token de inferência não lista nós; embeddings desligados no gateway sem operador"
+echo "OK: o token de inferência não lista workers; embeddings desligados no gateway sem operador"
 
 echo "=== B) um worker morre no meio da geração: as faixas dele vão para o outro ==="
 OUT=$(mktemp)
@@ -147,12 +147,12 @@ CODE=$(http -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" \
 [ "$CODE" = 503 ] || fail "sem nenhum worker o pedido deveria dar 503, deu: $CODE"
 echo "OK: 503 sem nenhum worker"
 
-echo "=== D) admissão: um nó com cache pequeno demais recusa o modelo na subida ==="
+echo "=== D) admissão: um worker com cache pequeno demais recusa o modelo na subida ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-3 "${common[@]}"   -v "$PWD/models:/models:ro" -e AI_CLUSTER_MODEL_DIR=/models -e AI_CLUSTER_SHARD_CACHE_MB=1   -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=worker-3   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 6
 ADMIT=$(MSYS_NO_PATHCONV=1 docker run --rm --name aic-gateway-d "${common[@]}" -e AI_CLUSTER_API_KEY=$KEY   -e AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE   -v "$PWD/models/$DIR:/model:ro" -e AI_CLUSTER_${VAR}_DIR=/model   -e AI_CLUSTER_${VAR}_SHARDS=worker-3 -e AI_CLUSTER_${VAR}_SUBDIR=$DIR   -e AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:8081 -e AI_CLUSTER_CONTROLLER=$CONTROLLER   "$IMG" sh -c "exec $R/ai-cluster-gateway" 2>&1)
 echo "$ADMIT" | tail -2
-echo "$ADMIT" | grep -q "faltam" || fail "o gateway deveria recusar o modelo que não cabe no nó"
+echo "$ADMIT" | grep -q "faltam" || fail "o gateway deveria recusar o modelo que não cabe no worker"
 echo "OK: o gateway recusou na subida dizendo quanto falta"
 
 teardown

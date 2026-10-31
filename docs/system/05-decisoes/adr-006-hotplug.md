@@ -11,7 +11,7 @@ Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
-Um nó que entra ou sai do cluster não pode levar consigo a memória viva de um processo. Migrar memória arbitrariamente é caro e frágil.
+Um worker que entra ou sai do cluster não pode levar consigo a memória viva de um processo. Migrar memória arbitrariamente é caro e frágil.
 
 ## Decisão
 
@@ -19,8 +19,8 @@ Hot-plug e hot-remove são tratados por state objects, checkpoints, retries, pro
 
 ## Consequências
 
-- Entrada e saída de nós funcionam. Na falha de um nó, as unidades dele voltam à fila e o grafo segue ([[worker-runtime]]).
-- Se o volume do controller morre, a cópia do estado num nó é recuperada ([[adr-013-estado-do-controller-e-recuperacao]]).
+- Entrada e saída de workers funcionam. Na falha de um worker, as unidades dele voltam à fila e o grafo segue ([[worker-runtime]]).
+- Se o volume do controller morre, a cópia do estado num worker é recuperada ([[adr-013-estado-do-controller-e-recuperacao]]).
 
 ## Alternativas
 

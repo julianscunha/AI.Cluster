@@ -1,6 +1,6 @@
 //! Renovação do certificado do túnel RPC de cada worker (ADR-026). O controller guarda a CA do cluster
-//! e emite, a pedido de um nó aprovado, um certificado novo com o SAN `aic-worker-<node_id>`. Sem convite
-//! aberto: a prova é a credencial do nó, não o token de join.
+//! e emite, a pedido de um worker aprovado, um certificado novo com o SAN `aic-worker-<node_id>`. Sem convite
+//! aberto: a prova é a credencial do worker, não o token de join.
 
 use rcgen::{
     CertificateParams, CertificateSigningRequestParams, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -49,7 +49,7 @@ impl CaSigner {
         let key = KeyPair::from_pem(key_pem).map_err(|e| format!("chave da CA: {e}"))?;
         let params = CertificateParams::from_ca_cert_pem(cert_pem)
             .map_err(|e| format!("certificado da CA: {e}"))?;
-        // A chave tem de ser a do certificado; senão o que sai não encadeia com a CA dos nós.
+        // A chave tem de ser a do certificado; senão o que sai não encadeia com a CA dos workers.
         let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
             .map_err(|e| format!("certificado da CA: {e}"))?;
         let (_, ca) = x509_parser::parse_x509_certificate(&pem.contents)
@@ -61,7 +61,7 @@ impl CaSigner {
         Ok(Self { issuer, key })
     }
 
-    /// Impressão digital (SHA-256, hex) da chave pública do CSR: é o que o controller fixa por nó.
+    /// Impressão digital (SHA-256, hex) da chave pública do CSR: é o que o controller fixa por worker.
     pub fn key_fingerprint(csr_pem: &str) -> Result<String, String> {
         use rcgen::PublicKeyData;
         use sha2::{Digest, Sha256};

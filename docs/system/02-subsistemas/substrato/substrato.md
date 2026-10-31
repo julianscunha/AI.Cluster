@@ -11,7 +11,7 @@ O substrato transforma máquinas heterogêneas em workers com capacidade medida,
 
 ## Notas
 
-- [[no-e-hardware]]: identidade do nó, descoberta de hardware e desaparecimento de nós.
+- [[no-e-hardware]]: identidade do worker, descoberta de hardware e desaparecimento de workers.
 - [[capability-engine]]: medidas de compute, rede, armazenamento e memória que alimentam o placement.
 - [[saude-e-confianca]]: saúde operacional, separada da confiança (autorização e integridade).
 - [[worker-runtime]]: componentes do worker, ciclo de trabalho, execução local e variáveis de ambiente.

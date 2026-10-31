@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Vulnerabilidade de segurança
-    url: https://github.com/julianscunha/Real.AI.Cluster/security/advisories/new
+    url: https://github.com/julianscunha/AI.Cluster/security/advisories/new
     about: Relate em privado; não abra issue pública.

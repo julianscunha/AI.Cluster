@@ -174,7 +174,7 @@ fn nodelay(stream: &TcpStream) {
 
 /// Tráfego do servidor do túnel, para o log: bytes que chegaram do gateway (`IN`) e que voltaram a ele
 /// (`OUT`), e as sessões abertas agora. O `rpc-server` do llama.cpp só escreve no log em blocos, então é
-/// por aqui que se vê, com horário, que o gateway está falando com este nó.
+/// por aqui que se vê, com horário, que o gateway está falando com este worker.
 static BYTES_IN: AtomicU64 = AtomicU64::new(0);
 static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
 static SESSIONS: AtomicUsize = AtomicUsize::new(0);
@@ -550,7 +550,7 @@ mod tests {
             BYTES_OUT.load(Ordering::Relaxed),
         );
         assert_eq!(roundtrip(client).await.as_deref(), Some(&b"ola rpc"[..]));
-        // O eco passou 7 bytes para dentro e 7 de volta: o log do nó vê o tráfego.
+        // O eco passou 7 bytes para dentro e 7 de volta: o log do worker vê o tráfego.
         assert!(BYTES_IN.load(Ordering::Relaxed) >= before_in + 7);
         assert!(BYTES_OUT.load(Ordering::Relaxed) >= before_out + 7);
         assert_eq!(clock().len(), 8);

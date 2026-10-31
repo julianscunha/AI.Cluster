@@ -23,7 +23,7 @@ scripts/dev-cluster.sh                    # cluster local de desenvolvimento (.p
 
 ## Arquitetura (visão de conjunto)
 
-- **Control plane × data plane.** `controller` guarda registry de nós, work store, placement por custo, reservas, eventos e métricas, e expõe o gRPC `ClusterControlService`. `worker` é o node agent: registra-se (join token), manda heartbeat, roda benchmark de capability e executa Work Units. `benchmark` só mede; decisão de placement fica no controller.
+- **Control plane × data plane.** `controller` guarda registry de workers, work store, placement por custo, reservas, eventos e métricas, e expõe o gRPC `ClusterControlService`. `worker` é o node agent: registra-se (join token), manda heartbeat, roda benchmark de capability e executa Work Units. `benchmark` só mede; decisão de placement fica no controller.
 - **Inferência.** `gateway` (HTTP, `/v1/chat/completions` com SSE) roda o modelo via `engine` (GPT-2, Llama/SmolLM2, tokenizador, KV cache). Apenas as projeções de peso são distribuídas: o `engine` fatia os pesos (`Slice`, `ShardStore`), os workers os mantêm residentes e atendem `ShardMatmul`; o gateway reatribui faixas se um worker cai. A paridade numérica contra `transformers` é critério de aceite.
 - **Segurança por papéis.** Três credenciais em `protocol` (join, operador, inferência); o papel de inferência só chama `ShardMatmul`, e o gateway roda sem o token de operador.
 - **Docs são parte do código.** o código é a verdade do que existe; ao mudar código, atualize `docs/system/` e `docs/guia/` (o que falta fica em `docs/implementation/pendencias.md`) e registre ADR se a decisão for arquitetural (convenções em `docs/convencoes.md`).

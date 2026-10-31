@@ -1,4 +1,4 @@
-//! Modelo servido pelo `llama-server` do llama.cpp (ADR-022): o gateway é o nó principal, carrega o
+//! Modelo servido pelo `llama-server` do llama.cpp (ADR-022): o gateway é o worker principal, carrega o
 //! GGUF e divide as camadas com os workers pelo RPC do llama.cpp. Cada worker é alcançado por um túnel
 //! mTLS local (`ai-cluster-tunnel`): o `llama-server` só enxerga portas em 127.0.0.1.
 //!
@@ -57,12 +57,12 @@ pub struct LlamaConfig {
     /// llama.cpp reparte pela memória que cada `rpc-server` informa.
     pub split: Vec<f64>,
     /// O `node_id` de cada endpoint (mesma ordem). Com `{node_id}` em `server_name`, o certificado do
-    /// worker precisa ter o nome daquele nó: um certificado roubado não serve a outro worker.
+    /// worker precisa ter o nome daquele worker: um certificado roubado não serve a outro worker.
     pub nodes: Vec<String>,
 }
 
 impl LlamaConfig {
-    /// O nome que o certificado do worker `index` precisa ter. `{node_id}` vira o id do nó (só
+    /// O nome que o certificado do worker `index` precisa ter. `{node_id}` vira o id do worker (só
     /// letras, dígitos, `.` e `-`; o resto vira `-`).
     pub fn server_name_for(&self, index: usize) -> String {
         let node: String = self

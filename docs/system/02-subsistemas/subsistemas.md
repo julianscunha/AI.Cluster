@@ -13,7 +13,7 @@ Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem uma nota próp
 
 | Grupo | Responde | Conteúdo |
 |---|---|---|
-| [[substrato]] | O que é um nó e o que ele faz | Nó e hardware, capability, saúde e confiança, worker runtime, Work Unit, camada de transporte |
+| [[substrato]] | O que é um worker e o que ele faz | Worker e hardware, capability, saúde e confiança, worker runtime, Work Unit, camada de transporte |
 | [[execucao]] | Como o trabalho é distribuído | Execution Graph, Execution Planner, Scheduler, modelo de desempenho, hot-plug e recuperação |
 | [[dados]] | Onde o estado mora | State Manager, Storage Intelligence, Graph Engine |
 | [[ia]] | Como uma requisição de IA é atendida | Inference API, Request Manager, Edge Optimizer, Model Manager, Inference Engine |
@@ -22,9 +22,9 @@ Mapa dos seis grupos de subsistemas do AI Cluster. Cada grupo tem uma nota próp
 
 ## Dependências entre grupos
 
-- [[execucao]] depende de [[substrato]]: sem nós, capabilities e Work Units não há o que escalonar.
+- [[execucao]] depende de [[substrato]]: sem workers, capabilities e Work Units não há o que escalonar.
 - [[dados]] e [[ia]] dependem de [[execucao]]: estado e inferência rodam como execuções.
-- [[plataforma]] prepara os nós que o [[substrato]] usa.
+- [[plataforma]] prepara os workers que o [[substrato]] usa.
 - [[operacao]] observa todos os grupos e não entra no caminho de execução.
 
 Leitura recomendada: substrato, depois execução, dados, IA, plataforma e operação. Os protocolos entre controller e workers estão em [[protocolo-controller-worker]], e as decisões em [[decisoes]].

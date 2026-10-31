@@ -21,19 +21,19 @@ Voltar para [[arquitetura]]. Esta página separa as decisões vigentes, as propo
 | Hardware tratado por capability, não por modelo de máquina. | [[principios]] P-001, [[capability-engine]] |
 | Health, capacity e trust separados. | [[saude-e-confianca]], [[principios]] P-004 e P-005 |
 | Execution Graph (WHAT), placement (WHERE) e Worker Runtime (HOW) separados. | [[principios]] P-003 |
-| O nó pede trabalho e o controller decide por custo, com histerese, prioridade e quarentena por evidência. | [[adr-011-escalonamento-por-custo]] |
+| O worker pede trabalho e o controller decide por custo, com histerese, prioridade e quarentena por evidência. | [[adr-011-escalonamento-por-custo]] |
 | Hot-plug por state objects, checkpoints e replanejamento, sem migração de memória viva. | [[adr-006-hotplug]] |
 | RAM e VRAM como HOT, SSD e NVMe como WARM, HDD como COLD. | [[adr-005-camadas-de-storage]] |
 | A Inference API é a única fronteira para cargas externas. | [[adr-007-fronteira-inference-api]] |
 | Pesos residentes nos workers, fatiados por faixas, com canal bidirecional pelo controller. | [[adr-009-canal-residente-de-fatias]] |
-| Papéis de credencial separados (join, operador, inferência, credencial por nó, chave de API), com falha fechada. | [[adr-010-papeis-de-credencial]] |
+| Papéis de credencial separados (join, operador, inferência, credencial por worker, chave de API), com falha fechada. | [[adr-010-papeis-de-credencial]] |
 | O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração. | [[adr-012-metricas-de-inferencia-no-gateway]] |
-| Estado do controller por snapshot do conjunto vivo, posse preguiçosa e cópia num nó. | [[adr-013-estado-do-controller-e-recuperacao]] |
+| Estado do controller por snapshot do conjunto vivo, posse preguiçosa e cópia num worker. | [[adr-013-estado-do-controller-e-recuperacao]] |
 | O transporte carrega bytes em frames; o cluster segue em gRPC. | [[adr-014-abstracao-de-transporte]] |
 | Request Manager dentro do gateway, enquanto houver um só gateway. | [[adr-015-request-manager-no-gateway]] |
 | mTLS opcional no plano de controle, ligado por CA de clientes. | [[adr-016-mtls-opcional-no-plano-de-controle]] |
 | Instalação A/B imutável é o caminho oficial; boot de rede só instala e recupera. | [[adr-017-instalacao-a-b-e-boot-de-rede]] |
-| Release assinada (Ed25519) conferida no nó, versão sempre crescente e medida do slot como attestation de software. | [[adr-018-release-assinada-e-medida-do-slot]] |
+| Release assinada (Ed25519) conferida no worker, versão sempre crescente e medida do slot como attestation de software. | [[adr-018-release-assinada-e-medida-do-slot]] |
 
 ## Propostas
 
@@ -42,7 +42,7 @@ Decisões sugeridas que ainda não foram tomadas.
 | Proposta | ADR |
 |---|---|
 | Base Linux específica. | [[adr-001-base-linux]] |
-| Imagem versionada e imutável com atualização A/B como padrão do OS do nó. | [[adr-002-os-imutavel]] |
+| Imagem versionada e imutável com atualização A/B como padrão do OS do worker. | [[adr-002-os-imutavel]] |
 | Grafo como projeção, não como fonte única de verdade. | [[adr-004-grafo-como-projecao]] |
 | PostgreSQL, time-series, object storage e projeção em grafo para metadados e métricas. | [[state-manager]], [[arquitetura]] §17 |
 | PXE/iPXE para provisionamento de PCs e servidores. | [[provisionamento]] |
@@ -69,8 +69,8 @@ Precisam de benchmark ou prova de conceito antes de virar decisão.
 | Tecnologia de graph database e de projeção. | [[graph-engine]] |
 | Tecnologia de time-series. | [[observabilidade]] |
 | Modelo de armazenamento distribuído do estado. | [[state-manager]], [[storage-intelligence]] |
-| Quando adotar pipeline ou paralelismo híbrido (modelo que não cabe em um nó). | [[inference-engine]] |
-| Rebalanceamento de fatias quando um nó entra no cluster. | [[canal-de-fatias]] |
+| Quando adotar pipeline ou paralelismo híbrido (modelo que não cabe em um worker). | [[inference-engine]] |
+| Rebalanceamento de fatias quando um worker entra no cluster. | [[canal-de-fatias]] |
 | Formato do worker móvel. | [[provisionamento]] |
 | Estratégia final de kernel optimization. | [[worker-runtime]] |
 | Imagem para ARM64 e x86_64 (instalador e bootloader próprios). | [[adr-017-instalacao-a-b-e-boot-de-rede]] |

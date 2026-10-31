@@ -1,5 +1,5 @@
 #!/bin/sh
-# Boas-vindas do login por SSH: o cabeçalho do componente (o mesmo do `aic`) e o resumo do nó.
+# Boas-vindas do login por SSH: o cabeçalho do componente (o mesmo do `aic`) e o resumo do worker.
 . /usr/lib/aic/ui.sh
 if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then C_RESET= C_HINT= C_TEXT=; fi
 banner worker "$(cat /etc/aic-release 2>/dev/null || echo dev)" "Este computador no cluster"

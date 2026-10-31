@@ -21,14 +21,14 @@ A coluna **Disponibilidade** indica o que existe hoje para cada requisito:
 
 | ID | Requisito | Disponibilidade |
 |---|---|---|
-| FR-001 | Descobrir novos nós automaticamente. | planejado |
+| FR-001 | Descobrir novos workers automaticamente. | planejado |
 | FR-002 | Identificar hardware e arquitetura. | parcial |
 | FR-003 | Medir capacidade real por benchmark. | parcial |
-| FR-004 | Recalcular capacidade do cluster após entrada/saída de nós. | parcial |
-| FR-005 | Suportar nós heterogêneos. | parcial |
+| FR-004 | Recalcular capacidade do cluster após entrada/saída de workers. | parcial |
+| FR-005 | Suportar workers heterogêneos. | parcial |
 | FR-006 | Suportar hot-plug e hot-remove planejado. | disponível |
 | FR-007 | Recuperar estado após falha de node. | disponível |
-| FR-008 | Excluir nós comprometidos via quarantine/revoke. | disponível |
+| FR-008 | Excluir workers comprometidos via quarantine/revoke. | disponível |
 
 ### SO / Provisioning
 

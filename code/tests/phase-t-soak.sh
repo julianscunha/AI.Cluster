@@ -81,13 +81,13 @@ echo "=== estado final ==="
 NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 READY=$(echo "$NODES" | grep -c "node-soak-.* READY")
-[ "$READY" -eq 3 ] || fail "esperados 3 nós READY no fim, vieram $READY"
+[ "$READY" -eq 3 ] || fail "esperados 3 workers READY no fim, vieram $READY"
 EVENTS=$(run "$R/aic cluster events --limit 1000")
 OFFLINE=$(echo "$EVENTS" | grep -c node_offline)
 [ "$OFFLINE" -ge 1 ] || fail "nenhum node_offline registrado"
 REQUEUED=$(docker logs aic-controller-soak 2>&1 | grep -oE "[0-9]+ unidades em voo reenfileiradas" | awk '{ n += $1 } END { print n + 0 }')
 [ "$REQUEUED" -ge 1 ] || fail "nenhuma unidade em voo foi reenfileirada: a falha não pegou trabalho em andamento"
-echo "OK: $ROUNDS rodadas de falha, todos os lotes completos, 3 nós READY, $OFFLINE node_offline, $REQUEUED unidades reenfileiradas"
+echo "OK: $ROUNDS rodadas de falha, todos os lotes completos, 3 workers READY, $OFFLINE node_offline, $REQUEUED unidades reenfileiradas"
 
 teardown
 echo "=== fim ==="

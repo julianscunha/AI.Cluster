@@ -9,7 +9,7 @@
 #   zImage, dtb       o kernel e a árvore de dispositivos da placa (do próprio sistema dela)
 #
 # Layout (setores de 512 B): [0..2047] MBR + u-boot | p1 FAT32 `AICBOOT` 64 MiB (kernel, dtb, boot.scr) | p2 `aicroot` slot A 512 MiB | p3 `aicroot` slot B 512 MiB | p4 `aicdata` o resto
-# (credencial do nó e worker.env: sobrevivem à troca de slot).
+# (credencial do worker e worker.env: sobrevivem à troca de slot).
 # Precisa de build/rootfs.ext4 (build-rootfs.sh). Saída: build/disk.img.gz. Nada é montado no PC.
 set -euo pipefail
 cd "$(dirname "$0")"

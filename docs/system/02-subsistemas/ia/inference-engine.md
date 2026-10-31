@@ -45,20 +45,20 @@ Tokenização -> Prefill (cria o KV cache) -> loop de decode -> saída
 
 Só as projeções lineares de cada camada podem ser executadas em workers. Embeddings, normas e a projeção de saída (no SmolLM2) ficam no gateway.
 
-- **Ativação de entrada replicada.** O gateway envia a mesma entrada a todos os nós da lista. Cada nó multiplica pela sua faixa.
+- **Ativação de entrada replicada.** O gateway envia a mesma entrada a todos os workers da lista. Cada worker multiplica pela sua faixa.
 - **Divisão.** No SmolLM2 a faixa é de linhas de saída. No GPT-2 é de colunas de saída, porque os pesos do `Conv1D` estão em `[entrada, saída]`. Não há all-reduce nem pipeline entre camadas.
 - **Pesos residentes.** Cada worker lê do próprio disco só a sua faixa, na primeira vez que ela é pedida, e a mantém em memória. Pesos não trafegam pela rede a cada chamada.
 - **Cache de faixas.** Quando o cache enche, a faixa menos usada sai e é lida de novo sob demanda. O tamanho é `AI_CLUSTER_SHARD_CACHE_MB` (padrão 2048 MB).
 - **Quais projeções.** Só tensores de projeção de camada, em lista fechada. Embeddings e normas são recusados pelo worker.
-- **Canal.** Cada worker abre, por iniciativa própria, um canal bidirecional com o controller. Não precisa de porta de entrada. O controller só aceita o canal de um nó registrado, aprovado, vivo e com a credencial dele. O controller repassa as operações, e cada resposta vale só para a operação enviada àquele nó.
-- **Limites do repasse.** Até 64 operações por chamada, 2 Mi valores de entrada, 8 chamadas simultâneas no controller, 64 operações em voo por nó, e 8 s de prazo por chamada.
-- **Recusa do próprio worker.** Se o worker recusa um pedido por erro dele (tensor fora da lista, entrada incoerente), a resposta sinaliza `invalid`. O gateway responde 503 sem tirar o nó de serviço.
+- **Canal.** Cada worker abre, por iniciativa própria, um canal bidirecional com o controller. Não precisa de porta de entrada. O controller só aceita o canal de um worker registrado, aprovado, vivo e com a credencial dele. O controller repassa as operações, e cada resposta vale só para a operação enviada àquele worker.
+- **Limites do repasse.** Até 64 operações por chamada, 2 Mi valores de entrada, 8 chamadas simultâneas no controller, 64 operações em voo por worker, e 8 s de prazo por chamada.
+- **Recusa do próprio worker.** Se o worker recusa um pedido por erro dele (tensor fora da lista, entrada incoerente), a resposta sinaliza `invalid`. O gateway responde 503 sem tirar o worker de serviço.
 
 ### Falha de worker
 
-Qualquer worker calcula qualquer faixa, porque lê do próprio disco. Quando um nó falha, o controller devolve o identificador do nó na resposta de erro. O gateway deixa esse nó de fora por 30 s, redistribui as faixas entre os nós vivos e refaz a chamada. A chamada é pura e o KV cache fica no gateway, então a geração continua do mesmo ponto. Se nenhum nó responde, o pedido recebe 503.
+Qualquer worker calcula qualquer faixa, porque lê do próprio disco. Quando um worker falha, o controller devolve o identificador do worker na resposta de erro. O gateway deixa esse worker de fora por 30 s, redistribui as faixas entre os workers vivos e refaz a chamada. A chamada é pura e o KV cache fica no gateway, então a geração continua do mesmo ponto. Se nenhum worker responde, o pedido recebe 503.
 
-Quando o prazo de 30 s termina, as faixas voltam ao nó dono. Não há rebalanceamento proativo quando um nó entra.
+Quando o prazo de 30 s termina, as faixas voltam ao worker dono. Não há rebalanceamento proativo quando um worker entra.
 
 ## Precisão e determinismo
 
@@ -70,7 +70,7 @@ Quando o prazo de 30 s termina, as faixas voltam ao nó dono. Não há rebalance
 
 - No CPU, o decode é limitado pelo produto de uma linha por vez. A divisão por linhas de saída, usada para a projeção de vocabulário, usa threads.
 - Cada projeção remota custa uma ida e volta de rede. Um token da SmolLM2 faz quatro dessas por camada. Com a rede real, esse custo tende a superar o cálculo local.
-- Por isso a distribuição é um caminho de **capacidade**: serve para modelos que não cabem em um nó, ou para lotes e prefill grandes. Não é um caminho de velocidade em rede local.
+- Por isso a distribuição é um caminho de **capacidade**: serve para modelos que não cabem em um worker, ou para lotes e prefill grandes. Não é um caminho de velocidade em rede local.
 
 ## Limites conhecidos
 

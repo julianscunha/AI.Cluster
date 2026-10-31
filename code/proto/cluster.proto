@@ -9,9 +9,9 @@ message NodeIdentity {
   string os_version = 4;
   string runtime_version = 5;
   /// SHA-256 medido do slot em execução (attestation de software: detecta slot corrompido ou
-  /// errado; um nó comprometido pode mentir). Vazio enquanto a medição não terminou.
+  /// errado; um worker comprometido pode mentir). Vazio enquanto a medição não terminou.
   string image_sha256 = 6;
-  /// O nó sabe aplicar uma release (tem comando de atualização). Só esses nós entram no rollout e
+  /// O worker sabe aplicar uma release (tem comando de atualização). Só esses workers entram no rollout e
   /// só eles podem ser canário.
   bool can_update = 7;
 }
@@ -32,18 +32,18 @@ message CapabilityReport {
   double network_score = 6;
   repeated string precisions = 7;
   repeated string accelerators = 8;
-  /// Classes de armazenamento em bloco detectadas no nó, da mais quente para a mais fria:
-  /// "nvme", "ssd", "hdd". Vazio significa "não medido", não "sem armazenamento" — um nó
+  /// Classes de armazenamento em bloco detectadas no worker, da mais quente para a mais fria:
+  /// "nvme", "ssd", "hdd". Vazio significa "não medido", não "sem armazenamento" — um worker
   /// que não expõe `/sys/block` reporta vazio. O tier HOT (RAM/VRAM) não aparece aqui:
   /// `memory_bytes` é a medida dele. Ver docs/system/02-subsistemas/dados/storage-intelligence.md.
   repeated string storage_classes = 9;
   /// Compute remedido depois do registro, na mesma escala de `compute_score`.
   ///
   /// `compute_score` é a medida do registro — o baseline. Esta é a última medida tirada
-  /// com o nó ocioso, para pegar o que o baseline não vê: um nó que ficou mais lento
+  /// com o worker ocioso, para pegar o que o baseline não vê: um worker que ficou mais lento
   /// depois de entrar (vizinho barulhento no host, limite de energia) sem sensor de
   /// temperatura que denuncie. Zero significa "não remedido desde o registro", nunca
-  /// "compute zero": um nó sem essa medida vale o baseline.
+  /// "compute zero": um worker sem essa medida vale o baseline.
   double current_compute_score = 10;
   /// Quanto confiar em `current_compute_score`, 0..1, a partir de quanto as repetições
   /// da medida concordaram entre si. Uma passada sob contenção varia muito; uma ociosa
@@ -51,13 +51,13 @@ message CapabilityReport {
   double compute_confidence = 11;
   /// Score do benchmark de registro pela **mediana** das execuções, na mesma escala de
   /// `compute_score`. `compute_score` é o melhor caso (a execução menos perturbada) e
-  /// serve para ordenar nós; a mediana é o valor central e serve para **calibrar** —
+  /// serve para ordenar workers; a mediana é o valor central e serve para **calibrar** —
   /// prever tempo com o melhor caso subestima sempre, porque a máquina raramente repete
   /// a execução mais sortuda. Zero significa "não medido", nunca "compute zero".
   double compute_median_score = 12;
   /// Desvio relativo das execuções do benchmark de registro: `desvio-padrão / média`
   /// dos tempos (coeficiente de variação). Zero é uma medida perfeitamente estável —
-  /// mas note que um nó com o score fixado (`AI_CLUSTER_COMPUTE_SCORE`) não mede nada, e
+  /// mas note que um worker com o score fixado (`AI_CLUSTER_COMPUTE_SCORE`) não mede nada, e
   /// então reporta zero aqui junto com `compute_median_score` zero: zero é "não medido"
   /// nesse caso, não "estável". É o desvio que diz se a mediana acima é um número em que
   /// se pode confiar para calibrar.
@@ -65,9 +65,9 @@ message CapabilityReport {
   /// Taxa de upload alcançada até o controller, na mesma escala de `network_score` (1.0 =
   /// 1 GbE), medida por `ProbeLink` no registro (Fase C2). O placement lê o menor entre ela e
   /// o `network_score` nominal: o link é o teto, a medida é o que ele entregou. Zero é "não
-  /// medido" — nó com `AI_CLUSTER_NETWORK_SCORE` fixado, ou sonda que falhou — nunca "sem rede".
+  /// medido" — worker com `AI_CLUSTER_NETWORK_SCORE` fixado, ou sonda que falhou — nunca "sem rede".
   double network_achieved_score = 14;
-  /// Última remedida da taxa alcançada, tirada com o nó ocioso (Fase C4), na mesma escala de
+  /// Última remedida da taxa alcançada, tirada com o worker ocioso (Fase C4), na mesma escala de
   /// `network_achieved_score`. Se cair abaixo do baseline do registro, o link degradou, e o
   /// placement passa a ler esta no lugar do baseline. Zero é "não remedido", nunca "link zero".
   double current_network_score = 15;
@@ -82,7 +82,7 @@ message CapabilityReport {
   /// Zero é "não participa do canal de fatias" (sem `AI_CLUSTER_MODEL_DIR`) ou worker antigo.
   uint64 shard_cache_bytes = 18;
   /// Quão limpo foi o benchmark do registro (o baseline), 0..1: a melhor execução sobre a mediana.
-  /// Perto de 1, as execuções concordaram e o baseline é o que o nó faz de verdade; baixo, o nó
+  /// Perto de 1, as execuções concordaram e o baseline é o que o worker faz de verdade; baixo, o worker
   /// estava perturbado (vizinho barulhento, frequência oscilando) e a mediana é a mais confiável.
   /// Zero é "não medido" (score fixado ou benchmark que falhou), nunca "baseline ruim".
   double baseline_confidence = 19;
@@ -114,12 +114,12 @@ message CapabilityReport {
   /// Verdadeiro quando a sonda de rede completou ao menos duas repetições, o mínimo para um desvio.
   /// Com falso, `network_jitter` zero é "não medido"; com verdadeiro, zero é "estável".
   bool network_jitter_measured = 26;
-  /// Porta do túnel mTLS do `rpc-server` do llama.cpp neste nó (ADR-022). Zero = o nó não roda RPC.
+  /// Porta do túnel mTLS do `rpc-server` do llama.cpp neste worker (ADR-022). Zero = o worker não roda RPC.
   uint32 rpc_port = 27;
-  /// Endereço que o gateway usa para chegar ao túnel; vazio = o endereço que o controller vê do nó.
+  /// Endereço que o gateway usa para chegar ao túnel; vazio = o endereço que o controller vê do worker.
   string rpc_host = 28;
   /// Commit do llama.cpp e versão do patch do `rpc-server`. O protocolo muda entre commits: o gateway só
-  /// usa o nó cuja versão é a do seu `llama-server`.
+  /// usa o worker cuja versão é a do seu `llama-server`.
   string rpc_version = 29;
 }
 
@@ -156,10 +156,10 @@ message HealthReport {
   /// report, which has no previous sample to difference against. Sums every entry the
   /// kernel lists, so partitions of the same disk are counted twice.
   double disk_io_ops = 9;
-  /// Carga da bateria, 0..1, quando o nó tem uma (F18 Q6). Zero com `on_battery` falso é "sem
+  /// Carga da bateria, 0..1, quando o worker tem uma (F18 Q6). Zero com `on_battery` falso é "sem
   /// bateria visível", nunca "bateria vazia".
   double battery_level = 10;
-  /// O nó está rodando na bateria (descarregando), não na tomada.
+  /// O worker está rodando na bateria (descarregando), não na tomada.
   bool on_battery = 11;
 }
 
@@ -170,22 +170,22 @@ message NodeSnapshot {
   string state = 4;
   uint64 registered_at_unix_ms = 5;
   uint64 last_heartbeat_unix_ms = 6;
-  // Confiança (Fase S2): um nó novo nasce não confiável e só recebe trabalho depois de aprovado.
+  // Confiança (Fase S2): um worker novo nasce não confiável e só recebe trabalho depois de aprovado.
   bool trusted = 7;
-  // Verdadeiro quando o nó roda a release desejada e a medida do slot (`image_sha256`) confere com a
-  // assinada. Calculado na leitura; não é persistido. Software apenas: um nó comprometido mente.
+  // Verdadeiro quando o worker roda a release desejada e a medida do slot (`image_sha256`) confere com a
+  // assinada. Calculado na leitura; não é persistido. Software apenas: um worker comprometido mente.
   bool attested = 8;
-  /// Impressão digital da credencial do nó (SHA-256, 16 hex). O nó a mostra no log ao registrar-se; o
+  /// Impressão digital da credencial do worker (SHA-256, 16 hex). O worker a mostra no log ao registrar-se; o
   /// operador a confere no `approve` para não aprovar quem tomou o id. Não revela a credencial.
   string fingerprint = 9;
   /// Velocidade estimada para gerar texto (a nota que o plano de modelo usa para ordenar os workers):
-  /// média geométrica da CPU com a banda de memória. Só serve para comparar nós entre si.
+  /// média geométrica da CPU com a banda de memória. Só serve para comparar workers entre si.
   double estimated_speed = 10;
 }
 
 message ApproveNodeRequest {
   string node_id = 1;
-  /// Impressão digital da credencial do nó que o operador viu (`NodeSnapshot.fingerprint`). Obrigatória:
+  /// Impressão digital da credencial do worker que o operador viu (`NodeSnapshot.fingerprint`). Obrigatória:
   /// se o id foi tomado por outro registro, a impressão muda e a aprovação é recusada.
   string fingerprint = 2;
 }
@@ -194,10 +194,10 @@ message RevokeNodeRequest {
   string node_id = 1;
 }
 
-// Renovação do certificado do túnel RPC (ADR-026). Prova a credencial do nó, não o token de join.
+// Renovação do certificado do túnel RPC (ADR-026). Prova a credencial do worker, não o token de join.
 message RenewNodeCertificateRequest {
   string node_id = 1;
-  // CSR em PEM com a chave deste nó; o controller emite com o SAN aic-worker-<node_id>.
+  // CSR em PEM com a chave deste worker; o controller emite com o SAN aic-worker-<node_id>.
   string csr_pem = 2;
 }
 
@@ -206,7 +206,7 @@ message RenewNodeCertificateResponse {
 }
 
 message RevokeNodeResponse {
-  // Falso quando o nó é desconhecido.
+  // Falso quando o worker é desconhecido.
   bool revoked = 1;
   // Unidades em voo que voltaram para a fila.
   uint32 requeued = 2;
@@ -217,7 +217,7 @@ message RetireNodeRequest {
 }
 
 message RetireNodeResponse {
-  // Falso quando o nó é desconhecido.
+  // Falso quando o worker é desconhecido.
   bool retired = 1;
   // Unidades em voo que voltaram para a fila.
   uint32 requeued = 2;
@@ -228,23 +228,23 @@ message RemoveNodeRequest {
 }
 
 message RemoveNodeResponse {
-  // Falso quando o nó é desconhecido.
+  // Falso quando o worker é desconhecido.
   bool removed = 1;
   // Unidades em voo que voltaram para a fila.
   uint32 requeued = 2;
 }
 
 message ApproveNodeResponse {
-  // Falso quando o nó é desconhecido; aprovar de novo um nó já aprovado continua verdadeiro.
+  // Falso quando o worker é desconhecido; aprovar de novo um worker já aprovado continua verdadeiro.
   bool approved = 1;
 }
 
 message RegisterNodeRequest {
   NodeIdentity identity = 1;
   CapabilityReport capability = 2;
-  /// Cópia do estado do controller que este nó guardou (I4). O nó oferece o que tem a cada
+  /// Cópia do estado do controller que este worker guardou (I4). O worker oferece o que tem a cada
   /// (re-)registro; um controller que perdeu os próprios arquivos adota a mais nova. Vazio
-  /// quando o nó não guarda cópia (`AI_CLUSTER_STATE_REPLICA` não definido).
+  /// quando o worker não guarda cópia (`AI_CLUSTER_STATE_REPLICA` não definido).
   StateReplica replica = 3;
 }
 
@@ -252,7 +252,7 @@ message RegisterNodeResponse {
   bool accepted = 1;
   string cluster_id = 2;
   string message = 3;
-  // Segredo do nó (Fase S3b), emitido a cada registro de quem não prova o anterior. O nó o
+  // Segredo do worker (Fase S3b), emitido a cada registro de quem não prova o anterior. O worker o
   // devolve no cabeçalho x-ai-cluster-node-auth em toda chamada que fala por ele.
   string node_credential = 4;
 }
@@ -260,38 +260,38 @@ message RegisterNodeResponse {
 message HeartbeatRequest {
   string node_id = 1;
   uint64 unix_ms = 2;
-  /// Época da cópia de estado que este nó guarda (I4). Zero quando não guarda nenhuma. O
-  /// controller só manda uma cópia nova quando a dele é mais recente que esta — o nó
+  /// Época da cópia de estado que este worker guarda (I4). Zero quando não guarda nenhuma. O
+  /// controller só manda uma cópia nova quando a dele é mais recente que esta — o worker
   /// confirma o que recebeu reportando a época na batida seguinte, então a resposta não
-  /// precisa de estado por nó do lado do controller.
+  /// precisa de estado por worker do lado do controller.
   uint64 replica_epoch_unix_ms = 3;
 }
 
 message HeartbeatResponse {
   bool acknowledged = 1;
-  /// Cópia do estado do controller para o nó guardar (I4). Presente só quando a época do
-  /// controller avançou além da que o nó reportou; ausente na maioria das batidas.
+  /// Cópia do estado do controller para o worker guardar (I4). Presente só quando a época do
+  /// controller avançou além da que o worker reportou; ausente na maioria das batidas.
   StateReplica replica = 2;
-  /// Release que este nó deve passar a rodar (F19). Presente só quando difere da versão que o
-  /// nó registrou e o rollout o liberou; ausente na maioria das batidas.
+  /// Release que este worker deve passar a rodar (F19). Presente só quando difere da versão que o
+  /// worker registrou e o rollout o liberou; ausente na maioria das batidas.
   Release release = 3;
-  /// Unidades que o nó está rodando e o controller cancelou (`CancelRequest`): o nó para a conta e
+  /// Unidades que o worker está rodando e o controller cancelou (`CancelRequest`): o worker para a conta e
   /// não envia resultado. Vazio na maioria das batidas. Se a resposta se perder, a conta termina
   /// e o resultado é recusado (a posse já saiu da tabela).
   repeated string cancel_work_ids = 4;
 }
 
 /// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato e a assinatura Ed25519
-/// do operador cobre placa, versão e as duas somas; quem confere é o nó (aic-updater), não o controller.
+/// do operador cobre placa, versão e as duas somas; quem confere é o worker (aic-updater), não o controller.
 message Release {
   string version = 1;
   string url = 2;
   string sha256 = 3;
-  /// SHA-256 do conteúdo do slot depois de gravado (a imagem ext4 descomprimida): o nó confere o
+  /// SHA-256 do conteúdo do slot depois de gravado (a imagem ext4 descomprimida): o worker confere o
   /// que gravou e, se medir o slot ativo, reporta o mesmo valor em `NodeIdentity.image_sha256`.
   string image_sha256 = 4;
   /// Assinatura Ed25519 (base64) do operador sobre placa, versão, sha256 e image_sha256. Quem
-  /// verifica é o nó (chave pública na imagem), não o controller.
+  /// verifica é o worker (chave pública na imagem), não o controller.
   string signature = 5;
   /// Assinatura Ed25519 (base64) do SHA256SUMS da release Linux comum (chave de Linux, ADR-025).
   /// `url` aponta para o diretório da release. Vazia nas releases só de AI Cluster OS; quem a usa é
@@ -309,9 +309,9 @@ message SetReleaseResponse {}
 /// Uma cópia do estado do controller guardada fora do volume dele (I4).
 ///
 /// O controller já escreve dois arquivos locais, e eles morrem junto com o volume. A cópia
-/// num nó sobrevive a isso: um controller novo, sem nenhum arquivo, restaura daqui. A
-/// época data a cópia — o nó guarda a mais nova que viu, e o controller só oferece a sua
-/// quando ela é mais recente que a que o nó já tem.
+/// num worker sobrevive a isso: um controller novo, sem nenhum arquivo, restaura daqui. A
+/// época data a cópia — o worker guarda a mais nova que viu, e o controller só oferece a sua
+/// quando ela é mais recente que a que o worker já tem.
 message StateReplica {
   uint64 epoch_unix_ms = 1;
   /// O `WorkSnapshot` codificado, exatamente os bytes que foram para os arquivos locais.
@@ -360,7 +360,7 @@ message CheckModelRequest {
 }
 
 message CheckModelResponse {
-  // Verdadeiro só se o motor roda o modelo e a RAM somada dos nós aprovados e vivos comporta.
+  // Verdadeiro só se o motor roda o modelo e a RAM somada dos workers aprovados e vivos comporta.
   bool ok = 1;
   uint64 weights_bytes = 2;
   uint64 kv_bytes = 3;
@@ -370,7 +370,7 @@ message CheckModelResponse {
   uint32 nodes = 7;
   // O motivo, em português: o que falta, ou por que o motor não roda o modelo.
   string message = 8;
-  // Verdadeiro se o modelo ainda caberia depois de perder o maior nó (folga para failover).
+  // Verdadeiro se o modelo ainda caberia depois de perder o maior worker (folga para failover).
   bool survives_one_loss = 9;
   // Estimativa de tokens por segundo a partir do modelo em execução (0 = sem estimativa).
   double estimated_tokens_per_second = 10;
@@ -541,7 +541,7 @@ message WorkUnit {
   string matrix_a_from = 8;
   /// O mesmo para matrix_b.
   string matrix_b_from = 9;
-  /// Filtro de candidatos: o controller não entregará esta unidade a um nó que
+  /// Filtro de candidatos: o controller não entregará esta unidade a um worker que
   /// reporte menos cpu_threads que isto. 0 significa sem requisito.
   uint32 min_cpu_threads = 10;
   /// Requisição de cliente que gerou esta unidade (H3). Todas as unidades enfileiradas
@@ -551,9 +551,9 @@ message WorkUnit {
   /// Classe de prioridade (G4): maior é despachada antes. 0 é a classe padrão; a fila continua
   /// FIFO dentro da classe, e o envelhecimento impede que uma classe alta mate a baixa de fome.
   uint32 priority = 12;
-  /// Só um nó atestado pode receber esta unidade: roda a release desejada e a medida do slot
+  /// Só um worker atestado pode receber esta unidade: roda a release desejada e a medida do slot
   /// (`image_sha256`) confere com a assinada. Sem release publicada ninguém é atestado, e a unidade
-  /// espera. É atestação de software: um nó comprometido mente (veja `NodeSnapshot.attested`).
+  /// espera. É atestação de software: um worker comprometido mente (veja `NodeSnapshot.attested`).
   bool require_attested = 13;
 }
 
@@ -598,7 +598,7 @@ message EnqueueWorkRequest {
   string request_id = 7;
   /// Classe de prioridade das unidades desta chamada (G4). 0 é a padrão; maior vai antes.
   uint32 priority = 8;
-  /// Só nós atestados recebem as unidades desta chamada (`WorkUnit.require_attested`).
+  /// Só workers atestados recebem as unidades desta chamada (`WorkUnit.require_attested`).
   bool require_attested = 9;
 }
 
@@ -622,7 +622,7 @@ message EnqueueGraphRequest {
 }
 
 /// Uma fatia de pesos: as linhas [row_start, row_end) do tensor `[out, in]` de
-/// `<raiz de modelos do nó>/<model_subdir>/model.safetensors`, calculada por `node_id`.
+/// `<raiz de modelos do worker>/<model_subdir>/model.safetensors`, calculada por `node_id`.
 message ShardOp {
   string node_id = 1;
   string model_subdir = 2;
@@ -639,7 +639,7 @@ message ShardCapacityRequest {
 
 message NodeShardCapacity {
   string node_id = 1;
-  /// Nó registrado, aprovado e vivo.
+  /// Worker registrado, aprovado e vivo.
   bool available = 2;
   uint64 shard_cache_bytes = 3;
   uint64 memory_bytes = 4;
@@ -647,7 +647,7 @@ message NodeShardCapacity {
 
 message GatewayModel {
   string model_id = 1;
-  /// Nós que guardam as fatias do modelo; vazio quando ele roda inteiro no gateway.
+  /// Workers que guardam as fatias do modelo; vazio quando ele roda inteiro no gateway.
   repeated string shard_nodes = 2;
 }
 
@@ -821,8 +821,8 @@ message TraceEntry {
   uint64 compute_time_us = 4;
   uint64 transfer_time_us = 5;
   uint64 total_latency_us = 6;
-  /// Tempo de compute que o modelo de custo previu para esta unidade no nó que a
-  /// recebeu (H5). Zero quando o nó não reportou compute score, ou quando a unidade
+  /// Tempo de compute que o modelo de custo previu para esta unidade no worker que a
+  /// recebeu (H5). Zero quando o worker não reportou compute score, ou quando a unidade
   /// ainda não foi despachada — zero significa "não previsto", não "instantâneo".
   uint64 predicted_compute_us = 7;
 }
@@ -840,27 +840,27 @@ message GetTraceResponse {
   repeated TraceEntry units = 2;
 }
 
-/// Uma reserva de nó para execução futura (G6). O nó fica retido para um `request_id`
+/// Uma reserva de worker para execução futura (G6). O worker fica retido para um `request_id`
 /// antes de o trabalho existir: enquanto a reserva durar, unidades de outras requisições
-/// não são colocadas nesse nó, e a requisição dona da reserva tem o nó só para si.
+/// não são colocadas nesse worker, e a requisição dona da reserva tem o worker só para si.
 message Reservation {
   string node_id = 1;
   string request_id = 2;
   /// Unix ms em que a reserva expira sozinha, para um cliente que reservou e sumiu não
-  /// segurar o nó para sempre.
+  /// segurar o worker para sempre.
   uint64 expires_at_unix_ms = 3;
-  /// Slots do nó que a reserva guarda para a requisição dona; 0 é o nó inteiro.
+  /// Slots do worker que a reserva guarda para a requisição dona; 0 é o worker inteiro.
   uint32 slots = 4;
 }
 
 message ReserveRequest {
   string node_id = 1;
-  /// Requisição para quem o nó é retido.
+  /// Requisição para quem o worker é retido.
   string request_id = 2;
   /// Quanto tempo a reserva vale, a partir de agora. 0 usa o padrão do controller.
   uint64 ttl_ms = 3;
-  /// Quantos slots de trabalho (`work_slots`) do nó ficam guardados para a requisição. As outras
-  /// requisições só usam o nó enquanto sobrar slot além dos guardados. 0 retém o nó inteiro, como
+  /// Quantos slots de trabalho (`work_slots`) do worker ficam guardados para a requisição. As outras
+  /// requisições só usam o worker enquanto sobrar slot além dos guardados. 0 retém o worker inteiro, como
   /// antes; o campo novo mantém o wire compatível nos dois sentidos.
   uint32 slots = 4;
 }
@@ -877,7 +877,7 @@ message ListReservationsResponse {
   repeated Reservation reservations = 1;
 }
 
-/// Liberar é por nó: um nó tem no máximo uma reserva, então o nó identifica qual soltar.
+/// Liberar é por worker: um worker tem no máximo uma reserva, então o worker identifica qual soltar.
 message ReleaseReservationRequest {
   string node_id = 1;
 }
@@ -918,7 +918,7 @@ message LeaveNodeResponse {
 }
 
 /// Algo que aconteceu, como o controller viu. Tempo observado pelo controller:
-/// relógios fornecidos pelos nós nunca são usados para ordenação.
+/// relógios fornecidos pelos workers nunca são usados para ordenação.
 message Event {
   uint64 at_unix_ms = 1;
   string kind = 2;
@@ -973,7 +973,7 @@ message MetricsResponse {
   /// a distância entre o que o placement esperava custar e o que a máquina gastou.
   /// Zero quando nenhuma unidade concluída teve previsão — "não previsto", não "instantâneo".
   uint64 total_predicted_compute_us = 15;
-  /// Médias sobre os nós prontos e aprovados que mediram o item (valor > 0); zero é "nenhum nó
+  /// Médias sobre os workers prontos e aprovados que mediram o item (valor > 0); zero é "nenhum worker
   /// mediu", nunca "rede ou disco ruins". Mesmas escalas dos scores do `CapabilityReport`.
   double avg_network_score = 16;
   double avg_storage_score = 17;
@@ -1017,15 +1017,15 @@ message WorkSnapshot {
   repeated string failed = 4;
   /// Sequência de ids, para que ids gerados após um reload não colidam com os carregados.
   uint64 sequence = 5;
-  /// Unidades em voo, com o nó que as segura. É o registro de posse: um reload sabe quem
+  /// Unidades em voo, com o worker que as segura. É o registro de posse: um reload sabe quem
   /// era o dono, em vez de oferecer a unidade de novo e aceitar só o resultado do novo dono.
   repeated WorkLease dispatched = 6;
   /// Época desta gravação (I4). Guardada dentro do arquivo porque é o arquivo que data o
-  /// estado: um controller que o recarrega sabe com que idade a sua cópia sai, e um nó
+  /// estado: um controller que o recarrega sabe com que idade a sua cópia sai, e um worker
   /// compara a cópia dele contra isso. Sem o campo aqui todo restart pareceria época zero.
   uint64 epoch_unix_ms = 7;
-  /// Reservas de nó ainda válidas. Vão no mesmo snapshot (e na réplica I4) para sobreviverem a um
-  /// reinício e serem herdadas por um controller que assuma pela cópia de um nó.
+  /// Reservas de worker ainda válidas. Vão no mesmo snapshot (e na réplica I4) para sobreviverem a um
+  /// reinício e serem herdadas por um controller que assuma pela cópia de um worker.
   repeated ReservationEntry reservations = 8;
 }
 
@@ -1163,16 +1163,16 @@ service ClusterControl {
   rpc SetRelease(SetReleaseRequest) returns (SetReleaseResponse);
   rpc GetOutput(GetOutputRequest) returns (GetOutputResponse);
   /// Canal residente de um worker (J5): o worker abre o stream e recebe operações de fatia de
-  /// peso; o nó vem no metadata `x-ai-cluster-node-id`, com a credencial do nó.
+  /// peso; o worker vem no metadata `x-ai-cluster-node-id`, com a credencial do worker.
   rpc ShardChannel(stream ShardResult) returns (stream ShardCompute);
-  /// Só operador: roda `x * fatia^T` em cada nó indicado e devolve as saídas na mesma ordem.
+  /// Só operador: roda `x * fatia^T` em cada worker indicado e devolve as saídas na mesma ordem.
   rpc ShardMatmul(ShardMatmulRequest) returns (ShardMatmulResponse);
-  /// Token de inferência ou de operador: quanto cada nó nomeado aceita guardar de fatias, para o
-  /// gateway recusar na subida um modelo que os nós não comportam.
+  /// Token de inferência ou de operador: quanto cada worker nomeado aceita guardar de fatias, para o
+  /// gateway recusar na subida um modelo que os workers não comportam.
   rpc ShardCapacity(ShardCapacityRequest) returns (ShardCapacityResponse);
   /// Token de inferência ou de operador: o gateway se apresenta (quem é, onde está, que modelos serve
-  /// e em quais nós ficam as fatias) e repete a cada poucos segundos. É o que `ListGateways` e a
-  /// topologia mostram; o gateway não é um nó e não recebe trabalho.
+  /// e em quais workers ficam as fatias) e repete a cada poucos segundos. É o que `ListGateways` e a
+  /// topologia mostram; o gateway não é um worker e não recebe trabalho.
   rpc ReportGateway(ReportGatewayRequest) returns (ReportGatewayResponse);
   /// Só operador: os gateways que se apresentaram, com a marca de vivo.
   rpc ListGateways(ListGatewaysRequest) returns (ListGatewaysResponse);

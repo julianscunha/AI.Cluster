@@ -1,9 +1,9 @@
-//! O `ggml-rpc-server` do llama.cpp neste nó (ADR-022). O worker o roda como processo filho,
+//! O `ggml-rpc-server` do llama.cpp neste worker (ADR-022). O worker o roda como processo filho,
 //! supervisionado, escutando só em 127.0.0.1, e é o túnel mTLS (`ai-cluster-tunnel`) a única porta
 //! aberta para a rede: o `rpc-server` não tem senha nem criptografia e executa o que o cliente manda.
 //!
 //! Ligado por `AI_CLUSTER_RPC_SERVER_BIN`. Sem certificado do worker e CA dos clientes o túnel não
-//! sobe e o nó não anuncia RPC: a falha é fechada, nunca em texto puro.
+//! sobe e o worker não anuncia RPC: a falha é fechada, nunca em texto puro.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -14,7 +14,7 @@ use ai_cluster_protocol::metadata::MetadataClient;
 
 use crate::cert;
 
-/// A configuração do `rpc-server` deste nó, lida do ambiente uma única vez.
+/// A configuração do `rpc-server` deste worker, lida do ambiente uma única vez.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcConfig {
     pub bin: String,
@@ -98,7 +98,7 @@ impl RpcConfig {
             .unwrap_or(0)
     }
 
-    /// Argumentos do `rpc-server`: loopback apenas, e as threads do nó.
+    /// Argumentos do `rpc-server`: loopback apenas, e as threads do worker.
     pub fn server_args(&self) -> Vec<String> {
         let mut args = vec![
             "-H".to_string(),
@@ -115,8 +115,8 @@ impl RpcConfig {
     }
 }
 
-/// Lê o ambiente. `None` quando o nó não roda `rpc-server`; `Some(Err)` quando pediu e a configuração
-/// é insegura ou incompleta (o nó segue sem RPC).
+/// Lê o ambiente. `None` quando o worker não roda `rpc-server`; `Some(Err)` quando pediu e a configuração
+/// é insegura ou incompleta (o worker segue sem RPC).
 pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     let var = |name: &str| {
         std::env::var(name)
@@ -172,9 +172,9 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     }))
 }
 
-/// O endereço por onde o gateway chega a este nó: `AI_CLUSTER_RPC_ADVERTISE_HOST`, ou o IP local que
+/// O endereço por onde o gateway chega a este worker: `AI_CLUSTER_RPC_ADVERTISE_HOST`, ou o IP local que
 /// a rota até o controller usa (um socket UDP "conectado" não envia nada; só escolhe a interface).
-/// Vazio se não der para saber: o controller então usa o endereço de onde o nó se registrou, que atrás
+/// Vazio se não der para saber: o controller então usa o endereço de onde o worker se registrou, que atrás
 /// de um NAT (Docker, por exemplo) é o do NAT.
 pub fn advertise_host(controller: &str) -> String {
     if let Ok(host) = std::env::var("AI_CLUSTER_RPC_ADVERTISE_HOST") {
@@ -205,7 +205,7 @@ fn local_ip_toward(endpoint: &str) -> Option<String> {
 
 static CONFIG: OnceLock<Option<RpcConfig>> = OnceLock::new();
 
-/// A configuração válida deste nó, ou `None` (sem RPC). Registra o motivo de uma recusa uma vez.
+/// A configuração válida deste worker, ou `None` (sem RPC). Registra o motivo de uma recusa uma vez.
 pub fn config(threads: usize) -> Option<&'static RpcConfig> {
     CONFIG
         .get_or_init(|| match from_env(threads) {
@@ -450,7 +450,10 @@ mod tests {
                 .for_each(|n| unsafe { std::env::remove_var(n) })
         };
         clear();
-        assert!(from_env(4).is_none(), "sem o binário, o nó não roda RPC");
+        assert!(
+            from_env(4).is_none(),
+            "sem o binário, o worker não roda RPC"
+        );
 
         unsafe { std::env::set_var("AI_CLUSTER_RPC_SERVER_BIN", "/usr/bin/ggml-rpc-server") };
         let refused = from_env(4).unwrap().unwrap_err();

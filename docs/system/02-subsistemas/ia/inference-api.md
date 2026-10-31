@@ -14,8 +14,8 @@ Hoje a API é o binário `ai-cluster-gateway`, um servidor HTTP.
 ## Papel
 
 - Expõe o cluster como um endpoint de inferência estável. A topologia interna pode mudar sem mudar o contrato.
-- Autentica, valida, admite e transmite a resposta. Não escolhe nó, faixa, transporte nem placement.
-- Administração não usa esta API. Nós, métricas, eventos e aprovação ficam na CLI ([[cli-tui]]).
+- Autentica, valida, admite e transmite a resposta. Não escolhe worker, faixa, transporte nem placement.
+- Administração não usa esta API. Workers, métricas, eventos e aprovação ficam na CLI ([[cli-tui]]).
 
 ## Endpoints
 
@@ -41,7 +41,7 @@ Hoje a API é o binário `ai-cluster-gateway`, um servidor HTTP.
 | `AI_CLUSTER_INFERENCE_TOKEN` | — | Necessário para os modelos de linguagem, se o gateway usar o papel de inferência. |
 | `AI_CLUSTER_TLS_CA` | — | CA que o gateway usa ao falar com o controller. |
 | `AI_CLUSTER_GPT2_DIR`, `AI_CLUSTER_SMOLLM2_DIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_DIR` | — | Diretórios dos modelos. Carregados na subida; um diretório incompleto impede o início. |
-| `AI_CLUSTER_GPT2_SHARDS`, `AI_CLUSTER_SMOLLM2_SHARDS`, `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Nós (`worker-1,worker-2`) que recebem as faixas de projeção. Sem isso, o modelo roda inteiro no gateway. |
+| `AI_CLUSTER_GPT2_SHARDS`, `AI_CLUSTER_SMOLLM2_SHARDS`, `AI_CLUSTER_SMOLLM2_INSTRUCT_SHARDS` | — | Workers (`worker-1,worker-2`) que recebem as faixas de projeção. Sem isso, o modelo roda inteiro no gateway. |
 | `AI_CLUSTER_GPT2_SUBDIR`, `AI_CLUSTER_SMOLLM2_SUBDIR`, `AI_CLUSTER_SMOLLM2_INSTRUCT_SUBDIR` | `gpt2`, `smollm2`, `smollm2-instruct` | Subdiretório dos pesos em cada worker. |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | Recusa modelo sem `manifest.json`. Ver [[model-manager]]. |
 | `AI_CLUSTER_CACHE_ENTRIES` | `256` | Tamanho do cache de respostas. `0` desliga. Ver [[edge-optimizer]]. |
@@ -140,7 +140,7 @@ Os códigos são estáveis. A causa interna vai para o log, não para a resposta
 | 404 | `MODEL_NOT_FOUND` | Modelo desconhecido. |
 | 429 | `CAPACITY_UNAVAILABLE` | Sem vaga de geração, fila cheia ou espera estourada. Traz `Retry-After`. |
 | 429 | `QUOTA_EXCEEDED` | Cota da janela esgotada. Traz `Retry-After`. |
-| 503 | `MODEL_UNAVAILABLE` | Falha de unidade de trabalho ou de nó que impede a resposta. |
+| 503 | `MODEL_UNAVAILABLE` | Falha de unidade de trabalho ou de worker que impede a resposta. |
 | 503 | `SERVICE_UNAVAILABLE` | Controller inalcançável. |
 | 504 | `TIMEOUT` | Prazo de 30 s estourado. |
 

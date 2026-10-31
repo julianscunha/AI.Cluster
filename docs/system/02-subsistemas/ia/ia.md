@@ -20,7 +20,7 @@ Aplicação
   -> Inference Engine       forward do modelo; projeções nos workers
 ```
 
-> Planejado: Execution Planner e Scheduler no caminho de inferência, com o Model Manager resolvendo variante e shards. Hoje quem escolhe os nós das projeções são as variáveis `AI_CLUSTER_*_SHARDS` do gateway.
+> Planejado: Execution Planner e Scheduler no caminho de inferência, com o Model Manager resolvendo variante e shards. Hoje quem escolhe os workers das projeções são as variáveis `AI_CLUSTER_*_SHARDS` do gateway.
 
 ## Notas
 

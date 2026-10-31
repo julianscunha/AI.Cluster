@@ -43,8 +43,8 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker-s3 -
 sleep 6
 
 echo "=== A) o token de operador administra ==="
-cli $OPERATOR cluster nodes | grep -q node-s3 || fail "o operador deveria listar o nó"
-cli $OPERATOR cluster node approve node-s3 --trust-listed | grep -qi "aprovad" || fail "o operador deveria aprovar o nó"
+cli $OPERATOR cluster nodes | grep -q node-s3 || fail "o operador deveria listar o worker"
+cli $OPERATOR cluster node approve node-s3 --trust-listed | grep -qi "aprovad" || fail "o operador deveria aprovar o worker"
 echo "OK"
 
 # F19: a ação do operador deixa rastro, com quem chamou e o alvo.

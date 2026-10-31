@@ -63,7 +63,7 @@ impl Gpt2 {
         nodes: Vec<String>,
     ) -> Result<Self, String> {
         if nodes.is_empty() {
-            return Err("sem nós para as fatias".into());
+            return Err("sem workers para as fatias".into());
         }
         Self::load_with(dir, Some((executor, nodes)))
     }

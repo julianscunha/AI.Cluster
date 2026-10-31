@@ -21,7 +21,7 @@ USER_OF=$(docker image inspect ai-cluster-worker:dev --format '{{.Config.User}}'
 [ "$USER_OF" = ai-cluster ] || fail "a imagem deveria rodar como ai-cluster, roda como '$USER_OF'"
 echo "OK: construída, usuário sem privilégios"
 
-echo "=== B) a imagem vira um nó READY ==="
+echo "=== B) a imagem vira um worker READY ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-controller-pi --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=pi-join -e AI_CLUSTER_OPERATOR_TOKEN=pi-operator \
   -e AI_CLUSTER_AUTO_APPROVE=1 "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null

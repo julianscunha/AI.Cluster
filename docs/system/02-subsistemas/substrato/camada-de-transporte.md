@@ -23,7 +23,7 @@ O serviço `LinkProbe` é separado do serviço de controle. Usos:
 - **Vazão de upload.** O worker envia 3 cargas de 2 MiB ao controller e fica com a melhor, com timeout de 5 s. O resultado, normalizado por 1 GbE, vira `network_achieved_score`.
 - **Latência.** O worker mede o menor tempo entre 5 sondas vazias. O resultado vai em `network_latency_ms`.
 
-Ambas são remedidas com o nó ocioso, na mesma cadência do compute. Uma sonda que falha mantém o valor anterior; zero significa "não medido".
+Ambas são remedidas com o worker ocioso, na mesma cadência do compute. Uma sonda que falha mantém o valor anterior; zero significa "não medido".
 
 O placement usa o menor entre a velocidade nominal do link e a velocidade alcançada.
 
@@ -31,13 +31,13 @@ O placement usa o menor entre a velocidade nominal do link e a velocidade alcan�
 
 `ShardChannel` é um stream bidirecional entre controller e worker, usado pela inferência:
 
-- O worker abre o stream com o `node_id` no cabeçalho. O controller mantém uma sessão por nó.
-- A fila de resposta tem 64 quadros e no máximo 64 operações pendentes por nó. O controller aceita resposta só para operação enviada àquele nó.
+- O worker abre o stream com o `node_id` no cabeçalho. O controller mantém uma sessão por worker.
+- A fila de resposta tem 64 quadros e no máximo 64 operações pendentes por worker. O controller aceita resposta só para operação enviada àquele worker.
 - Detalhes em [[canal-de-fatias]] e [[adr-009-canal-residente-de-fatias]].
 
 ## Decisões antes de transferir
 
-Hoje o sistema não decide entre transferir e recomputar. Toda unidade vai ao nó escolhido pelo placement, e os operandos sempre viajam pelo controller.
+Hoje o sistema não decide entre transferir e recomputar. Toda unidade vai ao worker escolhido pelo placement, e os operandos sempre viajam pelo controller.
 
 ## Plano de dados
 

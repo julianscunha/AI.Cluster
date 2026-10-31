@@ -7,7 +7,7 @@ type: sistema/subsistema
 
 # State Manager
 
-O state manager guarda o estado necessário para retomar a execução quando um nó ou o controller falha. Ele não executa nada: guarda, replica e restaura. Voltar para [[dados]].
+O state manager guarda o estado necessário para retomar a execução quando um worker ou o controller falha. Ele não executa nada: guarda, replica e restaura. Voltar para [[dados]].
 
 ## O que é guardado hoje
 
@@ -19,7 +19,7 @@ Só o estado de trabalho do controller:
 | Unidades em voo, com o dono de cada uma | Mesmo arquivo | Junto da alteração que a levou a voo. |
 | Resultados que uma unidade pendente ainda lê | Mesmo arquivo | Enquanto houver leitor. |
 | Cópia do arquivo | Arquivo ao lado (`.replica`), no mesmo volume | Junto do arquivo principal. |
-| Cópia de nó | Arquivo em cada worker com `AI_CLUSTER_STATE_REPLICA` | Entregue no heartbeat quando o controller avança. |
+| Cópia de worker | Arquivo em cada worker com `AI_CLUSTER_STATE_REPLICA` | Entregue no heartbeat quando o controller avança. |
 
 Resultados sem leitor são descartados. Um snapshot guarda o trabalho que falta, não o histórico. A gravação respeita um intervalo mínimo (`AI_CLUSTER_STATE_WRITE_MS`, 250 ms, nunca abaixo de 9 vezes o tempo da última gravação, o que limita o custo a ~10% do tempo para qualquer tamanho de estado ou disco; por isso não há journal de deltas: o snapshot inteiro continua simples e o custo fica limitado) e um flush por segundo grava o que ficou (respeitando o mesmo intervalo; o desligamento ignora o intervalo; o custo usa a média das duas últimas gravações); SIGTERM ou Ctrl+C gravam antes de sair; um crash (`kill -9`, queda de energia) perde no máximo ~1,3 s de mutações.
 
@@ -32,7 +32,7 @@ Resultados sem leitor são descartados. Um snapshot guarda o trabalho que falta,
 
 ## Posse de trabalho
 
-Uma unidade em voo volta ao reinício com o mesmo dono, e o resultado que esse dono entregar depois é aceito. Se o dono não reconectar até a grace contada a partir do início do controller, a unidade volta à fila ou falha, como em uma queda de nó.
+Uma unidade em voo volta ao reinício com o mesmo dono, e o resultado que esse dono entregar depois é aceito. Se o dono não reconectar até a grace contada a partir do início do controller, a unidade volta à fila ou falha, como em uma queda de worker.
 
 A posse é gravada de forma preguiçosa. A atribuição de uma unidade não é gravada sozinha. Se o controller reinicia logo após um despacho, a unidade volta sem dono e pode rodar duas vezes. Ver [[hotplug-e-recuperacao]].
 
@@ -46,9 +46,9 @@ A posse é gravada de forma preguiçosa. A atribuição de uma unidade não é g
 | Variável | Onde | Efeito |
 |---|---|---|
 | `AI_CLUSTER_STATE` | Controller | Caminho do arquivo de estado. Sem ele, o estado vive só em memória. |
-| `AI_CLUSTER_STATE_REPLICA` | Worker | Caminho do arquivo onde o nó guarda a cópia. Sem ele, o nó não guarda cópia. |
+| `AI_CLUSTER_STATE_REPLICA` | Worker | Caminho do arquivo onde o worker guarda a cópia. Sem ele, o worker não guarda cópia. |
 | `AI_CLUSTER_EVENTS` | Controller | Caminho do arquivo de eventos. Ver [[observabilidade]]. |
-| `AI_CLUSTER_NODES` | Controller | Caminho do arquivo de nós: aprovação, credencial e quarentena sobrevivem a reinício. |
+| `AI_CLUSTER_NODES` | Controller | Caminho do arquivo de workers: aprovação, credencial e quarentena sobrevivem a reinício. |
 
 ## Garantias
 
@@ -58,9 +58,9 @@ A posse é gravada de forma preguiçosa. A atribuição de uma unidade não é g
 
 ## Limites conhecidos
 
-- A cópia do controller fica no mesmo volume. Se o volume some, as duas somem juntas. Só a cópia em nó tem outro disco.
-- A cópia em nó é o snapshot inteiro, oferecido a cada gravação para cada nó configurado. Não há fator de replicação nem nó designado. Com estado grande, o tráfego cresce com nós e gravações.
-- Sem identidade de cluster na cópia: um controller novo apontado para nós com a cópia de outro cluster adota aquela fila.
+- A cópia do controller fica no mesmo volume. Se o volume some, as duas somem juntas. Só a cópia em worker tem outro disco.
+- A cópia em worker é o snapshot inteiro, oferecido a cada gravação para cada worker configurado. Não há fator de replicação nem worker designado. Com estado grande, o tráfego cresce com workers e gravações.
+- Sem identidade de cluster na cópia: um controller novo apontado para workers com a cópia de outro cluster adota aquela fila.
 - A gravação reescreve o estado vivo inteiro a cada alteração, e o custo cresce com o trabalho que falta. Oito resultados de 256 × 256 pendentes já somam cerca de 4 MB por gravação, com a cópia dobrando a escrita. Sem trabalho pendente, o arquivo fica em poucos bytes.
 - A posse é gravada de forma preguiçosa (ver acima), e isso pode causar compute duplicado após reinício.
 - Não há estado por chave. Não há diretório de referências lógicas (como `state://…`). O KV cache de uma geração de chat vive na memória do gateway e se perde se o gateway cai.

@@ -1,6 +1,6 @@
 #!/sbin/openrc-run
 # Confirma o slot (F15 J5): o slot em teste só vira o definitivo depois que o worker se registrou no
-# controller. Sem isso, em até COMMIT_TIMEOUT segundos o nó reinicia e o u-boot, que conta as
+# controller. Sem isso, em até COMMIT_TIMEOUT segundos o worker reinicia e o u-boot, que conta as
 # tentativas no setor de estado, volta ao slot anterior depois de duas.
 name="aic-slot-commit"
 description="Confirma o slot A/B depois que o worker se registra"

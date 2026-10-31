@@ -9,7 +9,7 @@
 # a segunda tentativa que falha volta ao slot confirmado. Contador em letras: sem aritmética.
 # Falhando tudo, cai no ambiente de recuperação pela rede (nb_server/nb_args, que o instalador põe no topo deste script) e, por último, no u-boot.
 
-echo "== Real.AI.Cluster - AI Cluster OS =="
+echo "== AI.Cluster - AI Cluster OS =="
 setenv load_addr 0x44000000
 setenv aic_slot A
 setenv aic_try ""
@@ -76,7 +76,7 @@ if test -n "${nb_server}"; then
 		fi
 	fi
 fi
-# Sem recuperacao (servidor ausente, fora do ar ou com o limite esgotado): nao prender o no num ciclo
+# Sem recuperacao (servidor ausente, fora do ar ou com o limite esgotado): nao prender o worker num ciclo
 # de reset. Zera o contador e tenta o slot confirmado.
 echo "aic: sem recuperacao disponivel; tentando o slot ${aic_slot}"
 setenv aic_boots ""

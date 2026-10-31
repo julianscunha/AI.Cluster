@@ -46,7 +46,7 @@ teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-# worker <nome> <nó> <endpoint> <ca|-> <insecure 0|1>
+# worker <nome> <worker> <endpoint> <ca|-> <insecure 0|1>
 worker() {
   local env=()
   [ "$4" != "-" ] && env+=(-e "AI_CLUSTER_TLS_CA=$4")
@@ -91,12 +91,12 @@ else
   fail "node-ok deveria estar READY por https"
 fi
 
-# refused <container> <nó> <rótulo> <erro esperado>: não entrou, e o log traz um erro de
+# refused <container> <worker> <rótulo> <erro esperado>: não entrou, e o log traz um erro de
 # transporte/certificado (não de token, nem outra falha qualquer do worker).
 refused() {
   sleep 8
   if cli cluster nodes | grep -q "$2"; then
-    fail "$3: o nó $2 não deveria ter entrado"
+    fail "$3: o worker $2 não deveria ter entrado"
   fi
   local log
   log=$(docker logs "$1" 2>&1)

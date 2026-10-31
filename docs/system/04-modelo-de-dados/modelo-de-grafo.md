@@ -11,7 +11,7 @@ Modelo do grafo que o cluster usará para consulta e travessia: topologia, depen
 
 > Planejado: todo este modelo. Hoje não existe projeção de grafo nem engine de grafo. As consultas respondem direto do estado do controller (`GetTrace`, `ListNodes`, `GetMetrics`). Ver [[graph-engine]].
 
-## Tipos de nó do grafo
+## Tipos de worker do grafo
 
 ```text
 Cluster
@@ -68,12 +68,12 @@ SUPPORTS
 | Tipo do grafo | Origem em [[entidades]] | Aresta | Origem em [[relacoes]] |
 |---|---|---|---|
 | Node | `NodeIdentity`, `NodeSnapshot` | HOSTS (Cluster → Node) | implícito |
-| Device, ComputeDevice | `device_id`, `accelerators` | — | 1 para 1 com o nó |
+| Device, ComputeDevice | `device_id`, `accelerators` | — | 1 para 1 com o worker |
 | Storage | `storage_classes` | HOSTS (Node → Storage) | campo do perfil |
 | NetworkInterface | — | CONNECTED_TO | não armazenada |
 | Model, ModelShard | `model_subdir`, `ShardOp` | HOSTS, STORES | faixa no worker |
 | Request, Execution, WorkUnit | `request_id`, `WorkUnit`, `WorkLease` | EXECUTES, DEPENDS_ON, PRODUCES, CONSUMES | `depends_on`, `*_from` |
-| StateObject | `WorkSnapshot`, `StateReplica` | STORES, REPLICATES | réplica no nó |
+| StateObject | `WorkSnapshot`, `StateReplica` | STORES, REPLICATES | réplica no worker |
 | Metric, Event | `MetricsResponse`, `Event` | AFFECTS | — |
 
 Hoje a única visão de grafo é o trace de uma requisição (`GetTrace`), que lista as unidades por estado e, dentro de cada estado, na ordem de execução. Não há travessia nem consulta por aresta.

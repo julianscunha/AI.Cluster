@@ -21,7 +21,7 @@ Uma coleção heterogênea de equipamentos Linux se comporta como um pool lógic
 
 - Executar uma única inferência distribuindo um modelo entre múltiplos dispositivos.
 - Aceitar hardware heterogêneo: x86_64, ARM64, CPU, GPU, NPU, PCs, servidores, notebooks, SBCs e dispositivos móveis compatíveis.
-- Provisionar nós automaticamente e convertê-los para um AI Cluster OS próprio.
+- Provisionar workers automaticamente e convertê-los para um AI Cluster OS próprio.
 - Suportar hot-plug, drain, falha e replanejamento sem derrubar o cluster.
 - Medir capacidade real, saúde, temperatura, armazenamento, rede e desempenho.
 - Otimizar tokens e computação na borda antes de acionar modelos grandes.
@@ -66,6 +66,6 @@ Uma coleção heterogênea de equipamentos Linux se comporta como um pool lógic
 ## Limites conhecidos
 
 - O cluster se comunica só por gRPC sobre TCP; o socket Unix e a memória compartilhada existem apenas como camada de transporte isolada ([[adr-014-abstracao-de-transporte]]).
-- Os nós testados são x86_64 e ARM de 32 bits (armv7). ARM64 não foi testado.
+- Os workers testados são x86_64 e ARM de 32 bits (armv7). ARM64 não foi testado.
 - O gateway executa o modelo no próprio processo; só as projeções podem ser distribuídas ([[adr-007-fronteira-inference-api]]).
 - A capacidade reportada é de compute, memória, rede (velocidade do link), saúde e classe de armazenamento. Memória sob carga, latência e aceleradores não são medidos.

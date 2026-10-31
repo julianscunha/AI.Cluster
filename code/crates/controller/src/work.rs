@@ -111,11 +111,11 @@ struct Inner {
     /// Dispatches that went to another unit while a queued unit waited (G4 aging). Not
     /// persisted: a restart resets the age, which only delays an overtake by one span.
     passed: HashMap<String, u32>,
-    /// O nó que acabou de perder a unidade (resultado recusado ou saída do nó). Enquanto houver
-    /// outro nó que a comporte, ela não volta a ele. Não persiste: o reinício só esquece a preferência.
+    /// O worker que acabou de perder a unidade (resultado recusado ou saída do worker). Enquanto houver
+    /// outro worker que a comporte, ela não volta a ele. Não persiste: o reinício só esquece a preferência.
     lost_by: HashMap<String, (String, u64)>,
-    /// Por nó, as unidades em voo canceladas que ele ainda não soube (entregues na próxima batida).
-    /// Não persiste: sem a notícia o nó termina a conta e o resultado é recusado.
+    /// Por worker, as unidades em voo canceladas que ele ainda não soube (entregues na próxima batida).
+    /// Não persiste: sem a notícia o worker termina a conta e o resultado é recusado.
     cancels: HashMap<String, Vec<String>>,
     /// Per node, how many times slower (or faster) than the cost model it really computes: the
     /// moving average of actual over predicted compute time (P1). Not persisted; a restart
@@ -123,8 +123,8 @@ struct Inner {
     learned: HashMap<String, f64>,
 }
 
-/// Se a unidade deve ser poupada a este nó: foi ele quem acabou de perdê-la e outro candidato a
-/// comporta. Sem outro nó, volta a ele (melhor que ficar parada).
+/// Se a unidade deve ser poupada a este worker: foi ele quem acabou de perdê-la e outro candidato a
+/// comporta. Sem outro worker, volta a ele (melhor que ficar parada).
 fn avoids(
     lost_by: &HashMap<String, (String, u64)>,
     attested: &HashSet<String>,
@@ -133,7 +133,7 @@ fn avoids(
     now_unix_ms: u64,
     candidates: &[(String, CapabilityReport, HealthReport)],
 ) -> bool {
-    // A preferência vale por pouco tempo: um outro nó que nunca pega a unidade (ocupado, retido
+    // A preferência vale por pouco tempo: um outro worker que nunca pega a unidade (ocupado, retido
     // para outra requisição) não pode deixá-la parada.
     lost_by
         .get(&unit.work_id)
@@ -145,10 +145,10 @@ fn avoids(
         })
 }
 
-/// Quanto tempo a unidade evita o nó que acabou de perdê-la.
+/// Quanto tempo a unidade evita o worker que acabou de perdê-la.
 const AVOID_MS: u64 = 10_000;
 
-/// Quantos cancelamentos ficam à espera da batida de um nó; um nó mudo não faz a lista crescer.
+/// Quantos cancelamentos ficam à espera da batida de um worker; um worker mudo não faz a lista crescer.
 const MAX_PENDING_CANCELS: usize = 1024;
 
 /// Weight of the newest observation in the learned ratio.
@@ -219,8 +219,8 @@ pub struct WorkStore {
     /// so handing out a request id does not shift the work-id numbering that tests and
     /// scripts read.
     request_sequence: AtomicU64,
-    /// Nós retidos para requisições futuras (G6). Lido dentro de `claim_placed`, então mora
-    /// aqui junto da decisão de placement, e não no registry, que só conhece estado dos nós.
+    /// Workers retidos para requisições futuras (G6). Lido dentro de `claim_placed`, então mora
+    /// aqui junto da decisão de placement, e não no registry, que só conhece estado dos workers.
     reservations: Reservations,
     /// Where the snapshot is written. `None` means memory only, which is what the
     /// tests and the benchmark runs use.
@@ -509,7 +509,7 @@ impl WorkStore {
             };
             // A cópia em memória sai do arquivo que carregou, com a época que ele traz: sem
             // isso um controller que voltou de um reload pareceria época zero, e tomaria a
-            // cópia de um nó por mais nova que a sua.
+            // cópia de um worker por mais nova que a sua.
             *store
                 .replica
                 .lock()
@@ -615,7 +615,7 @@ impl WorkStore {
     }
 
     /// Grava a posse de uma unidade recém-despachada. Não sobe a época da réplica: a posse é
-    /// detalhe do reinício deste controller, e subir a época faria cada nó baixar o estado inteiro
+    /// detalhe do reinício deste controller, e subir a época faria cada worker baixar o estado inteiro
     /// a cada despacho.
     fn save_lease_locked(&self, inner: &mut Inner) {
         self.write_state(inner, false);
@@ -820,7 +820,7 @@ impl WorkStore {
             return false;
         }
         let Ok(snapshot) = WorkSnapshot::decode(replica.snapshot.as_slice()) else {
-            println!("réplica de estado oferecida por um nó não decodifica; ignorada");
+            println!("réplica de estado oferecida por um worker não decodifica; ignorada");
             return false;
         };
         let mut inner = self.lock();
@@ -841,7 +841,7 @@ impl WorkStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(replica.clone()));
         self.save_locked(&mut inner);
         println!(
-            "estado restaurado da réplica de um nó: {pending} pendente(s), {dispatched} em voo, época {}",
+            "estado restaurado da réplica de um worker: {pending} pendente(s), {dispatched} em voo, época {}",
             replica.epoch_unix_ms
         );
         true
@@ -860,13 +860,13 @@ impl WorkStore {
         )
     }
 
-    /// Retém um nó para uma requisição futura (G6) até `ttl_ms` a partir de `now`.
+    /// Retém um worker para uma requisição futura (G6) até `ttl_ms` a partir de `now`.
     /// TTL zero usa o padrão de [`crate::reservations::DEFAULT_TTL_MS`].
     pub fn reserve(&self, node_id: &str, request_id: &str, ttl_ms: u64, now: u64) -> Reservation {
         self.reserve_slots(node_id, request_id, 0, ttl_ms, now)
     }
 
-    /// Como [`Self::reserve`], guardando só `slots` slots do nó (0 é o nó inteiro). A reserva vai
+    /// Como [`Self::reserve`], guardando só `slots` slots do worker (0 é o worker inteiro). A reserva vai
     /// para o snapshot junto com a fila, então sobrevive a um reinício.
     pub fn reserve_slots(
         &self,
@@ -884,7 +884,7 @@ impl WorkStore {
         reservation
     }
 
-    /// Libera a reserva de um nó. False quando não havia reserva ativa.
+    /// Libera a reserva de um worker. False quando não havia reserva ativa.
     pub fn release_reservation(&self, node_id: &str) -> bool {
         let mut inner = self.lock();
         let released = self.reservations.release(node_id);
@@ -894,7 +894,7 @@ impl WorkStore {
         released
     }
 
-    /// Reservas ativas em `now`, ordenadas por nó. As vencidas são descartadas na leitura.
+    /// Reservas ativas em `now`, ordenadas por worker. As vencidas são descartadas na leitura.
     pub fn reservations(&self, now: u64) -> Vec<(String, Reservation)> {
         self.reservations.list(now)
     }
@@ -1222,7 +1222,7 @@ impl WorkStore {
             inner.keep.remove(work_id);
         }
         // As unidades já em voo saem da tabela de posse (o resultado que vier será recusado) e o
-        // nó é avisado na próxima batida para parar a conta.
+        // worker é avisado na próxima batida para parar a conta.
         let flying: Vec<(String, String)> = inner
             .dispatched
             .iter()
@@ -1319,7 +1319,7 @@ impl WorkStore {
             .map(|(work_id, _)| work_id.clone())
             .collect();
         let mut outcome = RequeueOutcome::default();
-        // O nó que saiu não vai ler os avisos que ficaram para ele.
+        // O worker que saiu não vai ler os avisos que ficaram para ele.
         inner.cancels.remove(node_id);
         for work_id in stranded {
             let Some(record) = inner.dispatched.remove(&work_id) else {
@@ -1340,7 +1340,7 @@ impl WorkStore {
         outcome
     }
 
-    /// As unidades canceladas que o nó ainda não soube; esvazia a lista.
+    /// As unidades canceladas que o worker ainda não soube; esvazia a lista.
     pub fn take_cancels(&self, node_id: &str) -> Vec<String> {
         self.lock().cancels.remove(node_id).unwrap_or_default()
     }
@@ -1536,7 +1536,7 @@ mod tests {
 
         let (removed, in_flight) = store.cancel_request("req-a");
         assert_eq!((removed, in_flight), (1, 1));
-        // A unidade em voo saiu da tabela e o nó será avisado, uma vez só.
+        // A unidade em voo saiu da tabela e o worker será avisado, uma vez só.
         assert_eq!(store.take_cancels("n"), vec!["a1".to_string()]);
         assert!(store.take_cancels("n").is_empty());
         assert!(
@@ -2277,7 +2277,7 @@ mod tests {
             !avoids(&lost, &attested, &plain, "node-a", 1_000 + AVOID_MS, &both),
             "a preferência expira"
         );
-        // Unidade que exige atestado: o outro nó não atestado não conta como alternativa.
+        // Unidade que exige atestado: o outro worker não atestado não conta como alternativa.
         plain.require_attested = true;
         assert!(!avoids(&lost, &attested, &plain, "node-a", 2_000, &both));
         attested.insert("node-b".to_string());
@@ -2309,7 +2309,7 @@ mod tests {
                 .is_some()
         );
 
-        // Sem outro nó, volta ao mesmo (melhor que parada).
+        // Sem outro worker, volta ao mesmo (melhor que parada).
         let store = WorkStore::new();
         store.enqueue([unit("w2")]);
         let alone = [("node-a".to_string(), capability(8, 0.0), healthy())];
@@ -2810,7 +2810,7 @@ mod tests {
         );
     }
 
-    /// Nó com `work_slots` slots, para os testes de fila por recurso.
+    /// Worker com `work_slots` slots, para os testes de fila por recurso.
     fn slotted(slots: u32) -> CapabilityReport {
         CapabilityReport {
             work_slots: slots,
@@ -2868,7 +2868,7 @@ mod tests {
         store.set_attested(["lento".to_string()].into());
         let taken = store
             .claim_placed("lento", &capability(2, 0.5), 1_000, &nodes, 0.0)
-            .expect("o atestado não cede a um nó que nunca poderia levar a unidade");
+            .expect("o atestado não cede a um worker que nunca poderia levar a unidade");
         assert_eq!(taken.work_id, "sensivel");
         // e o atestado vazio é limpo quando ninguém precisa dele
         store.clear_attested();
@@ -2891,7 +2891,7 @@ mod tests {
         let candidates = [node.clone()];
         let ask = |now| store.claim_placed("n1", &node.1, now, &candidates, 0.0);
 
-        // com um slot só, a mais prioritária sai primeiro e o nó não recebe outra enquanto roda
+        // com um slot só, a mais prioritária sai primeiro e o worker não recebe outra enquanto roda
         assert_eq!(ask(1_000).unwrap().work_id, "alta");
         assert!(ask(1_001).is_none(), "slot ocupado: nada novo");
         store.complete(

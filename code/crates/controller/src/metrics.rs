@@ -96,7 +96,7 @@ pub fn summarize(
     }
 }
 
-/// Média dos valores positivos: zero quando nenhum nó mediu.
+/// Média dos valores positivos: zero quando nenhum worker mediu.
 fn mean_measured(values: impl Iterator<Item = f64>) -> f64 {
     let (sum, count) = values
         .filter(|value| value.is_finite() && *value > 0.0)
@@ -155,7 +155,7 @@ fn units_per_second(
     in_window as f64 / (span_ms as f64 / 1000.0)
 }
 
-/// Acrescenta ao roll-up o que depende dos nós (rede e storage) e do tempo (taxas por segundo).
+/// Acrescenta ao roll-up o que depende dos workers (rede e storage) e do tempo (taxas por segundo).
 /// Separado de [`summarize`] para que ele continue puro sobre contagens e unidades.
 pub fn add_rollups(
     metrics: &mut MetricsResponse,

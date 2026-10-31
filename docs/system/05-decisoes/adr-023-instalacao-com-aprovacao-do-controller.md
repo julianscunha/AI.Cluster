@@ -13,16 +13,16 @@ Status: decidido · registro de pendentes e aprovação implementados (`enrollme
 
 ## Contexto
 
-O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalacao-a-b-e-boot-de-rede]]). Hoje o TFTP filtra por IP, e o usuário muitas vezes não sabe o MAC do aparelho novo. O firmware de rede também não envia token: só MAC, UUID e arquitetura. Uma lista de MACs obrigatória não serve, e o gate de entrada já existe depois do boot: o nó nasce pendente e o operador o aprova ([[adr-020-niveis-de-confianca-do-no]]).
+O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalacao-a-b-e-boot-de-rede]]). Hoje o TFTP filtra por IP, e o usuário muitas vezes não sabe o MAC do aparelho novo. O firmware de rede também não envia token: só MAC, UUID e arquitetura. Uma lista de MACs obrigatória não serve, e o gate de entrada já existe depois do boot: o worker nasce pendente e o operador o aprova ([[adr-020-niveis-de-confianca-do-no]]).
 
 ## Decisão
 
 1. **Nenhuma instalação começa sozinha.** Qualquer máquina que dá boot (rede, pendrive ou comando em um Linux existente) cai numa **etapa de espera**: imagem mínima, sem a imagem do cluster, sem token e sem CA.
 2. **A etapa de espera mostra e informa o resumo:** MAC, CPU, RAM, discos, firmware e uma impressão digital curta. Registra o aparelho no controller como **pendente**, com teto de pendentes (32) e expiração (15 min); o excedente é ignorado.
-3. **O operador aprova no controller** conferindo a impressão digital da lista com a da tela. A aprovação mostra qual disco será apagado, e só depois o controller libera a imagem real e um **token de uso único** para aquele nó.
+3. **O operador aprova no controller** conferindo a impressão digital da lista com a da tela. A aprovação mostra qual disco será apagado, e só depois o controller libera a imagem real e um **token de uso único** para aquele worker.
 4. **A espera rechecar sozinha** a cada poucos segundos; numa máquina com tela, qualquer tecla força a checagem na hora. Máquina sem monitor não depende de teclado.
 5. **Já tem Linux:** o controller gera um comando (como o `/join`) para ingressar no estado atual ou instalar em modo dedicado. No dedicado ele checa o boot (firmware, disco, espaço), mostra o resumo, reinicia e cai na etapa de espera. Não apaga nada antes da aprovação.
-6. **O MAC é atalho opcional:** quem já o conhece pode pré-aprová-lo, e o nó entra sem esperar. Não é pré-requisito.
+6. **O MAC é atalho opcional:** quem já o conhece pode pré-aprová-lo, e o worker entra sem esperar. Não é pré-requisito.
 
 ## Consequências
 

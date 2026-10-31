@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Critério de saída da Fase 1: nós entram e saem com segurança.
+# Critério de saída da Fase 1: workers entram e saem com segurança.
 #
 # Fluxo: controller + dois workers -> enfileirar trabalho -> parar um worker com SIGTERM
 # (saída planejada) -> o sobrevivente deve terminar cada unidade, sem nada encalhado.
@@ -29,7 +29,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 
 sleep 6
-echo "=== nós antes da saída ==="
+echo "=== workers antes da saída ==="
 run "$R/aic cluster nodes"
 
 echo "=== enfileirar 6 unidades (faz poll até a fila drenar) ==="
@@ -47,7 +47,7 @@ echo "=== saída graciosa: docker stop aic-worker1 ==="
 docker stop aic-worker1
 sleep 2
 
-echo "=== nós após a saída ==="
+echo "=== workers após a saída ==="
 run "$R/aic cluster nodes"
 
 echo "=== aguardando o benchmark drenar ==="

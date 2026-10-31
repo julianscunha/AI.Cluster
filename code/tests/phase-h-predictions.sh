@@ -2,10 +2,10 @@
 # Fatia da Fase H (H5): previsto vs real — o erro do modelo de custo.
 #
 # Critério verificado: o trace não mostra só o que a unidade custou, mas o que o modelo de
-# custo tinha previsto, e a distância entre os dois. Um nó sem compute score não prevê nada,
+# custo tinha previsto, e a distância entre os dois. Um worker sem compute score não prevê nada,
 # e zero ali é lido como "não previsto", não como "instantâneo".
 #
-# O nó reporta um compute score fixo (AI_CLUSTER_COMPUTE_SCORE=1.0) em 4 threads, então a
+# O worker reporta um compute score fixo (AI_CLUSTER_COMPUTE_SCORE=1.0) em 4 threads, então a
 # previsão é aritmética conhecida: previsto_us = 2*size^3 / (4 * 1.0 * 6.0 * 1e3) + setup,
 # com o 6.0 vindo de REFERENCE_CORE_GFLOPS e o setup sendo `AI_CLUSTER_UNIT_SETUP_US`
 # (UNIT_SETUP_US por padrão). Para size=64 dá 22 + 600 = 622us por unidade; para size=128,
@@ -71,7 +71,7 @@ else
 fi
 # erro_pct = (real - previsto) / previsto * 100. O real é do relógio, então não dá para
 # fixar o valor. Antes do termo de setup o modelo era ~30x otimista (erro ~3000%); agora
-# ele pode errar para os dois lados — um nó ocupado faz o real ficar acima, um nó ocioso
+# ele pode errar para os dois lados — um worker ocupado faz o real ficar acima, um worker ocioso
 # abaixo — mas não por ordens de magnitude. Um teto de 1000% é o que ainda separa "modelo
 # calibrado" de "modelo otimista", com folga para o ruído do host compartilhado.
 ERR=$(echo "$TRACE" | sed -n 's/.*erro_pct=\(-\?[0-9.]*\).*/\1/p')

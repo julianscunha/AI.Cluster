@@ -258,7 +258,7 @@ pub fn is_recovery<T>(request: &Request<T>) -> bool {
 pub fn require_recovery_scope<T>(request: &Request<T>, node_id: &str) -> Result<(), Status> {
     if is_recovery(request) && !node_id.ends_with(RECOVERY_NODE_SUFFIX) {
         return Err(Status::permission_denied(
-            "o token de recuperação só vale para nós com sufixo -rec",
+            "o token de recuperação só vale para workers com sufixo -rec",
         ));
     }
     Ok(())
@@ -530,7 +530,7 @@ pub fn node_credential<T>(request: &Request<T>) -> &[u8] {
         .map_or(&b""[..], |value| value.as_bytes())
 }
 
-/// Impressão digital de uma credencial: 8 bytes do SHA-256 em hexadecimal. O nó a mostra e o operador a
+/// Impressão digital de uma credencial: 8 bytes do SHA-256 em hexadecimal. O worker a mostra e o operador a
 /// confere no `approve`; não permite recuperar a credencial.
 pub fn credential_fingerprint(credential: &str) -> String {
     use sha2::{Digest, Sha256};

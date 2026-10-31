@@ -3,11 +3,11 @@
 #
 # Critério verificado: um cliente lê, numa só chamada, o estado do cluster que antes
 # exigia juntar `nodes` com `work_report` na cabeça de quem lê. O que se prova aqui é
-# que os números mudam junto com o cluster — nó entra, unidade completa — e que o
+# que os números mudam junto com o cluster — worker entra, unidade completa — e que o
 # agregado bate com as partes (compute somado = compute da unidade).
 #
 # Sequência:
-#   A) cluster ocioso: 1 nó, 0 unidades, médias em 0 (não divisão por zero).
+#   A) cluster ocioso: 1 worker, 0 unidades, médias em 0 (não divisão por zero).
 #   B) depois de 2 unidades: concluídas=2, pendentes=0, compute somado > 0.
 set -uo pipefail
 
@@ -50,7 +50,7 @@ NODES=$(echo "$IDLE" | field nodes_total)
 COMPLETED=$(echo "$IDLE" | field units_completed)
 AVG=$(echo "$IDLE" | field avg_compute_time_us)
 if [ "$NODES" = "1" ] && [ "$COMPLETED" = "0" ] && [ "$AVG" = "0" ]; then
-  echo "OK: 1 nó, nada concluído, média em 0 (sem divisão por zero)"
+  echo "OK: 1 worker, nada concluído, média em 0 (sem divisão por zero)"
 else
   echo "FALHA: esperado nodes_total=1 units_completed=0 avg_compute_time_us=0"
   echo "       veio nodes_total=$NODES units_completed=$COMPLETED avg_compute_time_us=$AVG"
@@ -86,20 +86,20 @@ else
   exit 1
 fi
 
-echo "=== D) métricas de nó ==="
+echo "=== D) métricas de worker ==="
 NODES_OUT=$(run "$R/aic cluster nodes")
 echo "$NODES_OUT"
 if echo "$NODES_OUT" | grep -q "CPU_%"; then
-  echo "OK: a tabela de nós traz as colunas de métricas de nó"
+  echo "OK: a tabela de workers traz as colunas de métricas de worker"
 else
-  echo "FALHA: a tabela de nós deveria ter CPU_%/TEMP_C/SWAP_%"
+  echo "FALHA: a tabela de workers deveria ter CPU_%/TEMP_C/SWAP_%"
   teardown
   exit 1
 fi
 if echo "$NODES_OUT" | grep -q "node-m"; then
-  echo "OK: o nó aparece com suas métricas"
+  echo "OK: o worker aparece com suas métricas"
 else
-  echo "FALHA: o nó node-m deveria estar listado"
+  echo "FALHA: o worker node-m deveria estar listado"
   teardown
   exit 1
 fi

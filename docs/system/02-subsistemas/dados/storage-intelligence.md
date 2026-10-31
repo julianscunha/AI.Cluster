@@ -7,7 +7,7 @@ type: sistema/subsistema
 
 # Storage Intelligence
 
-O armazenamento é tratado como recurso complementar à memória e à execução. Hoje o cluster só classifica os discos de cada nó e mede sua velocidade de escrita. Nenhuma decisão de alocação usa essa informação. Voltar para [[dados]].
+O armazenamento é tratado como recurso complementar à memória e à execução. Hoje o cluster só classifica os discos de cada worker e mede sua velocidade de escrita. Nenhuma decisão de alocação usa essa informação. Voltar para [[dados]].
 
 ## Classificação
 
@@ -19,11 +19,11 @@ Cada worker lê `/sys/block/*/queue/rotational` e o nome do dispositivo:
 | `ssd` | Dispositivo sem rotação e nome sem prefixo `nvme` | WARM |
 | `hdd` | Dispositivo com rotação | COLD |
 
-A RAM é HOT e já aparece na memória do nó. Não entra na classificação de armazenamento.
+A RAM é HOT e já aparece na memória do worker. Não entra na classificação de armazenamento.
 
 Dispositivos `loop`, `ram` e device-mapper são ignorados, porque não são armazenamento usável pelo cluster.
 
-O relatório de capacidade traz `storage_classes` da classe mais quente para a mais fria. Um nó sem disco visível reporta lista vazia, que significa "não medido" e não "sem armazenamento".
+O relatório de capacidade traz `storage_classes` da classe mais quente para a mais fria. Um worker sem disco visível reporta lista vazia, que significa "não medido" e não "sem armazenamento".
 
 `AI_CLUSTER_STORAGE_CLASSES` substitui a detecção, e `aic cluster nodes` mostra a coluna `ARMAZ`.
 
@@ -38,7 +38,7 @@ A saúde de armazenamento usada pelo escore de saúde (ver [[saude-e-confianca]]
 ## Limites conhecidos
 
 - NVMe e SSD SATA ficam juntos na mesma camada, porque a classificação não usa latência nem vazão de leitura.
-- A classificação diz quais classes o nó tem, não quanto espaço há em cada uma. Um nó com dois NVMe reporta só `nvme`.
+- A classificação diz quais classes o worker tem, não quanto espaço há em cada uma. Um worker com dois NVMe reporta só `nvme`.
 - Não há medida de vazão de leitura, nem de capacidade por dispositivo, nem de contagem de dispositivos.
 - A medida de escrita é só do disco do diretório temporário, não de cada classe.
 - Dentro de contêiner, `/sys/block` mostra os discos do host.

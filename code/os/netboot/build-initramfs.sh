@@ -1,18 +1,18 @@
 #!/bin/sh
 # Monta o sistema mínimo do worker para o boot pela rede (F15 J4/J5): um initramfs com busybox,
-# o worker e um servidor SSH (dropbear), que roda inteiro na RAM do nó.
+# o worker e um servidor SSH (dropbear), que roda inteiro na RAM do worker.
 #
 #   sh build-initramfs.sh <ai-cluster-worker> <diretório-de-saída>
 #
-# Roda NA máquina de destino (mesma arquitetura e mesma glibc do nó que vai bootar), como root,
+# Roda NA máquina de destino (mesma arquitetura e mesma glibc do worker que vai bootar), como root,
 # num Debian/Ubuntu com apt: ela copia de si mesma o busybox, o dropbear e as bibliotecas.
 # Saída: <diretório>/initramfs.cpio.gz. A senha do root do SSH é sorteada a cada build e impressa
 # no fim (SSH_PASSWORD=... para fixá-la). A imagem NÃO leva o token de join: ele chega pela linha
-# de comando do kernel (aic.token=), que vem do cartão local do nó.
+# de comando do kernel (aic.token=), que vem do cartão local do worker.
 #
 # O init lê da linha de comando: aic.controller= aic.node= aic.token= aic.ttl=SEGUNDOS (reinicia o
-# nó depois desse tempo; 0 ou ausente = nunca). É o que faz do boot pela rede um slot em teste:
-# passado o prazo o nó volta ao u-boot e, sem servidor TFTP, sobe do cartão.
+# worker depois desse tempo; 0 ou ausente = nunca). É o que faz do boot pela rede um slot em teste:
+# passado o prazo o worker volta ao u-boot e, sem servidor TFTP, sobe do cartão.
 set -eu
 
 WORKER=$1
@@ -86,7 +86,7 @@ arg() { for word in $(cat /proc/cmdline); do case $word in aic.$1=*) echo "${wor
 CONTROLLER=$(arg controller); NODE=$(arg node); TOKEN=$(arg token); TTL=$(arg ttl)
 [ -n "$NODE" ] && hostname "$NODE"
 IP=$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | head -n 1)
-echo "== Real.AI.Cluster - AI Cluster OS (recuperacao) =="
+echo "== AI.Cluster - AI Cluster OS (recuperacao) =="
 echo "== AI Cluster netboot: no=$NODE ip=$IP controller=$CONTROLLER ttl=${TTL:-0}"
 
 dropbear -r /etc/dropbear/key -p 22 -E 2>/tmp/dropbear.log &

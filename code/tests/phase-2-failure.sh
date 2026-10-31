@@ -3,8 +3,8 @@
 #
 # O critério de aceitação verificado: perder um worker não corrompe o DAG.
 # O worker é morto sem saída graciosa, então o controller só percebe quando
-# sua graça de heartbeat expira. O que o nó morto segurava deve terminar ou
-# reenfileirado no nó sobrevivente ou falhado de forma limpa — nunca deixado pendente.
+# sua graça de heartbeat expira. O que o worker morto segurava deve terminar ou
+# reenfileirado no worker sobrevivente ou falhado de forma limpa — nunca deixado pendente.
 set -uo pipefail
 
 NET=aic-net
@@ -33,7 +33,7 @@ docker network create "$NET" >/dev/null
 echo "=== iniciar controller + dois workers ==="
 # Graça deliberadamente menor que a retenção de trabalho abaixo. Antes de o heartbeat ser
 # desacoplado do laço de trabalho, isso ceifava o worker saudável no meio da unidade; a execução
-# agora só deve ceifar o nó que foi morto.
+# agora só deve ceifar o worker que foi morto.
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=${AI_CLUSTER_JOIN_TOKEN:-e2e-token} -e AI_CLUSTER_OPERATOR_TOKEN=${AI_CLUSTER_OPERATOR_TOKEN:-e2e-operator} -e AI_CLUSTER_AUTO_APPROVE=1 -d --name aic-controller --network "$NET" \
   -v aic-target:/t -e AI_CLUSTER_HEARTBEAT_GRACE_MS=9000 \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
@@ -45,11 +45,11 @@ for n in b c; do
 done
 sleep 8
 
-echo "--- nós antes da falha ---"
+echo "--- workers antes da falha ---"
 run "$R/aic cluster nodes"
 
 echo "=== enfileirar duas unidades para que ambos os workers segurem uma, então matar um worker em voo ==="
-# Duas unidades prontas e dois workers: cada worker reivindica uma, então o nó que morre
+# Duas unidades prontas e dois workers: cada worker reivindica uma, então o worker que morre
 # está de fato segurando trabalho. O diamante não faria isso — ele tem uma única cabeça pronta,
 # então só um worker pode estar ocupado por vez.
 run "$R/aic cluster benchmark --size "$SIZE" --repetitions 2" &
@@ -59,7 +59,7 @@ echo "--- matando node-b: SIGKILL, sem leave, sem requeue na saída ---"
 docker kill aic-worker-b >/dev/null 2>&1
 wait "$CLI"
 
-echo "--- nós após a falha ---"
+echo "--- workers após a falha ---"
 run "$R/aic cluster nodes"
 
 echo "--- log do controller ---"

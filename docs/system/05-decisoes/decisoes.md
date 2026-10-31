@@ -22,23 +22,23 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-007-fronteira-inference-api]] | decidido | 2026-10-19 | A Inference API é a única fronteira para cargas externas |
 | [[adr-008-stack-inicial]] | vivo | 2026-10-19 | Rust 2024, tokio, gRPC e Protobuf, tonic 0.14, axum 0.8 e clap 4 |
 | [[adr-009-canal-residente-de-fatias]] | decidido | 2026-10-24 | Fatiar projeções com pesos residentes nos workers e canal bidirecional pelo controller |
-| [[adr-010-papeis-de-credencial]] | decidido | 2026-10-23 a 10-24 | Join, operador, inferência, credencial por nó e chave de API, cada um com segredo próprio e falha fechada |
-| [[adr-011-escalonamento-por-custo]] | decidido | 2026-10-25 | O nó pede, o controller decide por custo com histerese; prioridade com envelhecimento, slots no worker e quarentena por evidência |
+| [[adr-010-papeis-de-credencial]] | decidido | 2026-10-23 a 10-24 | Join, operador, inferência, credencial por worker e chave de API, cada um com segredo próprio e falha fechada |
+| [[adr-011-escalonamento-por-custo]] | decidido | 2026-10-25 | O worker pede, o controller decide por custo com histerese; prioridade com envelhecimento, slots no worker e quarentena por evidência |
 | [[adr-012-metricas-de-inferencia-no-gateway]] | decidido | 2026-10-25 | O gateway mede TTFT, ITL, tokens/s e KV cache de cada geração e os expõe em `GET /metrics` |
-| [[adr-013-estado-do-controller-e-recuperacao]] | decidido | 2026-10-25 | Snapshot atômico do conjunto vivo, posse preguiçosa, dois relógios de recuperação, cópia num nó e eventos em arquivo |
+| [[adr-013-estado-do-controller-e-recuperacao]] | decidido | 2026-10-25 | Snapshot atômico do conjunto vivo, posse preguiçosa, dois relógios de recuperação, cópia num worker e eventos em arquivo |
 | [[adr-014-abstracao-de-transporte]] | decidido | 2026-10-25 | O transporte carrega bytes em frames sobre qualquer fluxo ordenado (TCP, Unix); o cluster segue em gRPC |
 | [[adr-015-request-manager-no-gateway]] | decidido | 2026-10-25 | Tenants com ACL e cota de tokens, fila por classe com envelhecimento e cancelamento de grafo, dentro do gateway |
 | [[adr-016-mtls-opcional-no-plano-de-controle]] | decidido | 2026-10-25 | mTLS ligado por `AI_CLUSTER_TLS_CLIENT_CA`; certificado de cliente é a camada abaixo dos tokens |
 | [[adr-017-instalacao-a-b-e-boot-de-rede]] | decidido | 2026-10-26 | Instalação A/B imutável é o caminho oficial; boot de rede só instala e recupera; estado do A/B em setor cru |
-| [[adr-018-release-assinada-e-medida-do-slot]] | decidido | 2026-10-26 | Release assinada (Ed25519) verificada no nó; versão sempre crescente; medida do slot como attestation de software (não prova integridade contra nó comprometido) |
+| [[adr-018-release-assinada-e-medida-do-slot]] | decidido | 2026-10-26 | Release assinada (Ed25519) verificada no worker; versão sempre crescente; medida do slot como attestation de software (não prova integridade contra worker comprometido) |
 | [[adr-019-imagem-x86-uefi-com-grub]] | decidido | 2026-10-27 | Imagem x86_64 UEFI: GRUB com grubenv, slots A/B por número de partição, kernel dentro do slot, camada `ab.sh` por plataforma |
-| [[adr-020-niveis-de-confianca-do-no]] | decidido | 2026-10-27 | Níveis de confiança do nó: pendente, aprovado e atestado; a exigência de atestado é da unidade (`require_attested`) |
+| [[adr-020-niveis-de-confianca-do-no]] | decidido | 2026-10-27 | Níveis de confiança do worker: pendente, aprovado e atestado; a exigência de atestado é da unidade (`require_attested`) |
 | [[adr-021-persistencia-de-traces-e-exportacao-de-eventos]] | decidido | 2026-10-27 | Traces em arquivo de acréscimo com rotação, estado do gateway com `GatewayStats`, eventos por syslog UDP |
 | [[adr-022-fluxo-de-modelos-e-motor-hibrido]] | decidido | 2026-10-28 | Controller guia o fluxo de modelos (catálogo, OK/NOK, envio de pesos, chaves, benchmark); llama.cpp como data plane; vazão primeiro |
 | [[adr-023-instalacao-com-aprovacao-do-controller]] | decidido | 2026-10-30 | Nenhuma instalação começa sozinha: etapa de espera com resumo, aprovação do operador no controller (impressão digital, disco a apagar) e token de uso único; MAC só como atalho |
 | [[adr-024-interface-de-comandos-unica-aic]] | decidido | 2026-10-30 | Um único comando de usuário, `aic <recurso> <ação>` (cluster, controller, gateway, worker, update); nomes antigos removidos sem apelidos; `status` sempre da máquina; opções com nome único; cabeçalho e cores iguais |
 | [[adr-025-gatilho-de-atualizacao-assinada-linux]] | decidido | 2026-10-30 | Chave de Linux comum (separada da do AI Cluster OS) assina o SHA256SUMS; a pública é pinada na instalação e o `update` confere antes de qualquer hash; worker Linux recebe o gatilho pelo rollout e aplica por unit root |
-| [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do nó (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
+| [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
 
 ## Notas
 

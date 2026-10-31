@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Fatia da Fase S (S2): aprovação de nó novo.
+# Fatia da Fase S (S2): aprovação de worker novo.
 #
-# Critério verificado: um nó que acabou de se registrar fica pendente e não recebe trabalho
+# Critério verificado: um worker que acabou de se registrar fica pendente e não recebe trabalho
 # até alguém rodar `aic cluster node approve`; a aprovação sobrevive a um re-registro. O token de
 # join (S1) prova quem pode falar com o controller; a aprovação decide quem pode trabalhar.
 #
 # Sequência:
-#   A) nó novo: aparece como `pendente`, e uma unidade enfileirada não é entregue a ele.
-#   B) `approve`: o nó vira `aprovado` e a unidade que esperava roda nele.
-#   C) `approve` de um nó desconhecido responde "não encontrado".
+#   A) worker novo: aparece como `pendente`, e uma unidade enfileirada não é entregue a ele.
+#   B) `approve`: o worker vira `aprovado` e a unidade que esperava roda nele.
+#   C) `approve` de um worker desconhecido responde "não encontrado".
 set -uo pipefail
 
 NET=aic-net
@@ -50,7 +50,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker --ne
   -e AI_CLUSTER_NODE_ID=node-new "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== A) nó novo fica pendente e não recebe trabalho ==="
+echo "=== A) worker novo fica pendente e não recebe trabalho ==="
 NODES=$(cli cluster nodes)
 echo "$NODES"
 if echo "$NODES" | grep -E "^node-new " | grep -q pendente; then
@@ -64,11 +64,11 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-bench --net
 sleep 10
 if docker logs aic-bench 2>&1 | grep -q '^w-'; then
   docker logs aic-bench 2>&1 | tail -3
-  fail "uma unidade foi entregue a um nó pendente"
+  fail "uma unidade foi entregue a um worker pendente"
 fi
-echo "OK: a unidade esperou, o nó pendente não recebeu trabalho"
+echo "OK: a unidade esperou, o worker pendente não recebeu trabalho"
 
-echo "=== A2) o token de join não aprova nó (S3a) ==="
+echo "=== A2) o token de join não aprova worker (S3a) ==="
 DENIED=$(CLI_TOKEN=$TOKEN cli cluster node approve node-new --trust-listed)
 echo "$DENIED"
 if echo "$DENIED" | grep -qi "operador"; then
@@ -87,8 +87,8 @@ BAD=$(cli cluster node approve node-new --fingerprint 0000000000000000 2>&1 || t
 echo "$BAD"
 echo "$BAD" | grep -qi "não confere" || fail "impressão errada deveria ser recusada"
 cli cluster nodes | grep -E "^node-new " | grep -q pendente || fail "impressão errada não deveria aprovar"
-echo "OK: impressão errada recusada, o nó segue pendente"
-FP=$(cli cluster nodes | awk '$1=="NÓ"{for(i=1;i<=NF;i++) if($i=="IMPRESSÃO") c=i} $1=="node-new"{print $c}')
+echo "OK: impressão errada recusada, o worker segue pendente"
+FP=$(cli cluster nodes | awk '$1=="WORKER"{for(i=1;i<=NF;i++) if($i=="IMPRESSÃO") c=i} $1=="node-new"{print $c}')
 OUT=$(cli cluster node approve node-new --fingerprint "$FP")
 echo "$OUT"
 echo "$OUT" | grep -q "aprovado" || fail "approve deveria confirmar a aprovação"
@@ -105,10 +105,10 @@ else
   fail "node-new deveria constar como aprovado"
 fi
 
-echo "=== C) nó desconhecido ==="
+echo "=== C) worker desconhecido ==="
 GHOST=$(cli cluster node approve ghost --trust-listed || true)
 if echo "$GHOST" | grep -q "não encontrado"; then
-  echo "OK: approve de um nó desconhecido responde 'não encontrado'"
+  echo "OK: approve de um worker desconhecido responde 'não encontrado'"
 else
   fail "approve ghost deveria responder 'não encontrado'"
 fi

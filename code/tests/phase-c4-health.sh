@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Fatia da Fase C4: o score de saúde leva a pressão térmica, e o placement o usa.
 #
-# Critério verificado: um nó quente reporta score de saúde pior que um nó frio com a mesma
-# capability, e o escalonador manda a unidade para o nó mais saudável.
+# Critério verificado: um worker quente reporta score de saúde pior que um worker frio com a mesma
+# capability, e o escalonador manda a unidade para o worker mais saudável.
 #
-# Os dois nós reportam a *mesma* capability (threads, memória e compute fixados), então os
+# Os dois workers reportam a *mesma* capability (threads, memória e compute fixados), então os
 # termos de compute, transferência e fila do modelo de custo se cancelam e a única coisa que
 # separa os dois é o termo de saúde. A temperatura entra por AI_CLUSTER_TEMPERATURE_C porque
 # contêiner comum não expõe /sys/class/thermal — sem o override o termo térmico não pode ser
 # exercitado nesta máquina.
 #
 # Sequência:
-#   A) a temperatura de cada nó atravessa worker → proto → controller → CLI;
-#   B) o score de saúde do nó frio é maior que o do nó quente;
-#   C) o placement manda a unidade para o nó frio.
+#   A) a temperatura de cada worker atravessa worker → proto → controller → CLI;
+#   B) o score de saúde do worker frio é maior que o do worker quente;
+#   C) o placement manda a unidade para o worker frio.
 set -uo pipefail
 
 NET=aic-net-c4
@@ -31,7 +31,7 @@ teardown() {
 }
 
 # Reads one column of one node's row from the `nodes` table. Columns are, in order:
-# NÓ ESTADO ARQ THREADS RAM_GB COMPUTE SAÚDE CPU_% TEMP_C SWAP_% ARMAZ — so SAÚDE is 7
+# WORKER ESTADO ARQ THREADS RAM_GB COMPUTE SAÚDE CPU_% TEMP_C SWAP_% ARMAZ — so SAÚDE is 7
 # and TEMP_C is 9. Padded columns mean awk's whitespace split lands on the same numbers.
 field() {
   echo "$1" | awk -v node="$2" -v col="$3" '$1 == node { print $col }'
@@ -74,7 +74,7 @@ else
   exit 1
 fi
 
-echo "=== B) o score de saúde do nó frio é maior ==="
+echo "=== B) o score de saúde do worker frio é maior ==="
 COOL_H=$(field "$NODES" node-cool 7)
 HOT_H=$(field "$NODES" node-hot 7)
 if awk -v a="$COOL_H" -v b="$HOT_H" 'BEGIN { exit !(a > b) }'; then
@@ -87,13 +87,13 @@ else
   exit 1
 fi
 
-echo "=== C) o placement manda a unidade para o nó frio ==="
+echo "=== C) o placement manda a unidade para o worker frio ==="
 BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 # The per-unit rows start with the work id; the second field is the node that ran it.
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')
 if [ "$RAN" = "node-cool" ]; then
-  echo "OK: a única unidade rodou em node-cool, o nó mais saudável"
+  echo "OK: a única unidade rodou em node-cool, o worker mais saudável"
 else
   echo "FALHA: esperado node-cool, veio '$RAN'"
   teardown

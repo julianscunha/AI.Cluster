@@ -1,5 +1,5 @@
 #!/bin/sh
-# aic worker change - muda este no para outro controller, sem regravar a imagem.
+# aic worker change - muda este worker para outro controller, sem regravar a imagem.
 #
 #   aic worker change --server IP[:8099] --code CODIGO [--controller URL] [--yes]
 #       usa o convite do novo controller (sudo aic cluster invite la): baixa o token e a CA, pede um
@@ -23,13 +23,13 @@ ENV_FILE="$DATA/worker.env"
 
 usage() {
 	cat <<'USO'
-aic worker change - muda este no para outro controller
+aic worker change - muda este worker para outro controller
 
 uso:
   aic worker change --server IP[:8099] --code CODIGO [--controller URL] [--yes]
       pelo convite do novo controller (rode 'sudo aic cluster invite la'). Troca o token, a CA e o
       certificado do tunel. --controller sobrepoe o endereco que o convite informa (use se o
-      controller aparece com outro IP para este no, por exemplo atras de NAT)
+      controller aparece com outro IP para este worker, por exemplo atras de NAT)
   aic worker change --controller URL --token TOKEN [--yes]
   aic worker change --controller URL --token-file ARQUIVO [--yes]
       so o endereco do controller e o token de join (o arquivo tem o token; o token nao aparece no ps)
@@ -59,7 +59,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || die "rode como root"
-[ -r "$ENV_FILE" ] || die "falta $ENV_FILE: este no nao tem identidade"
+[ -r "$ENV_FILE" ] || die "falta $ENV_FILE: este worker nao tem identidade"
 NODE=$(sed -n 's/^AI_CLUSTER_NODE_ID=//p' "$ENV_FILE" | head -n 1 | tr -d "\"'")
 [ -n "$NODE" ] || die "o worker.env nao tem AI_CLUSTER_NODE_ID"
 
@@ -78,7 +78,7 @@ if [ -n "$SERVER" ]; then
 	case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "--server invalido" ;; esac
 	case "$SERVER" in *:*) ;; *) SERVER="$SERVER:8099" ;; esac
 	case "$CODE" in *[!A-Z0-9]*) die "o codigo tem so letras e numeros" ;; esac
-	case "$NODE" in *[!A-Za-z0-9.-]*) die "o id do no ($NODE) tem caracteres que o convite nao aceita" ;; esac
+	case "$NODE" in *[!A-Za-z0-9.-]*) die "o id do worker ($NODE) tem caracteres que o convite nao aceita" ;; esac
 	command -v openssl >/dev/null || die "precisa do openssl"
 else
 	[ -n "$CONTROLLER" ] && [ -n "$TOKEN" ] || { usage >&2; exit 2; }

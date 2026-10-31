@@ -62,7 +62,7 @@ Pré-requisitos:
 Requisitos extras:
 
 - `phase-c-network-degrade.sh` instala `iproute2` no contêiner para estrangular o link com `tc`.
-- `phase-r-lan.sh` não sobe nada: confere um cluster físico que já está de pé, com nós de duas arquiteturas.
+- `phase-r-lan.sh` não sobe nada: confere um cluster físico que já está de pé, com workers de duas arquiteturas.
 - `phase-u-netboot.sh` precisa de uma placa armv7 em bancada, com boot pela rede.
 - A atualização assinada (rollout) é um teste de bancada em placa armv7, feito à mão. Não há script para ele.
 
@@ -76,13 +76,13 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 
 | Script | O que prova |
 |---|---|
-| `phase-s1-join-token.sh` | Controller não sobe sem token; nó sem token ou com token errado não aparece; CLI sem token é recusada. |
+| `phase-s1-join-token.sh` | Controller não sobe sem token; worker sem token ou com token errado não aparece; CLI sem token é recusada. |
 | `phase-m-catalog.sh` | Catálogo de modelos e OK/NOK: `model list` lê os cabeçalhos, `model check` cabe ou não cabe com o que falta. Precisa dos pesos em `code/models`. |
 | `phase-r-llama-rpc.sh` | Um GGUF no llama.cpp dividido entre gateway e worker por RPC sobre mTLS: pronto, chat e stream, 401/404, o rpc-server escondido e o túnel exigindo certificado. Precisa de `/t/llama/{llama-server,ggml-rpc-server,smollm2-360m-q4.gguf}`. |
 | `phase-s-resistance.sh [minutos]` | Resistência: carga contínua em 2 workers com partição de rede de um deles, controller reiniciado sob carga (SIGTERM e `kill`) e soak com memória amostrada a cada 30 s (falha se o controller ou um worker cresce mais de 60 MiB e 50%). Medido com 60 min de soak: 14.432 unidades concluídas, 0 falhas, fila 0, controller 13 a 26 MiB, workers 146 a 168 MiB (limite 219 a 223); partição e reinícios do controller passaram. |
 | `phase-u-setup.sh [pasta-da-release]` | Instalador guiado (`package-release.sh` gera a pasta): `install.sh` instala o servidor baixando só os pacotes do papel, o worker entra pelo convite e fica READY e aprovado, controller e gateway em computadores separados (o gateway só com o código do convite) e as combinações recusadas (gateway em ARM, ARM de 64 bits, processador errado) e o `/wait` do convite (um computador com Linux se apresenta e aparece em `aic cluster install list`). A assinatura da release (ADR-025): adulterada, sem assinatura, de outra chave ou com pacote trocado recusa sem mexer em nada; servidor sem a chave recusa com a migração; a versão nova assinada atualiza. O worker Linux pede por `aic-update-linux` (`--verify` confere sem gravar), e o `ai-cluster-update` aplica o pedido assinado. Espelho local no lugar do GitHub; contêineres Debian. |
 | `phase-r2-model-start.sh` | O fluxo `model list`, `check`, `start`, `status`, `stop`: chave de API só em hash, plano de workers, worker novo entrando no plano, mesma chave após o stop, várias chaves (`add`, `list`, `rotate`, `remove` com cota e classe) e worker de outra versão do rpc-server fora do plano. |
-| `phase-s2-approval.sh` | Nó novo fica pendente sem trabalho até `approve`; a aprovação sobrevive a re-registro. |
+| `phase-s2-approval.sh` | Worker novo fica pendente sem trabalho até `approve`; a aprovação sobrevive a re-registro. |
 | `phase-s3-roles.sh` | Token de join e de inferência não administram; operador administra; ações de operador entram na auditoria. |
 | `phase-s4-tls.sh` | gRPC com TLS e CA; `http://` e CA errada são recusados; sem certificado, só com `INSECURE`. |
 | `phase-s5-persist.sh` | Aprovação sobrevive a reinício de worker e de controller; `revoke` derruba o worker revogado. |
@@ -92,30 +92,30 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-1-leave.sh` | Saída por SIGTERM: o sobrevivente termina cada unidade, sem nada encalhado. |
 | `phase-2-failure.sh` | Worker morto com unidade em voo: a unidade volta à fila e o grafo termina. |
 | `phase-2-graph.sh` | Diamante A → (B, C) → D: B e C só despacham depois de A; D depois de B e C. |
-| `phase-g-placement.sh` | O custo escolhe o nó capaz, não o fraco. |
+| `phase-g-placement.sh` | O custo escolhe o worker capaz, não o fraco. |
 | `phase-g-quarantine.sh` | Worker que mente no checksum vai para `QUARANTINED` e o trabalho termina no honesto. |
-| `phase-g-reservations.sh` | Nó reservado recusa trabalho de outras requisições e roda o da dona. |
+| `phase-g-reservations.sh` | Worker reservado recusa trabalho de outras requisições e roda o da dona. |
 | `phase-f11-cancel.sh` | `request cancel` para a multiplicação que já roda no worker: o aviso chega pela batida, a conta é interrompida e nenhum resultado é enviado. |
 | `phase-g-slots.sh`, `phase-g-cores.sh`, `phase-g-priority.sh` | Slots de concorrência, cores concedidos e prioridade de unidade. |
 | `phase-c-benchmark.sh`, `phase-c-current.sh` | Perfil com compute medido e capacidade corrente com confiança. |
-| `phase-c4-health.sh`, `phase-c-storage-health.sh`, `phase-c-battery.sh` | Nó quente, com disco degradado ou com bateria descarregando tem saúde pior, e a unidade vai para o nó saudável. |
+| `phase-c4-health.sh`, `phase-c-storage-health.sh`, `phase-c-battery.sh` | Worker quente, com disco degradado ou com bateria descarregando tem saúde pior, e a unidade vai para o worker saudável. |
 | `phase-h-metrics.sh`, `phase-h-dashboard.sh`, `phase-h-traces.sh` | Roll-up de métricas, painel e rastreio de requisição por `request_id`. |
 | `phase-h-predictions.sh` | Previsão de tempo por unidade e no roll-up. |
 | `phase-h-inference-metrics.sh` | TTFT, ITL, tokens por segundo e cache KV no `/metrics` do gateway. |
 | `phase-i-state.sh`, `phase-i-checkpoint.sh`, `phase-i-events.sh` | Fila sobrevive a queda abrupta; o snapshot é proporcional ao trabalho que falta; eventos atravessam reinício. |
-| `phase-i4-recovery.sh`, `phase-i4-replica.sh` | Unidade em voo atravessa reinício do controller; fila volta da cópia de um nó quando os arquivos locais somem. |
-| `phase-t-soak.sh` | Rodízio de kill e pause sob carga: todo lote fecha e o cluster volta a todos os nós. |
+| `phase-i4-recovery.sh`, `phase-i4-replica.sh` | Unidade em voo atravessa reinício do controller; fila volta da cópia de um worker quando os arquivos locais somem. |
+| `phase-t-soak.sh` | Rodízio de kill e pause sob carga: todo lote fecha e o cluster volta a todos os workers. |
 | `phase-j-inference.sh`, `phase-j-chat.sh` | Autenticação por chave, modelos, embeddings sobre matmul, chat com continuação determinística, erros estáveis. |
 | `phase-s-gateway-tls.sh` | Gateway com certificado serve HTTPS e recusa texto puro; certificado sem chave, ou escuta fora de loopback sem TLS, não sobe. |
 | `phase-j-shards.sh` | Projeções da SmolLM2 em dois workers dão a mesma continuação; sem worker, 503. |
 | `phase-m-request-manager.sh` | ACL e 401 por tenant; cota com 429; `interactive` passa na frente de `batch`; grafo abandonado é cancelado. |
 | `phase-o-cache.sh` | Pedido repetido vem do cache, com ganho de latência, também no streaming, e as métricas contam os acertos. |
-| `phase-p-bootstrap.sh` | Um Debian limpo vira nó pronto só com o binário e `os/bootstrap.sh`; argumentos inválidos são recusados; a execução é idempotente. |
-| `phase-p-image.sh` | A imagem mínima do worker é construída do zero e vira nó pronto. |
-| `phase-q-learning.sh` | O modelo aprendido corrige a previsão de um nó mal calibrado em poucas dezenas de unidades. |
+| `phase-p-bootstrap.sh` | Um Debian limpo vira worker pronto só com o binário e `os/bootstrap.sh`; argumentos inválidos são recusados; a execução é idempotente. |
+| `phase-p-image.sh` | A imagem mínima do worker é construída do zero e vira worker pronto. |
+| `phase-q-learning.sh` | O modelo aprendido corrige a previsão de um worker mal calibrado em poucas dezenas de unidades. |
 | `phase-b4-node-show.sh`, `phase-i-storage.sh` | `node show` completo; classe de armazenamento detectada a partir de `/sys/block`. |
-| `phase-u-netboot.sh` | Boot pela rede em placa armv7: o nó baixa a recuperação por TFTP e volta ao cartão. Exige bancada. |
-| `phase-r-lan.sh` | Cluster físico com x86 e ARM: lote em mais de um nó e checksum igual entre arquiteturas. Exige a LAN montada. |
+| `phase-u-netboot.sh` | Boot pela rede em placa armv7: o worker baixa a recuperação por TFTP e volta ao cartão. Exige bancada. |
+| `phase-r-lan.sh` | Cluster físico com x86 e ARM: lote em mais de um worker e checksum igual entre arquiteturas. Exige a LAN montada. |
 | `scaling-sweep.sh` | 1, 2 e 3 workers com tamanhos de 32 a 256: custo de compute contra transferência por unidade. |
 
 `os/test-upgrade.sh` (na pasta `os/`) testa atualização e rollback do worker em um Linux com systemd. Roda na máquina de destino, como root.

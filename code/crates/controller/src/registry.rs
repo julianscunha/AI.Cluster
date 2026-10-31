@@ -31,7 +31,7 @@ fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 /// worth having, so it stops rather than issue a guessable one.
 fn new_credential() -> String {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("sem fonte de entropia para a credencial do nó");
+    getrandom::fill(&mut bytes).expect("sem fonte de entropia para a credencial do worker");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -111,7 +111,7 @@ impl NodeRecord {
 pub enum Approval {
     Approved,
     Unknown,
-    /// A impressão digital não é a da credencial atual do nó.
+    /// A impressão digital não é a da credencial atual do worker.
     Mismatch,
 }
 
@@ -281,12 +281,12 @@ impl Registry {
         existed
     }
 
-    /// Tira o nó do trabalho sem tirar a identidade: perde a confiança (não recebe unidades nem entra
+    /// Tira o worker do trabalho sem tirar a identidade: perde a confiança (não recebe unidades nem entra
     /// no plano de modelo), mas a credencial e a impressão digital continuam as mesmas. O worker segue
     /// conectado, como pendente; `approve` com a impressão digital de antes o põe de volta. False se o
-    /// nó é desconhecido.
+    /// worker é desconhecido.
     pub fn retire(&self, node_id: &str) -> bool {
-        // Ordem nós → known (a de `register_as`): o `approve` concorrente não vê vivo sem persistir.
+        // Ordem workers → known (a de `register_as`): o `approve` concorrente não vê vivo sem persistir.
         let mut nodes = self.lock();
         if let Some(record) = nodes.get_mut(node_id) {
             record.trusted = false;
@@ -303,8 +303,8 @@ impl Registry {
         true
     }
 
-    /// Esquece o nó por inteiro: registro vivo e credencial guardada. Se o worker continuar rodando, ele
-    /// se apresenta de novo como um nó novo e pendente. False se o nó é desconhecido.
+    /// Esquece o worker por inteiro: registro vivo e credencial guardada. Se o worker continuar rodando, ele
+    /// se apresenta de novo como um worker novo e pendente. False se o worker é desconhecido.
     pub fn forget(&self, node_id: &str) -> bool {
         let live = self.lock().remove(node_id).is_some();
         let mut known = self.lock_known();
@@ -372,7 +372,7 @@ impl Registry {
         }
     }
 
-    /// [`approve`](Self::approve) que só vale se a impressão digital da credencial atual do nó for
+    /// [`approve`](Self::approve) que só vale se a impressão digital da credencial atual do worker for
     /// `fingerprint`: quem tomou o id depois de um `revoke` tem outra credencial e não é aprovado.
     pub fn approve_checked(&self, node_id: &str, fingerprint: &str) -> Approval {
         self.approve_if(node_id, |record| {
@@ -505,8 +505,8 @@ impl Registry {
         })
     }
 
-    /// Fixa a chave pública do certificado do nó na primeira renovação e recusa outra nas seguintes
-    /// (ADR-026). Quem chama já confirmou `renews`. Um nó esquecido ou revogado offline perde a fixação.
+    /// Fixa a chave pública do certificado do worker na primeira renovação e recusa outra nas seguintes
+    /// (ADR-026). Quem chama já confirmou `renews`. Um worker esquecido ou revogado offline perde a fixação.
     pub fn bind_key(&self, node_id: &str, key_fingerprint: &str) -> bool {
         let mut known = self.lock_known();
         let Some(entry) = known.get_mut(node_id) else {
@@ -770,7 +770,7 @@ mod tests {
         // A identidade fica: mesma credencial, mesma impressão digital.
         assert_eq!(registry.list()[0].fingerprint, seen);
         assert!(registry.authorizes("n1", first.credential.as_bytes()));
-        // O worker que volta com a credencial dele continua o mesmo nó, ainda fora do trabalho.
+        // O worker que volta com a credencial dele continua o mesmo worker, ainda fora do trabalho.
         let back = registry
             .register_as(
                 identity("n1"),
@@ -795,7 +795,7 @@ mod tests {
         assert!(registry.forget("n1"));
         assert!(registry.list().is_empty());
         assert!(!registry.forget("n1"), "esquecer duas vezes: desconhecido");
-        // Quem volta é um nó novo e pendente, com outra credencial.
+        // Quem volta é um worker novo e pendente, com outra credencial.
         let again = registry.register(identity("n1"), CapabilityReport::default(), 2);
         assert_ne!(again.credential, first.credential);
         assert!(!registry.is_trusted("n1"));
@@ -1189,7 +1189,7 @@ mod tests {
         assert!(registry.bind_key("node-a", "chave-1"));
         assert!(registry.bind_key("node-a", "chave-1"));
         assert!(!registry.bind_key("node-a", "chave-2"));
-        // revogar (nó vivo) não solta a fixação: a chave antiga não volta a ser aceita como nova
+        // revogar (worker vivo) não solta a fixação: a chave antiga não volta a ser aceita como nova
         assert!(registry.revoke("node-a"));
         registry.approve("node-a");
         assert!(!registry.bind_key("node-a", "chave-2"));

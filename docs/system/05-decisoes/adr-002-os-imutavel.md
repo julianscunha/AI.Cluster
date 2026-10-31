@@ -11,7 +11,7 @@ Status: proposto · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
-Um nó que acumula configuração manual diverge dos outros (configuration drift), e corrigir isso dá trabalho. Imagens versionadas tornam o estado de cada nó reproduzível e a reversão simples.
+Um worker que acumula configuração manual diverge dos outros (configuration drift), e corrigir isso dá trabalho. Imagens versionadas tornam o estado de cada worker reproduzível e a reversão simples.
 
 ## Decisão
 
@@ -20,11 +20,11 @@ Usar imagem versionada e imutável, com reimage inicial e atualização A/B.
 ## Consequências
 
 - Evita configuration drift e facilita rollback e recuperação.
-- A atualização de versão passa por release assinada conferida no nó ([[adr-018-release-assinada-e-medida-do-slot]]).
+- A atualização de versão passa por release assinada conferida no worker ([[adr-018-release-assinada-e-medida-do-slot]]).
 
 ## Alternativas
 
-- Configuração mutável por nó: a justificativa é o drift que a decisão evita.
+- Configuração mutável por worker: a justificativa é o drift que a decisão evita.
 
 ## Limites
 

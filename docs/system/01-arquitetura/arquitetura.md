@@ -67,7 +67,7 @@ Nenhum consumidor externo acessa diretamente Controller, Worker, shards, tensors
 A interface administrativa permanece separada: CLI/TUI e Management API são destinadas à operação da infraestrutura ([[cli-tui]]).
 
 > [!warning] Limite atual: o gateway executa o modelo
-> O gateway (`code/crates/gateway`) roda o modelo dentro do próprio processo, fora do cluster. As projeções podem ser enviadas aos workers, com os nós escolhidos pelas variáveis `AI_CLUSTER_GPT2_SHARDS` e `AI_CLUSTER_SMOLLM2_SHARDS`. No alvo, o gateway apenas traduz a API; a escolha de nós passa pelo Planner e pelo Scheduler. Planejado: separar a engine do gateway ([[inference-engine]]).
+> O gateway (`code/crates/gateway`) roda o modelo dentro do próprio processo, fora do cluster. As projeções podem ser enviadas aos workers, com os workers escolhidos pelas variáveis `AI_CLUSTER_GPT2_SHARDS` e `AI_CLUSTER_SMOLLM2_SHARDS`. No alvo, o gateway apenas traduz a API; a escolha de workers passa pelo Planner e pelo Scheduler. Planejado: separar a engine do gateway ([[inference-engine]]).
 
 ## 4. Request Manager
 
@@ -131,7 +131,7 @@ AI Cluster OS
 O OS é imutável ou controlado por imagens versionadas. A instalação inicial apaga o sistema anterior e grava uma imagem limpa ([[adr-002-os-imutavel]]).
 
 > [!warning] Limite atual
-> Hoje existe imagem A/B imutável para armv7 (raiz somente leitura, dois slots, boot de rede só para instalação e recuperação; [[adr-017-instalacao-a-b-e-boot-de-rede]]). Atualizações de versão são distribuídas pelo controller em canário, com release assinada e conferida no nó ([[adr-018-release-assinada-e-medida-do-slot]]). Planejado: imagens para x86_64 e ARM64 e instalador próprio para cada uma.
+> Hoje existe imagem A/B imutável para armv7 (raiz somente leitura, dois slots, boot de rede só para instalação e recuperação; [[adr-017-instalacao-a-b-e-boot-de-rede]]). Atualizações de versão são distribuídas pelo controller em canário, com release assinada e conferida no worker ([[adr-018-release-assinada-e-medida-do-slot]]). Planejado: imagens para x86_64 e ARM64 e instalador próprio para cada uma.
 
 ## 8. Provisionamento
 
@@ -259,7 +259,7 @@ ACTIVE
 A topologia lógica da execução pode continuar enquanto o placement é substituído ([[hotplug-e-recuperacao]], [[adr-006-hotplug]]).
 
 > [!warning] Limite atual
-> Entrada e saída de nós funcionam, e a falha de um worker reenfileira as unidades dele. A recuperação do estado por chave (KV cache, estado de modelo) não existe. Planejado: hot-plug de dispositivos (USB, aceleradores) e recuperação de estado por chave.
+> Entrada e saída de workers funcionam, e a falha de um worker reenfileira as unidades dele. A recuperação do estado por chave (KV cache, estado de modelo) não existe. Planejado: hot-plug de dispositivos (USB, aceleradores) e recuperação de estado por chave.
 
 ## 13. Capacidade
 
@@ -313,7 +313,7 @@ O cluster deve expor:
 - expected throughput;
 - actual throughput.
 
-> Hoje o roll-up compara previsão e execução real, e cada nó aprende a razão entre elas para corrigir as previsões seguintes. Planejado: calibração que vá além dessa razão e planejador aprendido.
+> Hoje o roll-up compara previsão e execução real, e cada worker aprende a razão entre elas para corrigir as previsões seguintes. Planejado: calibração que vá além dessa razão e planejador aprendido.
 
 ## 15. Inteligência de edge
 

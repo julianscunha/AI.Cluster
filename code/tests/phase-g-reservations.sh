@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Fatia da Fase G (G6): reservas — um nó fica retido para uma requisição futura.
+# Fatia da Fase G (G6): reservas — um worker fica retido para uma requisição futura.
 #
-# Critério verificado: a reserva decide o placement, e não o custo. Um nó reservado
+# Critério verificado: a reserva decide o placement, e não o custo. Um worker reservado
 # (a) recusa unidades de outras requisições e (b) recebe as unidades da requisição dona
-# mesmo sendo o nó pior, o que o cost model sozinho nunca faria.
+# mesmo sendo o worker pior, o que o cost model sozinho nunca faria.
 #
-# Dois nós, um fraco (2 threads) e um forte (8 threads). Sem reserva o cost model sempre
+# Dois workers, um fraco (2 threads) e um forte (8 threads). Sem reserva o cost model sempre
 # prefere o forte; é essa preferência que dá sentido às pernas abaixo.
-#   A) baseline: sem reserva a unidade roda no nó forte.
-#   B) dono recebe o nó: node-weak retido para req-held; a unidade de req-held roda no
-#      node-weak — o nó *pior* — porque a reserva vence o ranking de custo.
+#   A) baseline: sem reserva a unidade roda no worker forte.
+#   B) dono recebe o worker: node-weak retido para req-held; a unidade de req-held roda no
+#      node-weak — o worker *pior* — porque a reserva vence o ranking de custo.
 #   C) recusa: node-strong retido para req-locked; a unidade de req-other não pode usar o
 #      node-strong e cai no node-weak, mesmo o forte estando ocioso.
-#   D) liberar: soltar a reserva devolve o nó forte ao ranking.
+#   D) liberar: soltar a reserva devolve o worker forte ao ranking.
 set -uo pipefail
 
 NET=aic-net
@@ -33,7 +33,7 @@ teardown() {
   docker rm -f aic-controller aic-worker-weak aic-worker-strong >/dev/null 2>&1
 }
 
-# Enfileira uma unidade sob um id de requisição e imprime o nó que a executou.
+# Enfileira uma unidade sob um id de requisição e imprime o worker que a executou.
 #
 # O relatório do benchmark é cumulativo (lista toda unidade já concluída no controller),
 # então pegamos o id de trabalho mais alto — que é sempre a unidade desta perna — em vez
@@ -68,10 +68,10 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== A) baseline: sem reserva o cost model prefere o nó forte ==="
+echo "=== A) baseline: sem reserva o cost model prefere o worker forte ==="
 expect "baseline" node-strong "$(place req-base)"
 
-echo "=== B) o dono recebe o nó: reserva em node-weak ($WEAK_THREADS threads) para req-held ==="
+echo "=== B) o dono recebe o worker: reserva em node-weak ($WEAK_THREADS threads) para req-held ==="
 run "$R/aic cluster reservation add node-weak req-held --minutes $MINUTES"
 run "$R/aic cluster reservation list"
 expect "unidade de req-held" node-weak "$(place req-held)"
@@ -81,7 +81,7 @@ echo "=== C) recusa: reserva em node-strong ($STRONG_THREADS threads) para req-l
 run "$R/aic cluster reservation add node-strong req-locked --minutes $MINUTES"
 expect "unidade de req-other" node-weak "$(place req-other)"
 
-echo "=== D) liberar devolve o nó forte ao ranking ==="
+echo "=== D) liberar devolve o worker forte ao ranking ==="
 run "$R/aic cluster reservation remove node-strong"
 expect "unidade de req-free" node-strong "$(place req-free)"
 

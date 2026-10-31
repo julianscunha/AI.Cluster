@@ -33,7 +33,7 @@ for pair in "aic-worker1:node-b" "aic-worker2:node-c"; do
 done
 sleep 8
 
-echo "--- nós ---"
+echo "--- workers ---"
 run "$R/aic cluster nodes"
 
 echo "=== enfileirar o diamante e aguardar drenar ==="

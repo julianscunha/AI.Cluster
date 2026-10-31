@@ -2,13 +2,13 @@
 # Fatia da Fase S (S1): token de join.
 #
 # Critério verificado: o controller só aceita quem apresenta o token de join, em todas as
-# chamadas. Sem isso qualquer cliente da rede registrava um nó ou injetava estado pela fila.
+# chamadas. Sem isso qualquer cliente da rede registrava um worker ou injetava estado pela fila.
 #
 # Sequência:
 #   A) controller sem token: recusa subir (fail-closed), não sobe aberto.
 #   B) worker com token errado e worker sem token: não entram, o log mostra Unauthenticated.
 #   C) worker com o token certo: entra e fica READY.
-#   D) a CLI sem token também é recusada; com o token lista o nó.
+#   D) a CLI sem token também é recusada; com o token lista o worker.
 set -uo pipefail
 
 NET=aic-net
@@ -31,7 +31,7 @@ cli() {
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
-# worker <nome> <nó> <token|->
+# worker <nome> <worker> <token|->
 worker() {
   local env=()
   [ "$3" != "-" ] && env=(-e "AI_CLUSTER_JOIN_TOKEN=$3")
@@ -69,7 +69,7 @@ sleep 8
 NODES=$(cli "$TOKEN" cluster nodes)
 if echo "$NODES" | grep -qE "node-bad|node-none"; then
   echo "$NODES"
-  fail "um nó sem o token certo apareceu em nodes"
+  fail "um worker sem o token certo apareceu em nodes"
 fi
 for w in aic-w-bad aic-w-none; do
   if docker logs "$w" 2>&1 | grep -qi "unauthenticated"; then
@@ -94,7 +94,7 @@ fi
 echo "=== D) a CLI sem token é recusada ==="
 OUT=$(cli - nodes)
 if echo "$OUT" | grep -qi "unauthenticated" && ! echo "$OUT" | grep -q "node-ok"; then
-  echo "OK: a CLI sem token foi recusada e não viu nós"
+  echo "OK: a CLI sem token foi recusada e não viu workers"
 else
   echo "$OUT"
   fail "a CLI sem token deveria ser recusada"

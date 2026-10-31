@@ -15,19 +15,19 @@ Não existe graph engine. Não há banco de grafo no código. O único grafo em 
 
 ## Domínios previstos
 
-| Grafo | Nós e arestas |
+| Grafo | Workers e arestas |
 |---|---|
 | Conhecimento | Documento, trecho, entidade, fato, incidente, serviço |
-| Hardware | Nó, CPU, RAM, GPU, NPU, armazenamento |
+| Hardware | Worker, CPU, RAM, GPU, NPU, armazenamento |
 | Rede | Enlaces e suas métricas |
 | Execução | Operações, dependências, tensores, Work Units |
-| Observabilidade | Requisição, plano, nó, evento, métrica, incidente |
+| Observabilidade | Requisição, plano, worker, evento, métrica, incidente |
 
 O modelo de dados desses grafos está em [[modelo-de-grafo]].
 
 ## Por que ainda não existe
 
-A adoção de busca por grafo só acontece com ganho medido contra a busca comum. Para medir isso é preciso uma coleção de documentos e perguntas de recuperação, e o cluster ainda não tem nenhuma. Consultas de topologia que o cluster precisa hoje (quais nós estão no mesmo host, qual é o link entre dois nós) são respondidas pelo registro e pelo modelo de custo, sem grafo.
+A adoção de busca por grafo só acontece com ganho medido contra a busca comum. Para medir isso é preciso uma coleção de documentos e perguntas de recuperação, e o cluster ainda não tem nenhuma. Consultas de topologia que o cluster precisa hoje (quais workers estão no mesmo host, qual é o link entre dois workers) são respondidas pelo registro e pelo modelo de custo, sem grafo.
 
 ## Limites conhecidos
 
@@ -35,4 +35,4 @@ A adoção de busca por grafo só acontece com ganho medido contra a busca comum
 - Não há projeção reconstruível a partir dos stores operacionais.
 - Não há consultas de placement ou de observabilidade sobre grafo.
 
-> Planejado: projeção reconstruível dos dados operacionais, consultas de nó elegível mais próximo, nós que hospedam um shard, incidentes relacionados, réplicas de estado e caminho entre nós, e integração com o [[edge-optimizer]] para recuperação. Entra só com ganho medido em benchmark de recuperação.
+> Planejado: projeção reconstruível dos dados operacionais, consultas de worker elegível mais próximo, workers que hospedam um shard, incidentes relacionados, réplicas de estado e caminho entre workers, e integração com o [[edge-optimizer]] para recuperação. Entra só com ganho medido em benchmark de recuperação.

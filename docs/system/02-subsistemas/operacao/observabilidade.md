@@ -7,15 +7,15 @@ type: sistema/subsistema
 
 # Observabilidade e telemetria
 
-O cluster responde três perguntas em qualquer momento: como está cada nó e o cluster inteiro, o que mudou, e o que aconteceu com uma requisição específica. A telemetria tem três tipos, cada um com um papel, e uma comparação entre previsão e medida para calibrar o modelo de custo. Voltar para [[operacao]].
+O cluster responde três perguntas em qualquer momento: como está cada worker e o cluster inteiro, o que mudou, e o que aconteceu com uma requisição específica. A telemetria tem três tipos, cada um com um papel, e uma comparação entre previsão e medida para calibrar o modelo de custo. Voltar para [[operacao]].
 
 ## Três tipos de telemetria
 
 | Tipo | Responde | Forma | Onde se lê |
 |---|---|---|---|
-| Métricas | Como está agora | Totais, médias, percentis e sinais por nó | `aic cluster metrics`, `aic cluster nodes`, `/metrics` |
+| Métricas | Como está agora | Totais, médias, percentis e sinais por worker | `aic cluster metrics`, `aic cluster nodes`, `/metrics` |
 | Eventos | O que mudou | Linha do tempo de transições | `aic cluster events` |
-| Traces | Por onde passou uma requisição | Unidades de uma requisição, com nó e tempos | `aic cluster request trace <id>` |
+| Traces | Por onde passou uma requisição | Unidades de uma requisição, com worker e tempos | `aic cluster request trace <id>` |
 
 O painel `aic cluster dashboard` junta os três numa tela só ([[cli-tui]]).
 
@@ -42,7 +42,7 @@ p50_latency_us=1000 p95_latency_us=2000
 
 Média e percentil respondem perguntas diferentes. A média mostra o custo típico. O p95 mostra o que a cauda sente, e a cauda é o que um cliente que espera por uma requisição experimenta.
 
-## Métricas de nó
+## Métricas de worker
 
 O worker lê `/proc` e `/sys` a cada heartbeat e envia:
 
@@ -54,7 +54,7 @@ O worker lê `/proc` e `/sys` a cada heartbeat e envia:
 
 Da medição do registro (capability) saem também, no `nodes` da CLI e no exporter: `baseline_confidence` (baseline limpo ou perturbado), `network_retransmit_ratio` e `network_jitter` e `ai_cluster_node_network_jitter_measured` (perda e oscilação da sonda de rede; sem pelo menos duas repetições o jitter 0 é "não medido", `n/d` na CLI), `storage_read_score` (leitura com `O_DIRECT`) e `memory_bandwidth_loaded_score` (memória com os núcleos juntos).
 
-O roll-up do controller (`GetMetrics` e o exporter) traz também as médias de rede e storage dos nós prontos que mediram e as unidades concluídas por segundo em 1 e 5 minutos (zero sem história que cubra a janela). O controller lembra as últimas 100 mil unidades concluídas; as contagens de concluídas passam a valer essa janela quando ela enche.
+O roll-up do controller (`GetMetrics` e o exporter) traz também as médias de rede e storage dos workers prontos que mediram e as unidades concluídas por segundo em 1 e 5 minutos (zero sem história que cubra a janela). O controller lembra as últimas 100 mil unidades concluídas; as contagens de concluídas passam a valer essa janela quando ela enche.
 
 Zero significa "não medido", não "zero". Na primeira leitura, CPU e IOPS são zero. Sem sensor de temperatura, a temperatura é zero.
 
@@ -95,7 +95,7 @@ O gateway se apresenta ao controller a cada 5 s (a cada 1 s enquanto o modelo ca
 O exportador do controller serve `GET /metrics` na porta `AI_CLUSTER_METRICS_ADDR` (padrão `127.0.0.1:9101`). Ele exige `Authorization: Bearer <token de operador>`.
 
 - Nomes começam com `ai_cluster_`. Os demais seguem o nome do campo de `metrics`, para que um número visto no scraper e na CLI seja o mesmo.
-- Cada nó vira uma série com o rótulo `node=`.
+- Cada worker vira uma série com o rótulo `node=`.
 - Se o exportador não sobe, o erro é reportado e o controller segue funcionando.
 
 ## Eventos
@@ -106,11 +106,11 @@ Nomes de evento:
 
 | Evento | Quando |
 |---|---|
-| `node_registered` | Nó se registrou. |
-| `node_approved`, `node_revoked` | Aprovação e revogação de nó. |
-| `node_left` | Nó saiu do cluster ao desligar ou ao drenar. |
-| `node_offline` | Nó sem heartbeat além da carência. |
-| `node_reserved`, `reservation_released` | Reserva de nó criada ou liberada. |
+| `node_registered` | Worker se registrou. |
+| `node_approved`, `node_revoked` | Aprovação e revogação de worker. |
+| `node_left` | Worker saiu do cluster ao desligar ou ao drenar. |
+| `node_offline` | Worker sem heartbeat além da carência. |
+| `node_reserved`, `reservation_released` | Reserva de worker criada ou liberada. |
 | `work_enqueued`, `graph_enqueued` | Trabalho entrou na fila. |
 | `work_completed` | Unidade concluída. |
 | `request_cancelled` | Unidades de uma requisição foram removidas da fila. |
@@ -118,14 +118,14 @@ Nomes de evento:
 | `rollout` | Mudança de estado do rollout de release. |
 | `audit` | Ação administrativa. Ver adiante. |
 
-Os eventos são guardados em anel de 256 entradas. O tempo é sempre o do controller, porque relógios de nó não são confiáveis para ordenação. Com `AI_CLUSTER_EVENTS=<arquivo>`, a linha do tempo sobrevive a reinício: o arquivo guarda uma linha por evento e é reescrito quando passa de 1024 linhas.
+Os eventos são guardados em anel de 256 entradas. O tempo é sempre o do controller, porque relógios de worker não são confiáveis para ordenação. Com `AI_CLUSTER_EVENTS=<arquivo>`, a linha do tempo sobrevive a reinício: o arquivo guarda uma linha por evento e é reescrito quando passa de 1024 linhas.
 
 ## Trilha de auditoria
 
 Cada ação administrativa gera um evento `audit` com ação, alvo e endereço de quem chamou. Ações cobertas: aprovação, revogação, enfileiramento de trabalho e de grafo, cancelamento de requisição, reserva, liberação de reserva e definição de release.
 
 - Tentativa negada por token errado não aparece na trilha. Ela falha antes de qualquer ação.
-- A ação é registrada antes do efeito. Um `approve` de nó inexistente aparece como tentativa.
+- A ação é registrada antes do efeito. Um `approve` de worker inexistente aparece como tentativa.
 - Eventos `audit` não são expulsos do anel por eventos comuns.
 - O ator é o endereço de rede de quem chamou, não uma identidade. Não há CN de certificado nem nome de operador.
 
@@ -133,7 +133,7 @@ Cada ação administrativa gera um evento `audit` com ação, alvo e endereço d
 
 O controller estima o tempo de compute de cada unidade com o modelo de custo. Ele soma as estimativas nas métricas (`total_predicted_compute_us`), ao lado do tempo medido. A diferença mostra o erro do modelo no cluster.
 
-Por nó, o controller também aprende a razão entre o real e o previsto. Ela corrige as previsões seguintes do mesmo nó, com taxa de aprendizado de 0,3. Razões fora de 0,05 a 20 são descartadas como erro de relógio. A correção afeta a previsão, não o placement: o nó escolhido continua pela taxa de referência do benchmark.
+Por worker, o controller também aprende a razão entre o real e o previsto. Ela corrige as previsões seguintes do mesmo worker, com taxa de aprendizado de 0,3. Razões fora de 0,05 a 20 são descartadas como erro de relógio. A correção afeta a previsão, não o placement: o worker escolhido continua pela taxa de referência do benchmark.
 
 A razão não é persistida. Reiniciar o controller reaprende.
 
@@ -143,7 +143,7 @@ A razão não é persistida. Reiniciar o controller reaprende.
 
 ```text
 REQUISIÇÃO abc123 UNIDADES 2
-TRABALHO   NÓ             ESTADO      COMPUTE_US TRANSFER_US   TOTAL_US
+TRABALHO   WORKER             ESTADO      COMPUTE_US TRANSFER_US   TOTAL_US
 w1         node-t         completed       12345         678      13023
 w2         node-t         completed       11987         654      12641
 unidades=2 compute_somado_us=24332 transfer_somado_us=1332 latencia_somada_us=25664
@@ -152,7 +152,7 @@ unidades=2 compute_somado_us=24332 transfer_somado_us=1332 latencia_somada_us=25
 Estados de uma unidade:
 
 - `queued`: na fila, ainda não despachada. Inclui as que esperam dependência do grafo.
-- `dispatched`: em voo num nó, sem resultado.
+- `dispatched`: em voo num worker, sem resultado.
 - `completed`: concluída. É a única com tempos.
 - `failed`: esgotou as tentativas.
 
@@ -160,7 +160,7 @@ O id da requisição é escolhido pelo cliente, ou cunhado pelo controller quand
 
 ## Painel
 
-`aic cluster dashboard [--watch N]` mostra nós disponíveis, a tabela de nós, o trabalho (concluídas, pendentes, bloqueadas e falhas), os tempos de compute e latência com o previsto, e as reservas. Sem `--watch` imprime uma vez. Com `--watch N` repinta a cada N segundos. O painel lê as mesmas chamadas da CLI e não tem navegação.
+`aic cluster dashboard [--watch N]` mostra workers disponíveis, a tabela de workers, o trabalho (concluídas, pendentes, bloqueadas e falhas), os tempos de compute e latência com o previsto, e as reservas. Sem `--watch` imprime uma vez. Com `--watch N` repinta a cada N segundos. O painel lê as mesmas chamadas da CLI e não tem navegação.
 
 ## Limites conhecidos
 
@@ -174,8 +174,8 @@ O id da requisição é escolhido pelo cliente, ou cunhado pelo controller quand
 - **IOPS conta o disco e as partições.** O número é um teto.
 - **Sem diagnóstico.** O cluster não indica causa provável nem ação recomendada.
 
-> Planejado: métricas de nó de frequência, carga, throttling, GPU e NPU, saúde de armazenamento e banda de memória.
+> Planejado: métricas de worker de frequência, carga, throttling, GPU e NPU, saúde de armazenamento e banda de memória.
 > Planejado: eventos `NODE_DEGRADED`, `SSD_WARNING` e `REBALANCE_STARTED`.
-> Planejado: amostragem adaptativa, com frequência alta só em nó degradado ou anômalo.
+> Planejado: amostragem adaptativa, com frequência alta só em worker degradado ou anômalo.
 > Planejado: diagnóstico com causa provável, impacto e ação.
 > Planejado: histórico persistido de métricas e exportação para um coletor.

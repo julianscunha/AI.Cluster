@@ -11,27 +11,27 @@ Catálogo de serviços, RPCs e mensagens do schema `code/proto/cluster.proto` (p
 
 ## Serviços e RPCs
 
-Autorização: **join** = token de join (todo nó e cliente); **op** = token de operador; **inf** = token de inferência; **nó** = credencial do nó, além do token de join (o operador também passa).
+Autorização: **join** = token de join (todo worker e cliente); **op** = token de operador; **inf** = token de inferência; **worker** = credencial do worker, além do token de join (o operador também passa).
 
 | RPC | Serviço | Request → Response | Chamador | Autorização | Efeito |
 |---|---|---|---|---|---|
 | `ProbeLink` | `LinkProbe` | `ProbeLinkRequest` → `ProbeLinkResponse` | worker | join | recebe o payload e devolve quantos bytes chegaram |
-| `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o nó e devolve `cluster_id` e `node_credential` |
-| `ApproveNode` | `ClusterControl` | `ApproveNodeRequest` → `ApproveNodeResponse` | operador | op | torna confiável um nó registrado; tira o nó de quarentena |
+| `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o worker e devolve `cluster_id` e `node_credential` |
+| `ApproveNode` | `ClusterControl` | `ApproveNodeRequest` → `ApproveNodeResponse` | operador | op | torna confiável um worker registrado; tira o worker de quarentena |
 | `RevokeNode` | `ClusterControl` | `RevokeNodeRequest` → `RevokeNodeResponse` | operador | op | retira a confiança e a credencial; devolve à fila o que estava em voo |
-| `RenewNodeCertificate` | `ClusterControl` | `RenewNodeCertificateRequest` → `RenewNodeCertificateResponse` | worker | credencial do nó | emite o certificado do túnel RPC para o CSR do nó (SAN `aic-worker-<nó>`); recusa nó pendente ou revogado (ADR-026) |
+| `RenewNodeCertificate` | `ClusterControl` | `RenewNodeCertificateRequest` → `RenewNodeCertificateResponse` | worker | credencial do worker | emite o certificado do túnel RPC para o CSR do worker (SAN `aic-worker-<worker>`); recusa worker pendente ou revogado (ADR-026) |
 | `SetRelease` | `ClusterControl` | `SetReleaseRequest` → `SetReleaseResponse` | operador | op | define a release desejada do cluster; `version` em branco cancela o rollout |
 | `GetOutput` | `ClusterControl` | `GetOutputRequest` → `GetOutputResponse` | operador | op | devolve a saída guardada de uma requisição com `keep_result` |
-| `ShardChannel` | `ClusterControl` | stream `ShardResult` → stream `ShardCompute` | worker | join + nó | canal residente de fatias; o worker abre |
-| `ShardMatmul` | `ClusterControl` | `ShardMatmulRequest` → `ShardMatmulResponse` | gateway | inf ou op | `x × fatia^T` em cada nó indicado |
-| `Heartbeat` | `ClusterControl` | `HeartbeatRequest` → `HeartbeatResponse` | worker | join + nó | batida de vida; leva e recebe a época da réplica de estado e, quando há, a release a instalar |
-| `ReportHealth` | `ClusterControl` | `HealthStreamRequest` → `HealthStreamResponse` | worker | join + nó | saúde e, opcionalmente, o perfil remedido. O nome é histórico: a RPC é unária |
-| `ListNodes` | `ClusterControl` | `ListNodesRequest` → `ListNodesResponse` | operador ou CLI | join | snapshot dos nós, sem credencial |
+| `ShardChannel` | `ClusterControl` | stream `ShardResult` → stream `ShardCompute` | worker | join + worker | canal residente de fatias; o worker abre |
+| `ShardMatmul` | `ClusterControl` | `ShardMatmulRequest` → `ShardMatmulResponse` | gateway | inf ou op | `x × fatia^T` em cada worker indicado |
+| `Heartbeat` | `ClusterControl` | `HeartbeatRequest` → `HeartbeatResponse` | worker | join + worker | batida de vida; leva e recebe a época da réplica de estado e, quando há, a release a instalar |
+| `ReportHealth` | `ClusterControl` | `HealthStreamRequest` → `HealthStreamResponse` | worker | join + worker | saúde e, opcionalmente, o perfil remedido. O nome é histórico: a RPC é unária |
+| `ListNodes` | `ClusterControl` | `ListNodesRequest` → `ListNodesResponse` | operador ou CLI | join | snapshot dos workers, sem credencial |
 | `ListModels` | `ClusterControl` | `ListModelsRequest` → `ListModelsResponse` | operador | modelos da pasta `AI_CLUSTER_MODELS_DIR`, lidos pelo cabeçalho (ADR-022, E1) |
-| `CheckModel` | `ClusterControl` | `CheckModelRequest` → `CheckModelResponse` | operador | OK ou NOK de um modelo da pasta contra a RAM dos nós aprovados e vivos (ADR-022, E2) |
-| `LeaveNode` | `ClusterControl` | `LeaveNodeRequest` → `LeaveNodeResponse` | worker | join + nó | o nó sai: fica `DRAINING`, devolve o que tinha em voo e é removido |
-| `RequestWork` | `ClusterControl` | `RequestWorkRequest` → `RequestWorkResponse` | worker | join + nó | puxa uma unidade, respeitando reservas e `min_cpu_threads` |
-| `SubmitWorkResult` | `ClusterControl` | `SubmitWorkResultRequest` → `SubmitWorkResultResponse` | worker | join + nó | entrega o resultado de uma unidade |
+| `CheckModel` | `ClusterControl` | `CheckModelRequest` → `CheckModelResponse` | operador | OK ou NOK de um modelo da pasta contra a RAM dos workers aprovados e vivos (ADR-022, E2) |
+| `LeaveNode` | `ClusterControl` | `LeaveNodeRequest` → `LeaveNodeResponse` | worker | join + worker | o worker sai: fica `DRAINING`, devolve o que tinha em voo e é removido |
+| `RequestWork` | `ClusterControl` | `RequestWorkRequest` → `RequestWorkResponse` | worker | join + worker | puxa uma unidade, respeitando reservas e `min_cpu_threads` |
+| `SubmitWorkResult` | `ClusterControl` | `SubmitWorkResultRequest` → `SubmitWorkResultResponse` | worker | join + worker | entrega o resultado de uma unidade |
 | `EnqueueWork` | `ClusterControl` | `EnqueueWorkRequest` → `EnqueueWorkResponse` | operador | op | enfileira `repetitions` unidades independentes |
 | `EnqueueGraph` | `ClusterControl` | `EnqueueGraphRequest` → `EnqueueGraphResponse` | operador | op | enfileira um grafo sintético de quatro unidades com dependência; recusa quando a fila passa de 256 unidades |
 | `CancelRequest` | `ClusterControl` | `CancelRequestRequest` → `CancelRequestResponse` | operador | op | retira da fila as unidades da requisição que ainda não foram despachadas e as que dependiam delas |
@@ -40,25 +40,25 @@ Autorização: **join** = token de join (todo nó e cliente); **op** = token de 
 | `WatchEvents` | `ClusterControl` | `WatchEventsRequest` → stream de `Event` | operador ou CLI | operador | barramento: cada evento novo, assim que é gravado; 16 assinantes; assinante lento recebe `events_lagged` |
 | `GetMetrics` | `ClusterControl` | `GetMetricsRequest` → `MetricsResponse` | operador, exportador | join | roll-up do cluster no instante |
 | `GetTrace` | `ClusterControl` | `GetTraceRequest` → `GetTraceResponse` | operador ou CLI | join | caminho requisição → unidades |
-| `Reserve` | `ClusterControl` | `ReserveRequest` → `ReserveResponse` | operador | op | retém um nó para uma requisição |
+| `Reserve` | `ClusterControl` | `ReserveRequest` → `ReserveResponse` | operador | op | retém um worker para uma requisição |
 | `ListReservations` | `ClusterControl` | `ListReservationsRequest` → `ListReservationsResponse` | operador ou CLI | join | reservas vivas |
-| `ReleaseReservation` | `ClusterControl` | `ReleaseReservationRequest` → `ReleaseReservationResponse` | operador | op | libera a reserva do nó |
+| `ReleaseReservation` | `ClusterControl` | `ReleaseReservationRequest` → `ReleaseReservationResponse` | operador | op | libera a reserva do worker |
 
 Total: 2 serviços e 24 RPCs.
 
-## Nó e identidade
+## Worker e identidade
 
 | Mensagem | Campos (número) | Notas |
 |---|---|---|
-| `NodeIdentity` | `node_id` (1), `device_id` (2), `architecture` (3), `os_version` (4), `runtime_version` (5), `image_sha256` (6), `can_update` (7) | `image_sha256`: SHA-256 medido do slot em execução; vazio até a medição terminar. `can_update`: o nó sabe aplicar uma release; só esses entram no rollout e só eles podem ser canário |
-| `CapabilityReport` | `rpc_port` (27, porta do túnel mTLS do rpc-server; 0 = sem RPC), `rpc_host` (28, endereço que o gateway usa), `rpc_version` (29, commit do llama.cpp com o patch), além de `cpu_threads` (1), `memory_bytes` (2), `compute_score` (3), `memory_bandwidth_score` (4), `storage_score` (5), `network_score` (6), `precisions` (7), `accelerators` (8), `storage_classes` (9), `current_compute_score` (10), `compute_confidence` (11), `compute_median_score` (12), `compute_deviation` (13), `network_achieved_score` (14), `current_network_score` (15), `work_slots` (16), `storage_latency_ms` (17), `shard_cache_bytes` (18), `baseline_confidence` (19), `network_retransmit_ratio` (20), `network_jitter` (21), `network_jitter_measured` (26: sonda com duas ou mais repetições; sem isso, jitter 0 é "não medido"), `storage_read_score` (22), `storage_device` (23), `memory_bandwidth_loaded_score` (24), `storage_devices` (25, mensagem `StorageDevice`) | Scores relativos a uma referência; zero é "não medido", nunca "nulo". `compute_score` é o melhor caso e ordena os nós; `compute_median_score` calibra previsões. `network_score` é a velocidade nominal do link (1.0 = 1 GbE); `network_achieved_score` é a taxa alcançada até o controller, e o placement usa a menor das duas. `storage_classes` vai do mais quente ao mais frio (`nvme`, `ssd`, `hdd`) |
+| `NodeIdentity` | `node_id` (1), `device_id` (2), `architecture` (3), `os_version` (4), `runtime_version` (5), `image_sha256` (6), `can_update` (7) | `image_sha256`: SHA-256 medido do slot em execução; vazio até a medição terminar. `can_update`: o worker sabe aplicar uma release; só esses entram no rollout e só eles podem ser canário |
+| `CapabilityReport` | `rpc_port` (27, porta do túnel mTLS do rpc-server; 0 = sem RPC), `rpc_host` (28, endereço que o gateway usa), `rpc_version` (29, commit do llama.cpp com o patch), além de `cpu_threads` (1), `memory_bytes` (2), `compute_score` (3), `memory_bandwidth_score` (4), `storage_score` (5), `network_score` (6), `precisions` (7), `accelerators` (8), `storage_classes` (9), `current_compute_score` (10), `compute_confidence` (11), `compute_median_score` (12), `compute_deviation` (13), `network_achieved_score` (14), `current_network_score` (15), `work_slots` (16), `storage_latency_ms` (17), `shard_cache_bytes` (18), `baseline_confidence` (19), `network_retransmit_ratio` (20), `network_jitter` (21), `network_jitter_measured` (26: sonda com duas ou mais repetições; sem isso, jitter 0 é "não medido"), `storage_read_score` (22), `storage_device` (23), `memory_bandwidth_loaded_score` (24), `storage_devices` (25, mensagem `StorageDevice`) | Scores relativos a uma referência; zero é "não medido", nunca "nulo". `compute_score` é o melhor caso e ordena os workers; `compute_median_score` calibra previsões. `network_score` é a velocidade nominal do link (1.0 = 1 GbE); `network_achieved_score` é a taxa alcançada até o controller, e o placement usa a menor das duas. `storage_classes` vai do mais quente ao mais frio (`nvme`, `ssd`, `hdd`) |
 | `HealthReport` | `health_score` (1), `cpu_utilization` (2), `memory_utilization` (3), `temperature_c` (4), `storage_health` (5), `network_latency_ms` (6), `thermal_throttling` (7), `swap_utilization` (8), `disk_io_ops` (9), `battery_level` (10), `on_battery` (11) | `disk_io_ops` é zero no primeiro relatório. `battery_level` zero com `on_battery` falso significa "sem bateria visível", não "bateria vazia" |
 | `NodeSnapshot` | `identity` (1), `capability` (2), `health` (3), `state` (4), `registered_at_unix_ms` (5), `last_heartbeat_unix_ms` (6), `trusted` (7), `attested` (8) | `state` é texto (`READY`, `OFFLINE`, `DRAINING`…). `attested` é calculado na leitura: a versão e a medida do slot batem com a release desejada. A credencial não sai aqui |
-| `RegisterNodeRequest` | `identity` (1), `capability` (2), `replica` (3) | `replica` é a cópia de estado que o nó guarda |
+| `RegisterNodeRequest` | `identity` (1), `capability` (2), `replica` (3) | `replica` é a cópia de estado que o worker guarda |
 | `RegisterNodeResponse` | `accepted` (1), `cluster_id` (2), `message` (3), `node_credential` (4) | a credencial é emitida a cada registro de quem não prova a anterior |
-| `HeartbeatRequest` | `node_id` (1), `unix_ms` (2), `replica_epoch_unix_ms` (3) | época zero quando o nó não guarda cópia. O `unix_ms` do nó é informativo: a vivacidade usa o relógio do controller |
-| `HeartbeatResponse` | `acknowledged` (1), `replica` (2), `release` (3), `cancel_work_ids` (4) | `cancel_work_ids`: unidades em voo canceladas por `CancelRequest`, o nó para a conta (até uma batida de atraso). `replica` só vem quando a época do controller avançou; `release` só vem quando difere da versão do nó e o rollout o liberou |
-| `Release` | `version` (1), `url` (2), `sha256` (3), `image_sha256` (4), `signature` (5), `linux_signature` (6) | release do sistema. `sha256` é do artefato; `image_sha256` é o do conteúdo do slot depois de gravado; `signature` é Ed25519 em base64 (88 caracteres), conferida pelo nó (AI Cluster OS); `linux_signature` é Ed25519 do `SHA256SUMS` da release Linux comum, conferida pelo worker Linux (ADR-025), e `url` aponta para o diretório da release. Cada release leva uma das duas assinaturas ou as duas |
+| `HeartbeatRequest` | `node_id` (1), `unix_ms` (2), `replica_epoch_unix_ms` (3) | época zero quando o worker não guarda cópia. O `unix_ms` do worker é informativo: a vivacidade usa o relógio do controller |
+| `HeartbeatResponse` | `acknowledged` (1), `replica` (2), `release` (3), `cancel_work_ids` (4) | `cancel_work_ids`: unidades em voo canceladas por `CancelRequest`, o worker para a conta (até uma batida de atraso). `replica` só vem quando a época do controller avançou; `release` só vem quando difere da versão do worker e o rollout o liberou |
+| `Release` | `version` (1), `url` (2), `sha256` (3), `image_sha256` (4), `signature` (5), `linux_signature` (6) | release do sistema. `sha256` é do artefato; `image_sha256` é o do conteúdo do slot depois de gravado; `signature` é Ed25519 em base64 (88 caracteres), conferida pelo worker (AI Cluster OS); `linux_signature` é Ed25519 do `SHA256SUMS` da release Linux comum, conferida pelo worker Linux (ADR-025), e `url` aponta para o diretório da release. Cada release leva uma das duas assinaturas ou as duas |
 | `SetReleaseRequest` / `SetReleaseResponse` | `release` (1) / — | ver [[versionamento]] para a validação e o rollout |
 | `HealthStreamRequest` | `node_id` (1), `health` (2), `capability` (3) | `capability` é opcional; quando vem, substitui o perfil guardado e `current_compute_score` carrega a medida mais recente |
 | `HealthStreamResponse` | `accepted` (1) | |
@@ -76,9 +76,9 @@ Total: 2 serviços e 24 RPCs.
 | `ModelStatus` | `model_id` (1), `state` (2: `ModelState` STOPPED, LOADING, READY, FAILED), `reason` (3), `generation` (4), `tokens_per_second` (5) | o gateway diz o que aplicou; o controller descarta ids fora do padrão |
 | `TenantGrant` | `tenant` (1), `key_sha256` (2), `models` (3), `tokens` (4, cota por janela; 0 = sem cota), `class` (5, teto de prioridade) | só o hash da chave; vazio em `models` = todos |
 | `ReportGatewayRequest` / `ReportGatewayResponse` | `gateway_id` (1), `url` (2), `models` (3), `stats` (4), `running` (5), `llama_version` (6), `llama_slots` (7), `memory_available_bytes` (8) / `desired` (1), `tenants` (2) | a resposta leva o plano de modelo e as chaves em hash (token de inferência) |
-| `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | nó desconhecido responde `approved` falso; aprovar de novo um nó já aprovado continua verdadeiro |
-| `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | nó desconhecido responde `revoked` falso |
-| `RenewNodeCertificateRequest` / `RenewNodeCertificateResponse` | `node_id` (1), `csr_pem` (2) / `cert_pem` (1) | CSR assinado pela chave do nó; a prova é a credencial, não o token de join |
+| `ApproveNodeRequest` / `ApproveNodeResponse` | `node_id` (1), `fingerprint` (2, obrigatória; `NodeSnapshot.fingerprint` = 9) / `approved` (1) | worker desconhecido responde `approved` falso; aprovar de novo um worker já aprovado continua verdadeiro |
+| `RevokeNodeRequest` / `RevokeNodeResponse` | `node_id` (1) / `revoked` (1), `requeued` (2) | worker desconhecido responde `revoked` falso |
+| `RenewNodeCertificateRequest` / `RenewNodeCertificateResponse` | `node_id` (1), `csr_pem` (2) / `cert_pem` (1) | CSR assinado pela chave do worker; a prova é a credencial, não o token de join |
 | `LeaveNodeRequest` / `LeaveNodeResponse` | `node_id` (1) / `accepted` (1), `requeued` (2) | |
 | `ProbeLinkRequest` / `ProbeLinkResponse` | `payload` (1) / `received_bytes` (1) | payload de até 4 MiB |
 
@@ -109,7 +109,7 @@ Total: 2 serviços e 24 RPCs.
 | `ShardOutput` | `rows` (1), `cols` (2), `data` (3), `compute_us` (4) | `compute_us` é medido no worker, sem a rede |
 | `ShardMatmulResponse` | `outputs` (1) | mesma ordem de `ops` |
 | `ShardCompute` | `op_id` (1), `model_subdir` (2), `tensor` (3), `row_start` (4), `row_end` (5), `rows` (6), `k` (7), `x` (8), `by_columns` (9) | controller → worker; `op_id` é gerado pelo controller |
-| `ShardResult` | `op_id` (1), `ok` (2), `error` (3), `rows` (4), `cols` (5), `data` (6), `compute_us` (7), `invalid` (8) | worker → controller; `invalid` marca recusa do pedido, não falha do nó |
+| `ShardResult` | `op_id` (1), `ok` (2), `error` (3), `rows` (4), `cols` (5), `data` (6), `compute_us` (7), `invalid` (8) | worker → controller; `invalid` marca recusa do pedido, não falha do worker |
 
 Comportamento de cada campo e limites: [[canal-de-fatias]].
 
@@ -128,14 +128,14 @@ Comportamento de cada campo e limites: [[canal-de-fatias]].
 | Mensagem | Campos (número) | Notas |
 |---|---|---|
 | `Reservation` | `node_id` (1), `request_id` (2), `expires_at_unix_ms` (3) | expira sozinha |
-| `ReserveRequest` / `ReserveResponse` | `node_id` (1), `request_id` (2), `ttl_ms` (3), `slots` (4) / `granted` (1), `expires_at_unix_ms` (2), `message` (3) | `ttl_ms` 0 usa 60 s; `slots` 0 retém o nó inteiro |
+| `ReserveRequest` / `ReserveResponse` | `node_id` (1), `request_id` (2), `ttl_ms` (3), `slots` (4) / `granted` (1), `expires_at_unix_ms` (2), `message` (3) | `ttl_ms` 0 usa 60 s; `slots` 0 retém o worker inteiro |
 | `ListReservationsRequest` / `ListReservationsResponse` | — / `reservations` (1) | |
-| `ReleaseReservationRequest` / `ReleaseReservationResponse` | `node_id` (1) / `released` (1) | um nó tem no máximo uma reserva |
+| `ReleaseReservationRequest` / `ReleaseReservationResponse` | `node_id` (1) / `released` (1) | um worker tem no máximo uma reserva |
 
 > [!warning] Campos novos e compatibilidade
 > `by_columns` (`ShardOp` 6, `ShardCompute` 9) e `invalid` (`ShardResult` 8) mudam o resultado quando ausentes. Um worker que não os conhece calcula faixas de GPT-2 como linhas e pode devolver forma compatível, sem erro. Por isso controller e workers se atualizam juntos ([[versionamento]]).
 >
-> `priority` (`WorkUnit` 12, `EnqueueWorkRequest` 8, `EnqueueGraphRequest` 5) e a atualização de nós (`can_update`, `image_sha256`, `HeartbeatResponse.release`) são seguros numa mistura de versões: um peer antigo usa o padrão, e um nó sem `can_update` fica de fora do rollout.
+> `priority` (`WorkUnit` 12, `EnqueueWorkRequest` 8, `EnqueueGraphRequest` 5) e a atualização de workers (`can_update`, `image_sha256`, `HeartbeatResponse.release`) são seguros numa mistura de versões: um peer antigo usa o padrão, e um worker sem `can_update` fica de fora do rollout.
 
 > [!info] Planejado
 > Negociação de features no registro; `WorkAssignment` com tipo de operação, precisão e URIs de tensor (hoje a unidade é uma multiplicação `f64` fixa); mensagens próprias para carregar e descarregar modelos e fatias, para checkpoint e restauração e para cancelar unidade individual; telemetria por stream.

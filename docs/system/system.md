@@ -58,7 +58,7 @@ O código fica em `code/` (workspace Rust).
 
 ### Camada 5 — Plataforma e operação
 
-32. [[ai-cluster-os]] — sistema operacional do nó.
+32. [[ai-cluster-os]] — sistema operacional do worker.
 33. [[provisionamento]] — descoberta, instalação e recuperação.
 34. [[seguranca]] — identidade, tokens, credenciais e papéis.
 35. [[cli-tui]] — comandos operacionais e dashboard.

@@ -9,10 +9,10 @@ type: sistema/subsistema
 
 Duas dimensões separadas:
 
-- **Saúde** responde se o nó consegue trabalhar agora.
-- **Confiança** responde se o nó está autorizado e íntegro, ou seja, se pode receber trabalho em princípio.
+- **Saúde** responde se o worker consegue trabalhar agora.
+- **Confiança** responde se o worker está autorizado e íntegro, ou seja, se pode receber trabalho em princípio.
 
-Um nó pode estar saudável e não confiável (recém-chegado, ainda sem aprovação), ou confiável e degradado (temperatura alta). O escalonador usa as duas.
+Um worker pode estar saudável e não confiável (recém-chegado, ainda sem aprovação), ou confiável e degradado (temperatura alta). O escalonador usa as duas.
 
 ## Saúde
 
@@ -30,35 +30,35 @@ O escore é o **pior domínio**, não a média:
 Regras:
 
 - **CPU não entra no escore.** Utilização mede carga, não condição. A carga é tratada pelo termo de fila do custo de placement.
-- **Piso de 0,05.** Um nó medido nunca reporta exatamente 0, porque 0 significa "não reportado" para o placement.
+- **Piso de 0,05.** Um worker medido nunca reporta exatamente 0, porque 0 significa "não reportado" para o placement.
 - **Sem sensor não penaliza.** Temperatura zero significa que nenhum sensor está visível, e o domínio é ignorado.
-- O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um nó degradado perde para um saudável de capacidade igual.
+- O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um worker degradado perde para um saudável de capacidade igual.
 
 Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para qualquer hardware.
 
 ## Confiança
 
-O controller guarda a confiança de cada nó como aprovado ou não aprovado, com uma exceção de quarentena:
+O controller guarda a confiança de cada worker como aprovado ou não aprovado, com uma exceção de quarentena:
 
 | Situação | Efeito |
 |---|---|
-| Nó novo | Não confiável. Não recebe trabalho até ser aprovado (`aic cluster node approve`). |
+| Worker novo | Não confiável. Não recebe trabalho até ser aprovado (`aic cluster node approve`). |
 | Aprovado | Recebe trabalho. |
 | Revogado (`RevokeNode`) | Sai de circulação. Suas unidades em voo voltam à fila. |
 | Quarentena | Sai de circulação até um operador aprovar de novo. Ver abaixo. |
 
-A aprovação e a credencial do nó sobrevivem a reinício quando o controller tem `AI_CLUSTER_NODES` configurado. Registrar o nó de novo não o cura, e sair do cluster não apaga o registro: o nó continua listado, como `QUARANTINED` se estava em quarentena.
+A aprovação e a credencial do worker sobrevivem a reinício quando o controller tem `AI_CLUSTER_NODES` configurado. Registrar o worker de novo não o cura, e sair do cluster não apaga o registro: o worker continua listado, como `QUARANTINED` se estava em quarentena.
 
-Toda RPC exige o token de entrada, e a credencial do nó é conferida em cada chamada. O papel de operador é separado do papel de nó (ver [[seguranca]]).
+Toda RPC exige o token de entrada, e a credencial do worker é conferida em cada chamada. O papel de operador é separado do papel de worker (ver [[seguranca]]).
 
 ## Quarentena
 
 Um resultado é inválido quando não tem a forma esperada, tem números não finitos ou tem checksum diferente do que a soma recomputada pelo controller daria (mesma ordem de soma, igualdade exata).
 
-- Um resultado inválido não é aceito. A unidade volta à fila **sem gastar** a tentativa dela, porque a culpa é do nó.
-- Três resultados inválidos seguidos colocam o nó em quarentena. Um resultado válido zera a contagem.
-- Ao entrar em quarentena, o nó perde as unidades que ainda segura (cada uma volta à fila gastando uma tentativa) e os canais de fatias são derrubados.
-- Só `aic cluster node approve` libera o nó. O limite de três é fixo, sem variável de ambiente.
+- Um resultado inválido não é aceito. A unidade volta à fila **sem gastar** a tentativa dela, porque a culpa é do worker.
+- Três resultados inválidos seguidos colocam o worker em quarentena. Um resultado válido zera a contagem.
+- Ao entrar em quarentena, o worker perde as unidades que ainda segura (cada uma volta à fila gastando uma tentativa) e os canais de fatias são derrubados.
+- Só `aic cluster node approve` libera o worker. O limite de três é fixo, sem variável de ambiente.
 
 ## Diagnóstico
 
@@ -66,11 +66,11 @@ O sistema não registra a causa provável de uma degradação nem o impacto esti
 
 ## Limites conhecidos
 
-- O checksum prova coerência interna do resultado, não que a multiplicação está certa. Um nó que devolve uma matriz errada com o checksum dessa matriz passa pela validação.
-- Não há verificação por réplica. Executar a mesma unidade em dois nós e comparar custaria o dobro de compute.
+- O checksum prova coerência interna do resultado, não que a multiplicação está certa. Um worker que devolve uma matriz errada com o checksum dessa matriz passa pela validação.
+- Não há verificação por réplica. Executar a mesma unidade em dois workers e comparar custaria o dobro de compute.
 - Não há SMART, medida de desgaste de disco nem limite térmico por hardware.
 - A degradação de rede não entra no escore de saúde. O custo de transferência usa a medida corrente, mas o escore não.
 - Não há estados `UNKNOWN`, `BOOTSTRAPPED` ou `VALIDATED`. A confiança é binária (aprovado ou não) mais a quarentena.
-- Os estados `DEGRADED`, `ACTIVE` e `FAILED` existem no enum, mas o controller não os produz. O estado de um nó que parou de responder é `OFFLINE`.
+- Os estados `DEGRADED`, `ACTIVE` e `FAILED` existem no enum, mas o controller não os produz. O estado de um worker que parou de responder é `OFFLINE`.
 
 > Planejado: níveis de confiança com provisionamento e verificação (`UNKNOWN` até `TRUSTED`), attestation, limite térmico por hardware, SMART e diagnóstico automatizado com impacto estimado no trabalho.

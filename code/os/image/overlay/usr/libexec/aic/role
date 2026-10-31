@@ -1,17 +1,17 @@
 #!/bin/sh
-# Diz qual é o papel deste nó no cluster, lendo só a configuração local (sem token e sem rede).
+# Diz qual é o papel deste worker no cluster, lendo só a configuração local (sem token e sem rede).
 #   aic worker role         resumo em várias linhas
 #   aic worker role --short  uma linha, para o console
-# Quem aprova o nó é o controller: confira lá com `aic cluster nodes` (coluna CONFIANÇA).
+# Quem aprova o worker é o controller: confira lá com `aic cluster nodes` (coluna CONFIANÇA).
 
 usage() {
 	cat <<'USO'
-aic worker role - diz o papel deste no no cluster, lendo so a configuracao local
+aic worker role - diz o papel deste worker no cluster, lendo so a configuracao local
 
 uso: aic worker role [--short]
   sem argumento   resumo: no, papel, estado do worker, controller, registro, versao e slot
   --short         so o papel, em uma linha (e o que o console mostra)
-A estrutura do cluster e a aprovacao dos nos sao do controller: aic cluster topology.
+A estrutura do cluster e a aprovacao dos workers sao do controller: aic cluster topology.
 USO
 }
 case "${1:-}" in -h | --help) usage; exit 0 ;; esac
@@ -50,11 +50,11 @@ case "$state" in *execucao) sc=$C_OK ;; *) sc=$C_BAD ;; esac
 case "$joined" in sim*) jc=$C_OK ;; *) jc=$C_WARN ;; esac
 row() { printf '  %s%-12s%s %s%s%s\n' "$C_LOGO" "$1" "$C_RESET" "$3" "$2" "$C_RESET"; } # rótulo valor cor
 
-row 'No' "${node:-$(hostname)}" "$C_VALUE"
+row 'Worker' "${node:-$(hostname)}" "$C_VALUE"
 row 'Papel' "$role" "$C_VALUE"
 row 'Estado' "$G_NODE $state" "$sc"
 row 'Controller' "${controller:-nao configurado}" "$C_VALUE"
 row 'Registrado' "$joined" "$jc"
 row 'Versao' "$(cat /etc/aic-release 2>/dev/null || echo dev)   slot $(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' "$CMDLINE")" "$C_VALUE"
-printf '\n  %sA estrutura do cluster e a aprovacao dos nos sao do controller:%s\n' "$C_HINT" "$C_RESET"
+printf '\n  %sA estrutura do cluster e a aprovacao dos workers sao do controller:%s\n' "$C_HINT" "$C_RESET"
 printf '  %saic cluster --controller %s topology%s\n' "$C_HINT" "${controller:-URL}" "$C_RESET"

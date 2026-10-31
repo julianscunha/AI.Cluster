@@ -2,13 +2,13 @@
 # Fatia da Fase P (F15, J3): bootstrap de um Linux existente até virar worker.
 #
 # Critério verificado: um Debian limpo, sem Rust e sem nada do cluster, recebe só o binário do
-# worker e o `os/bootstrap.sh` e vira um nó READY no controller, sem outra intervenção.
+# worker e o `os/bootstrap.sh` e vira um worker READY no controller, sem outra intervenção.
 # (O Debian roda num contêiner, sem systemd: o script usa o caminho "segundo plano".)
 #
 # Sequência:
 #   A) argumentos errados (inclusive caracteres de shell)  são recusados antes de mexer na máquina;
 #   B) o bootstrap instala, grava o ambiente em modo 0600 e o worker aparece READY;
-#   C) rodar de novo é inofensivo (idempotente) e o nó segue um só.
+#   C) rodar de novo é inofensivo (idempotente) e o worker segue um só.
 set -uo pipefail
 
 NET=aic-net-p
@@ -85,12 +85,12 @@ boot --controller $CONTROLLER --token p-join --insecure --node-id node-clean \
   --binary /t/release/ai-cluster-worker >/dev/null || fail "a segunda execução falhou"
 sleep 6
 COUNT=$(cli cluster nodes 2>/dev/null | awk '$1 == "node-clean"' | wc -l)
-[ "$COUNT" = 1 ] || fail "deveria haver um nó node-clean, há $COUNT"
+[ "$COUNT" = 1 ] || fail "deveria haver um worker node-clean, há $COUNT"
 # O nome do processo no /proc é cortado em 15 caracteres ("ai-cluster-work"). O contêiner não tem
 # init que recolha filhos, então o worker antigo, já encerrado, fica como zumbi: não conta.
 RUNNING=$(MSYS_NO_PATHCONV=1 docker exec aic-clean-p sh -c 'for d in /proc/[0-9]*; do grep -q "^ai-cluster-work" $d/comm 2>/dev/null && ! grep -q "^State:.*Z" $d/status && echo x; done | wc -l')
 [ "$RUNNING" = 1 ] || fail "deveria haver um processo do worker, há $RUNNING"
-echo "OK: um nó, um processo"
+echo "OK: um worker, um processo"
 
 echo "=== D) trocar o id da máquina exige --force ==="
 refused --controller $CONTROLLER --token p-join --insecure --node-id outro-nome   --binary /t/release/ai-cluster-worker || fail "trocar o node-id sem --force deveria ser recusado (código 2)"

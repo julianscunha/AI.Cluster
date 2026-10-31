@@ -11,7 +11,7 @@ Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 
-O cluster reúne hardware heterogêneo e precisa de uma visão única para planejar e distribuir trabalho, sem perder a execução local eficiente em cada nó.
+O cluster reúne hardware heterogêneo e precisa de uma visão única para planejar e distribuir trabalho, sem perder a execução local eficiente em cada worker.
 
 ## Decisão
 
@@ -28,4 +28,4 @@ Separar o control plane do cluster (o controller) do Worker Runtime ([[worker-ru
 
 ## Limites
 
-- Não há controller em alta disponibilidade. Uma cópia do estado num nó cobre a perda do volume do controller ([[adr-013-estado-do-controller-e-recuperacao]]).
+- Não há controller em alta disponibilidade. Uma cópia do estado num worker cobre a perda do volume do controller ([[adr-013-estado-do-controller-e-recuperacao]]).

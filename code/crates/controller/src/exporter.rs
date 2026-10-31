@@ -135,13 +135,13 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     gauge(
         &mut out,
         "ai_cluster_nodes_total",
-        "Nós registrados no cluster.",
+        "Workers registrados no cluster.",
         f64::from(summary.nodes_total),
     );
     gauge(
         &mut out,
         "ai_cluster_nodes_available",
-        "Nós que o placement pode escolher agora.",
+        "Workers que o placement pode escolher agora.",
         f64::from(summary.nodes_available),
     );
     gauge(
@@ -165,25 +165,25 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     gauge(
         &mut out,
         "ai_cluster_avg_network_score",
-        "Média do score de rede dos nós prontos que mediram. Zero é nenhum nó mediu.",
+        "Média do score de rede dos workers prontos que mediram. Zero é nenhum worker mediu.",
         summary.avg_network_score,
     );
     gauge(
         &mut out,
         "ai_cluster_avg_storage_score",
-        "Média da escrita sequencial dos nós prontos que mediram, sobre 500 MB/s.",
+        "Média da escrita sequencial dos workers prontos que mediram, sobre 500 MB/s.",
         summary.avg_storage_score,
     );
     gauge(
         &mut out,
         "ai_cluster_avg_storage_read_score",
-        "Média da leitura O_DIRECT dos nós prontos que mediram, sobre 500 MB/s.",
+        "Média da leitura O_DIRECT dos workers prontos que mediram, sobre 500 MB/s.",
         summary.avg_storage_read_score,
     );
     gauge(
         &mut out,
         "ai_cluster_avg_storage_latency_ms",
-        "Média da latência de escrita com fsync (ms) dos nós prontos que mediram.",
+        "Média da latência de escrita com fsync (ms) dos workers prontos que mediram.",
         summary.avg_storage_latency_ms,
     );
     gauge(
@@ -250,7 +250,7 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_threads",
-        "Threads que o nó reporta.",
+        "Threads que o worker reporta.",
         nodes,
         |node| {
             f64::from(
@@ -263,7 +263,7 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_memory_bytes",
-        "Memória que o nó reporta, em bytes.",
+        "Memória que o worker reporta, em bytes.",
         nodes,
         |node| {
             node.capability
@@ -373,7 +373,7 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_health_score",
-        "Saúde do nó: 1.0 saudável, 0 sem informação.",
+        "Saúde do worker: 1.0 saudável, 0 sem informação.",
         nodes,
         |node| {
             node.health
@@ -417,7 +417,7 @@ pub fn render(summary: &MetricsResponse, nodes: &[NodeSnapshot]) -> String {
     node_metric(
         &mut out,
         "ai_cluster_node_temperature_celsius",
-        "Temperatura do nó em Celsius. Zero significa sensor não visível.",
+        "Temperatura do worker em Celsius. Zero significa sensor não visível.",
         nodes,
         |node| {
             node.health

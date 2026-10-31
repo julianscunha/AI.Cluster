@@ -11,7 +11,7 @@ C_RESET="${ESC}[0m"
 C_BAR="${ESC}[1;37;44m"   # cabeçalho: branco forte sobre azul
 C_FOOT="${ESC}[30;47m"    # rodapé: preto sobre cinza claro
 C_LOGO="${ESC}[36m"       # logotipo e rótulos: ciano
-C_NODE="${ESC}[1;36m"     # nós do logotipo: ciano forte
+C_NODE="${ESC}[1;36m"     # workers do logotipo: ciano forte
 C_TEXT="${ESC}[37m"
 C_VALUE="${ESC}[97m"
 C_OK="${ESC}[92m"
@@ -106,10 +106,10 @@ box() {
 # Cabecalho do componente, igual ao brand::banner do Rust (e ao setup dos Linux): logotipo, nome, apoio,
 # versao e detalhe. Sem terminal (ou com NO_COLOR) vira uma linha so.
 banner() { # banner <componente> <versao> <detalhe>
-	if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then printf 'Real.AI.Cluster %s v%s - %s\n' "$1" "$2" "$3"; return; fi
+	if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then printf 'AI.Cluster %s v%s - %s\n' "$1" "$2" "$3"; return; fi
 	local w="${ESC}[1;97m" a="${ESC}[36m" k="${ESC}[2;37m" z="${C_RESET}"
 	printf '\n   %s%s%s%s%s%s%s\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$z"
-	printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$a" "$z" "$w" "$1" "$z"
+	printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$a" "$z" "$w" "$1" "$z"
 	printf ' %s%s%s%s%s%s    %sIA distribuida em hardware comum%s\n' "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$z" "$k" "$z"
 	printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$a" "$z" "$k" "$2" "$z"
 	printf '   %s%s%s%s%s%s      %s%s%s\n\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$a" "$3" "$z"

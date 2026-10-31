@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Fatia da Fase Q (F17, P1): o modelo de custo aprende a velocidade real de cada nó.
+# Fatia da Fase Q (F17, P1): o modelo de custo aprende a velocidade real de cada worker.
 #
-# Critério verificado: um nó que anuncia um compute score 4x acima do que entrega (fixado de
+# Critério verificado: um worker que anuncia um compute score 4x acima do que entrega (fixado de
 # propósito) começa com previsões muito erradas, e depois de algumas unidades o erro cai: a
-# previsão de cada nó passa a ser corrigida pela média móvel do real sobre o previsto.
+# previsão de cada worker passa a ser corrigida pela média móvel do real sobre o previsto.
 set -uo pipefail
 
 NET=aic-net-q
@@ -24,12 +24,12 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker-q $ENVS --network "$NET" -v a
   -e AI_CLUSTER_COMPUTE_SCORE=4.0 -e AI_CLUSTER_CPU_THREADS=1 "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== 40 unidades, uma por vez, num nó que promete 4x o que entrega ==="
+echo "=== 40 unidades, uma por vez, num worker que promete 4x o que entrega ==="
 OUT=$(run "$R/aic cluster benchmark --size 64 --repetitions 40")
 REQ=$(echo "$OUT" | sed -n 's/.*requisicao=\([^ ]*\).*/\1/p' | head -1)
 [ -n "$REQ" ] || fail "sem request id"
 TRACE=$(run "$R/aic cluster request trace $REQ")
-# Linhas "w-N nó completed COMPUTE PREDITO ..."; ordena pelo número da unidade.
+# Linhas "w-N worker completed COMPUTE PREDITO ..."; ordena pelo número da unidade.
 ROWS=$(echo "$TRACE" | awk '$3 == "completed" { sub("w-", "", $1); print $1, $4, $5 }' | sort -n)
 echo "$ROWS" | head -3; echo "..."; echo "$ROWS" | tail -3
 COUNT=$(echo "$ROWS" | wc -l)

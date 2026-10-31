@@ -1,5 +1,5 @@
 #!/bin/sh
-# AI Cluster OS - o `setup` deste no (ADR-024). Mesmo contrato `<substantivo> <verbo>` do setup dos Linux:
+# AI Cluster OS - o `setup` deste worker (ADR-024). Mesmo contrato `<substantivo> <verbo>` do setup dos Linux:
 # quem chama e o `aic` (/usr/bin/aic), que repassa a linha. Os programas que ele usa ficam aqui, fora do PATH:
 # role (papel), change (troca de controller), passwd (senha do console) e os daemons (aic-updater etc.).
 #
@@ -62,10 +62,10 @@ worker)
 	esac ;;
 update)
 	case "$verbo" in
-	status) banner atualizacao "$VER" "Versao e ultima atualizacao deste no"; atualizacao_status ;;
-	# A atualizacao assinada e empurrada pelo controller (aic cluster rollout); este no nao puxa release.
-	apply) banner atualizacao "$VER" "Atualizacao deste no"
-		echo "a atualizacao assinada chega pelo controller (aic cluster rollout); este no nao a puxa sozinho." >&2
+	status) banner atualizacao "$VER" "Versao e ultima atualizacao deste worker"; atualizacao_status ;;
+	# A atualizacao assinada e empurrada pelo controller (aic cluster rollout); este worker nao puxa release.
+	apply) banner atualizacao "$VER" "Atualizacao deste worker"
+		echo "a atualizacao assinada chega pelo controller (aic cluster rollout); este worker nao a puxa sozinho." >&2
 		echo "o aic-updater aplica a release quando ela chega. Para ver o resultado: aic update status" >&2
 		exit 1 ;;
 	*) usage ;;

@@ -25,40 +25,40 @@ Ver [[seguranca]] para os papéis de cada token.
 
 - Saída que um script lê é `chave=valor` ou tabela de colunas fixas.
 - Estado é texto. Em terminal o painel usa cor e glifos; redirecionado (scripts, `grep`, log), sai em texto puro, em `chave=valor`.
-- Comandos que mudam estado respondem com uma linha que diz o resultado, como `NÓ aprovado` ou `NÓ não encontrado`.
+- Comandos que mudam estado respondem com uma linha que diz o resultado, como `WORKER aprovado` ou `WORKER não encontrado`.
 
 ## Comandos
 
-### Nós
+### Workers
 
 | Comando | Função |
 |---|---|
-| `aic cluster nodes` | Tabela de nós: uma linha por nó, com estado, confiança, versão, medida e sinais. |
-| `aic cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os nós agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway entra como um ramo à parte: ele se apresenta ao controller a cada 15 s (`ReportGateway`, não é um nó e não recebe trabalho) e a árvore mostra o id, a URL, se está vivo e, por modelo, os nós que guardam as fatias. Controller antigo, sem o RPC, mostra a árvore sem o ramo. |
-| `aic cluster node show <id>` | Um nó, com capability, saúde e confiança completas. |
-| `aic cluster node approve <nó>` | Aprova um nó pendente para receber trabalho. |
-| `aic cluster node revoke <nó>` | Retira a aprovação e a credencial do nó, devolve o trabalho em voo à fila e deixa o nó pendente. |
-| `aic cluster node retire <nó>` / `remove <nó>` | Tira o nó do trabalho mantendo a identidade, ou o esquece por inteiro. |
+| `aic cluster nodes` | Tabela de workers: uma linha por worker, com estado, confiança, versão, medida e sinais. |
+| `aic cluster topology` | A estrutura do cluster em árvore: o controller na raiz e os workers agrupados por papel (computação, computação com fatias de modelo, recuperação), com estado, arquitetura, versão e os pendentes de aprovação. O gateway entra como um ramo à parte: ele se apresenta ao controller a cada 15 s (`ReportGateway`, não é um worker e não recebe trabalho) e a árvore mostra o id, a URL, se está vivo e, por modelo, os workers que guardam as fatias. Controller antigo, sem o RPC, mostra a árvore sem o ramo. |
+| `aic cluster node show <id>` | Um worker, com capability, saúde e confiança completas. |
+| `aic cluster node approve <worker>` | Aprova um worker pendente para receber trabalho. |
+| `aic cluster node revoke <worker>` | Retira a aprovação e a credencial do worker, devolve o trabalho em voo à fila e deixa o worker pendente. |
+| `aic cluster node retire <worker>` / `remove <worker>` | Tira o worker do trabalho mantendo a identidade, ou o esquece por inteiro. |
 
 A instalação com aprovação (`aic cluster install list|approve|reject|open|close`) e o convite (`aic cluster invite`) estão na referência de [[cli]].
 
-A tabela de nós traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão da imagem) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
+A tabela de workers traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão da imagem) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
 
 ### Reservas
 
 | Comando | Função |
 |---|---|
-| `aic cluster reservation add <nó> <requisição> [--minutes N] [--slots N]` | Retém um nó para uma requisição. `--minutes 0` usa o padrão do controller (60 s). `--slots` guarda só N slots; `0` é o nó inteiro. |
-| `aic cluster reservation list` | Lista nó, requisição dona e vencimento. |
-| `aic cluster reservation remove <nó>` | Libera a reserva antes do vencimento. Nó sem reserva não é erro. |
+| `aic cluster reservation add <worker> <requisição> [--minutes N] [--slots N]` | Retém um worker para uma requisição. `--minutes 0` usa o padrão do controller (60 s). `--slots` guarda só N slots; `0` é o worker inteiro. |
+| `aic cluster reservation list` | Lista worker, requisição dona e vencimento. |
+| `aic cluster reservation remove <worker>` | Libera a reserva antes do vencimento. Worker sem reserva não é erro. |
 
-Reservar antes de enfileirar permite que a requisição caia no nó reservado: o `benchmark --request-id` aceita o mesmo id da reserva.
+Reservar antes de enfileirar permite que a requisição caia no worker reservado: o `benchmark --request-id` aceita o mesmo id da reserva.
 
 ### Trabalho e requisições
 
 | Comando | Função |
 |---|---|
-| `aic cluster request trace <id>` | Unidades de uma requisição, com estado, nó e tempos. |
+| `aic cluster request trace <id>` | Unidades de uma requisição, com estado, worker e tempos. |
 | `aic cluster request cancel <id>` | Remove da fila as unidades de uma requisição. Unidade já em execução termina. |
 | `aic cluster benchmark [--size N] [--repetitions N] [--local] [--min-threads N] [--request-id ID] [--priority N]` | Despacha multiplicações de matrizes e compara compute com transferência. `--local` roda no próprio processo. |
 | `aic cluster graph [--size N]` | Despacha um grafo diamante de dependências e mostra as ramificações liberadas. |
@@ -77,7 +77,7 @@ Ver [[observabilidade]] para o significado de cada campo.
 
 | Comando | Função |
 |---|---|
-| `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` (ou `--url <diretório> --linux-signature <base64>` para os workers Linux comum) | Define a release que os nós devem rodar. |
+| `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` (ou `--url <diretório> --linux-signature <base64>` para os workers Linux comum) | Define a release que os workers devem rodar. |
 | `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
 
 O `sign-release.sh` do repositório gera os argumentos de `rollout` a partir do artefato assinado. O fluxo está em [[ai-cluster-os]].
@@ -95,24 +95,24 @@ Ver [[model-manager]].
 
 `aic cluster dashboard` mostra, em texto:
 
-- `nós_disponíveis`: quantos nós o placement pode escolher agora.
-- Tabela de nós, com estado (`READY`, `DRAINING` e outros) e saúde.
+- `nós_disponíveis`: quantos workers o placement pode escolher agora.
+- Tabela de workers, com estado (`READY`, `DRAINING` e outros) e saúde.
 - `TRABALHO`: concluídas, pendentes, bloqueadas e falhas, desde o início do controller.
 - `TEMPO`: compute e latência totais e médios, com o previsto ao lado.
 - `RESERVAS`: reservas ativas e a requisição dona de cada uma.
 
-Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não tem seleção nem paginação. Detalhe de um nó vem de `aic cluster node show`, e de uma requisição, de `aic cluster request trace`.
+Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não tem seleção nem paginação. Detalhe de um worker vem de `aic cluster node show`, e de uma requisição, de `aic cluster request trace`.
 
 ## Limites conhecidos
 
 - **A CLI usa o token de operador para tudo.** Não existe papel só de leitura para quem só quer olhar o cluster.
 - **Painel sem histórico.** Mostra o estado de agora. Taxas por segundo não existem.
 - **Painel sem seções de inferência.** TTFT, ITL e tokens por segundo estão no `/metrics` do gateway, não no painel.
-- **Sem comandos de manutenção de nó.** A CLI não drena nem reprovisiona um nó. A saída acontece quando o próprio worker se desliga.
+- **Sem comandos de manutenção de worker.** A CLI não drena nem reprovisiona um worker. A saída acontece quando o próprio worker se desliga.
 
 > Planejado: `node drain`, `node reprovision` e `node history`.
 > Planejado: `request list` e `request show`.
 > Planejado: `model show`.
 > Planejado: `diagnose`, `rebalance` e `graph query`.
-> Planejado: TUI com navegação e seleção de nó, e estado com cor além do texto.
+> Planejado: TUI com navegação e seleção de worker, e estado com cor além do texto.
 > Planejado: TTFT, ITL, tokens por segundo e cache KV no painel.

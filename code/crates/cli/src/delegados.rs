@@ -58,7 +58,7 @@ pub enum Controller {
         /// Instala também o gateway, no mesmo computador.
         #[arg(long)]
         with_gateway: bool,
-        /// IP deste computador que os nós usam para chegar ao controller.
+        /// IP deste computador que os workers usam para chegar ao controller.
         #[arg(long)]
         ip: Option<String>,
         /// Pasta com os modelos.

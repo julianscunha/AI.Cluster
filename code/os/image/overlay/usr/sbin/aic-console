@@ -126,13 +126,13 @@ draw() {
 		logo "$top" $((MX + 8))
 		at $((top + 1)) $((MX + 28)); printf '%sAI Cluster OS%s' "${ESC}[1;97m" "$C_RESET"
 		at $((top + 2)) $((MX + 28)); printf '%sIA distribuida em hardware comum%s' "$C_TEXT" "$C_RESET"
-		at $((top + 3)) $((MX + 28)); printf '%sReal.AI.Cluster%s' "$C_LOGO" "$C_RESET"
+		at $((top + 3)) $((MX + 28)); printf '%sAI.Cluster%s' "$C_LOGO" "$C_RESET"
 		at $((top + 4)) $((MX + 28)); printf '%sversao %s  -  slot %s%s' "$C_HINT" "$release" "${slot:-?}" "$C_RESET"
 		b=$((top + 6))
 	else
 		b=$top
 	fi
-	box "$b" "$pc" "$pw" 8 "Estado do no"
+	box "$b" "$pc" "$pw" 8 "Estado do worker"
 	statline $((b + 1)) "$pc" "$pw" "$C_OK" "Papel" "$role"
 	statline $((b + 2)) "$pc" "$pw" "$dot_worker" "Worker" "$worker"
 	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "${ip:-sem endereco}"
@@ -141,7 +141,7 @@ draw() {
 	statline $((b + 6)) "$pc" "$pw" "$dot_reg" "Registro" "${registered:-?}"
 
 	if [ "$LINES_N" -ge 22 ]; then
-		at $((b + 9)) "$pc"; printf '%sPara gerenciar este no use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
+		at $((b + 9)) "$pc"; printf '%sPara gerenciar este worker use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
 		at $((b + 10)) $((pc + 2)); printf '%saic cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
 		at $((b + 11)) "$pc"; printf '%sNeste no:%s  %saic --help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
 	fi
@@ -293,8 +293,8 @@ act_restart_worker() {
 }
 
 act_reboot() {
-	page "Reiniciar este no"
-	if confirm "Reiniciar este no agora?"; then
+	page "Reiniciar este worker"
+	if confirm "Reiniciar este worker agora?"; then
 		at 5 4; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"
 		reboot
 		sleep 60
@@ -302,8 +302,8 @@ act_reboot() {
 }
 
 act_poweroff() {
-	page "Desligar este no"
-	if confirm "Desligar este no agora?"; then
+	page "Desligar este worker"
+	if confirm "Desligar este worker agora?"; then
 		at 5 4; printf '%sDesligando...%s' "$C_TEXT" "$C_RESET"
 		poweroff
 		sleep 60
@@ -316,7 +316,7 @@ menu() {
 	while :; do
 		page "Personalizar o sistema"
 		i=1
-		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o worker" "Reiniciar este no" "Desligar este no" "Atualizacao do sistema"; do
+		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o worker" "Reiniciar este worker" "Desligar este worker" "Atualizacao do sistema"; do
 			at $((3 + i)) 6
 			if [ "$i" -eq "$sel" ]; then
 				printf '%s %d. %-40s%s' "$C_FOOT" "$i" "$label" "$C_RESET"
@@ -349,8 +349,8 @@ menu() {
 
 power_dialog() {
 	page "Reiniciar ou desligar"
-	at 4 6; printf '%s[R]%s Reiniciar este no' "$C_LOGO" "$C_RESET"
-	at 5 6; printf '%s[D]%s Desligar este no' "$C_LOGO" "$C_RESET"
+	at 4 6; printf '%s[R]%s Reiniciar este worker' "$C_LOGO" "$C_RESET"
+	at 5 6; printf '%s[D]%s Desligar este worker' "$C_LOGO" "$C_RESET"
 	at 7 6; printf '%sOutra tecla cancela.%s' "$C_HINT" "$C_RESET"
 	case "$(key 30)" in
 	r | R) at 9 6; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"; reboot; sleep 60 ;;

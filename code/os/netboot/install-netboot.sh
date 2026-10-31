@@ -1,11 +1,11 @@
 #!/bin/sh
-# Liga o boot pela rede num nó Armbian/u-boot (F15 J4/J5): o u-boot tenta baixar kernel, dtb e
+# Liga o boot pela rede num worker Armbian/u-boot (F15 J4/J5): o u-boot tenta baixar kernel, dtb e
 # initramfs do servidor TFTP e, se qualquer passo falhar, segue para o boot local de sempre.
 #
-#   sh install-netboot.sh install <ip-do-servidor> <id-do-nó, terminado em -rec> <token-de-recuperação> <controller> [ttl]
+#   sh install-netboot.sh install <ip-do-servidor> <id-do-worker, terminado em -rec> <token-de-recuperação> <controller> [ttl]
 #   sh install-netboot.sh remove
 #
-# Roda NO nó, como root. Guarda o original em /boot/boot.cmd.orig e /boot/boot.scr.orig; `remove`
+# Roda NO worker, como root. Guarda o original em /boot/boot.cmd.orig e /boot/boot.scr.orig; `remove`
 # os restaura e apaga o netboot.env. Tirar só o /boot/netboot.env também desliga o boot pela rede.
 # O token fica no cartão local (netboot.env, 0600), nunca na imagem servida.
 set -eu
@@ -21,7 +21,7 @@ remove)
   exit 0
   ;;
 install) ;;
-*) echo "uso: $0 install <servidor> <nó> <token-de-recuperação> <controller> [ttl] | remove" >&2; exit 2 ;;
+*) echo "uso: $0 install <servidor> <worker> <token-de-recuperação> <controller> [ttl] | remove" >&2; exit 2 ;;
 esac
 
 SERVER=$2; NODE=$3; TOKEN=$4; CONTROLLER=$5; TTL=${6:-0}
@@ -79,4 +79,4 @@ cat > "$BOOT/netboot.env" <<ENV
 nb_server=$SERVER
 nb_args=aic.controller=$CONTROLLER aic.node=$NODE aic.token=$TOKEN aic.ttl=$TTL
 ENV
-echo "boot pela rede instalado: servidor $SERVER, nó $NODE, prazo ${TTL}s (original em boot.cmd.orig)"
+echo "boot pela rede instalado: servidor $SERVER, worker $NODE, prazo ${TTL}s (original em boot.cmd.orig)"

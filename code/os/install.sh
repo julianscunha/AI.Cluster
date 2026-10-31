@@ -3,7 +3,7 @@
 # que esse papel precisa e instala. Não detecta nada: quem dita é o usuário (só confere se o
 # processador informado é o da máquina, para não instalar um binário que não roda).
 #
-#   curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
+#   curl -fsSL https://github.com/julianscunha/AI.Cluster/releases/latest/download/install.sh | sudo sh
 #
 # Sem perguntas (automação):
 #   sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 \
@@ -16,7 +16,7 @@
 # Idioma: --lang pt|en (ou AIC_LANG=en no ambiente); padrão pt. Vale para o setup e para o convite.
 set -eu
 
-REPO=julianscunha/Real.AI.Cluster
+REPO=julianscunha/AI.Cluster
 MODE=""; ROLE=""; ARCH=""; KIND=""; SERVER=""; IP=""; MODELS=""; VERSION=""; YES=0
 LANG_AIC=${AIC_LANG:-pt}
 
@@ -50,9 +50,9 @@ else
 fi
 # Cabeçalho igual ao do setup e ao brand::banner do Rust: sem cor vira uma linha só.
 banner() { # banner <componente> <versão, ou vazio> <detalhe>
-  if [ "$TTY" != 1 ]; then printf 'Real.AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
+  if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
   printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
-  printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
+  printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
   printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
   if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
   else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi

@@ -496,16 +496,16 @@ fn check_fit(
 ) -> Result<(), (String, bool)> {
     for (node, bytes) in need {
         let Some(cap) = nodes.iter().find(|cap| cap.node_id == *node) else {
-            let msg = format!("{id}: o controller não respondeu sobre o nó {node}");
+            let msg = format!("{id}: o controller não respondeu sobre o worker {node}");
             return Err((msg, true));
         };
         if !cap.available {
-            let msg = format!("{id}: nó {node} não está registrado, aprovado e vivo");
+            let msg = format!("{id}: worker {node} não está registrado, aprovado e vivo");
             return Err((msg, true));
         }
         if cap.shard_cache_bytes == 0 {
             let msg = format!(
-                "{id}: nó {node} não reporta cache de fatias (sem AI_CLUSTER_MODEL_DIR ou worker antigo)"
+                "{id}: worker {node} não reporta cache de fatias (sem AI_CLUSTER_MODEL_DIR ou worker antigo)"
             );
             return Err((msg, false));
         }
@@ -517,7 +517,7 @@ fn check_fit(
         };
         if *bytes > room {
             let msg = format!(
-                "{id}: nó {node} precisa de {} de fatias e aceita {} (faltam {}); suba AI_CLUSTER_SHARD_CACHE_MB no worker ou acrescente nós ao *_SHARDS do modelo",
+                "{id}: worker {node} precisa de {} de fatias e aceita {} (faltam {}); suba AI_CLUSTER_SHARD_CACHE_MB no worker ou acrescente workers ao *_SHARDS do modelo",
                 gib(*bytes),
                 gib(room),
                 gib(bytes - room)
@@ -556,7 +556,7 @@ async fn admit(
                 Err((err, false)) => return Err(err),
                 Err((err, true)) => last = err,
             },
-            Err(err) => last = format!("{id}: capacidade dos nós: {}", err.message()),
+            Err(err) => last = format!("{id}: capacidade dos workers: {}", err.message()),
         }
     }
     Err(last)
@@ -1998,12 +1998,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Atenção: classifica pelo texto dos erros de `controller/src/shards.rs` e do `shard_matmul`; se
 /// aquelas mensagens mudarem, o teste abaixo (que usa os mesmos trechos) deve mudar junto.
 ///
-/// O motivo que o cliente pode ver quando a geração falha, sem nomes de nós nem detalhes internos, e
+/// O motivo que o cliente pode ver quando a geração falha, sem nomes de workers nem detalhes internos, e
 /// se vale tentar de novo (um worker que saiu ou ficou lento: sim; o resto: não se sabe).
 fn generation_failure(detail: &str) -> (&'static str, bool) {
     if detail.contains("indisponível")
         || detail.contains("sem canal")
-        || detail.contains("canal do nó fechado")
+        || detail.contains("canal do worker fechado")
         || detail.contains("o canal do worker caiu")
     {
         (
@@ -2048,7 +2048,7 @@ mod tests {
         assert!(slow.0.contains("não respondeu") && slow.1);
         let other = generation_failure("Ok(Err(\"fatias: saída com forma inesperada\"))");
         assert_eq!(other, ("a geração falhou", false));
-        // Nunca repete o texto do erro (que pode trazer ids de nós).
+        // Nunca repete o texto do erro (que pode trazer ids de workers).
         assert!(!gone.0.contains("fatias:"));
     }
 
@@ -2100,7 +2100,7 @@ Buffers: 1 kB
             err.contains("precisa de 3.0 GB") && err.contains("faltam 1.0 GB"),
             "{err}"
         );
-        // a RAM do nó manda quando é menor que o cache, com 20% de folga para o resto do sistema
+        // a RAM do worker manda quando é menor que o cache, com 20% de folga para o resto do sistema
         assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 2 << 30)]).is_err());
         assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 3 << 30)]).is_err());
         assert!(check_fit("m", &need, &[cap("w1", true, 4 << 30, 4 << 30)]).is_ok());
@@ -2111,7 +2111,7 @@ Buffers: 1 kB
     #[test]
     fn admissao_falha_fechada() {
         let need = std::collections::BTreeMap::from([("w1".to_string(), 1u64)]);
-        // nó que ainda não apareceu: vale esperar
+        // worker que ainda não apareceu: vale esperar
         assert!(check_fit("m", &need, &[]).unwrap_err().1);
         assert!(
             check_fit("m", &need, &[cap("w1", false, 1 << 30, 0)])
@@ -2124,7 +2124,7 @@ Buffers: 1 kB
                 .unwrap_err()
                 .1
         );
-        // outro nó na resposta não vale pelo w1
+        // outro worker na resposta não vale pelo w1
         assert!(check_fit("m", &need, &[cap("w2", true, 1 << 30, 0)]).is_err());
     }
 
@@ -2156,7 +2156,7 @@ Buffers: 1 kB
         roster.bench("c");
         // With nobody live, every node is tried again.
         assert_eq!(nodes(roster.assign(&slices).unwrap()), ["a", "b", "c"]);
-        assert!(Roster::new(vec![]).assign(&slices).is_err(), "sem nós");
+        assert!(Roster::new(vec![]).assign(&slices).is_err(), "sem workers");
     }
 
     #[test]

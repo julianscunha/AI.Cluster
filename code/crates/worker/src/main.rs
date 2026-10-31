@@ -23,7 +23,7 @@ const DEFAULT_CONTROLLER: &str = "http://127.0.0.1:50051";
 const HEARTBEAT_INTERVAL_SECS: u64 = 5;
 
 /// Intervalo entre batidas; `AI_CLUSTER_HEARTBEAT_SECS` (1 a 10) o muda. Menos que o padrão acelera
-/// o aviso de cancelamento; o controller dá o nó por morto só depois da graça de heartbeat.
+/// o aviso de cancelamento; o controller dá o worker por morto só depois da graça de heartbeat.
 fn heartbeat_secs() -> u64 {
     std::env::var("AI_CLUSTER_HEARTBEAT_SECS")
         .ok()
@@ -82,7 +82,7 @@ const REFERENCE_MEMORY_MBPS: f64 = 10_000.0;
 /// A static because one worker process is one node — the same reason `CURRENT_COMPUTE` is.
 static STATE_REPLICA: Mutex<Option<StateReplica>> = Mutex::new(None);
 
-/// As unidades que este nó está calculando, cada uma com a bandeira que a para (o controller
+/// As unidades que este worker está calculando, cada uma com a bandeira que a para (o controller
 /// cancelou a requisição). Entra antes da conta e sai depois dela.
 static RUNNING: Mutex<Option<HashMap<String, Arc<AtomicBool>>>> = Mutex::new(None);
 
@@ -97,7 +97,7 @@ fn running_flag(work_id: &str) -> Arc<AtomicBool> {
 }
 
 /// Tira a bandeira da tabela, mas só se ainda for a desta execução: o mesmo `work_id` pode ter
-/// voltado a este nó e ganho uma bandeira nova enquanto a conta antiga terminava.
+/// voltado a este worker e ganho uma bandeira nova enquanto a conta antiga terminava.
 fn forget_running(work_id: &str, flag: &Arc<AtomicBool>) {
     if let Some(running) = RUNNING
         .lock()
@@ -256,7 +256,7 @@ fn state_replica_epoch() -> u64 {
 
 /// Release aceita para instalar: o worker só age se `AI_CLUSTER_UPDATE_CMD` estiver definido, a versão
 /// difere da que roda, ainda não foi tentada (evita laço quando a nova volta por rollback) e tudo
-/// o que vai ao comando está em caracteres seguros. `linux` escolhe a assinatura deste nó: a de AI
+/// o que vai ao comando está em caracteres seguros. `linux` escolhe a assinatura deste worker: a de AI
 /// Cluster OS (com URL e hashes da imagem) ou a de Linux comum (ADR-025). Downgrade não é detectado
 /// aqui: o setup do Linux recusa versão mais antiga sem --force.
 fn accept_update(release: &Release, current: &str, tried: &str, linux: bool) -> bool {
@@ -308,9 +308,9 @@ fn update_args(release: &Release, linux: bool) -> [&str; 5] {
 }
 
 /// Pergunta ao comando de atualização (`--verify`) se a assinatura da release confere, antes de o
-/// worker drenar: sem isso um controller malicioso tira o nó do cluster com uma versão inventada.
+/// worker drenar: sem isso um controller malicioso tira o worker do cluster com uma versão inventada.
 async fn update_verified(command: &str, release: &Release, linux: bool) -> bool {
-    // Roda no laço do heartbeat: sem prazo, um comando travado faria o controller dar o nó por morto.
+    // Roda no laço do heartbeat: sem prazo, um comando travado faria o controller dar o worker por morto.
     let run = tokio::process::Command::new(command)
         .arg("--verify")
         .args(update_args(release, linux))
@@ -371,7 +371,7 @@ fn image_measurement() -> String {
         .unwrap_or_default()
 }
 
-/// A versão que o nó roda: a da imagem (`/etc/aic-release`, gravada no build) ou, sem ela, a do
+/// A versão que o worker roda: a da imagem (`/etc/aic-release`, gravada no build) ou, sem ela, a do
 /// binário. O rollout compara este valor com a release desejada.
 fn runtime_version() -> String {
     let path =
@@ -483,7 +483,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (rpc_client, rpc_node) = (client.clone(), node_id.clone());
         tokio::spawn(async move {
             // Sem AI_CLUSTER_RPC_CACHE, o cache liga sozinho se há diretório para ele e o disco dele lê
-            // bem mais rápido que o enlace. Na própria tarefa, para a sonda não atrasar a subida do nó.
+            // bem mais rápido que o enlace. Na própria tarefa, para a sonda não atrasar a subida do worker.
             if let (false, Some(dir)) = (rpc.cache_explicit, rpc.cache_dir.clone()) {
                 let disk = tokio::task::spawn_blocking(move || {
                     let _ = std::fs::create_dir_all(&dir);
@@ -587,7 +587,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     broken.store(true, Ordering::Relaxed);
                                 } else {
                                     println!(
-                                        "release {} recusada; o nó continua no cluster",
+                                        "release {} recusada; o worker continua no cluster",
                                         release.version
                                     );
                                     rejected = key;
@@ -819,7 +819,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let pending = update.lock().unwrap_or_else(|p| p.into_inner()).take();
     if let (Some(release), Some(command)) = (pending, update_cmd) {
-        // Marca antes: se o nó voltar por rollback, não tenta a mesma versão de novo.
+        // Marca antes: se o worker voltar por rollback, não tenta a mesma versão de novo.
         let _ = std::fs::write(update_mark_path(), &release.version);
         // resultado de uma tentativa anterior não vale para esta
         let _ = std::fs::remove_file(update_mark_path().with_file_name("update-result"));
@@ -1053,7 +1053,7 @@ fn pinned_compute_score() -> Option<f64> {
 /// Result of one compute benchmark: the normalised score and how much the timed runs
 /// agreed with each other.
 ///
-/// `score` é o melhor caso — a capability, o que o nó faz quando menos perturbado.
+/// `score` é o melhor caso — a capability, o que o worker faz quando menos perturbado.
 /// `median_score` é a execução típica — o valor contra o qual uma previsão de tempo deve ser
 /// calibrada, porque a máquina raramente repete a execução mais sortuda. `confidence` (melhor
 /// sobre mediana) e `deviation` (desvio relativo) dizem os dois quanto as execuções
@@ -1192,12 +1192,12 @@ fn normalize_compute_score(gflops: f64, reference: f64) -> f64 {
     gflops / reference
 }
 
-/// Classes de armazenamento em bloco do nó, da mais quente para a mais fria.
+/// Classes de armazenamento em bloco do worker, da mais quente para a mais fria.
 ///
 /// `/sys/block/*/queue/rotational` diz 0 para estado sólido e 1 para disco giratório, mas
 /// NVMe e SSD respondem 0 igualmente. O nome do dispositivo é a única pista que o kernel
 /// dá sem abrir o dispositivo, então `nvme` vem do prefixo. Loop, ram e device-mapper ficam
-/// de fora: existem em qualquer nó e não são armazenamento que o cluster possa usar.
+/// de fora: existem em qualquer worker e não são armazenamento que o cluster possa usar.
 ///
 /// A classificação é por dispositivo, não por tier: HDD é COLD, SSD/NVMe são WARM, e o HOT
 /// é RAM — que já vem em `memory_bytes`. Ver `storage-intelligence`.
@@ -1743,8 +1743,8 @@ fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
 
-/// Memória que as fatias residentes podem ocupar neste nó: `AI_CLUSTER_SHARD_CACHE_MB` (padrão
-/// 2048). Zero sem `AI_CLUSTER_MODEL_DIR`, porque o nó nem abre o canal de fatias.
+/// Memória que as fatias residentes podem ocupar neste worker: `AI_CLUSTER_SHARD_CACHE_MB` (padrão
+/// 2048). Zero sem `AI_CLUSTER_MODEL_DIR`, porque o worker nem abre o canal de fatias.
 fn shard_cache_bytes() -> u64 {
     let mb = std::env::var("AI_CLUSTER_SHARD_CACHE_MB")
         .ok()
@@ -2533,14 +2533,14 @@ mod tests {
             signature: format!("{}==", "A".repeat(86)),
             ..Default::default()
         };
-        // sem a assinatura de Linux, o nó Linux não age, mesmo com a de AI Cluster OS
+        // sem a assinatura de Linux, o worker Linux não age, mesmo com a de AI Cluster OS
         assert!(!accept_update(&so_os, "1", "", true));
         let so_linux = Release {
             linux_signature: format!("{}==", "B".repeat(86)),
             ..so_os.clone()
         };
         assert!(accept_update(&so_linux, "1", "", true));
-        // e o nó de AI Cluster OS não age com a só de Linux (ele exige os hashes da imagem)
+        // e o worker de AI Cluster OS não age com a só de Linux (ele exige os hashes da imagem)
         assert!(!accept_update(&so_linux, "1", "", false));
         // os argumentos do comando: na release Linux, os hashes vão vazios e a assinatura é a de Linux
         let args = update_args(&so_linux, true);

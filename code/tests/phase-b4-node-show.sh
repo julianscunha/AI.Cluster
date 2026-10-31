@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Fatia da Fase B (B4): `aic cluster node show <id>`.
 #
-# Critério verificado: um nó pode ser inspecionado sozinho, com os campos que a tabela de
+# Critério verificado: um worker pode ser inspecionado sozinho, com os campos que a tabela de
 # `nodes` não mostra — compute medido, classes de armazenamento, pressão de memória e a
-# reserva do nó. Sem isso, ver esses campos exige ler o código do worker.
+# reserva do worker. Sem isso, ver esses campos exige ler o código do worker.
 #
 # Sequência:
-#   A) detalhe de um nó vivo: estado, capability e saúde.
-#   B) a reserva do nó aparece no detalhe (G6 e B4 juntos).
+#   A) detalhe de um worker vivo: estado, capability e saúde.
+#   B) a reserva do worker aparece no detalhe (G6 e B4 juntos).
 #   C) id desconhecido é informativo, não erro.
 set -uo pipefail
 
@@ -37,7 +37,7 @@ MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== A) detalhe de um nó vivo ==="
+echo "=== A) detalhe de um worker vivo ==="
 DETAIL=$(run "$R/aic cluster node show node-b4")
 echo "$DETAIL"
 for field in "estado=READY" "armazenamento=nvme,ssd" "threads=" "score=" "compute_score="; do
@@ -50,7 +50,7 @@ for field in "estado=READY" "armazenamento=nvme,ssd" "threads=" "score=" "comput
   fi
 done
 
-echo "=== B) a reserva do nó aparece no detalhe ==="
+echo "=== B) a reserva do worker aparece no detalhe ==="
 run "$R/aic cluster reservation add node-b4 req-b4" >/dev/null
 HELD=$(run "$R/aic cluster node show node-b4")
 if echo "$HELD" | grep -q "requisicao=req-b4"; then

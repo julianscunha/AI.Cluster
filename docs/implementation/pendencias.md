@@ -24,8 +24,8 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(nós)) e o ranking custa O(unidades × nós) sob o lock. Sem medição de gargalo: com 2 a 4 nós é desprezível, e a gravação do snapshot já espera um intervalo adaptativo. Só mexer com perfil em mãos (dezenas de nós). | dados |
-| Níveis de confiança | O token de uso único por nó e a aprovação por regra entram com a etapa de espera ([[adr-023-instalacao-com-aprovacao-do-controller]]), sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
+| Custo do atestado e das reservas | `require_attested` refaz os atestados (O(workers)) e o ranking custa O(unidades × workers) sob o lock. Sem medição de gargalo: com 2 a 4 workers é desprezível, e a gravação do snapshot já espera um intervalo adaptativo. Só mexer com perfil em mãos (dezenas de workers). | dados |
+| Níveis de confiança | O token de uso único por worker e a aprovação por regra entram com a etapa de espera ([[adr-023-instalacao-com-aprovacao-do-controller]]), sobre o [[adr-020-niveis-de-confianca-do-no]]. | decisão, código |
 | Scheduler por GPU/NPU | Filas por recurso; hoje só CPU. | hardware |
 | Localidade | Entra no custo só quando as saídas ficarem residentes no worker (F12). | código |
 
@@ -34,21 +34,21 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 | Item | O que falta | Dependência |
 |---|---|---|
 | Estado por chave | KV cache, estado de execução e de modelo não existem no cluster (depende de F12). | código |
-| Replicação da fila | A cópia fica num nó só: faltam fator de replicação, portador designado e identidade de cluster. | código |
+| Replicação da fila | A cópia fica num worker só: faltam fator de replicação, portador designado e identidade de cluster. | código |
 | Checkpoint de unidade e `state://` | Retomar no meio do cálculo; referências lógicas de estado. | código, decisão |
 
 ## F07 — Segurança base
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Atalho `--trust-listed` | Aprova a impressão que o controller mostra, sem comparar com a do nó; anula a proteção contra o id tomado. Usado nos scripts de teste e no bootstrap manual. | decisão |
+| Atalho `--trust-listed` | Aprova a impressão que o controller mostra, sem comparar com a do worker; anula a proteção contra o id tomado. Usado nos scripts de teste e no bootstrap manual. | decisão |
 | Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. O limite de gateways vivos por IP existe (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`); falta um segredo por gateway. | código, decisão |
 
 ## F08 — Inferência
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um nó entra; o teto de operações em voo por nó (64, `AI_CLUSTER_SHARD_MAX_PENDING`) dá 503 ao passar. | código |
+| Tolerância a falha | Só reatribuição: sem réplica de fatias pré-carregada nem rebalanceamento quando um worker entra; o teto de operações em voo por worker (64, `AI_CLUSTER_SHARD_MAX_PENDING`) dá 503 ao passar. | código |
 | Engine fora do scheduler | O canal de fatias ainda passa pelo controller. Tirá-lo exige porta de entrada no worker (revisa o [[adr-009-canal-residente-de-fatias]]) para um motor que só serve à paridade e à pesquisa; reabrir se o motor próprio voltar a ser caminho de uso. | decisão |
 
 ## F09 e F10 — Transporte e storage
@@ -68,19 +68,19 @@ Dependência: **código** (resolve-se no repositório), **hardware** (máquina o
 |---|---|---|
 | Estados, idempotência, orçamento | Não existem. | código |
 | Equidade e backpressure | Os tetos de admissão são configuráveis (`AI_CLUSTER_MAX_IN_FLIGHT`, `AI_CLUSTER_QUEUE_MAX`, `AI_CLUSTER_QUEUE_WAIT_SECS`), mas fixos por processo e iguais para todos os tenants. Falta equidade entre tenants sob carga. | código |
-| Deadlines | Os do `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`) e do gateway (`AI_CLUSTER_GATEWAY_DEADLINE_MS`) são configuráveis, mas fixos por processo. Falta derivar do tempo medido de cada nó. | código |
+| Deadlines | Os do `ShardMatmul` (`AI_CLUSTER_SHARD_TIMEOUT_MS`) e do gateway (`AI_CLUSTER_GATEWAY_DEADLINE_MS`) são configuráveis, mas fixos por processo. Falta derivar do tempo medido de cada worker. | código |
 | Entrada arbitrária no grafo | Hoje só o grafo sintético e os modelos fixos. | código |
 | Fora do gateway | O Request Manager ainda mora no gateway. | código, decisão |
 
 ## F12 — Model runtime distribuído
 
-O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chaves e benchmark, nó novo) está feito para modelos GGUF no llama.cpp (veja [[model-manager]] e o [[adr-022-fluxo-de-modelos-e-motor-hibrido]]). As linhas abaixo são o que falta ou o que só vale para o motor próprio.
+O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chaves e benchmark, worker novo) está feito para modelos GGUF no llama.cpp (veja [[model-manager]] e o [[adr-022-fluxo-de-modelos-e-motor-hibrido]]). As linhas abaixo são o que falta ou o que só vale para o motor próprio.
 
 | Item | O que falta | Dependência |
 |---|---|---|
 | N1 a N3 | Catálogo por pasta, quantização (GGUF) e OK/NOK existem; falta manifesto assinado. O motor próprio segue só em fp32. | código, decisão |
 | Admissão por capacidade | Falta barrar por folga de failover (hoje só informa), estimar o tempo por token sem um modelo de referência rodando. | código |
-| Tensor com all-reduce e planejador híbrido | Não existem. O pipeline próprio foi descartado por medição ([[adr-022-fluxo-de-modelos-e-motor-hibrido]]); o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. Só reabrir com nós de velocidade parecida em cabo. | dados |
+| Tensor com all-reduce e planejador híbrido | Não existem. O pipeline próprio foi descartado por medição ([[adr-022-fluxo-de-modelos-e-motor-hibrido]]); o llama.cpp reparte camadas pelo RPC e empurra os tensores na carga. Só reabrir com workers de velocidade parecida em cabo. | dados |
 | Execução fora do gateway | O placement é do controller (`models::select`). O modelo ainda roda no processo do gateway, e o KV não é distribuído nem persistente. | código |
 
 ## F13 e F14 — Graph engine e edge optimizer
@@ -116,9 +116,9 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Revogação | Lista de revogação de chaves de release e de certificados de worker (o controller já não renova nem anuncia o nó revogado, ADR-026; falta CRL para quem não é o controller); revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). | código |
+| Revogação | Lista de revogação de chaves de release e de certificados de worker (o controller já não renova nem anuncia o worker revogado, ADR-026; falta CRL para quem não é o controller); revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). | código |
 | mTLS | Ligar o certificado ao `node_id`; rotação, CRL e emissão automática; TLS no exportador de métricas. | código |
-| Rollout | HTTPS no download (hoje HTTP, segue redirecionamento); marca guarda uma versão só; downgrade legítimo (decisão); ondas com mais de um nó. | código, decisão, hardware |
+| Rollout | HTTPS no download (hoje HTTP, segue redirecionamento); marca guarda uma versão só; downgrade legítimo (decisão); ondas com mais de um worker. | código, decisão, hardware |
 | Integridade de boot | dm-verity com root hash assinado; TPM e secure boot; medida de 512 MiB leva 25 a 40 s no SD. | hardware |
 | Auditoria | O log persiste, mas não é assinado nem à prova de adulteração. | código, decisão |
 | Saúde do upgrade | Binário que registra e quebra depois passa; sem rollback sem systemd. | código |
@@ -135,7 +135,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Gatilho sem systemd | O worker sem systemd (contêiner, OpenRC) não se declara atualizável e fica fora do rollout; a atualização é manual (`aic update apply`). Falta um gatilho para esses ambientes. | código |
 | Rotação e revogação da chave de Linux | Trocar a chave exige reinstalar em cada máquina, porque o pino só muda na instalação. Falta rotação sem reinstalar (chave nova assinada pela antiga) e a lista de revogação. | código, decisão |
 | Origem do pino | A chave pinada vem da origem da instalação (confiança no primeiro uso). Falta confirmar a chave por outro canal, p. ex. impressa no convite. | decisão |
-| Release só-Linux em cluster misto | Um nó AI Cluster OS que vira canário numa release só com a assinatura de Linux recusa e pausa o rollout em 10 min. Falta escolher o canário pelo canal do nó (o identity não declara o canal). | código |
+| Release só-Linux em cluster misto | Um worker AI Cluster OS que vira canário numa release só com a assinatura de Linux recusa e pausa o rollout em 10 min. Falta escolher o canário pelo canal do worker (o identity não declara o canal). | código |
 
 ## Marcos
 
@@ -145,4 +145,4 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Certificado por nó | Renovação e revogação prontas (ADR-026): o controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do nó, com chave fixada por nó e escrita atômica no worker. Falta: rotação da CA; trocar a chave do nó na renovação; CRL para quem não é o controller; nó esquecido ou revogado offline volta só com novo convite (regra de operação, sem imposição no código); entrada de nó novo, que ainda passa pelo convite; sem systemd e em instalação antiga a renovação fica desligada; renovação ainda não exercitada ponta a ponta nem em hardware. | código, decisão |
+| Certificado por worker | Renovação e revogação prontas (ADR-026): o controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker, com chave fixada por worker e escrita atômica no worker. Falta: rotação da CA; trocar a chave do worker na renovação; CRL para quem não é o controller; worker esquecido ou revogado offline volta só com novo convite (regra de operação, sem imposição no código); entrada de worker novo, que ainda passa pelo convite; sem systemd e em instalação antiga a renovação fica desligada; renovação ainda não exercitada ponta a ponta nem em hardware. | código, decisão |

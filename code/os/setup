@@ -18,7 +18,7 @@
 # segundo plano e não voltam sozinhos depois de um reinício. `cluster invite` abre uma janela em que outros
 # computadores entram no cluster:
 #     curl -fsSL http://<ip>:8099/join-<código> | sudo sh     # worker (x86_64 ou armv7); o código está no convite
-# e aprova sozinho os nós que entram enquanto o convite está aberto. O pacote do worker de cada
+# e aprova sozinho os workers que entram enquanto o convite está aberto. O pacote do worker de cada
 # processador vem da release do servidor (a mesma versão do cluster) e fica em cache.
 #
 # Ao lado deste script: ai-cluster-controller, ai-cluster-gateway, llama-server, aic e bootstrap.sh (o que o
@@ -58,12 +58,12 @@ else
   B=""; W=""; D=""; G=""; R=""; C=""; Y=""; Z=""; TTY=0
 fi
 
-# Cabeçalho igual ao do Rust: logotipo de 5 linhas (malha de 7 nós), nome do componente, apoio, versão e
+# Cabeçalho igual ao do Rust: logotipo de 5 linhas (malha de 7 workers), nome do componente, apoio, versão e
 # detalhe. Sem terminal (ou com NO_COLOR) vira uma linha só, como o brand::banner.
 banner() { # banner <componente> <versão, ou vazio> <detalhe>
-  if [ "$TTY" != 1 ]; then printf 'Real.AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
+  if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
   printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
-  printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
+  printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
   printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
   if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
   else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
@@ -865,7 +865,7 @@ AIC_WRAP
 chmod 755 /usr/local/bin/aic
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
 NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
-# Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do nó
+# Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do worker
 # no certificado, então um worker comprometido não se passa por outro.
 command -v openssl >/dev/null || { echo "needs openssl (apt install openssl)" >&2; exit 1; }
 ( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
@@ -949,12 +949,12 @@ touch /etc/ai-cluster/.installed
 echo pt > /etc/ai-cluster/lang
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
 NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
-# Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do nó
+# Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do worker
 # no certificado, então um worker comprometido não se passa por outro.
 command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)" >&2; exit 1; }
 ( umask 077; openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -keyout /etc/ai-cluster/rpc-tls/worker.key -out "\$T/worker.csr" -subj "/CN=\$NAME" >/dev/null ) \
-  || { echo "não consegui criar a chave do nó (veja o erro acima)" >&2; exit 1; }
+  || { echo "não consegui criar a chave do worker (veja o erro acima)" >&2; exit 1; }
 code=\$(curl -sS --data-binary @"\$T/worker.csr" -o /etc/ai-cluster/rpc-tls/worker.crt -w '%{http_code}' "http://$IP:$PORT/sign?name=\$NAME&code=$GCODE") || code=000
 if [ "\$code" != 200 ]; then
   rm -f /etc/ai-cluster/rpc-tls/worker.crt
@@ -965,10 +965,10 @@ if [ "\$code" != 200 ]; then
     000) m="sem resposta de $IP:$PORT" ;;
     *) m="HTTP \$code" ;;
   esac
-  echo "o servidor não assinou o certificado do nó: \$m" >&2; exit 1
+  echo "o servidor não assinou o certificado do worker: \$m" >&2; exit 1
 fi
 openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null \
-  || { echo "certificado do nó não confere com a CA do cluster" >&2; exit 1; }
+  || { echo "certificado do worker não confere com a CA do cluster" >&2; exit 1; }
 chmod 644 /etc/ai-cluster/rpc-tls/worker.crt
 chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
 AIC_INVITED=1 AIC_LANG=pt sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
@@ -979,7 +979,7 @@ AIC_INVITED=1 AIC_LANG=pt sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PO
 printf '%s\n' "ROLE=worker" "BASE=$RBASE" "VERSION=$RVER" "SUMS=$RSUMS" > /etc/ai-cluster/release
 touch /etc/ai-cluster/.installed
 echo pt > /etc/ai-cluster/lang
-echo "Pronto: \$NAME entrou no cluster. O servidor aprova o nó em instantes."
+echo "Pronto: \$NAME entrou no cluster. O servidor aprova o worker em instantes."
 JOIN_SCRIPT
   fi
   # O script para quem já tem Linux e quer instalar o AI Cluster OS (modo dedicado): confere o
@@ -1039,14 +1039,14 @@ chmod 755 "\$T/aic-wait"
 AIC_INSTALL_OUT=/run/aic-install.json "\$T/aic-wait" http://$IP:$ENROLL_PORT
 WAIT_SCRIPT
   fi
-  # Para quem já é um AI Cluster OS e só quer mudar de controller (`aic worker change` no nó): endereço e
+  # Para quem já é um AI Cluster OS e só quer mudar de controller (`aic worker change` no worker): endereço e
   # token, sob o código do convite como o /join.
   printf 'AI_CLUSTER_CONTROLLER=http://%s:%s
 AI_CLUSTER_JOIN_TOKEN=%s
 ' "$IP" "$GRPC_PORT" "$JOIN" > "$WEB/node-$GCODE"
   cd "$WEB"
   # Servidor do convite: arquivos sem listagem de diretório (o código do gateway não pode ser
-  # descoberto olhando a raiz) e POST /sign?name=<nó>, que assina o pedido de certificado do worker.
+  # descoberto olhando a raiz) e POST /sign?name=<worker>, que assina o pedido de certificado do worker.
   HD=$(mktemp -d)
   cat > "$HD/invite.py" <<'PYSERVER'
 import hmac, http.server, os, re, subprocess, sys, tempfile, threading
@@ -1228,12 +1228,12 @@ PYSERVER
         printf '  %s•%s aparelho %s quer instalar (%s)\n    confira a impressão digital na tela dele e aprove: aic cluster install approve %s --disk <disco>\n' "$C" "$Z" "$f" "$info" "$f"
       fi
     done || true
-    # Nós pendentes enquanto o convite está aberto são aprovados: foi o operador quem os convidou. Quem é
+    # Workers pendentes enquanto o convite está aberto são aprovados: foi o operador quem os convidou. Quem é
     # pendente vem da coluna CONFIANÇA (pelo cabeçalho, não pela posição nem pela palavra solta no nome).
     /usr/local/bin/aic cluster nodes 2>/dev/null | awk '/CONFIANÇA/ { for (i = 1; i <= NF; i++) if ($i == "CONFIANÇA") c = i; next } c && $c == "pendente" { print $1 }' \
       | while read -r n; do
           case "$n" in
-            -*) warn "$(t "nó '$n' começa com '-' (o aprova não aceita): aprove à mão" "node '$n' starts with '-' (approve does not accept it): approve it by hand")"; continue ;;
+            -*) warn "$(t "worker '$n' começa com '-' (o aprova não aceita): aprove à mão" "node '$n' starts with '-' (approve does not accept it): approve it by hand")"; continue ;;
           esac
           if /usr/local/bin/aic cluster node approve "$n" --trust-listed >/dev/null 2>&1; then
             printf '  %s✔%s %s %s\n' "$G" "$Z" "$n" "$(t 'entrou e foi aprovado' 'joined and was approved')"
@@ -1348,7 +1348,7 @@ linux_apply() {
 # passa a rodar quando aparece um pedido. Sem systemd não há quem aplique: a atualização fica manual.
 gatilho_linux() {
   [ -f "$PREFIX/worker.env" ] || return 0
-  # Sem systemd não há quem aplique o pedido: o nó não se declara atualizável, então o rollout não o escolhe.
+  # Sem systemd não há quem aplique o pedido: o worker não se declara atualizável, então o rollout não o escolhe.
   if ! have_systemd; then
     echo "AVISO: sem systemd o worker não recebe atualização do controller; atualize com aic update apply"
     return 0
@@ -1470,7 +1470,7 @@ cmd_update() {
   if [ -n "${AIC_UPDATE_BASE:-}" ]; then BASE=$AIC_UPDATE_BASE   # o worker Linux aplica da URL do pedido (ADR-025)
   elif [ -n "$WANT" ]; then
     case "$WANT" in ''|*[!0-9A-Za-z.+-]*) die "$(t '--version aceita só letras, dígitos e . + -' '--version accepts only letters, digits and . + -')" ;; esac
-    BASE="https://github.com/julianscunha/Real.AI.Cluster/releases/download/v$WANT"
+    BASE="https://github.com/julianscunha/AI.Cluster/releases/download/v$WANT"
   fi
   # Sem origem não há de onde baixar: nada de chutar o último lançamento do GitHub.
   [ -n "$BASE" ] || die "$(t 'a instalação não guardou de onde baixar a atualização; rode sudo aic update apply --version X.Y.Z' 'the installation did not keep where to download the update from; run sudo aic update apply --version X.Y.Z')"

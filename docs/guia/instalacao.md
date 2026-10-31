@@ -20,7 +20,7 @@ Volte ao [[guia]] para o índice. Valores de configuração estão em [[configur
 Um script só pergunta o que este computador será e baixa da **última release** apenas o que esse papel precisa:
 
 ```bash
-curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh
+curl -fsSL https://github.com/julianscunha/AI.Cluster/releases/latest/download/install.sh | sudo sh
 ```
 
 Em inglês: acrescente `-s -- --lang en` ao `sh` (ou `AIC_LANG=en`). O idioma vale para o instalador, o `aic` e os scripts do convite, e fica gravado em `/etc/ai-cluster/lang`. Sem isso tudo sai em português. Em modo inglês, `--mode dedicated`, `--kind physical` e `--kind container` também são aceitos.
@@ -51,7 +51,7 @@ curl -fsSL http://<ip-do-servidor>:8099/join-<CÓDIGO> | sudo sh
 
 O **código do convite** (8 caracteres, letras maiúsculas e números sem `0/O/1/I`) é a credencial do convite: o instalador o pergunta quando o papel é worker ou gateway (minúsculas valem), e a linha curta o leva no endereço (`/join-<CÓDIGO>`). Sem ele o servidor não entrega o token de join nem assina o certificado do túnel. Como o código é curto, cada endereço IP que errar 30 vezes (arquivo inexistente em `/join-*`, `/gw-*`, `/node-*`, por GET ou HEAD, com o caminho já normalizado, ou `/sign` com código errado) é travado com 429, e há um teto global de 300 chutes; o terminal do convite avisa quando um IP trava, e os outros endereços seguem servidos. O convite expira sozinho no fim da janela (o servidor Python também se encerra, mesmo que o terminal seja fechado à força). O convite continua em HTTP puro, então o código serve contra quem só alcança a porta, não contra quem escuta a rede.
 
-O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. Cada worker gera a própria chave do túnel RPC; o servidor só assina o pedido de certificado (SAN `aic-worker-<nome do nó>`), e a chave nunca sai do worker. O gateway em outro computador entra pelo mesmo convite (papel gateway no instalador, ou `sudo aic gateway install --server <ip> --code <código>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
+O pacote do worker de cada processador vem do próprio servidor, na mesma versão do cluster: o servidor o baixa da release na primeira vez que abre um convite e o guarda em cache. Os outros computadores não precisam de internet. Cada worker gera a própria chave do túnel RPC; o servidor só assina o pedido de certificado (SAN `aic-worker-<nome do worker>`), e a chave nunca sai do worker. O gateway em outro computador entra pelo mesmo convite (papel gateway no instalador, ou `sudo aic gateway install --server <ip> --code <código>`), mas a pasta de modelos precisa ser a mesma que o controller enxerga (NFS, por exemplo).
 
 Sem perguntas (automação): `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.
 
@@ -98,7 +98,7 @@ aic worker change --server <ip-do-novo-controller>:8099 --code <CÓDIGO>
 aic worker change --server <ip>:8099 --code <CÓDIGO> --controller http://<ip-que-o-worker-alcança>:50051
 ```
 
-O comando mostra o controller de destino e pede confirmação (`S/n`; `--yes`/`AIC_ASSUME_YES=1` dispensa). Depois baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o nó fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o nó aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`. Para o token não aparecer no `ps`, use `--token-file <arquivo>` (arquivo só do dono, `chmod 600`).
+O comando mostra o controller de destino e pede confirmação (`S/n`; `--yes`/`AIC_ASSUME_YES=1` dispensa). Depois baixa o token e a CA do convite, gera uma chave nova **no próprio worker**, pede o certificado do túnel, confere tudo e só então troca o `worker.env`, apaga a credencial antiga e reinicia o worker. Se qualquer passo falhar, o worker fica como estava (o estado anterior fica em `/data/.change-backup`). Depois o worker aparece como pendente no novo controller; o convite aberto o aprova sozinho. Só o endereço e o token (sem mexer no certificado do túnel): `aic worker change --controller <url> --token <token>`. Para o token não aparecer no `ps`, use `--token-file <arquivo>` (arquivo só do dono, `chmod 600`).
 
 ## Instalação dedicada
 
@@ -147,7 +147,7 @@ bash code/scripts/dev-cluster.sh metrics    # /metrics do controller
 bash code/scripts/dev-cluster.sh down
 ```
 
-O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUSTER_AUTO_APPROVE=1` (nós entram aprovados). Não use essa configuração em rede aberta. A imagem base vem de `AIC_RUST_IMAGE` (padrão `rust:1-bookworm`).
+O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUSTER_AUTO_APPROVE=1` (workers entram aprovados). Não use essa configuração em rede aberta. A imagem base vem de `AIC_RUST_IMAGE` (padrão `rust:1-bookworm`).
 
 ## Produção com TLS
 
@@ -163,7 +163,7 @@ O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUS
    ai-cluster-controller
    ```
 
-   Sem o par de certificado o controller não sobe (a menos de `AI_CLUSTER_INSECURE=1`). `AI_CLUSTER_DATA_DIR` deve estar em volume que sobrevive a reinício: nele ficam o registro de nós (`nodes`), a fila (`state.bin`) e os eventos (`events.log`).
+   Sem o par de certificado o controller não sobe (a menos de `AI_CLUSTER_INSECURE=1`). `AI_CLUSTER_DATA_DIR` deve estar em volume que sobrevive a reinício: nele ficam o registro de workers (`nodes`), a fila (`state.bin`) e os eventos (`events.log`).
 3. Suba cada worker apontando para `https://` e a CA:
 
    ```bash
@@ -176,7 +176,7 @@ O script usa tokens fixos de teste, `AI_CLUSTER_INSECURE=1` (sem TLS) e `AI_CLUS
    ```
 
    Se o endpoint for um IP, defina `AI_CLUSTER_TLS_DOMAIN` com o nome do certificado.
-4. Aprove cada nó novo: `aic cluster node approve no-1 --fingerprint <fp>`. Sem `AI_CLUSTER_AUTO_APPROVE`, o nó fica pendente e não recebe trabalho.
+4. Aprove cada worker novo: `aic cluster node approve no-1 --fingerprint <fp>`. Sem `AI_CLUSTER_AUTO_APPROVE`, o worker fica pendente e não recebe trabalho.
 5. Suba a CLI com `AI_CLUSTER_CONTROLLER`, `AI_CLUSTER_OPERATOR_TOKEN` e `AI_CLUSTER_TLS_CA`.
 6. Suba o gateway (ver [[api]]) com `AI_CLUSTER_API_KEY` ou `AI_CLUSTER_TENANTS`, pelo menos um dos tokens de operador ou de inferência, e o controller em `https://`.
 
@@ -199,7 +199,7 @@ sudo ./os/bootstrap.sh --controller https://controller.exemplo:50051 \
 - `http://` exige `--insecure`. Valores são validados contra uma lista de caracteres permitidos. `--prefix` e `--model-dir` precisam ser absolutos.
 - Trocar `--node-id` numa máquina já instalada exige `--force`.
 - Rodar de novo atualiza binário e ambiente. Com systemd, a nova versão só fica se o worker se registrar em `--health-timeout` segundos; senão o binário anterior (`bin/ai-cluster-worker.prev`) volta e o script sai com código 3.
-- O script não aprova o nó. Aprove com `aic cluster node approve <id> --fingerprint <fp>` quando for o caso.
+- O script não aprova o worker. Aprove com `aic cluster node approve <id> --fingerprint <fp>` quando for o caso.
 
 ## Contêiner do worker
 
@@ -208,13 +208,13 @@ cd code
 docker build -f os/Dockerfile.worker -t ai-cluster-worker:dev .
 ```
 
-A imagem tem o binário e um usuário sem privilégios (UID 10001), sobre `debian:bookworm-slim`. Nenhuma configuração entra na imagem: controller, token de join e id do nó vêm por variável. A credencial do nó fica em `AI_CLUSTER_NODE_CREDENTIAL_FILE` (`/var/lib/ai-cluster/credential` na imagem); monte um volume ali para o nó manter a aprovação depois de reiniciar.
+A imagem tem o binário e um usuário sem privilégios (UID 10001), sobre `debian:bookworm-slim`. Nenhuma configuração entra na imagem: controller, token de join e id do worker vêm por variável. A credencial do worker fica em `AI_CLUSTER_NODE_CREDENTIAL_FILE` (`/var/lib/ai-cluster/credential` na imagem); monte um volume ali para o worker manter a aprovação depois de reiniciar.
 
 ## RPC do llama.cpp no worker (modelos GGUF)
 
-Para o worker dividir um modelo GGUF com o gateway, ele roda o `ggml-rpc-server` do llama.cpp atrás de um túnel mTLS (veja [[seguranca]]). Gere o certificado do worker (SAN `aic-worker`, ou o nome combinado com o gateway) e a CA que assina **só o gateway** (a renovação automática depende de `AI_CLUSTER_RPC_CA_CERT` e `_KEY` no controller, ADR-026), e configure `AI_CLUSTER_RPC_SERVER_BIN`, `AI_CLUSTER_RPC_TLS_CERT`, `AI_CLUSTER_RPC_TLS_KEY` e `AI_CLUSTER_RPC_TLS_CLIENT_CA` ([[configuracao]]). Sem os três do TLS o nó segue sem RPC.
+Para o worker dividir um modelo GGUF com o gateway, ele roda o `ggml-rpc-server` do llama.cpp atrás de um túnel mTLS (veja [[seguranca]]). Gere o certificado do worker (SAN `aic-worker`, ou o nome combinado com o gateway) e a CA que assina **só o gateway** (a renovação automática depende de `AI_CLUSTER_RPC_CA_CERT` e `_KEY` no controller, ADR-026), e configure `AI_CLUSTER_RPC_SERVER_BIN`, `AI_CLUSTER_RPC_TLS_CERT`, `AI_CLUSTER_RPC_TLS_KEY` e `AI_CLUSTER_RPC_TLS_CLIENT_CA` ([[configuracao]]). Sem os três do TLS o worker segue sem RPC.
 
-Num **Linux x86_64 com systemd**, `bash code/scripts/package-worker.sh` (depois de `docker compose -f deploy/docker-compose.yml build`) gera `dist/ai-cluster-worker-x86_64.tar.gz` com o worker, o `ggml-rpc-server`, o `bootstrap.sh` e um `install.sh`: copie, extraia e rode `sudo ./install.sh --controller ... --token-file ... --rpc-tls-dir ...` (precisa de `libgomp1` e glibc 2.36 ou mais nova). Na **imagem armv7** o `ggml-rpc-server` já vem em `/usr/bin` e liga sozinho quando existem `/data/rpc-tls/worker.crt`, `worker.key` e `ca.crt`. O binário é o do patch de 32 bits de `code/third_party/llama.cpp` (compilado por `build.sh`, no volume `aic-llama`, e copiado por `build-rootfs.sh`). A hora do nó precisa estar certa para o certificado valer: a imagem traz o DNS de reserva (`aic-dns`, o gateway da rota e 1.1.1.1 quando o DHCP não entrega nomes) e o chrony com salto de hora; uma placa sem RTC nasce em 2024 e acerta o relógio depois da rede. Se o nó não entra no plano com `certificate expired`, confira `date` nele.
+Num **Linux x86_64 com systemd**, `bash code/scripts/package-worker.sh` (depois de `docker compose -f deploy/docker-compose.yml build`) gera `dist/ai-cluster-worker-x86_64.tar.gz` com o worker, o `ggml-rpc-server`, o `bootstrap.sh` e um `install.sh`: copie, extraia e rode `sudo ./install.sh --controller ... --token-file ... --rpc-tls-dir ...` (precisa de `libgomp1` e glibc 2.36 ou mais nova). Na **imagem armv7** o `ggml-rpc-server` já vem em `/usr/bin` e liga sozinho quando existem `/data/rpc-tls/worker.crt`, `worker.key` e `ca.crt`. O binário é o do patch de 32 bits de `code/third_party/llama.cpp` (compilado por `build.sh`, no volume `aic-llama`, e copiado por `build-rootfs.sh`). A hora do worker precisa estar certa para o certificado valer: a imagem traz o DNS de reserva (`aic-dns`, o gateway da rota e 1.1.1.1 quando o DHCP não entrega nomes) e o chrony com salto de hora; uma placa sem RTC nasce em 2024 e acerta o relógio depois da rede. Se o worker não entra no plano com `certificate expired`, confira `date` nele.
 
 ## Imagem do AI Cluster OS (armv7)
 
@@ -239,9 +239,9 @@ Sequência de build, a partir de `code/`:
      --token <token> --node-id no-1 --ssh-key ~/.ssh/id.pub
    ```
 
-   O instalador só age num nó com o cartão desmontado e rodando do initramfs (raiz `rootfs`). Ele apaga o cartão inteiro e exige `--yes`. Precisa do `paramiko`.
+   O instalador só age num worker com o cartão desmontado e rodando do initramfs (raiz `rootfs`). Ele apaga o cartão inteiro e exige `--yes`. Precisa do `paramiko`.
 
-Para o nó chegar ao ambiente de recuperação pela rede, `os/netboot/` traz `build-initramfs.sh` (monta o initramfs com o worker e um servidor SSH), `tftpd.py` (servidor TFTP somente leitura; `--allow` lista os IPs que podem baixar) e `install-netboot.sh` (liga o boot pela rede num Linux armv7 existente, com prazo e volta ao cartão).
+Para o worker chegar ao ambiente de recuperação pela rede, `os/netboot/` traz `build-initramfs.sh` (monta o initramfs com o worker e um servidor SSH), `tftpd.py` (servidor TFTP somente leitura; `--allow` lista os IPs que podem baixar) e `install-netboot.sh` (liga o boot pela rede num Linux armv7 existente, com prazo e volta ao cartão).
 
 Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh` (AI Cluster OS) e com `scripts/package-release.sh` (Linux comum, `SHA256SUMS.sig`). Veja [[operacao]].
 
@@ -253,10 +253,10 @@ A imagem do AI Cluster OS só instala atualização assinada por uma chave cuja 
    `bash os/image/release-keys.sh` (outro diretório: `AIC_KEYS=/cofre bash os/image/release-keys.sh`).
 2. **Monte a imagem com a sua pública.** `os/image/build-rootfs.sh` (armv7) e `os/image/x86/build-rootfs.sh` copiam as públicas de `AIC_PUBS` (padrão `~/.aic/release.pub`) para `/etc/aic-release.d/` da imagem. Depois siga os passos das seções acima (`mk-disk-image.sh` ou `mk-disk.sh`, e a gravação).
 3. **Assine cada versão nova e publique:**
-   `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]` imprime os argumentos de `aic cluster rollout`. A placa é `armv7-opipc` (padrão) ou `x86_64-uefi`; a versão só cresce (números e pontos). Hospede o `rootfs.gz` num endereço que os nós alcancem e rode `aic cluster rollout <versão> <argumentos impressos> --url <endereço>` ([[operacao]]).
-4. **Troque a chave sem perder os nós:** `bash os/image/release-keys.sh nova` gera `nova.key` e `nova.pub`. Monte uma imagem com `AIC_PUBS="~/.aic/release.pub ~/.aic/nova.pub"` (qualquer uma das duas confere), publique-a assinada com a antiga e, na imagem seguinte, só com a `nova.pub`, a antiga deixa de valer. A versão só cresce, então uma release antiga não volta.
+   `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]` imprime os argumentos de `aic cluster rollout`. A placa é `armv7-opipc` (padrão) ou `x86_64-uefi`; a versão só cresce (números e pontos). Hospede o `rootfs.gz` num endereço que os workers alcancem e rode `aic cluster rollout <versão> <argumentos impressos> --url <endereço>` ([[operacao]]).
+4. **Troque a chave sem perder os workers:** `bash os/image/release-keys.sh nova` gera `nova.key` e `nova.pub`. Monte uma imagem com `AIC_PUBS="~/.aic/release.pub ~/.aic/nova.pub"` (qualquer uma das duas confere), publique-a assinada com a antiga e, na imagem seguinte, só com a `nova.pub`, a antiga deixa de valer. A versão só cresce, então uma release antiga não volta.
 
-Perder a chave privada significa não poder mais atualizar os nós por rollout: eles só voltam a aceitar atualização regravando a imagem com uma pública nova. Guarde a privada fora da máquina de build quando puder.
+Perder a chave privada significa não poder mais atualizar os workers por rollout: eles só voltam a aceitar atualização regravando a imagem com uma pública nova. Guarde a privada fora da máquina de build quando puder.
 
 ## Outras arquiteturas
 
@@ -274,13 +274,13 @@ bash os/image/x86/mk-disk.sh --controller https://controller.exemplo:50051 \
   --token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img
 ```
 
-A imagem leva a identidade do nó (`worker.env`), então é uma por nó. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:
+A imagem leva a identidade do worker (`worker.env`), então é uma por worker. Para gravar num disco, a partir de qualquer Linux (um pendrive de recuperação serve), com o disco de destino desmontado:
 
 ```bash
 sudo sh os/image/x86/install-disk.sh build/disk-x86.img /dev/sdX --yes   # APAGA o disco inteiro
 ```
 
-O script grava a imagem, move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados até o fim do disco. Depois, dê boot pelo disco em modo UEFI. As releases para atualizar o nó são assinadas com a placa `x86_64-uefi`: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> x86_64-uefi` (o `.gz` e o `.ext4` são o `build/rootfs-x86.ext4` comprimido e sem comprimir).
+O script grava a imagem, move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados até o fim do disco. Depois, dê boot pelo disco em modo UEFI. As releases para atualizar o worker são assinadas com a placa `x86_64-uefi`: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> x86_64-uefi` (o `.gz` e o `.ext4` são o `build/rootfs-x86.ext4` comprimido e sem comprimir).
 
 Para experimentar sem hardware, `bash os/image/x86/run-qemu.sh` sobe o disco num QEMU com OVMF dentro de um contêiner na rede `aic-net` (o boot sem KVM leva alguns minutos); `docker logs aic-vm` mostra o console. Sem firmware de hardware (`linux-firmware`) a imagem só enxerga placas de rede e de disco que funcionam sem blobs; para as demais, acrescente o pacote de firmware correspondente ao `x86/Dockerfile`.
 
@@ -310,7 +310,7 @@ Para conferir: `aic controller status`, `aic gateway status` ou `aic worker stat
 
 ## Cabeçalho e cores
 
-Toda saída pensada para uma pessoa (o instalador e o `aic`) começa com o logotipo da malha de sete nós e a linha `Real.AI.Cluster <componente> v<versão>`, com as mesmas cores em todos os componentes. Sem terminal (log, pipe, arquivo) ou com `NO_COLOR`, o cabeçalho vira uma linha só, sem cor. `AI_CLUSTER_COLOR=never` tira só a cor; `AI_CLUSTER_COLOR=always` força a cor; `AI_CLUSTER_ASCII=1` troca os glifos por ASCII.
+Toda saída pensada para uma pessoa (o instalador e o `aic`) começa com o logotipo da malha de sete workers e a linha `AI.Cluster <componente> v<versão>`, com as mesmas cores em todos os componentes. Sem terminal (log, pipe, arquivo) ou com `NO_COLOR`, o cabeçalho vira uma linha só, sem cor. `AI_CLUSTER_COLOR=never` tira só a cor; `AI_CLUSTER_COLOR=always` força a cor; `AI_CLUSTER_ASCII=1` troca os glifos por ASCII.
 
 ## Comandos antigos
 

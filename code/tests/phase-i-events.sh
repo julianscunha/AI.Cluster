@@ -2,7 +2,7 @@
 # Fatia da Fase I (F06): a linha do tempo de eventos sobrevive a um restart do controller.
 #
 # Critério verificado: um worker entra, o controller é derrubado e sobe de novo com o mesmo
-# AI_CLUSTER_EVENTS, e `aic cluster events` ainda mostra o evento de entrada do nó.
+# AI_CLUSTER_EVENTS, e `aic cluster events` ainda mostra o evento de entrada do worker.
 set -uo pipefail
 
 NET=aic-net-i6
@@ -30,7 +30,7 @@ sleep 8
 echo "=== A) o evento de entrada existe antes do restart ==="
 BEFORE=$(run "$R/aic cluster events --limit 50")
 echo "$BEFORE"
-echo "$BEFORE" | grep -q node-i6 || { echo "FALHA: sem evento do nó antes do restart"; teardown; exit 1; }
+echo "$BEFORE" | grep -q node-i6 || { echo "FALHA: sem evento do worker antes do restart"; teardown; exit 1; }
 echo "OK"
 
 echo "=== B) depois de derrubar e subir o controller o evento continua ==="
@@ -42,7 +42,7 @@ echo "$AFTER"
 if echo "$AFTER" | grep -q node-i6; then
   echo "OK: a linha do tempo sobreviveu ao restart"
 else
-  echo "FALHA: o evento do nó sumiu no restart"
+  echo "FALHA: o evento do worker sumiu no restart"
   teardown
   exit 1
 fi

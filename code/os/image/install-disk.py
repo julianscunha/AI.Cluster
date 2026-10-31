@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grava a imagem do AI Cluster OS (F15 J4) no cartão de um nó que está no ambiente de recuperação
+"""Grava a imagem do AI Cluster OS (F15 J4) no cartão de um worker que está no ambiente de recuperação
 em RAM (boot de rede) e escreve a identidade dele na partição de dados.
 
     AIC_SSH_PASSWORD=... python3 install-disk.py --host 192.168.1.24 --yes \\
@@ -7,9 +7,9 @@ em RAM (boot de rede) e escreve a identidade dele na partição de dados.
         --token TOKEN --node-id orangepi-1 --ssh-key ~/.ssh/aic_pi.pub \\
         --recovery-server 192.168.1.25
 
-Trava de segurança: só age num nó cujo cartão está DESMONTADO e que roda do initramfs (raiz `rootfs`),
+Trava de segurança: só age num worker cujo cartão está DESMONTADO e que roda do initramfs (raiz `rootfs`),
 isto é, nunca no sistema que está em uso. Apaga o cartão inteiro; exige --yes.
-Precisa do paramiko (pip install paramiko). Roda no PC; o nó só precisa de busybox.
+Precisa do paramiko (pip install paramiko). Roda no PC; o worker só precisa de busybox.
 """
 import argparse
 import ipaddress
@@ -39,7 +39,7 @@ def main():
     ap.add_argument('--controller', required=True)
     ap.add_argument('--token', required=True)
     ap.add_argument('--node-id', required=True)
-    ap.add_argument('--ssh-key', help='chave pública que poderá entrar por SSH no nó instalado')
+    ap.add_argument('--ssh-key', help='chave pública que poderá entrar por SSH no worker instalado')
     ap.add_argument('--recovery-server', help='IP do servidor TFTP da recuperação pela rede')
     ap.add_argument('--recovery-token', help='token de recuperação (AI_CLUSTER_RECOVERY_TOKEN do controller); vai em claro no boot.scr, por isso não é o token de join')
     ap.add_argument('--insecure', action='store_true', default=True,
@@ -65,7 +65,7 @@ def main():
     # 1) Travas: ambiente de RAM e cartão desmontado.
     _, mounts, _ = run(client, 'cat /proc/mounts')
     if not mounts.splitlines()[0].startswith('rootfs / rootfs'):
-        sys.exit('o nó não está rodando do ambiente em RAM (raiz != rootfs); recuso apagar um sistema em uso')
+        sys.exit('o worker não está rodando do ambiente em RAM (raiz != rootfs); recuso apagar um sistema em uso')
     if 'mmcblk0' in mounts:
         sys.exit('há partições do cartão montadas; recuso gravar')
     _, size, _ = run(client, f'cat /sys/block/{DEVICE.split("/")[-1]}/size')
@@ -79,7 +79,7 @@ def main():
     if not args.yes:
         sys.exit(f'isto apaga {DEVICE} em {args.host}; rode de novo com --yes')
 
-    # 2) Grava a imagem inteira (o gzip viaja comprimido; o nó descomprime).
+    # 2) Grava a imagem inteira (o gzip viaja comprimido; o worker descomprime).
     print('gravando a imagem...', flush=True)
     channel = client.get_transport().open_session()
     # o status do gunzip vai a um arquivo: num pipe, só o do dd chegaria a quem chamou
@@ -108,9 +108,9 @@ def main():
     time.sleep(2)
     code, listing, _ = run(client, f'ls {DEVICE}p1 {DEVICE}p2 {DEVICE}p3 {DEVICE}p4 2>&1')
     if code != 0:
-        sys.exit(f'o kernel não enxergou as partições novas ({listing.strip()}); reinicie o nó e rode de novo só a configuração')
+        sys.exit(f'o kernel não enxergou as partições novas ({listing.strip()}); reinicie o worker e rode de novo só a configuração')
 
-    # 3) Identidade do nó na partição de dados e a recuperação na de boot.
+    # 3) Identidade do worker na partição de dados e a recuperação na de boot.
     worker_env = (
         f'AI_CLUSTER_CONTROLLER={args.controller}\n'
         f'AI_CLUSTER_JOIN_TOKEN={args.token}\n'
@@ -143,7 +143,7 @@ def main():
 
     if code != 0:
         sys.exit(f'falha ao escrever a identidade: {err or out}')
-    print('identidade escrita. Reinicie o nó para subir do cartão: reboot -f')
+    print('identidade escrita. Reinicie o worker para subir do cartão: reboot -f')
 
 
 if __name__ == '__main__':

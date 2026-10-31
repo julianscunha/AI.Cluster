@@ -8,13 +8,13 @@
 # Critérios verificados:
 #   A) install.sh instala o servidor (controller + gateway) baixando só os pacotes desse papel, com o
 #      cabeçalho do instalador e o aviso de que, sem systemd, nada volta sozinho depois de um reinício;
-#   B) o convite entrega o pacote do worker pelo processador e o nó fica READY e aprovado;
+#   B) o convite entrega o pacote do worker pelo processador e o worker fica READY e aprovado;
 #   B1) um worker com systemd de mentira: `enable` é chamado e a unit tem Restart=always;
 #   B2) o /wait do convite apresenta um computador com Linux para instalação e o operador o vê;
-#   B2b) `aic worker change` muda um nó de controller pelo convite (token, CA, certificado novo; a troca só
+#   B2b) `aic worker change` muda um worker de controller pelo convite (token, CA, certificado novo; a troca só
 #        se dá por feita com o registro novo no log; falha, ou worker que não registra, volta tudo);
 #        `--token-file` troca controller e token (espaços e quebras saem; arquivo ausente, vazio ou legível
-#        por outros é recusado sem mexer no nó);
+#        por outros é recusado sem mexer no worker);
 #   B3) o worker exige o código do convite (8 caracteres) e o convite trava com chutes demais, inclusive com
 #        HEAD e com caminho codificado (/%6Aoin-X); quem não chutou continua sendo atendido;
 #   C) o controller sozinho e o gateway em outro computador sobem (o gateway com o controller dele);
@@ -44,6 +44,7 @@
 set -uo pipefail
 export MSYS_NO_PATHCONV=1
 DISTU=$(cd "${1:-dist/release}" && pwd)
+CURV=$(cat "$DISTU/VERSION"); NEWV=${CURV%.*}.$(( ${CURV##*.} + 1 ))   # uma versão à frente da do pacote, para os testes de atualização
 DIST=$(cd "${1:-dist/release}" && pwd -W 2>/dev/null || pwd)
 NET=aic-st
 BASE=http://aic-mirror:9000
@@ -91,14 +92,14 @@ assina() { # assina <pasta> [chave]: refaz o SHA256SUMS.sig da pasta
 rm -f "$BADDIST/SHA256SUMS.sig"; assina "$BADDIST" || { echo "FALHA: não assinei a release ruim"; exit 1; }
 # Variantes com um defeito cada (pastas no espelho ruim, com os arquivos da release boa por ligação física):
 #   sig-adulterada: o SHA256SUMS mudou depois de assinado; sig-semsig: sem SHA256SUMS.sig; sig-chave: assinada
-#   por outra chave; sig-pacote: um pacote não bate com o SHA256SUMS; sig-novo: versão nova (0.2.1), válida.
+#   por outra chave; sig-pacote: um pacote não bate com o SHA256SUMS; sig-novo: versão nova (a seguinte à do pacote), válida.
 boa() { mkdir -p "$BADDIST/$1"; cp -l "$DISTU"/*.tar.gz "$DISTU"/install.sh "$DISTU"/VERSION "$DISTU"/SHA256SUMS "$DISTU"/SHA256SUMS.sig "$BADDIST/$1/"; }
 boa sig-adulterada; rm -f "$BADDIST/sig-adulterada/SHA256SUMS"; { cat "$DISTU/SHA256SUMS"; echo "# adulterado"; } > "$BADDIST/sig-adulterada/SHA256SUMS"
 boa sig-semsig; rm -f "$BADDIST/sig-semsig/SHA256SUMS.sig"
 boa sig-chave; openssl genpkey -algorithm ed25519 -out "$(win "$TMPD/outra.key")" 2>/dev/null
 rm -f "$BADDIST/sig-chave/SHA256SUMS.sig"; assina "$BADDIST/sig-chave" "$TMPD/outra.key" || { echo "FALHA: chave descartável"; exit 1; }
 boa sig-pacote; rm -f "$BADDIST/sig-pacote/controller-linux-x86_64.tar.gz"; { cat "$DISTU/controller-linux-x86_64.tar.gz"; echo x; } > "$BADDIST/sig-pacote/controller-linux-x86_64.tar.gz"
-mkdir -p "$BADDIST/sig-novo"; cp -l "$DISTU"/*.tar.gz "$DISTU"/install.sh "$BADDIST/sig-novo/"; printf '0.2.1\n' > "$BADDIST/sig-novo/VERSION"
+mkdir -p "$BADDIST/sig-novo"; cp -l "$DISTU"/*.tar.gz "$DISTU"/install.sh "$BADDIST/sig-novo/"; echo "$NEWV" > "$BADDIST/sig-novo/VERSION"
 (cd "$BADDIST/sig-novo" && for f in install.sh VERSION *.tar.gz; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done > SHA256SUMS)
 assina "$BADDIST/sig-novo" || { echo "FALHA: não assinei a versão nova"; exit 1; }
 docker run -d --name aic-mirror --network $NET -v "$DIST:/r:ro" -w /r aic-test-base python3 -m http.server 9000 >/dev/null
@@ -142,7 +143,7 @@ OUT=$(inst aic-srv --role server --arch x86_64) || { echo "$OUT"; fail "install.
 echo "$OUT" | grep -q "✔ gateway-linux-x86_64" || fail "o gateway deveria ter sido baixado"
 echo "$OUT" | grep -q "worker-linux" && fail "o servidor não deveria baixar o worker"
 docker exec aic-srv sh -c 'grep -q "^AI_CLUSTER_GATEWAY_URL=http://$(cat /etc/ai-cluster/server-ip):8080$" /etc/ai-cluster/gateway.env' || fail "o gateway do servidor deveria anunciar http://<ip>:8080 (e não 0.0.0.0)"
-echo "$OUT" | grep -q "^Real.AI.Cluster instalador - " || fail "o instalador deveria abrir com o cabeçalho dele"
+echo "$OUT" | grep -q "^AI.Cluster instalador - " || fail "o instalador deveria abrir com o cabeçalho dele"
 echo "$OUT" | grep -q "não voltam sozinhos" || fail "sem systemd o instalador deveria avisar que nada volta sozinho"
 docker exec aic-srv sh -c 'test -x /opt/ai-cluster/libexec/setup && test -x /usr/local/bin/aic && test -x /opt/ai-cluster/bin/aic' || fail "o setup e o aic deveriam ficar em /opt/ai-cluster"
 # A chave de release é pinada na instalação (ADR-025): a do pacote tools, que é a do repositório.
@@ -156,26 +157,26 @@ docker exec aic-srv sh -c '[ "$(stat -c %U:%G:%a /etc/ai-cluster/pki/ca.key)" = 
 docker exec aic-srv grep -q '^AI_CLUSTER_RPC_CA_KEY=' /etc/ai-cluster/controller.env && fail "sem systemd não deveria gravar AI_CLUSTER_RPC_CA_KEY"
 echo "OK: servidor instalado, com a chave de release pinada e a CA fora do alcance do gateway sem systemd"
 
-echo "=== B) o convite entrega o worker e o nó fica READY e aprovado ==="
+echo "=== B) o convite entrega o worker e o worker fica READY e aprovado ==="
 docker exec -d aic-srv sh -c "aic cluster invite --minutes 4 > /tmp/invite.log 2>&1"
 espera_ate 40 docker exec aic-srv grep -q -- '--code' /tmp/invite.log || fail "o convite não mostrou o código"
 SIP=$(docker exec aic-srv cat /etc/ai-cluster/server-ip)
 WCODE=$(docker exec aic-srv sh -c "grep -o -- '--code [A-Za-z0-9]*' /tmp/invite.log | head -n 1 | cut -d' ' -f2")
 [ ${#WCODE} -eq 8 ] || fail "o convite deveria mostrar um código de 8 caracteres (veio: $WCODE)"
-docker exec aic-srv grep -q "^Real.AI.Cluster convite " /tmp/invite.log || fail "o convite deveria abrir com o cabeçalho dele"
+docker exec aic-srv grep -q "^AI.Cluster convite " /tmp/invite.log || fail "o convite deveria abrir com o cabeçalho dele"
 # O worker precisa do código: sem ele o instalador recusa (sem terminal para perguntar), o /join não existe e o /sign nega.
 falha_com "sem terminal para perguntar" inst aic-wk --role worker --arch x86_64 --server "$SIP"
 [ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' http://$SIP:8099/join)" = 404 ] || fail "o /join sem código não deveria existir"
 [ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' -X POST --data x "http://$SIP:8099/sign?name=intruso&code=ZZZZZZZZ")" = 403 ] || fail "o /sign com código errado deveria dar 403"
 OUT=$(docker exec aic-wk sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role worker --arch x86_64 --server $SIP" 2>&1) || { echo "$OUT" | tail -5; fail "o worker não entrou"; }
-espera_ate 40 docker exec aic-srv sh -c "aic cluster nodes 2>/dev/null | grep -E 'READY.*aprovado'" || fail "o nó não ficou READY e aprovado"
+espera_ate 40 docker exec aic-srv sh -c "aic cluster nodes 2>/dev/null | grep -E 'READY.*aprovado'" || fail "o worker não ficou READY e aprovado"
 echo "OK: worker READY e aprovado"
-# Certificado por nó: a chave nasceu no worker (o servidor não tem chave de worker) e o SAN leva o nome do nó.
+# Certificado por worker: a chave nasceu no worker (o servidor não tem chave de worker) e o SAN leva o nome do worker.
 docker exec aic-srv test ! -e /etc/ai-cluster/pki/worker.key || fail "o servidor não deveria guardar chave de worker"
 WNAME=$(docker exec aic-wk hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 docker exec aic-wk sh -c "openssl x509 -in /etc/ai-cluster/rpc-tls/worker.crt -noout -ext subjectAltName | grep -q 'DNS:aic-worker-$WNAME' && openssl verify -CAfile /etc/ai-cluster/rpc-tls/ca.crt /etc/ai-cluster/rpc-tls/worker.crt >/dev/null"   || fail "o certificado do worker deveria ter o SAN aic-worker-$WNAME e conferir com a CA"
-docker exec aic-srv grep -q 'AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}' /etc/ai-cluster/gateway.env || fail "o gateway deveria esperar o nome por nó"
-echo "OK: certificado por nó"
+docker exec aic-srv grep -q 'AI_CLUSTER_LLAMA_RPC_SERVER_NAME=aic-worker-{node_id}' /etc/ai-cluster/gateway.env || fail "o gateway deveria esperar o nome por worker"
+echo "OK: certificado por worker"
 # O worker entrou pelo join novo: ele grava a release (origem da atualização) e leva o aic e o setup.
 docker exec aic-wk sh -c 'grep -q "^ROLE=worker$" /etc/ai-cluster/release && grep -q "^BASE=http" /etc/ai-cluster/release && grep -q "^SUMS=[0-9a-f]" /etc/ai-cluster/release && test -x /opt/ai-cluster/libexec/setup && test -x /opt/ai-cluster/bin/aic && test -e /etc/ai-cluster/.installed' || fail "o join deveria gravar /etc/ai-cluster/release e instalar o aic e o setup"
 echo "OK: join grava a release e instala aic e setup"
@@ -215,7 +216,7 @@ docker exec aic-wk grep -q "Impressão digital" /tmp/wait.log || fail "a tela de
 espera_ate 30 docker exec aic-srv grep -q "quer instalar" /tmp/invite.log || fail "o convite deveria avisar o operador do aparelho"
 echo "OK: aparelho aguardando aprovação"
 
-# `aic worker change` (AI Cluster OS): muda um nó de controller pelo convite, sem regravar a imagem. O nó de
+# `aic worker change` (AI Cluster OS): muda um worker de controller pelo convite, sem regravar a imagem. O worker de
 # mentira usa pastas e um rc-service de mentira (que registra no log do worker quando sobe); o resto
 # (wget, openssl, convite) é de verdade. AIC_TESTING=1 libera os caminhos de teste; AIC_ASSUME_YES=1 pula a pergunta.
 AICDIR=$(cd "$(dirname "$0")/../os/image/overlay/usr/libexec/aic" && pwd -W 2>/dev/null || pwd)
@@ -237,10 +238,10 @@ docker exec aic-wk chmod +x /tmp/fd/rc || fail "chmod do rc de mentira"
 CH="AIC_TESTING=1 AIC_ASSUME_YES=1 AIC_DATA=/tmp/fd AIC_RC=/tmp/fd/rc AIC_WORKER_LOG=/tmp/fd/worker.log sh /tmp/aic-change"
 # Sem terminal e sem --yes, nada muda: a pergunta é obrigatória.
 falha_com "sem terminal para confirmar" docker exec aic-wk sh -c "AIC_TESTING=1 AIC_DATA=/tmp/fd AIC_RC=/tmp/fd/rc sh /tmp/aic-change --controller http://192.168.1.25:50051 --token novo"
-docker exec aic-wk grep -q 'JOIN_TOKEN=velho' /tmp/fd/worker.env || fail "sem confirmação o nó não pode mudar"
-# Código errado: falha com o motivo e o nó continua como estava.
+docker exec aic-wk grep -q 'JOIN_TOKEN=velho' /tmp/fd/worker.env || fail "sem confirmação o worker não pode mudar"
+# Código errado: falha com o motivo e o worker continua como estava.
 falha_com "o convite nao respondeu" docker exec aic-wk sh -c "$CH --server $SIP:8099 --code ZZZZZZZZ"
-docker exec aic-wk grep -q 'JOIN_TOKEN=velho' /tmp/fd/worker.env || fail "aic change com falha não pode mexer no nó"
+docker exec aic-wk grep -q 'JOIN_TOKEN=velho' /tmp/fd/worker.env || fail "aic change com falha não pode mexer no worker"
 docker exec aic-wk sh -c "$CH --server $SIP:8099 --code $(echo $WCODE | tr A-Z a-z) --controller http://192.168.1.25:50051" >/dev/null || fail "aic change pelo convite"
 NEWTOK=$(docker exec aic-srv sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)
 docker exec aic-wk grep -q "AI_CLUSTER_JOIN_TOKEN=$NEWTOK" /tmp/fd/worker.env || fail "o token novo deveria estar no worker.env"
@@ -250,7 +251,7 @@ docker exec aic-wk sh -c "test ! -e /tmp/fd/state/credential && openssl verify -
 [ "$(docker exec aic-wk stat -c %a /tmp/fd/.change-backup)" = 700 ] || fail "o backup do change deveria ser 700"
 docker exec aic-wk sh -c 'test -z "$(find /tmp/fd/.change-backup -perm /077)"' || fail "os arquivos do backup deveriam ser só do root"
 # Token por arquivo: espaços e quebras saem; a recusa (ausente, vazio, legível por outros, junto de --token)
-# não mexe no nó; o arquivo certo troca controller e token, e o token nunca aparece na saída.
+# não mexe no worker; o arquivo certo troca controller e token, e o token nunca aparece na saída.
 docker exec aic-wk sh -c "printf '  tokenDoArquivo1 \n\n' > /tmp/fd/tok-ok && chmod 600 /tmp/fd/tok-ok && printf 'outro\n' > /tmp/fd/tok-aberto && chmod 644 /tmp/fd/tok-aberto && : > /tmp/fd/tok-vazio && chmod 600 /tmp/fd/tok-vazio" || fail "não preparei os arquivos de token"
 ANTES_ARQ=$(docker exec aic-wk cat /tmp/fd/worker.env)
 falha_com "ausente ou sem leitura" docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 --token-file /tmp/fd/nao-existe"
@@ -262,7 +263,7 @@ OUT_ARQ=$(docker exec aic-wk sh -c "$CH --controller http://192.168.1.28:50051 -
 docker exec aic-wk grep -qx 'AI_CLUSTER_JOIN_TOKEN=tokenDoArquivo1' /tmp/fd/worker.env || fail "o token do arquivo deveria entrar no worker.env, sem espaços nem quebra"
 docker exec aic-wk grep -qx 'AI_CLUSTER_CONTROLLER=http://192.168.1.28:50051' /tmp/fd/worker.env || fail "--controller com --token-file deveria valer"
 echo "$OUT_ARQ" | grep -q tokenDoArquivo1 && fail "o token não pode aparecer na saída do aic worker change"
-echo "OK: --token-file troca controller e token; recusas não mexem no nó e o token não aparece"
+echo "OK: --token-file troca controller e token; recusas não mexem no worker e o token não aparece"
 BEFORE=$(docker exec aic-wk cat /tmp/fd/worker.env)
 # Worker que não sobe: volta o que estava (token, CA e certificado) e sai com erro.
 docker exec aic-wk touch /tmp/fd/fail-start
@@ -402,8 +403,8 @@ docker exec aic-old sed -i "s|^BASE=.*|BASE=$BASE|" /etc/ai-cluster/release
 OUT=$(docker exec aic-old aic update apply --yes 2>&1) && echo "$OUT" | grep -q "já está na versão mais recente" || { echo "$OUT" | tail -4; fail "a release assinada igual deveria dizer que já está na versão mais recente"; }
 docker exec aic-old sed -i "s|^BASE=.*|BASE=$BASE_BAD/sig-novo|" /etc/ai-cluster/release
 OUT=$(docker exec aic-old aic update apply --yes 2>&1) || { echo "$OUT" | tail -6; fail "a versão nova assinada deveria atualizar"; }
-echo "$OUT" | grep -q "Atualizado para 0.2.1" || { echo "$OUT" | tail -4; fail "a atualização deveria terminar com 'Atualizado para 0.2.1'"; }
-docker exec aic-old grep -qx 'VERSION=0.2.1' /etc/ai-cluster/release || fail "a release gravada deveria ser a 0.2.1"
+echo "$OUT" | grep -q "Atualizado para $NEWV" || { echo "$OUT" | tail -4; fail "a atualização deveria terminar com 'Atualizado para $NEWV'"; }
+docker exec aic-old grep -qx "VERSION=$NEWV" /etc/ai-cluster/release || fail "a release gravada deveria ser a $NEWV"
 docker exec aic-old sed -i "s|^BASE=.*|BASE=$BASE|" /etc/ai-cluster/release
 falha_com "é mais antiga" docker exec aic-old aic update apply --yes
 echo "OK C4b) assinada e nova atualiza; a mesma não mexe; a mais antiga pede --force"
@@ -564,17 +565,17 @@ UPD="runuser -u ai-cluster -- /opt/ai-cluster/bin/aic-update-linux"   # o worker
 # Confere sem gravar nada: assinatura boa passa; de outra chave, adulterada ou de outra versão não passam.
 docker exec aic-wk sh -c "$UPD --verify $VER $BASE x x $SIG" >/dev/null 2>&1 || fail "--verify com a assinatura boa deveria passar"
 falha_com "não confere com a chave" docker exec aic-wk sh -c "$UPD --verify $VER $BASE_BAD/sig-chave x x $(cat "$BADDIST/sig-chave/SHA256SUMS.sig")"
-falha_com "não confere com a chave" docker exec aic-wk sh -c "$UPD --verify $VER $BASE x x $(echo "$SIG" | sed 's/^./Z/')"
+falha_com "não confere com a chave" docker exec aic-wk sh -c "$UPD --verify $VER $BASE x x $(echo "$SIG" | sed 's/^Z/Y/; t; s/^./Z/')"
 falha_com "não a 9.9.9" docker exec aic-wk sh -c "$UPD --verify 9.9.9 $BASE x x $SIG"
 falha_com "assinatura inválida" docker exec aic-wk sh -c "$UPD --verify $VER $BASE x x curta"
 docker exec aic-wk test ! -e /opt/ai-cluster/state/update-request || fail "--verify não pode gravar pedido"
 # Pedido com a assinatura de outra chave não é gravado; o da versão nova assinada é, e o ai-cluster-update (root) aplica.
-falha_com "não confere com a chave" docker exec aic-wk sh -c "$UPD 0.2.1 $BASE_BAD/sig-chave x x $(cat "$BADDIST/sig-chave/SHA256SUMS.sig")"
+falha_com "não confere com a chave" docker exec aic-wk sh -c "$UPD $NEWV $BASE_BAD/sig-chave x x $(cat "$BADDIST/sig-chave/SHA256SUMS.sig")"
 docker exec aic-wk test ! -e /opt/ai-cluster/state/update-request || fail "pedido recusado não pode ficar gravado"
 PID_H3=$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)
 BIN_H3=$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)
 # Pedido adulterado gravado à mão (o pedido de outro usuário, p. ex.): o ai-cluster-update confere de novo e recusa.
-docker exec aic-wk sh -c "printf '%s %s %s\n' 0.2.1 $BASE_BAD/sig-chave $(cat "$BADDIST/sig-chave/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request && chown ai-cluster /opt/ai-cluster/state/update-request" || fail "não consegui gravar o pedido falso"
+docker exec aic-wk sh -c "printf '%s %s %s\n' $NEWV $BASE_BAD/sig-chave $(cat "$BADDIST/sig-chave/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request && chown ai-cluster /opt/ai-cluster/state/update-request" || fail "não consegui gravar o pedido falso"
 docker exec aic-wk /opt/ai-cluster/libexec/setup update linux-apply >/dev/null 2>&1 && fail "um pedido com assinatura de outra chave não pode ser aplicado"
 docker exec aic-wk grep -q "não confere com a chave" /opt/ai-cluster/state/update-result || fail "o motivo da recusa deveria ficar em update-result (o worker o mostra)"
 [ "$(docker exec aic-wk sha256sum /opt/ai-cluster/bin/ai-cluster-worker | cut -d' ' -f1)" = "$BIN_H3" ] && [ "$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)" = "$PID_H3" ] \
@@ -589,12 +590,12 @@ docker exec aic-wk /opt/ai-cluster/libexec/setup update linux-apply >/dev/null 2
 docker exec aic-wk grep -q "link simbólico" /opt/ai-cluster/state/update-result || fail "o motivo do link deveria ir para update-result"
 docker exec aic-wk sh -c 'test "$(cat /tmp/alvo-req)" = intacto && test ! -L /opt/ai-cluster/state/update-request' || fail "o root não pode seguir o link do pedido"
 docker exec aic-wk rm -f /opt/ai-cluster/state/update-result && docker exec aic-wk runuser -u ai-cluster -- ln -s /tmp/alvo-res /opt/ai-cluster/state/update-result || fail "não consegui plantar o link de resultado"
-docker exec aic-wk sh -c "printf '0.2.1 %s %s\n' $BASE_BAD/sig-chave $(cat "$BADDIST/sig-chave/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request" || fail "não gravei o pedido de teste"
+docker exec aic-wk sh -c "printf '$NEWV %s %s\n' $BASE_BAD/sig-chave $(cat "$BADDIST/sig-chave/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request" || fail "não gravei o pedido de teste"
 docker exec aic-wk /opt/ai-cluster/libexec/setup update linux-apply >/dev/null 2>&1 && fail "pedido de outra chave não pode ser aplicado"
 docker exec aic-wk sh -c 'test "$(cat /tmp/alvo-res)" = intacto && test ! -L /opt/ai-cluster/state/update-result && grep -q "não confere com a chave" /opt/ai-cluster/state/update-result' \
   || fail "o resultado não pode ir para o alvo de um link: deveria ser um arquivo comum com o motivo"
 # Origem: um pedido com a assinatura boa mas de outro host não é aplicado (o BASE desta instalação ainda é o do espelho bom).
-docker exec aic-wk sh -c "printf '0.2.1 %s %s\n' $BASE_BAD/sig-novo $(cat "$BADDIST/sig-novo/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request" || fail "não gravei o pedido de outra origem"
+docker exec aic-wk sh -c "printf '$NEWV %s %s\n' $BASE_BAD/sig-novo $(cat "$BADDIST/sig-novo/SHA256SUMS.sig") > /opt/ai-cluster/state/update-request" || fail "não gravei o pedido de outra origem"
 docker exec aic-wk /opt/ai-cluster/libexec/setup update linux-apply >/dev/null 2>&1 && fail "pedido de outra origem não pode ser aplicado"
 docker exec aic-wk grep -q "não é da origem" /opt/ai-cluster/state/update-result || fail "a recusa de origem deveria dizer o motivo"
 [ "$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)" = "$PID_H3" ] || fail "a recusa de origem não pode reiniciar o worker"
@@ -604,30 +605,30 @@ echo "OK H3c) link simbólico no pedido ou no resultado não é seguido pelo roo
 
 # Pedido da versão nova assinada: o worker pede (runuser, como o serviço) e o ai-cluster-update aplica: pid novo,
 # release gravada e o binário anterior guardado.
-docker exec aic-wk sh -c "$UPD 0.2.1 $BASE_BAD/sig-novo $(sha256sum "$BADDIST/sig-novo/SHA256SUMS" | cut -d' ' -f1) x $(cat "$BADDIST/sig-novo/SHA256SUMS.sig")" || fail "o pedido assinado deveria ser aceito"
+docker exec aic-wk sh -c "$UPD $NEWV $BASE_BAD/sig-novo $(sha256sum "$BADDIST/sig-novo/SHA256SUMS" | cut -d' ' -f1) x $(cat "$BADDIST/sig-novo/SHA256SUMS.sig")" || fail "o pedido assinado deveria ser aceito"
 docker exec aic-wk test -s /opt/ai-cluster/state/update-request || fail "o pedido assinado deveria ficar gravado"
 docker exec aic-wk /opt/ai-cluster/libexec/setup update linux-apply > /tmp/apply-h3.log 2>&1 || { tail -8 /tmp/apply-h3.log; fail "o ai-cluster-update deveria aplicar o pedido assinado"; }
-docker exec aic-wk grep -qx 'VERSION=0.2.1' /etc/ai-cluster/release || fail "a release gravada do worker deveria ser a 0.2.1"
+docker exec aic-wk grep -qx "VERSION=$NEWV" /etc/ai-cluster/release || fail "a release gravada do worker deveria ser a $NEWV"
 docker exec aic-wk test -x /opt/ai-cluster/bin/.prev/ai-cluster-worker || fail "a atualização do worker deveria guardar o binário anterior"
 [ "$(pid_de aic-wk /opt/ai-cluster/state/worker.pid)" != "$PID_H3" ] || fail "o worker deveria ter pid novo depois da atualização pedida"
 docker exec aic-wk test ! -e /opt/ai-cluster/state/update-request || fail "o pedido aplicado deveria ser apagado"
 docker exec aic-wk sed -i "s|^BASE=.*|BASE=$BASE|" /etc/ai-cluster/release || fail "não voltei a origem do worker"
-echo "OK H3b) pedido assinado: o worker pede, o ai-cluster-update aplica, o pid muda e a release fica 0.2.1"
+echo "OK H3b) pedido assinado: o worker pede, o ai-cluster-update aplica, o pid muda e a release fica a nova"
 
 echo "=== I) cabeçalho com o nome do componente, comandos antigos inexistentes ==="
-S=$(docker exec aic-srv aic controller status 2>&1); echo "$S" | head -n 1 | grep -q "^Real.AI.Cluster controller v" || fail "o controller deveria abrir com o cabeçalho dele"
-S=$(docker exec aic-gw aic gateway status 2>&1); echo "$S" | head -n 1 | grep -q "^Real.AI.Cluster gateway v" || fail "o gateway deveria abrir com o cabeçalho dele"
-S=$(docker exec aic-wk aic worker status 2>&1); echo "$S" | head -n 1 | grep -q "^Real.AI.Cluster worker v" || fail "o worker deveria abrir com o cabeçalho dele"
-S=$(docker exec aic-wk aic update status 2>&1); echo "$S" | head -n 1 | grep -q "^Real.AI.Cluster atualização" || fail "o update deveria abrir com o cabeçalho dele"
+S=$(docker exec aic-srv aic controller status 2>&1); echo "$S" | head -n 1 | grep -q "^AI.Cluster controller v" || fail "o controller deveria abrir com o cabeçalho dele"
+S=$(docker exec aic-gw aic gateway status 2>&1); echo "$S" | head -n 1 | grep -q "^AI.Cluster gateway v" || fail "o gateway deveria abrir com o cabeçalho dele"
+S=$(docker exec aic-wk aic worker status 2>&1); echo "$S" | head -n 1 | grep -q "^AI.Cluster worker v" || fail "o worker deveria abrir com o cabeçalho dele"
+S=$(docker exec aic-wk aic update status 2>&1); echo "$S" | head -n 1 | grep -q "^AI.Cluster atualização" || fail "o update deveria abrir com o cabeçalho dele"
 COR=$(docker exec aic-srv script -qc "aic controller status" /dev/null 2>&1)
-echo "$COR" | grep -q "$(printf '\033')\[1;97mReal.AI.Cluster controller" \
+echo "$COR" | grep -q "$(printf '\033')\[1;97mAI.Cluster controller" \
   || fail "com terminal, o cabeçalho deveria sair colorido (título em negrito)"
 echo "OK I1) cabeçalho com o nome do componente, e colorido num terminal"
 for c in ai-cluster aic-setup aic-change aic-role aic-passwd; do
   [ -z "$(docker exec aic-srv sh -c "command -v $c; true")" ] || fail "o comando $c não deveria existir mais"
 done
 docker exec aic-srv sh -c "test ! -e /usr/local/bin/ai-cluster && test ! -e /usr/local/bin/aic-setup" || fail "o instalador não deveria criar os nomes antigos"
-docker exec aic-srv aic status >/dev/null 2>&1 && fail "aic status (o antigo, de nós e modelo) não deveria existir"
+docker exec aic-srv aic status >/dev/null 2>&1 && fail "aic status (o antigo, de workers e modelo) não deveria existir"
 OUT=$(docker exec aic-wk aic worker role 2>&1); RC=$?
 [ "$RC" = 1 ] || fail "aic worker role no Linux comum deveria sair com 1 (saiu $RC)"
 echo "$OUT" | grep -q "disponível apenas no AI Cluster OS" || fail "aic worker role no Linux comum deveria dizer que é só do AI Cluster OS"

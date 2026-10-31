@@ -65,7 +65,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name $HOST --network "$NET" -v aic-target:/t 
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 sleep 3
 
-# worker <nome> <nó> [certificado de cliente] [chave de cliente]
+# worker <nome> <worker> [certificado de cliente] [chave de cliente]
 worker() {
   local env=()
   [ -n "${3:-}" ] && env+=(-e "AI_CLUSTER_TLS_CLIENT_CERT=$3")
@@ -90,11 +90,11 @@ echo "$NODES"
 echo "$NODES" | grep -E "^node-ok " | grep -q READY && echo "OK: node-ok READY e a CLI com certificado enxerga" \
   || { docker logs aic-w-mtls-ok 2>&1 | tail -3; fail "node-ok deveria estar READY"; }
 
-# refused <container> <nó> <rótulo> <erro esperado>
+# refused <container> <worker> <rótulo> <erro esperado>
 refused() {
   sleep 8
   if cli -e AI_CLUSTER_TLS_CLIENT_CERT=/tls/ok.pem -e AI_CLUSTER_TLS_CLIENT_KEY=/tls/ok.key | grep -q "$2"; then
-    fail "$3: o nó $2 não deveria ter entrado"
+    fail "$3: o worker $2 não deveria ter entrado"
   fi
   local log
   log=$(docker logs "$1" 2>&1)

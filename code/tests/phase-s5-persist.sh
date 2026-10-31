@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Fatia da Fase S (S5): a aprovação sobrevive a reinícios, e `revoke` retira a confiança.
 #
-# Critério verificado: sem AI_CLUSTER_AUTO_APPROVE, um nó aprovado continua aprovado quando o
+# Critério verificado: sem AI_CLUSTER_AUTO_APPROVE, um worker aprovado continua aprovado quando o
 # worker reinicia e quando o controller reinicia, desde que o worker guarde a credencial e o
-# controller guarde o arquivo de nós. `revoke` devolve o nó a pendente e derruba o worker.
+# controller guarde o arquivo de workers. `revoke` devolve o worker a pendente e derruba o worker.
 #
 # Sequência:
 #   A) worker novo fica pendente; `approve` o aprova.
 #   B) o worker reinicia (sai com `leave_node`) e volta aprovado, sem novo `approve`.
-#   C) o controller reinicia e o nó volta aprovado, sem novo `approve`.
-#   D) `revoke`: o nó fica pendente e o worker encerra por credencial inválida.
+#   C) o controller reinicia e o worker volta aprovado, sem novo `approve`.
+#   D) `revoke`: o worker fica pendente e o worker encerra por credencial inválida.
 set -uo pipefail
 
 NET=aic-net
@@ -35,7 +35,7 @@ cli() {
     -e AI_CLUSTER_CONTROLLER=$CONTROLLER "$IMG" sh -c "$R/aic $*" 2>&1
 }
 
-# trust <nó>: aprovado | pendente | ausente
+# trust <worker>: aprovado | pendente | ausente
 trust() {
   local row
   row=$(cli cluster nodes | grep -E "^$1 ")
@@ -61,7 +61,7 @@ MSYS_NO_PATHCONV=1 docker run -d --name aic-worker --network "$NET" -v aic-targe
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
 sleep 8
 
-echo "=== A) nó novo pendente; approve o aprova ==="
+echo "=== A) worker novo pendente; approve o aprova ==="
 [ "$(trust node-p)" = pendente ] || fail "node-p deveria nascer pendente"
 cli cluster node approve node-p --trust-listed | grep -q aprovado || fail "approve deveria confirmar"
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria estar aprovado"
@@ -73,7 +73,7 @@ sleep 10
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria continuar aprovado depois de reiniciar o worker"
 echo "OK: node-p continua aprovado depois do reinício do worker"
 
-echo "=== C) o controller reinicia e o nó continua aprovado ==="
+echo "=== C) o controller reinicia e o worker continua aprovado ==="
 docker restart aic-controller >/dev/null
 sleep 5
 # O worker não sobrevive a um controller fora do ar (o poll de trabalho propaga o erro); um
@@ -83,7 +83,7 @@ sleep 12
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria continuar aprovado depois de reiniciar o controller"
 echo "OK: node-p continua aprovado depois do reinício do controller"
 
-echo "=== C2) quem só tem o token de join não toma o id de um nó aprovado ==="
+echo "=== C2) quem só tem o token de join não toma o id de um worker aprovado ==="
 MSYS_NO_PATHCONV=1 docker run -d --name aic-impostor --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_INSECURE=1 -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \
   -e AI_CLUSTER_NODE_ID=node-p "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
@@ -98,7 +98,7 @@ docker rm -f aic-impostor >/dev/null 2>&1
 [ "$(trust node-p)" = aprovado ] || fail "node-p deveria continuar aprovado depois da tentativa do impostor"
 echo "OK: node-p continua aprovado"
 
-echo "=== D) revoke devolve o nó a pendente e derruba o worker ==="
+echo "=== D) revoke devolve o worker a pendente e derruba o worker ==="
 OUT=$(cli cluster node revoke node-p)
 echo "$OUT"
 echo "$OUT" | grep -q revogado || fail "revoke deveria confirmar"
@@ -111,7 +111,7 @@ else
   docker logs aic-worker 2>&1 | tail -3
   fail "o worker revogado deveria encerrar com Unauthenticated"
 fi
-cli cluster node revoke ghost | grep -q "não encontrado" || fail "revoke de nó desconhecido deveria responder 'não encontrado'"
+cli cluster node revoke ghost | grep -q "não encontrado" || fail "revoke de worker desconhecido deveria responder 'não encontrado'"
 
 teardown
 echo "=== S5 persistência e revogação OK ==="

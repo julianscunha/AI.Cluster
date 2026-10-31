@@ -30,14 +30,14 @@ O worker não expõe porta. Ele abre o canal ao controller por iniciativa própr
 
 | Variável | O que guarda | Sem a variável |
 |---|---|---|
-| `AI_CLUSTER_NODES` | Nós, credenciais e aprovação (modo 0600, em claro). | Registro só na memória. Nós voltam a pendentes após reinício. |
+| `AI_CLUSTER_NODES` | Workers, credenciais e aprovação (modo 0600, em claro). | Registro só na memória. Workers voltam a pendentes após reinício. |
 | `AI_CLUSTER_STATE` | Fila de trabalho e unidades em voo. | Fila só na memória. |
 | `AI_CLUSTER_EVENTS` | Linha do tempo de eventos. | Eventos só na memória. |
 | `AI_CLUSTER_RELEASE_STATE` | Release desejada pelo rollout. | Rollout some no reinício. |
 
 ## Comportamento do controller
 
-- **Heartbeat.** Um nó sem heartbeat por `AI_CLUSTER_HEARTBEAT_GRACE_MS` (padrão 15000 ms) é marcado offline. As unidades em voo dele voltam à fila, ou falham se esgotaram as tentativas.
+- **Heartbeat.** Um worker sem heartbeat por `AI_CLUSTER_HEARTBEAT_GRACE_MS` (padrão 15000 ms) é marcado offline. As unidades em voo dele voltam à fila, ou falham se esgotaram as tentativas.
 - **Reinício.** Unidades cujo dono não voltou depois de um reinício também voltam à fila, depois do mesmo prazo de carência.
 - **Varredura.** A checagem de heartbeat roda a cada 5 s.
 - **Fail-closed.** O controller não sobe sem token de join, sem token de operador, ou sem certificado TLS (a menos que `AI_CLUSTER_INSECURE=1`).
@@ -45,7 +45,7 @@ O worker não expõe porta. Ele abre o canal ao controller por iniciativa própr
 ## Rotina de operação
 
 1. `aic cluster dashboard` para o estado geral.
-2. `aic cluster nodes` para aprovação, versão e medida de cada nó.
+2. `aic cluster nodes` para aprovação, versão e medida de cada worker.
 3. `aic cluster events` para a linha do tempo recente.
 4. `aic cluster metrics` ou o scraper em `/metrics` para números agregados.
 5. `aic cluster request trace <id>` para uma requisição específica.

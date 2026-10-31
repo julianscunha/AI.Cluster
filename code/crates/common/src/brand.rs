@@ -1,5 +1,5 @@
-//! A identidade visual do Real.AI.Cluster, compartilhada por todos os componentes (CLI, painel,
-//! controller, gateway, worker). Os scripts do SO do nó seguem a mesma paleta e o mesmo logotipo em
+//! A identidade visual do AI.Cluster, compartilhada por todos os componentes (CLI, painel,
+//! controller, gateway, worker). Os scripts do SO do worker seguem a mesma paleta e o mesmo logotipo em
 //! `os/image/overlay/usr/lib/aic/ui.sh`; mexa nos dois juntos.
 //!
 //! Cor e glifos de caixa só saem num terminal que os aceita: a saída redirecionada para arquivo ou
@@ -72,7 +72,7 @@ fn paint_with(text: &str, tone: Tone, on: bool) -> String {
     }
 }
 
-/// O tom de um estado de nó: pronto é verde, sem sinal ou em quarentena é vermelho, o resto
+/// O tom de um estado de worker: pronto é verde, sem sinal ou em quarentena é vermelho, o resto
 /// (drenando, pendente, desconhecido) é atenção.
 pub fn state_tone(state: &str) -> Tone {
     match state {
@@ -118,7 +118,7 @@ pub fn glyphs() -> Glyphs {
     }
 }
 
-/// O logotipo, uma malha de sete nós em cinco linhas (a mesma do console do SO).
+/// O logotipo, uma malha de sete workers em cinco linhas (a mesma do console do SO).
 pub fn logo() -> Vec<String> {
     let g = glyphs();
     let n = |tone| paint(g.node, tone);
@@ -141,12 +141,12 @@ pub fn logo() -> Vec<String> {
 /// apoio. Em saída que não é terminal (log de contêiner, arquivo) vira uma linha só, sem desenho.
 pub fn banner(component: &str, version: &str, detail: &str) -> String {
     if !color_enabled() {
-        return format!("Real.AI.Cluster {component} v{version} - {detail}");
+        return format!("AI.Cluster {component} v{version} - {detail}");
     }
     let logo = logo();
     let text = [
         String::new(),
-        paint(&format!("Real.AI.Cluster {component}"), Tone::Strong),
+        paint(&format!("AI.Cluster {component}"), Tone::Strong),
         paint("IA distribuida em hardware comum", Tone::Dim),
         paint(&format!("versao {version}"), Tone::Dim),
         paint(detail, Tone::Accent),
@@ -219,9 +219,9 @@ mod tests {
     #[test]
     fn a_linha_de_secao_tem_a_largura_pedida_e_nunca_menos_que_o_titulo() {
         // sem terminal os testes rodam em texto puro
-        let line = rule("Nós", 30);
+        let line = rule("Workers", 30);
         assert_eq!(line.chars().count(), 30, "{line}");
-        assert!(line.contains("Nós"));
+        assert!(line.contains("Workers"));
         assert!(rule("Um título bem comprido", 5).contains("Um título bem comprido"));
     }
 

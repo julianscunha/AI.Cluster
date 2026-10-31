@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Fatia da Fase I (I2): classificação de armazenamento por nó (HOT/WARM/COLD).
+# Fatia da Fase I (I2): classificação de armazenamento por worker (HOT/WARM/COLD).
 #
-# Critério verificado: cada nó diz de que classes de armazenamento dispõe — WARM (SSD/NVMe)
+# Critério verificado: cada worker diz de que classes de armazenamento dispõe — WARM (SSD/NVMe)
 # e COLD (HDD); HOT é a RAM, já reportada em RAM_GB. Sem isso o diretório de estado
 # (state-manager) não tem como escolher onde colocar estado.
 #
 # A classificação é uma medida do worker: ele lê /sys/block e traduz rotational + nome do
 # dispositivo em classe. Em contêiner comum /sys/block é do host, então o teste fixa as
-# classes de um nó por AI_CLUSTER_STORAGE_CLASSES para provar o caminho, e deixa outro nó
+# classes de um worker por AI_CLUSTER_STORAGE_CLASSES para provar o caminho, e deixa outro worker
 # sem override para provar que a detecção real roda de ponta a ponta.
 #
 # Sequência:
-#   A) nó com classes fixadas: a classificação atravessa worker → proto → controller → CLI.
-#   B) nó sem override: o valor é uma classe válida, ou "-" se nada foi lido.
+#   A) worker com classes fixadas: a classificação atravessa worker → proto → controller → CLI.
+#   B) worker sem override: o valor é uma classe válida, ou "-" se nada foi lido.
 #   C) override vazio: "-" — "não medido" não pode parecer "sem armazenamento".
 set -uo pipefail
 
@@ -58,7 +58,7 @@ sleep 8
 NODES=$(run "$R/aic cluster nodes")
 echo "$NODES"
 
-echo "=== A) nó com classes fixadas (nvme,ssd) ==="
+echo "=== A) worker com classes fixadas (nvme,ssd) ==="
 FIXED=$(storage_of "$NODES" node-fixed)
 if [ "$FIXED" = "nvme,ssd" ]; then
   echo "OK: a classificação chegou ao cliente como nvme,ssd"
@@ -68,7 +68,7 @@ else
   exit 1
 fi
 
-echo "=== B) nó sem override: detecção real de /sys/block ==="
+echo "=== B) worker sem override: detecção real de /sys/block ==="
 REAL=$(storage_of "$NODES" node-real)
 if echo "$REAL" | grep -qE '^(nvme|ssd|hdd)(,(nvme|ssd|hdd))*$|^-$'; then
   echo "OK: a detecção devolveu uma classe válida ('$REAL')"

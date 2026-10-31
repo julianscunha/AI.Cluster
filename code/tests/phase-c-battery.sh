@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Fatia da Fase Q6 (F18): a bateria entra no score de saúde, e o placement a usa.
 #
-# Critério verificado: um nó descarregando a 15% reporta saúde pior que um nó na tomada, com a
-# mesma capability, e a unidade vai para o nó na tomada. A bateria entra por AI_CLUSTER_BATTERY
+# Critério verificado: um worker descarregando a 15% reporta saúde pior que um worker na tomada, com a
+# mesma capability, e a unidade vai para o worker na tomada. A bateria entra por AI_CLUSTER_BATTERY
 # (<percentual>:<charging|discharging>) porque um contêiner não tem bateria.
 #
 # Sequência:
-#   A) a bateria de cada nó atravessa worker → proto → controller → CLI;
-#   B) o score de saúde do nó na tomada é maior;
-#   C) o placement manda a unidade para o nó na tomada.
+#   A) a bateria de cada worker atravessa worker → proto → controller → CLI;
+#   B) o score de saúde do worker na tomada é maior;
+#   C) o placement manda a unidade para o worker na tomada.
 set -uo pipefail
 
 NET=aic-net-c7
@@ -26,7 +26,7 @@ teardown() {
 }
 
 # Reads one column of one node's row from the `nodes` table. Columns are, in order:
-# NÓ ESTADO ARQ THREADS RAM_GB COMPUTE SAÚDE CPU_% TEMP_C SWAP_% ARMAZ — so SAÚDE is 7
+# WORKER ESTADO ARQ THREADS RAM_GB COMPUTE SAÚDE CPU_% TEMP_C SWAP_% ARMAZ — so SAÚDE is 7
 # and TEMP_C is 9. Padded columns mean awk's whitespace split lands on the same numbers.
 field() {
   echo "$1" | awk -v node="$2" -v col="$3" '$1 == node { print $col }'
@@ -69,7 +69,7 @@ else
   exit 1
 fi
 
-echo "=== B) o score de saúde do nó ok é maior ==="
+echo "=== B) o score de saúde do worker ok é maior ==="
 OK_H=$(field "$NODES" node-ok 7)
 SLOW_H=$(field "$NODES" node-slow 7)
 if awk -v a="$OK_H" -v b="$SLOW_H" 'BEGIN { exit !(a > b) }'; then
@@ -82,13 +82,13 @@ else
   exit 1
 fi
 
-echo "=== C) o placement manda a unidade para o nó ok ==="
+echo "=== C) o placement manda a unidade para o worker ok ==="
 BENCH=$(run "$R/aic cluster benchmark --size 64 --repetitions 1")
 echo "$BENCH"
 # The per-unit rows start with the work id; the second field is the node that ran it.
 RAN=$(echo "$BENCH" | awk '$1 ~ /^w-/ { print $2; exit }')
 if [ "$RAN" = "node-ok" ]; then
-  echo "OK: a única unidade rodou em node-ok, o nó mais saudável"
+  echo "OK: a única unidade rodou em node-ok, o worker mais saudável"
 else
   echo "FALHA: esperado node-ok, veio '$RAN'"
   teardown

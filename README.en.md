@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/julianscunha/Real.AI.Cluster/actions/workflows/rust.yml"><img alt="CI" src="https://github.com/julianscunha/Real.AI.Cluster/actions/workflows/rust.yml/badge.svg"></a>
+  <a href="https://github.com/julianscunha/AI.Cluster/actions/workflows/rust.yml"><img alt="CI" src="https://github.com/julianscunha/AI.Cluster/actions/workflows/rust.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Rust 2024" src="https://img.shields.io/badge/rust-edition%202024-orange?logo=rust">
   <img alt="Platforms" src="https://img.shields.io/badge/x86__64%20%7C%20ARMv7-tested-informational">
@@ -68,7 +68,7 @@ Docker is **not** required to use AI Cluster. It only appears for people develop
 ## Guided install (Linux)
 
 ```bash
-curl -fsSL https://github.com/julianscunha/Real.AI.Cluster/releases/latest/download/install.sh | sudo sh -s -- --lang en
+curl -fsSL https://github.com/julianscunha/AI.Cluster/releases/latest/download/install.sh | sudo sh -s -- --lang en
 ```
 
 `--lang en` makes the installer, the `aic` command and the invite scripts speak English (it is remembered on the server, so `aic cluster invite` later stays in English). Without it everything is in Portuguese. The help and messages of the `aic` command are in Portuguese for now: an English version of the CLI does not exist yet.
@@ -129,13 +129,13 @@ docker compose -f deploy/docker-compose.yml exec controller aic cluster model st
 On a Linux build machine:
 
 ```bash
-git clone https://github.com/julianscunha/Real.AI.Cluster.git
-cd Real.AI.Cluster/code
+git clone https://github.com/julianscunha/AI.Cluster.git
+cd AI.Cluster/code
 cargo build --release --workspace
 # binaries in target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, aic
 ```
 
-Copy `ai-cluster-controller` and `ai-cluster-gateway` to the server, `aic` to whoever administers, and `ai-cluster-worker` to each device **of the same architecture**. For ARMv7 boards build with `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (see the [installation guide](docs/guia/instalacao.md)). There are no prebuilt binaries to download yet.
+Copy `ai-cluster-controller` and `ai-cluster-gateway` to the server, `aic` to whoever administers, and `ai-cluster-worker` to each device **of the same architecture**. For ARMv7 boards build with `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (see the [installation guide](docs/guia/instalacao.md)). For x86_64 there is a ready-made package in the [v0.2.1 release](https://github.com/julianscunha/AI.Cluster/releases/tag/v0.2.1).
 
 ### 2. Controller (on the server)
 

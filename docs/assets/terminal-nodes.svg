@@ -5,8 +5,8 @@
   <text x="550" y="24" fill="#94a3b8" font-size="13" text-anchor="middle">aic cluster nodes</text>
   <g font-size="15" xml:space="preserve">
     <text x="24" y="76" fill="#22c55e">$ aic cluster nodes</text>
-    <text x="24" y="108" fill="#94a3b8">NÓS 2</text>
-    <text x="24" y="136" fill="#64748b">NÓ            ESTADO  ARQ     THREADS  RAM_GB  COMPUTE  SAÚDE  CONFIANÇA  ARMAZ  VERSÃO</text>
+    <text x="24" y="108" fill="#94a3b8">WORKERS 2</text>
+    <text x="24" y="136" fill="#64748b">WORKER            ESTADO  ARQ     THREADS  RAM_GB  COMPUTE  SAÚDE  CONFIANÇA  ARMAZ  VERSÃO</text>
     <text x="24" y="162" fill="#e2e8f0">orangepi-ab   <tspan fill="#22c55e">READY</tspan>   arm          4    0.98     0.02   0.95  aprovado   mmc    5.3</text>
     <text x="24" y="188" fill="#e2e8f0">pc-x86        <tspan fill="#22c55e">READY</tspan>   x86_64       4    3.77     1.15   0.73  aprovado   hdd    0.1.0</text>
     <text x="24" y="232" fill="#22c55e">$ aic cluster dashboard</text>

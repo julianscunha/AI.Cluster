@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fatia da Fase I (I4): recuperação — uma unidade em voo atravessa o restart do controller e a
-# perda do dono, e termina em outro nó.
+# perda do dono, e termina em outro worker.
 #
 # Critério verificado: interrupção abrupta do controller *com* unidade em voo não perde
 # trabalho nem deixa a unidade presa; a posse guardada no disco permite concluir, depois do
@@ -21,7 +21,7 @@
 #
 # A posse atravessando o restart tem teste unitário
 # (`an_in_flight_unit_keeps_its_owner_across_a_restart`); o que este roteiro acrescenta é o
-# caminho completo, com o dono ausente de verdade e a unidade terminando em outro nó.
+# caminho completo, com o dono ausente de verdade e a unidade terminando em outro worker.
 set -uo pipefail
 
 NET=aic-net

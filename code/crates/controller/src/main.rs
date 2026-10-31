@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let Some(operator) = operator_token() else {
         return Err(format!(
-            "{OPERATOR_TOKEN_ENV} é obrigatório; sem ele ninguém aprova nós nem enfileira trabalho"
+            "{OPERATOR_TOKEN_ENV} é obrigatório; sem ele ninguém aprova workers nem enfileira trabalho"
         )
         .into());
     };
@@ -203,7 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // them back so the surviving nodes can finish the work.
                 let outcome = sweep_work.requeue_for_node(&node_id);
                 println!(
-                    "nó {node_id} offline após {grace_ms}ms sem heartbeat; {} unidades em voo reenfileiradas, {} falharam",
+                    "worker {node_id} offline após {grace_ms}ms sem heartbeat; {} unidades em voo reenfileiradas, {} falharam",
                     outcome.requeued, outcome.failed
                 );
                 sweep_events.record(
@@ -216,9 +216,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             // Unidades em voo cujo dono nunca reapareceu depois de um restart: a posse veio
-            // do snapshot, mas o nó não voltou. Antes do grace elas esperam — o dono pode
+            // do snapshot, mas o worker não voltou. Antes do grace elas esperam — o dono pode
             // estar voltando, e reoferecer agora só faria a unidade rodar duas vezes. Passado
-            // o grace valem as mesmas regras de um nó perdido: volta para a fila, ou falha se
+            // o grace valem as mesmas regras de um worker perdido: volta para a fila, ou falha se
             // o orçamento de tentativas acabou.
             if unix_ms().saturating_sub(started_unix_ms) >= grace_ms {
                 let known: Vec<String> = sweep
@@ -229,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for node_id in sweep_work.unknown_owners(&known) {
                     let outcome = sweep_work.requeue_for_node(&node_id);
                     println!(
-                        "nó {node_id} não voltou após o restart; {} unidades em voo reenfileiradas, {} falharam",
+                        "worker {node_id} não voltou após o restart; {} unidades em voo reenfileiradas, {} falharam",
                         outcome.requeued, outcome.failed
                     );
                     sweep_events.record(

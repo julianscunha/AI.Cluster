@@ -7,14 +7,14 @@
 #        [--rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls]
 #        [--update-cmd /opt/ai-cluster/bin/aic-update-linux]
 #
-# `--rpc-server-bin` e `--rpc-tls-dir` ligam o RPC do llama.cpp neste nó (modelos GGUF, ADR-022): o
+# `--rpc-server-bin` e `--rpc-tls-dir` ligam o RPC do llama.cpp neste worker (modelos GGUF, ADR-022): o
 # worker roda o `ggml-rpc-server` em loopback atrás de um túnel mTLS. A pasta de TLS tem de ter
 # `worker.crt`, `worker.key` e `ca.crt` (a CA que assina só o gateway); sem os três o RPC fica desligado.
 #
 # O que faz: cria o usuário `ai-cluster`, instala o binário do worker (dono root), grava o
 # ambiente em `<prefix>/worker.env` (root:ai-cluster, 0640: o token de join mora ali) e sobe o
 # worker, com systemd se houver, senão em segundo plano. Rodar de novo atualiza o binário e o
-# ambiente. Trocar o --node-id de uma máquina já instalada exige --force (o nó antigo ficaria
+# ambiente. Trocar o --node-id de uma máquina já instalada exige --force (o worker antigo ficaria
 # órfão no controller). O worker entra no cluster pelo caminho de sempre (join + aprovação);
 # este script não aprova.
 #
@@ -88,9 +88,9 @@ else
   W=""; C=""; D=""; Z=""; BTTY=0
 fi
 banner() { # banner <componente> <versão, ou vazio> <detalhe>
-  if [ "$BTTY" != 1 ]; then printf 'Real.AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
+  if [ "$BTTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
   printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
-  printf '  %s/ \\ / \\%s     %sReal.AI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
+  printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
   printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
   if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
   else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
@@ -140,7 +140,7 @@ ENV_FILE="$PREFIX/worker.env"
 if [ -f "$ENV_FILE" ] && [ "$FORCE" != 1 ]; then
   OLD_ID=$(sed -n 's/^AI_CLUSTER_NODE_ID=//p' "$ENV_FILE" | head -n 1)
   if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "$NODE_ID" ]; then
-    die "$(t "esta máquina já é o nó '$OLD_ID'; trocar para '$NODE_ID' deixa o antigo órfão no controller (use --force)" "this machine is already node '$OLD_ID'; switching to '$NODE_ID' leaves the old one orphaned on the controller (use --force)")"
+    die "$(t "esta máquina já é o worker '$OLD_ID'; trocar para '$NODE_ID' deixa o antigo órfão no controller (use --force)" "this machine is already node '$OLD_ID'; switching to '$NODE_ID' leaves the old one orphaned on the controller (use --force)")"
   fi
 fi
 
@@ -193,7 +193,7 @@ if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
     # ADR-026: o certificado renovado mora numa pasta do usuário do worker; a pasta do convite (com a CA e a chave) não muda.
     echo "AI_CLUSTER_RPC_TLS_RENEWED_DIR=$RPC_TLS_DIR/renovado"
   fi
-  # Sem systemd não há quem aplique o pedido: o nó não se declara atualizável (fica fora do rollout).
+  # Sem systemd não há quem aplique o pedido: o worker não se declara atualizável (fica fora do rollout).
   if [ -n "$UPDATE_CMD" ] && [ -d /run/systemd/system ]; then
     echo "AI_CLUSTER_UPDATE_CMD=$UPDATE_CMD"
     echo "AI_CLUSTER_UPDATE_KIND=linux"

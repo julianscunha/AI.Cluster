@@ -4,7 +4,7 @@
 #   bash code/os/image/x86/mk-disk.sh --controller URL --token T --node-id ID [--insecure] [--ssh-key arq.pub]
 #
 # Layout (GPT): p1 ESP FAT32 64 MiB (BOOTX64.EFI + EFI/aic/grubenv) | p2 slot A 1 GiB | p3 slot B 1 GiB |
-# p4 `aic-data` o resto (identidade do nó, sobrevive à troca de slot). A identidade do slot é o número
+# p4 `aic-data` o resto (identidade do worker, sobrevive à troca de slot). A identidade do slot é o número
 # da partição no disco da ESP; as PARTUUID são sorteadas a cada imagem. O rootfs vai igual nos dois
 # slots (o hash assinado cobre o ext4 inteiro). Saída: build/disk-x86.img (bruto). Nada é montado no PC.
 set -euo pipefail

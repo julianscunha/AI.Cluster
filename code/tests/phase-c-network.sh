@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Fatia da Fase C (C1): descoberta de rede.
 #
-# Critério verificado: o nó reporta a própria rede como capability, e esse número é o que o
+# Critério verificado: o worker reporta a própria rede como capability, e esse número é o que o
 # modelo de placement usa para decidir onde a unidade roda. É descoberta, não benchmark: a
 # velocidade *nominal* do link, relativa à referência de 1 GbE. Medir a taxa alcançada sob
 # carga e a latência é a fatia de benchmark (capability-engine), não esta.
 #
 # Sequência:
-#   A) nó real: o detalhe traz `rede_score=`, a velocidade do link sobre 1 GbE. Um veth de
+#   A) worker real: o detalhe traz `rede_score=`, a velocidade do link sobre 1 GbE. Um veth de
 #      contêiner não tem taxa negociada, então `-` é a resposta honesta ali; o que o teste
 #      exige é o campo presente e a convenção de zero = "não medido" respeitada.
-#   B) `AI_CLUSTER_NETWORK_SCORE` fixado: o nó reporta o número pinado sem ler interface — é
+#   B) `AI_CLUSTER_NETWORK_SCORE` fixado: o worker reporta o número pinado sem ler interface — é
 #      o botão de determinismo que o passo C usa.
-#   C) o consumidor: dois nós com o mesmo compute e redes diferentes. Primeiro-a-chegar manda
-#      a unidade para o nó de link lento; com placement, o custo a manda para o link rápido.
+#   C) o consumidor: dois workers com o mesmo compute e redes diferentes. Primeiro-a-chegar manda
+#      a unidade para o worker de link lento; com placement, o custo a manda para o link rápido.
 #      Sem a perna do baseline não daria para dizer se a decisão foi o custo ou o acaso.
 set -uo pipefail
 
@@ -42,7 +42,7 @@ start_controller() {
     "${extra[@]}" "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 }
 
-# start_worker <nome> <nó> <extra env...>
+# start_worker <nome> <worker> <extra env...>
 start_worker() {
   local name=$1 node=$2
   shift 2
@@ -55,7 +55,7 @@ teardown() {
   docker rm -f aic-controller aic-worker-net aic-worker-slow aic-worker-fast >/dev/null 2>&1
 }
 
-# field <chave> — lê o valor de uma linha `chave=valor` do detalhe do nó.
+# field <chave> — lê o valor de uma linha `chave=valor` do detalhe do worker.
 field() {
   sed -n "s/.*$1=\([0-9.-]*\).*/\1/p" | head -1
 }
@@ -64,7 +64,7 @@ teardown
 docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 
-echo "=== A) nó real: a rede sai do link, não de um pin ==="
+echo "=== A) worker real: a rede sai do link, não de um pin ==="
 start_controller
 start_worker aic-worker-net node-net -e AI_CLUSTER_RECOMPUTE_INTERVAL_SECS=0
 sleep 12
@@ -125,7 +125,7 @@ else
 fi
 
 teardown
-echo "=== C) baseline primeiro-a-chegar: só o nó de link lento ==="
+echo "=== C) baseline primeiro-a-chegar: só o worker de link lento ==="
 start_controller AI_CLUSTER_PLACEMENT=off
 start_worker aic-worker-slow node-slow \
   -e AI_CLUSTER_COMPUTE_SCORE=$SCORE -e AI_CLUSTER_CPU_THREADS=$THREADS \
@@ -135,7 +135,7 @@ sleep 8
 BASE=$(run "$R/aic cluster benchmark --size $SIZE --repetitions 1" | grep '^w-' || true)
 echo "$BASE"
 if grep -q 'node-slow' <<<"$BASE"; then
-  echo "OK: primeiro-a-chegar entregou a unidade ao nó de link lento"
+  echo "OK: primeiro-a-chegar entregou a unidade ao worker de link lento"
 else
   echo "FALHA: o baseline deveria mostrar node-slow"
   teardown
