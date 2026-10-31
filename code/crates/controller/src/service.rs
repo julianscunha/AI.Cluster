@@ -955,7 +955,7 @@ impl ClusterControl for ClusterControlService {
             .map(|(version, _)| version)
             .unwrap_or_default();
         let (release, event) = self.rollout.announce(
-            self.registry.can_update(&request.node_id),
+            self.registry.update_channel(&request.node_id),
             &request.node_id,
             &version,
             |node| self.registry.version(node),

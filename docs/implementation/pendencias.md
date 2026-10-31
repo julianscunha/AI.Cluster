@@ -127,15 +127,11 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| `aic update apply` no AI Cluster OS | Só explica que a atualização é empurrada pelo controller e pede ao `aic-updater` que cheque. Falta uma checagem local sob demanda. | código |
 | Boot completo da imagem x86 do SO | A imagem x86 UEFI foi reconstruída com o `aic` (12.1), o userland foi conferido (`aic version`, `aic update status`, `aic --help`, helpers em `/usr/libexec/aic`, nenhum comando antigo) e ela bootou no QEMU+OVMF até o OpenRC. O boot inteiro não terminou: sem KVM neste PC o QEMU roda em TCG e o boot passou de 30 min com soft lockups em `fork`/`vmalloc`, sem chegar ao registro, ao ssh nem ao rollout x86. Hipótese não verificada: o `aic-measure` (SHA-256 de 512 MiB do slot, antes do worker) é lentíssimo em TCG; testar sem ele ou com `-cpu` simples, ou em máquina com KVM ou em hardware real. A imagem x86 embute só `release.pub` (o ARM, `nova.pub`): o rollout x86 assina com `release.key`. | hardware, código |
-| Ajuda do clap em inglês | A ajuda do `aic` ainda mostra `[possible values: pt, en]` em inglês, na opção `--lang`. | código |
 | Gatilho de atualização para controller e gateway Linux | Não é empurrado: cada um roda `aic update apply`, já com a assinatura conferida. Empurrar exigiria um canal de comando no gateway, sem ganho sobre o pino ([[adr-025-gatilho-de-atualizacao-assinada-linux]]). Reabrir se o operador precisar do empurrão. | decisão |
-| Gatilho com systemd de verdade | Os units `ai-cluster-update.path` e `.service` são escritos pelo `setup` e os testes os aplicam à mão (systemd de mentira); nunca rodaram com um systemd real. Falta validar num Debian com systemd. | hardware, código |
-| Gatilho sem systemd | O worker sem systemd (contêiner, OpenRC) não se declara atualizável e fica fora do rollout; a atualização é manual (`aic update apply`). Falta um gatilho para esses ambientes. | código |
-| Rotação e revogação da chave de Linux | Trocar a chave exige reinstalar em cada máquina, porque o pino só muda na instalação. Falta rotação sem reinstalar (chave nova assinada pela antiga) e a lista de revogação. | código, decisão |
+| Gatilho com systemd de verdade | Os units `ai-cluster-update.path` e `.service` são escritos pelo `setup` e os testes os aplicam à mão (systemd de mentira); nunca rodaram com um systemd real. Falta validar num Debian com systemd, e o vigia sem systemd ([[adr-025-gatilho-de-atualizacao-assinada-linux]], item 8) num OpenRC de verdade (a imagem de teste é Debian sem init). | hardware, código |
+| Revogação da chave de Linux | A rotação sem reinstalar está pronta ([[adr-025-gatilho-de-atualizacao-assinada-linux]], item 9). Falta a lista de revogação: decidir quem revoga, como a lista chega sem depender da chave que ela revoga, e se revogar barra o retorno. | decisão, código |
 | Origem do pino | A chave pinada vem da origem da instalação (confiança no primeiro uso). Falta confirmar a chave por outro canal, p. ex. impressa no convite. | decisão |
-| Release só-Linux em cluster misto | Um worker AI Cluster OS que vira canário numa release só com a assinatura de Linux recusa e pausa o rollout em 10 min. Falta escolher o canário pelo canal do worker (o identity não declara o canal). | código |
 
 ## Marcos
 

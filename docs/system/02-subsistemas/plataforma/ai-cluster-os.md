@@ -83,7 +83,7 @@ Ver [[cli-tui]] para os argumentos e [[seguranca]] para a assinatura e a rotaç�
 ### Como o rollout anda
 
 - Só participam os workers que declaram capacidade de atualizar, isto é, têm o comando de atualização configurado. Os demais continuam na versão atual.
-- O controller escolhe como **canário** o primeiro worker apto que informa a versão antiga. Os demais esperam o canário reportar a versão nova **e** a medida igual à da release assinada.
+- O controller escolhe como **canário** o primeiro worker apto que informa a versão antiga e cujo canal (`update_kind`) a release atende (ADR-028). Os demais esperam o canário reportar a versão nova **e** a medida igual à da release assinada.
 - `AI_CLUSTER_ROLLOUT_WAVE=N` limita quantos workers atualizam ao mesmo tempo, depois do canário. Ausente ou `0` significa todos de uma vez. Uma vaga volta quando o worker reporta a versão nova, ou depois de 10 min.
 - Se o canário não reporta a versão nova em 10 min, o rollout pausa e registra um evento `rollout`. Ele só anda de novo com um novo comando `rollout`.
 - Com `AI_CLUSTER_RELEASE_STATE`, a release desejada sobrevive ao reinício do controller.

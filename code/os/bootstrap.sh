@@ -197,8 +197,8 @@ if [ "${AIC_INVITED:-0}" = 1 ]; then rm -f "$PREFIX/state/credential"; fi
     # ADR-026: o certificado renovado mora numa pasta do usuário do worker; a pasta do convite (com a CA e a chave) não muda.
     echo "AI_CLUSTER_RPC_TLS_RENEWED_DIR=$RPC_TLS_DIR/renovado"
   fi
-  # Sem systemd não há quem aplique o pedido: o worker não se declara atualizável (fica fora do rollout).
-  if [ -n "$UPDATE_CMD" ] && [ -d /run/systemd/system ]; then
+  # Sem systemd quem aplica o pedido é o vigia do setup (update linux-trigger, logo depois do join; ADR-025).
+  if [ -n "$UPDATE_CMD" ]; then
     echo "AI_CLUSTER_UPDATE_CMD=$UPDATE_CMD"
     echo "AI_CLUSTER_UPDATE_KIND=linux"
     echo "AI_CLUSTER_UPDATE_MARK=$PREFIX/state/update-tried"

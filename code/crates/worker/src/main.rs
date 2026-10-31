@@ -349,6 +349,15 @@ async fn update_verified(command: &str, release: &Release, linux: bool) -> bool 
     }
 }
 
+/// Canal declarado no identity (`AI_CLUSTER_UPDATE_KIND`): "linux" para Linux comum, "os" no resto (ADR-025).
+fn update_kind() -> &'static str {
+    if std::env::var("AI_CLUSTER_UPDATE_KIND").is_ok_and(|kind| kind.trim() == "linux") {
+        "linux"
+    } else {
+        "os"
+    }
+}
+
 fn update_mark_path() -> PathBuf {
     std::env::var_os("AI_CLUSTER_UPDATE_MARK")
         .map_or_else(|| "/data/state/update-tried".into(), Into::into)
@@ -412,6 +421,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_version: runtime_version(),
         image_sha256: image_measurement(),
         can_update: std::env::var("AI_CLUSTER_UPDATE_CMD").is_ok_and(|c| !c.is_empty()),
+        update_kind: update_kind().into(),
     };
     let mut capability = capability();
     // Fase G4: the local scheduler decides how many cores each unit gets. The node runs up to
@@ -553,8 +563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .filter(|c| !c.is_empty());
     // Worker Linux comum (ADR-025): a release que chega traz a assinatura de Linux, não a de AI Cluster OS.
-    let linux_update =
-        std::env::var("AI_CLUSTER_UPDATE_KIND").is_ok_and(|kind| kind.trim() == "linux");
+    let linux_update = update_kind() == "linux";
     let heartbeat_task = tokio::spawn({
         let mut client = client.clone();
         let node_id = node_id.clone();

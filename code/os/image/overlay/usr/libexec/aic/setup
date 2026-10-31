@@ -64,10 +64,16 @@ update)
 	case "$verbo" in
 	status) banner atualizacao "$VER" "Versao e ultima atualizacao deste worker"; atualizacao_status ;;
 	# A atualizacao assinada e empurrada pelo controller (aic cluster rollout); este worker nao puxa release.
-	apply) banner atualizacao "$VER" "Atualizacao deste worker"
-		echo "a atualizacao assinada chega pelo controller (aic cluster rollout); este worker nao a puxa sozinho." >&2
-		echo "o aic-updater aplica a release quando ela chega. Para ver o resultado: aic update status" >&2
-		exit 1 ;;
+	apply) banner atualizacao "$VER" "Checagem da atualizacao deste worker"
+		# pede ao aic-updater que confira agora (ciclo de 5 s); nada e baixado aqui, a release vem do controller assinada
+		rm -f /data/state/update-check-result
+		rm -f /data/state/update-check && ( set -C; : > /data/state/update-check ) 2>/dev/null \
+			|| { echo "nao consegui pedir a checagem ao aic-updater" >&2; exit 1; }
+		i=0
+		while [ ! -f /data/state/update-check-result ] && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+		[ -f /data/state/update-check-result ] || { echo "o aic-updater nao respondeu em 15 s (veja: aic worker logs)" >&2; exit 1; }
+		sed 's/^/  /' /data/state/update-check-result
+		atualizacao_status ;;
 	*) usage ;;
 	esac ;;
 *) usage ;;

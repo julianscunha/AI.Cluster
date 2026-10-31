@@ -14,6 +14,9 @@ message NodeIdentity {
   /// O worker sabe aplicar uma release (tem comando de atualização). Só esses workers entram no rollout e
   /// só eles podem ser canário.
   bool can_update = 7;
+  /// Canal de atualização do worker (ADR-025): "os" (AI Cluster OS, confere `signature`) ou "linux" (Linux
+  /// comum, confere `linux_signature`). Vazio é worker antigo, tratado como "os". Só vale com `can_update`.
+  string update_kind = 8;
 }
 
 message CapabilityReport {

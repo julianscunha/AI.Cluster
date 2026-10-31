@@ -1291,6 +1291,26 @@ confere_assinatura() { # confere_assinatura <SHA256SUMS> <SHA256SUMS.sig, base64
   return 1
 }
 
+# Rotação da chave de Linux (ADR-025): a release pode trazer release.pub.next (a chave nova) e release.pub.next.sig,
+# assinado pela chave pinada. Confere-se antes de qualquer troca (ROT=1 se a rotação confere); o pino só muda depois
+# que a atualização deu certo. Chamar só depois de confere_assinatura do SHA256SUMS (a rotação é conferida por ele).
+busca_rotacao() { # busca_rotacao <pasta> <URL da release> <SHA256SUMS>
+  ROT=""
+  awk '$2=="release.pub.next" {f=1} END {exit !f}' "$3" || return 0
+  for f in release.pub.next release.pub.next.sig; do
+    curl -fsSL $PROTO -o "$1/$f" "$2/$f" \
+      || { SIG_MOTIVO=$(t "não consegui ler a rotação da chave em $2" "could not read the key rotation at $2"); return 1; }
+    want=$(awk -v f="$f" '$2==f {print $1}' "$3")
+    [ -n "$want" ] && [ "$want" = "$(sha256sum "$1/$f" | cut -d' ' -f1)" ] \
+      || { SIG_MOTIVO=$(t "$f não confere com o SHA256SUMS assinado; nada foi trocado" "$f does not match the signed SHA256SUMS; nothing was changed"); return 1; }
+  done
+  confere_assinatura "$1/release.pub.next" "$1/release.pub.next.sig" \
+    || { SIG_MOTIVO="$(t 'rotação da chave recusada: ' 'key rotation refused: ')$SIG_MOTIVO"; return 1; }
+  openssl pkey -pubin -in "$1/release.pub.next" -text_pub -noout 2>/dev/null | grep -q '^ED25519' \
+    || { SIG_MOTIVO=$(t 'rotação da chave recusada: a chave nova não é Ed25519 pública' 'key rotation refused: the new key is not an Ed25519 public key'); return 1; }
+  ROT=1
+}
+
 # O worker Linux pede a atualização (ADR-025). linux_check confere o pedido sem gravar nada (o worker o chama
 # antes de drenar): a assinatura tem de cobrir o SHA256SUMS da URL e a versão dela tem de ser a pedida.
 # Recebe os cinco argumentos do comando de atualização; na release Linux os dois hashes não valem.
@@ -1308,6 +1328,7 @@ linux_check() { # linux_check <versão> <URL> <SHA256> <SHA da imagem> <assinatu
   fi
   printf '%s' "$5" > "$t_/sig"
   if ! confere_assinatura "$t_/SHA256SUMS" "$t_/sig"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
+  if ! busca_rotacao "$t_" "$2" "$t_/SHA256SUMS"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
   want=$(awk '$2=="VERSION" {print $1}' "$t_/SHA256SUMS")
   if [ -z "$want" ] || [ "$want" != "$(sha256sum "$t_/VERSION" | cut -d' ' -f1)" ]; then
     rm -rf "$t_"; echo "o VERSION da release não confere com o SHA256SUMS assinado" >&2; return 3
@@ -1331,36 +1352,48 @@ grava_resultado() { rm -f "$R"; ( set -C; printf '%s\n' "$1" > "$R" ) 2>/dev/nul
 linux_apply() {
   need_root
   P="$PREFIX/state/update-request"; R="$PREFIX/state/update-result"
-  if [ -L "$P" ]; then rm -f "$P"; grava_resultado "pedido de atualização é um link simbólico: recusado"; return 1; fi
-  [ -f "$P" ] || return 0
-  read -r LV LURL LSIG < "$P" || true
-  rm -f "$P" "$R"
-  if ! motivo=$(linux_check "$LV" "$LURL" "" "" "$LSIG" 2>&1); then
-    grava_resultado "$motivo"; return 1
-  fi
+  [ -e "$P" ] || [ -L "$P" ] || return 0
+  # o pedido sai do state do worker (que pode trocá-lo a qualquer hora) para um nome só do root antes de ser lido
+  PR="$PREFIX/update-request.root"; rm -f "$PR"
+  mv -f "$P" "$PR" 2>/dev/null || return 0
+  rm -f "$R"
+  if [ -L "$PR" ] || [ ! -f "$PR" ]; then rm -f "$PR"; grava_resultado "pedido de atualização não é um arquivo comum: recusado"; return 1; fi
+  read -r LV LURL LSIG < "$PR" || true
+  rm -f "$PR"
   # O pedido só fala com a origem desta instalação (esquema e host de /etc/ai-cluster/release), nunca com outro host.
   BASE_ATUAL=$(get "$CONF/release" BASE)
   if [ -z "$BASE_ATUAL" ] || [ "$(origem_de "$LURL")" != "$(origem_de "$BASE_ATUAL")" ]; then
     grava_resultado "$(t "a URL do pedido ($LURL) não é da origem desta instalação (${BASE_ATUAL:-vazia}): recusado" "the request URL ($LURL) is not from this installation's origin (${BASE_ATUAL:-empty}): refused")"
     return 1
   fi
+  if ! motivo=$(linux_check "$LV" "$LURL" "" "" "$LSIG" 2>&1); then
+    grava_resultado "$motivo"; return 1
+  fi
   if ! ( AIC_UPDATE_BASE=$LURL cmd_update apply --yes ) >>"$SETUP_LOG" 2>&1; then
     grava_resultado "$(t "a atualização para $LV não concluiu (veja $SETUP_LOG)" "the update to $LV did not finish (see $SETUP_LOG)")"
     return 1
   fi
 }
-# Gatilho do worker Linux: o comando de atualização vai ao worker.env e, com systemd, o ai-cluster-update (root)
-# passa a rodar quando aparece um pedido. Sem systemd não há quem aplique: a atualização fica manual.
+# Vigia do pedido sem systemd (ADR-025): um laço root em segundo plano confere a cada 5 s se o worker pediu e roda
+# `setup update linux-apply` (um processo novo por pedido, então o código é sempre o instalado). Não sobe duas vezes.
+# shortcut: não sobrevive a reinício do contêiner (como os outros serviços sem systemd); volta com o próximo join ou update.
+vigia_linux() {
+  p=$(head -n 1 /run/ai-cluster-update.pid 2>/dev/null || true)
+  if [ -n "$p" ] && kill -0 "$p" 2>/dev/null && grep -q ai-cluster-vigia "/proc/$p/cmdline" 2>/dev/null; then return 0; fi
+  setsid sh -c 'while sleep 5; do [ -f "$1" ] && "$2" update linux-apply >/dev/null 2>&1; done' ai-cluster-vigia \
+    "$PREFIX/state/update-request" "$PREFIX/libexec/setup" </dev/null >>"$SETUP_LOG" 2>&1 &
+  echo $! > /run/ai-cluster-update.pid
+}
+
+# Gatilho do worker Linux: o comando de atualização vai ao worker.env e o pedido é aplicado por quem tem root:
+# com systemd, o ai-cluster-update (unit .path); sem, o vigia_linux. Um worker que se declara atualizável sem quem
+# aplique seria canário que nunca reporta, por isso o vigia sobe junto com a declaração.
 gatilho_linux() {
   [ -f "$PREFIX/worker.env" ] || return 0
-  # Sem systemd não há quem aplique o pedido: o worker não se declara atualizável, então o rollout não o escolhe.
-  if ! have_systemd; then
-    echo "AVISO: sem systemd o worker não recebe atualização do controller; atualize com aic update apply"
-    return 0
-  fi
   ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_CMD "$PREFIX/bin/aic-update-linux" || return 1
   ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_KIND linux || return 1
   ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_MARK "$PREFIX/state/update-tried" || return 1
+  if ! have_systemd; then vigia_linux; return 0; fi
   cat > /etc/systemd/system/ai-cluster-update.path <<UNIT
 [Unit]
 Description=AI Cluster: aplica a atualização que o worker pediu
@@ -1491,6 +1524,7 @@ cmd_update() {
   # A assinatura vem antes de qualquer hash da release (ADR-025): sem ela, ou com outra chave, nada é trocado.
   curl -fsSL $PROTO -o "$U/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" 2>/dev/null || : > "$U/SHA256SUMS.sig"
   confere_assinatura "$U/SHA256SUMS" "$U/SHA256SUMS.sig" || die "$SIG_MOTIVO"
+  busca_rotacao "$U" "$BASE" "$U/SHA256SUMS" || die "$SIG_MOTIVO"
   curl -fsSL $PROTO -o "$U/VERSION" "$BASE/VERSION" \
     || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
   want=$(awk '$2=="VERSION" {print $1}' "$U/SHA256SUMS")
@@ -1567,6 +1601,12 @@ cmd_update() {
   else echo "VERSION=$NEWV" >> "$CONF/release"; fi
   sed -i '/^SUMS=/d' "$CONF/release"
   echo "SUMS=$NEWSUM" >> "$CONF/release"
+  # A rotação vira pino só agora: a atualização deu certo. O pino anterior fica em release.pub.prev (troca atômica).
+  if [ "$ROT" = 1 ]; then
+    install -m 644 "$CONF/release.pub" "$CONF/release.pub.prev" && install -m 644 "$U/release.pub.next" "$CONF/release.pub.new" \
+      && mv -f "$CONF/release.pub.new" "$CONF/release.pub" \
+      || warn "$(t 'a atualização entrou, mas não consegui trocar a chave de release (a antiga continua pinada)' 'the update went in, but the release key could not be replaced (the old one is still pinned)')"
+  fi
   avisa_pendencias
   printf '\n'
   if [ "$LANG_AIC" = en ]; then

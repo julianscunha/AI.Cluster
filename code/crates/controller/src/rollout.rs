@@ -87,6 +87,40 @@ pub fn validate(release: &Release) -> Result<(), String> {
     Ok(())
 }
 
+/// Canal de atualização de um worker (ADR-025): a assinatura que ele confere e aplica. Um worker só entra no
+/// rollout e só vira canário de uma release que traz a assinatura desse canal; senão ele recusa e pausa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Canal {
+    /// AI Cluster OS (imagem A/B): `signature`, com URL e hashes da imagem.
+    Os,
+    /// Linux comum: `linux_signature`.
+    Linux,
+    /// Worker antigo, que não declara o canal: pode ser de imagem ou Linux (v0.2.1); serve a qualquer assinatura.
+    Legado,
+}
+
+impl Canal {
+    /// O `update_kind` declarado pelo worker. Vazio é worker antigo, sem o campo.
+    /// Outro valor não atualiza.
+    pub fn de_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "" => Some(Self::Legado),
+            "os" => Some(Self::Os),
+            "linux" => Some(Self::Linux),
+            _ => None,
+        }
+    }
+
+    /// A release traz a assinatura deste canal?
+    pub fn atende(self, release: &Release) -> bool {
+        match self {
+            Self::Os => !release.signature.is_empty(),
+            Self::Linux => !release.linux_signature.is_empty(),
+            Self::Legado => !release.signature.is_empty() || !release.linux_signature.is_empty(),
+        }
+    }
+}
+
 /// Campo vazio no arquivo de estado: `-` (um espaço some na leitura por palavras).
 fn campo(text: &str) -> &str {
     if text.is_empty() { "-" } else { text }
@@ -168,7 +202,7 @@ impl Rollout {
     /// atual roda (o registro sabe). Devolve também um evento quando o rollout pausa ou conclui.
     pub fn announce(
         &self,
-        can_update: bool,
+        canal: Option<Canal>,
         node: &str,
         version: &str,
         canary_version: impl Fn(&str) -> Option<(String, String)>,
@@ -178,11 +212,13 @@ impl Rollout {
         let Some(desired) = state.desired.clone() else {
             return (None, None);
         };
-        // um worker sem comando de atualização não entra no rollout nem vira canário
+        // um worker sem comando de atualização (canal None) não entra no rollout nem vira canário, e
+        // nem um worker de outro canal: a release só-Linux não passa por worker de imagem, e vice-versa
         if version == desired.version {
             state.wave.remove(node);
         }
-        if !can_update || version == desired.version || state.paused {
+        let no_canal = !canal.is_some_and(|canal| canal.atende(&desired));
+        if no_canal || version == desired.version || state.paused {
             return (None, None);
         }
         match state.canary.clone() {
@@ -244,6 +280,9 @@ mod tests {
         }
     }
 
+    const OS: Option<Canal> = Some(Canal::Os);
+    const NAO: Option<Canal> = None;
+
     #[test]
     fn aceita_assinatura_so_linux_ou_so_os_ou_as_duas() {
         let assinada = format!("{}==", "A".repeat(86));
@@ -296,19 +335,19 @@ mod tests {
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
         // worker que não sabe atualizar não vira canário
-        assert!(rollout.announce(false, "x", "1", none, 0).0.is_none());
+        assert!(rollout.announce(NAO, "x", "1", none, 0).0.is_none());
         // o primeiro worker vira canário
-        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
+        assert!(rollout.announce(OS, "a", "1", none, 0).0.is_some());
         // outro worker espera enquanto o canário não reporta a versão nova
-        assert!(rollout.announce(true, "b", "1", none, 1).0.is_none());
+        assert!(rollout.announce(OS, "b", "1", none, 1).0.is_none());
         // o canário reporta "2": libera os demais
         let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), "b".repeat(64)));
         // medida errada: o canário não concluiu
         let a_errado = |n: &str| (n == "a").then(|| ("2".to_string(), "c".repeat(64)));
-        assert!(rollout.announce(true, "b", "1", a_errado, 2).0.is_none());
-        assert!(rollout.announce(true, "b", "1", a_novo, 2).0.is_some());
+        assert!(rollout.announce(OS, "b", "1", a_errado, 2).0.is_none());
+        assert!(rollout.announce(OS, "b", "1", a_novo, 2).0.is_some());
         // quem já está na versão não recebe nada
-        assert!(rollout.announce(true, "a", "2", a_novo, 3).0.is_none());
+        assert!(rollout.announce(OS, "a", "2", a_novo, 3).0.is_none());
     }
 
     #[test]
@@ -317,19 +356,19 @@ mod tests {
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
         let a_novo = |n: &str| (n == "a").then(|| ("2".to_string(), "b".repeat(64)));
-        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
-        assert!(rollout.announce(true, "b", "1", a_novo, 1).0.is_some());
+        assert!(rollout.announce(OS, "a", "1", none, 0).0.is_some());
+        assert!(rollout.announce(OS, "b", "1", a_novo, 1).0.is_some());
         // vaga ocupada por b; c espera, b continua sendo anunciado
-        assert!(rollout.announce(true, "c", "1", a_novo, 2).0.is_none());
-        assert!(rollout.announce(true, "b", "1", a_novo, 3).0.is_some());
+        assert!(rollout.announce(OS, "c", "1", a_novo, 2).0.is_none());
+        assert!(rollout.announce(OS, "b", "1", a_novo, 3).0.is_some());
         // b chegou à versão: libera a vaga
-        assert!(rollout.announce(true, "b", "2", a_novo, 4).0.is_none());
-        assert!(rollout.announce(true, "c", "1", a_novo, 5).0.is_some());
+        assert!(rollout.announce(OS, "b", "2", a_novo, 4).0.is_none());
+        assert!(rollout.announce(OS, "c", "1", a_novo, 5).0.is_some());
         // b que nunca voltasse perderia a vaga depois do prazo
-        assert!(rollout.announce(true, "d", "1", a_novo, 6).0.is_none());
+        assert!(rollout.announce(OS, "d", "1", a_novo, 6).0.is_none());
         assert!(
             rollout
-                .announce(true, "d", "1", a_novo, CANARY_TIMEOUT_MS + 6)
+                .announce(OS, "d", "1", a_novo, CANARY_TIMEOUT_MS + 6)
                 .0
                 .is_some()
         );
@@ -340,18 +379,58 @@ mod tests {
         let rollout = Rollout::new(None);
         rollout.set(Some(release("2")));
         let none = |_: &str| None;
-        assert!(rollout.announce(true, "a", "1", none, 0).0.is_some());
-        let (r, evento) = rollout.announce(true, "a", "1", none, CANARY_TIMEOUT_MS + 1);
+        assert!(rollout.announce(OS, "a", "1", none, 0).0.is_some());
+        let (r, evento) = rollout.announce(OS, "a", "1", none, CANARY_TIMEOUT_MS + 1);
         assert!(r.is_none() && evento.is_some());
         assert!(
             rollout
-                .announce(true, "b", "1", none, CANARY_TIMEOUT_MS + 2)
+                .announce(OS, "b", "1", none, CANARY_TIMEOUT_MS + 2)
                 .0
                 .is_none()
         );
         // novo set limpa a pausa
         rollout.set(Some(release("3")));
-        assert!(rollout.announce(true, "b", "1", none, 0).0.is_some());
+        assert!(rollout.announce(OS, "b", "1", none, 0).0.is_some());
+    }
+
+    #[test]
+    fn canario_so_do_canal_que_a_release_atende() {
+        let none = |_: &str| None;
+        let mut so_linux = release("2");
+        so_linux.signature = String::new();
+        so_linux.sha256 = String::new();
+        so_linux.image_sha256 = String::new();
+        so_linux.linux_signature = format!("{}==", "A".repeat(86));
+        let rollout = Rollout::new(None);
+        rollout.set(Some(so_linux));
+        // worker de imagem não vira canário de release só-Linux
+        assert!(rollout.announce(OS, "img", "1", none, 0).0.is_none());
+        // worker Linux é o canário; o de imagem continua de fora
+        assert!(
+            rollout
+                .announce(Some(Canal::Linux), "lin", "1", none, 1)
+                .0
+                .is_some()
+        );
+        assert!(rollout.announce(OS, "img", "1", none, 2).0.is_none());
+        // e o inverso: release só de imagem não vai a worker Linux
+        rollout.set(Some(release("3")));
+        assert!(
+            rollout
+                .announce(Some(Canal::Linux), "lin", "1", none, 3)
+                .0
+                .is_none()
+        );
+        assert!(rollout.announce(OS, "img", "1", none, 4).0.is_some());
+    }
+
+    #[test]
+    fn canal_vem_do_update_kind() {
+        assert_eq!(Canal::de_kind("linux"), Some(Canal::Linux));
+        assert_eq!(Canal::de_kind("os"), Some(Canal::Os));
+        // worker antigo, sem o campo, era de imagem
+        assert_eq!(Canal::de_kind(""), Some(Canal::Legado));
+        assert_eq!(Canal::de_kind("windows"), None);
     }
 
     #[test]

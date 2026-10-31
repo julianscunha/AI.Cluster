@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::rollout::Canal;
 use ai_cluster_common::NodeState;
 use ai_cluster_protocol::cluster::{CapabilityReport, HealthReport, NodeIdentity, NodeSnapshot};
 
@@ -582,11 +583,15 @@ impl Registry {
         })
     }
 
-    /// Whether the node declared it can apply a release (`can_update`).
-    pub fn can_update(&self, node_id: &str) -> bool {
-        self.lock()
-            .get(node_id)
-            .is_some_and(|record| record.identity.can_update)
+    /// Canal de atualização que o nó declarou; `None` se ele não sabe atualizar ou declarou um canal desconhecido.
+    pub fn update_channel(&self, node_id: &str) -> Option<Canal> {
+        self.lock().get(node_id).and_then(|record| {
+            if record.identity.can_update {
+                Canal::de_kind(&record.identity.update_kind)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns false when the node is unknown, so the caller can ask it to re-register.
@@ -763,8 +768,25 @@ mod tests {
             os_version: "linux".to_string(),
             image_sha256: String::new(),
             can_update: false,
+            update_kind: String::new(),
             runtime_version: "0.1.0".to_string(),
         }
+    }
+
+    #[test]
+    fn canal_de_atualizacao_so_para_quem_declara_que_atualiza() {
+        let registry = Registry::default();
+        let mut linux = identity("lin");
+        linux.can_update = true;
+        linux.update_kind = "linux".into();
+        registry.register(linux, CapabilityReport::default(), 1);
+        let mut preso = identity("sem");
+        preso.update_kind = "linux".into();
+        registry.register(preso, CapabilityReport::default(), 1);
+        assert_eq!(registry.update_channel("lin"), Some(Canal::Linux));
+        // sem comando de atualização, canal nenhum
+        assert_eq!(registry.update_channel("sem"), None);
+        assert_eq!(registry.update_channel("nao-existe"), None);
     }
 
     #[test]

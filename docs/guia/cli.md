@@ -123,7 +123,7 @@ Estes comandos respondem que não existem nos Linux comuns.
 | Comando | O que faz |
 |---|---|
 | `aic update status` | Versão instalada × disponível, ou o resultado da última atualização assinada. |
-| `aic update apply [--version V] [--force] [--yes] [--lang pt\|en]` | Atualiza este computador. Em Linux, confere a assinatura do `SHA256SUMS` com a chave pinada antes de qualquer hash, baixa da origem da instalação e troca o que o papel usa; recusa versão mais antiga sem `--force`. No AI Cluster OS, pede ao `aic-updater` que cheque agora. Ver [[operacao]]. |
+| `aic update apply [--version V] [--force] [--yes] [--lang pt\|en]` | Atualiza este computador. Em Linux, confere a assinatura do `SHA256SUMS` com a chave pinada antes de qualquer hash, baixa da origem da instalação e troca o que o papel usa; recusa versão mais antiga sem `--force`. No AI Cluster OS, pede ao `aic-updater` que confira agora e mostra o estado (release pendente, slot em teste ou nada); não baixa nada. Ver [[operacao]]. |
 | `aic version` | Versão do `aic` e do sistema. |
 
 ## Migração dos comandos

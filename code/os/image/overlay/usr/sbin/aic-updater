@@ -14,6 +14,8 @@ USO
 case "${1:-}" in -h | --help) usage; exit 0 ;; esac
 
 REQ=/data/state/update-request
+CHK=/data/state/update-check        # pedido de checagem do `aic update apply` (só lê o estado)
+CHKR=/data/state/update-check-result
 DL=/data/.update   # só do root: o worker grava em /data/state, não aqui
 PUBS=/etc/aic-release.d   # uma ou mais públicas (rotação): vale se qualquer uma confere
 . /etc/aic-board   # board=… slot_mib=…
@@ -89,7 +91,20 @@ apply() {
 	reboot
 }
 
+# checagem sob demanda (`aic update apply`): diz o estado e não baixa nada; a release só entra pelo pedido assinado
+check() {
+	rm -f "$CHK"
+	try=$(state_get aic_try)
+	if [ -f "$REQ" ]; then msg="pedido de release pendente; o aic-updater o confere no proximo ciclo"
+	elif [ -n "$try" ]; then msg="slot $try em teste; atualizacao adiada ate confirmar o boot"
+	else msg="sem release pendente; o controller empurra a release (aic cluster rollout) e este no a recebe no heartbeat"
+	fi
+	rm -f "$CHKR"
+	( set -C; umask 022; echo "$msg" > "$CHKR" ) 2>/dev/null
+}
+
 while :; do
 	[ -f "$REQ" ] && apply
+	[ -f "$CHK" ] && check
 	sleep 5
 done

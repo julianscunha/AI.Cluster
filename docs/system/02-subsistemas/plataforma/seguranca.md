@@ -96,7 +96,7 @@ A medida prova que o conteúdo do slot é o esperado. Ela não prova que o worke
 
 Cada release de imagem é assinada com Ed25519 pelo operador. A chave privada fica fora do repositório e do controller. A assinatura cobre a versão, a placa, o SHA-256 do arquivo comprimido e o SHA-256 da imagem ext4. O URL fica fora da assinatura, então trocar de espelho não exige assinar de novo.
 
-Linux comum tem chave própria (`linux.key`, separada da do AI Cluster OS; ADR-025). Ela assina o `SHA256SUMS` da release, e a pública é pinada na instalação em `/etc/ai-cluster/release.pub`. Todo `aic update` confere essa assinatura antes de qualquer hash, e não busca a chave de novo na origem.
+Linux comum tem chave própria (`linux.key`, separada da do AI Cluster OS; ADR-025). Ela assina o `SHA256SUMS` da release, e a pública é pinada na instalação em `/etc/ai-cluster/release.pub`. Todo `aic update` confere essa assinatura antes de qualquer hash, e não busca a chave de novo na origem. A chave troca sem reinstalar por rotação assinada pela pinada (ADR-025, item 9): a chave nova só vira pino depois que a atualização que a trouxe deu certo, e a antiga é guardada em `release.pub.prev`. Lista de revogação: pendente.
 
 - O worker confere a assinatura antes de baixar qualquer coisa, com as chaves públicas gravadas na imagem.
 - Mais de uma chave pública pode estar na imagem, e vale qualquer uma que confira. É isso que permite rotação.

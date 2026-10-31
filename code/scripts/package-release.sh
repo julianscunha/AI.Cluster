@@ -12,6 +12,8 @@
 # SHA256SUMS.sig é a assinatura Ed25519 (base64) do SHA256SUMS com a chave de Linux comum
 # (~/.aic/linux.key, de os/image/release-keys.sh linux). A pública (os/linux.pub) vai no tools.tar.gz
 # como release.pub e o instalador a pina em /etc/ai-cluster/release.pub (ADR-025).
+# Rotação (ADR-025): AIC_LINUX_ROTATION=<pasta de rotate-linux-key.sh> leva release.pub.next e .sig nesta release
+# (só nesta; depois troque os/linux.pub pela chave nova e assine as próximas com ela).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 OUT=${1:-dist/release}
@@ -19,7 +21,7 @@ IMAGE=${IMAGE:-ai-cluster:local}
 ARM_TARGET=${ARM_TARGET:-armv7-unknown-linux-musleabihf}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$OUT"
-rm -f "$OUT"/*.tar.gz "$OUT"/SHA256SUMS "$OUT"/SHA256SUMS.sig "$OUT"/VERSION "$OUT"/install.sh   # sem restos de builds antigos
+rm -f "$OUT"/*.tar.gz "$OUT"/SHA256SUMS "$OUT"/SHA256SUMS.sig "$OUT"/VERSION "$OUT"/install.sh "$OUT"/release.pub.next* # sem restos de builds antigos
 STAGE="$OUT/.stage-$$"; mkdir -p "$STAGE"
 CID=""
 trap 'rm -rf "$STAGE"; [ -z "$CID" ] || docker rm -f "$CID" >/dev/null 2>&1' EXIT
@@ -30,6 +32,18 @@ LINUX_KEY=${AIC_LINUX_KEY:-$HOME/.aic/linux.key}
 [ -f "$LINUX_KEY" ] || { echo "falta a chave $LINUX_KEY (rode os/image/release-keys.sh linux)" >&2; exit 2; }
 # openssl nativo do Windows não lê caminhos /d/…: converte quando há cygpath
 win() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+ROT=${AIC_LINUX_ROTATION:-}
+ARQ="install.sh VERSION *.tar.gz"
+if [ -n "$ROT" ]; then
+  [ -f "$ROT/release.pub.next" ] && [ -f "$ROT/release.pub.next.sig" ] || { echo "faltam release.pub.next e .sig em $ROT (rode rotate-linux-key.sh)" >&2; exit 2; }
+  # Só sai rotação que confere com a chave que o repositório pina: uma rotação antiga não pode ir numa release nova.
+  SIGR=$(mktemp); base64 -d < "$ROT/release.pub.next.sig" > "$SIGR" 2>/dev/null || : > "$SIGR"
+  openssl pkeyutl -verify -pubin -inkey "$(win "$HERE/os/linux.pub")" -rawin -in "$(win "$ROT/release.pub.next")" -sigfile "$(win "$SIGR")" >/dev/null 2>&1 \
+    || { rm -f "$SIGR"; echo "a rotação em $ROT não confere com os/linux.pub: gere de novo com rotate-linux-key.sh (ou apague a pasta)" >&2; exit 2; }
+  rm -f "$SIGR"
+  cp "$ROT/release.pub.next" "$ROT/release.pub.next.sig" "$OUT/"
+  ARQ="$ARQ release.pub.next release.pub.next.sig"
+fi
 
 # pack <nome> <arquivo>... : junta os arquivos de $STAGE/<nome> num .tar.gz sem diretório raiz.
 pack() {
@@ -77,7 +91,7 @@ pack tools
 cp "$HERE/os/install.sh" "$OUT/install.sh"
 sed -i 's/\r$//' "$OUT/install.sh"
 printf '%s\n' "$VERSION" > "$OUT/VERSION"
-(cd "$OUT" && rm -f SHA256SUMS && for f in install.sh VERSION *.tar.gz; do printf '%s  %s
+(cd "$OUT" && rm -f SHA256SUMS && for f in $ARQ; do printf '%s  %s
 ' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done > SHA256SUMS)
 # Assinatura Ed25519 bruta (-rawin) do SHA256SUMS, em base64 numa linha: o formato que o rollout pede.
 SIG_BIN=$(mktemp); trap 'rm -rf "$STAGE" "$SIG_BIN"; [ -z "$CID" ] || docker rm -f "$CID" >/dev/null 2>&1' EXIT

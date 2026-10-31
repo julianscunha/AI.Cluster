@@ -39,12 +39,12 @@ O operador define a versão desejada do sistema com `SetRelease`. Ela tem seis c
 
 Fluxo:
 
-1. O controller anuncia a release na resposta da batida (`Heartbeat`), só aos workers com `can_update` que rodam outra versão.
-2. O primeiro worker elegível vira **canário**. Os demais só recebem a release depois que o canário roda a versão nova e a medida do slot confere com `image_sha256`.
+1. O controller anuncia a release na resposta da batida (`Heartbeat`), só aos workers com `can_update` que rodam outra versão e cujo canal (`update_kind`) a release atende (ADR-028).
+2. O primeiro worker elegível vira **canário**; release só-Linux nunca tem worker de imagem como canário, e vice-versa. Os demais só recebem a release depois que o canário roda a versão nova e a medida do slot confere com `image_sha256`.
 3. Depois do canário, os workers recebem a release em ondas. `AI_CLUSTER_ROLLOUT_WAVE` limita quantos atualizam ao mesmo tempo; zero significa todos.
 4. Se o canário não chega à versão em 10 min, o rollout pausa e nada mais é anunciado.
 5. Cancelar com `SetRelease` de versão em branco interrompe o rollout.
-6. A release Linux comum segue o mesmo canal: o worker Linux (com `AI_CLUSTER_UPDATE_KIND=linux`) confere `linux_signature` antes de drenar e aplica pelo gatilho (ADR-025). Um worker AI Cluster OS a ignora.
+6. A release Linux comum segue o mesmo canal: o worker Linux (com `update_kind=linux`) confere `linux_signature` antes de drenar e aplica pelo gatilho (ADR-025). Um worker AI Cluster OS a ignora.
 
 O worker sai do cluster de forma ordenada (`LeaveNode`), roda o comando de atualização e reinicia. Numa imagem com dois slots, o atualizador confere a assinatura e o SHA-256 antes de gravar o slot inativo. Se o slot novo não sobe, o worker volta ao anterior e não tenta de novo a mesma versão. Quando a release é aceita, o worker mede o slot gravado e informa `image_sha256` no próximo registro, que é como o controller sabe que a atualização terminou.
 

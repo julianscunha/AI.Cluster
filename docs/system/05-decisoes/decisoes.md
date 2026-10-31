@@ -37,9 +37,10 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-022-fluxo-de-modelos-e-motor-hibrido]] | decidido | 2026-10-28 | Controller guia o fluxo de modelos (catálogo, OK/NOK, envio de pesos, chaves, benchmark); llama.cpp como data plane; vazão primeiro |
 | [[adr-023-instalacao-com-aprovacao-do-controller]] | decidido | 2026-10-30 | Nenhuma instalação começa sozinha: etapa de espera com resumo, aprovação do operador no controller (impressão digital, disco a apagar) e token de uso único; MAC só como atalho |
 | [[adr-024-interface-de-comandos-unica-aic]] | decidido | 2026-10-30 | Um único comando de usuário, `aic <recurso> <ação>` (cluster, controller, gateway, worker, update); nomes antigos removidos sem apelidos; `status` sempre da máquina; opções com nome único; cabeçalho e cores iguais |
-| [[adr-025-gatilho-de-atualizacao-assinada-linux]] | decidido | 2026-10-30 | Chave de Linux comum (separada da do AI Cluster OS) assina o SHA256SUMS; a pública é pinada na instalação e o `update` confere antes de qualquer hash; worker Linux recebe o gatilho pelo rollout e aplica por unit root |
+| [[adr-025-gatilho-de-atualizacao-assinada-linux]] | decidido | 2026-10-30 | Chave de Linux comum (separada da do AI Cluster OS) assina o SHA256SUMS; a pública é pinada na instalação e o `update` confere antes de qualquer hash; worker Linux recebe o gatilho pelo rollout e aplica por unit root (sem systemd, por um vigia root do setup); rotação da chave assinada pela pinada, sem reinstalar |
 | [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
 | [[adr-027-worker-removido-so-volta-por-convite]] | decidido | 2026-10-31 | Remover deixa uma lápide com a credencial: o worker que a apresenta é recusado e só volta por convite (`aic worker join`); retirar mantém a identidade; revogar segue como rotação |
+| [[adr-028-canal-de-atualizacao-declarado-pelo-worker]] | decidido | 2026-10-31 | O worker declara o canal de atualização (`update_kind`: `os` ou `linux`) e o controller só leva a release aos workers cujo canal ela traz; release só-Linux não tem worker de imagem como canário |
 
 ## Notas
 
