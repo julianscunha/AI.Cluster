@@ -102,6 +102,11 @@ pub const NODE_ID_HEADER: &str = "x-ai-cluster-node-id";
 /// route its slices elsewhere and try again (J5).
 pub const FAILED_NODE_HEADER: &str = "x-ai-cluster-failed-node";
 
+/// Mensagem (`PermissionDenied`) de um worker que o operador removeu (ADR-027): o controller a manda e o
+/// worker a reconhece para não voltar em laço. Uma linha só, com o caminho de volta.
+pub const NODE_REMOVED_MESSAGE: &str =
+    "worker removido pelo operador; para entrar de novo, use um convite: aic worker join";
+
 /// Ceiling for a single gRPC message, in bytes, in both directions.
 ///
 /// A work unit travels as one message carrying its operands as `repeated double`: a

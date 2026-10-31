@@ -16,8 +16,10 @@ Autorização: **join** = token de join (todo worker e cliente); **op** = token 
 | RPC | Serviço | Request → Response | Chamador | Autorização | Efeito |
 |---|---|---|---|---|---|
 | `ProbeLink` | `LinkProbe` | `ProbeLinkRequest` → `ProbeLinkResponse` | worker | join | recebe o payload e devolve quantos bytes chegaram |
-| `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o worker e devolve `cluster_id` e `node_credential` |
+| `RegisterNode` | `ClusterControl` | `RegisterNodeRequest` → `RegisterNodeResponse` | worker | join | registra o worker e devolve `cluster_id` e `node_credential`; credencial de worker removido recebe `PermissionDenied` (ADR-027) |
 | `ApproveNode` | `ClusterControl` | `ApproveNodeRequest` → `ApproveNodeResponse` | operador | op | torna confiável um worker registrado; tira o worker de quarentena |
+| `RetireNode` | `ClusterControl` | `RetireNodeRequest` → `RetireNodeResponse` | operador | op | tira o worker do trabalho e mantém a identidade (ADR-027) |
+| `RemoveNode` | `ClusterControl` | `RemoveNodeRequest` → `RemoveNodeResponse` | operador | op | esquece o worker e deixa a credencial como lápide: quem a apresenta é recusado (ADR-027) |
 | `RevokeNode` | `ClusterControl` | `RevokeNodeRequest` → `RevokeNodeResponse` | operador | op | retira a confiança e a credencial; devolve à fila o que estava em voo |
 | `RenewNodeCertificate` | `ClusterControl` | `RenewNodeCertificateRequest` → `RenewNodeCertificateResponse` | worker | credencial do worker | emite o certificado do túnel RPC para o CSR do worker (SAN `aic-worker-<worker>`); recusa worker pendente ou revogado (ADR-026) |
 | `SetRelease` | `ClusterControl` | `SetReleaseRequest` → `SetReleaseResponse` | operador | op | define a release desejada do cluster; `version` em branco cancela o rollout |

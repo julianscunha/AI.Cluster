@@ -126,6 +126,8 @@ struct Known {
     quarantined: bool,
     /// SHA-256 da chave pública do certificado de túnel já renovado (ADR-026); vazio = ainda não fixada.
     key: String,
+    /// Lápide de `forget` (ADR-027): a credencial continua valendo como "este worker foi removido".
+    removed: bool,
 }
 
 #[derive(Debug)]
@@ -188,6 +190,7 @@ impl Registry {
                             // Optional fourth column; files from before G1 do not have it.
                             quarantined: fields.next() == Some("1"),
                             key: fields.next().unwrap_or("").to_string(),
+                            removed: fields.next() == Some("1"),
                         },
                     );
                 }
@@ -213,6 +216,7 @@ impl Registry {
                 trusted,
                 quarantined,
                 key,
+                removed: false,
             },
         );
         self.save(&known);
@@ -237,11 +241,12 @@ impl Registry {
             .map(|id| {
                 let entry = &known[id];
                 format!(
-                    "{id}\t{}\t{}\t{}\t{}\n",
+                    "{id}\t{}\t{}\t{}\t{}\t{}\n",
                     entry.credential,
                     u8::from(entry.trusted),
                     u8::from(entry.quarantined),
-                    entry.key
+                    entry.key,
+                    u8::from(entry.removed)
                 )
             })
             .collect();
@@ -274,8 +279,10 @@ impl Registry {
             return true;
         }
         let mut known = self.lock_known();
-        let existed = known.remove(node_id).is_some();
+        // A lápide de um worker removido não sai por revogação: só um convite (um registro sem credencial) a troca.
+        let existed = known.get(node_id).is_some_and(|entry| !entry.removed);
         if existed {
+            known.remove(node_id);
             self.save(&known);
         }
         existed
@@ -284,7 +291,7 @@ impl Registry {
     /// Tira o worker do trabalho sem tirar a identidade: perde a confiança (não recebe unidades nem entra
     /// no plano de modelo), mas a credencial e a impressão digital continuam as mesmas. O worker segue
     /// conectado, como pendente; `approve` com a impressão digital de antes o põe de volta. False se o
-    /// worker é desconhecido.
+    /// worker é desconhecido ou já foi removido.
     pub fn retire(&self, node_id: &str) -> bool {
         // Ordem workers → known (a de `register_as`): o `approve` concorrente não vê vivo sem persistir.
         let mut nodes = self.lock();
@@ -295,7 +302,7 @@ impl Registry {
             return true;
         }
         let mut known = self.lock_known();
-        let Some(entry) = known.get_mut(node_id) else {
+        let Some(entry) = known.get_mut(node_id).filter(|entry| !entry.removed) else {
             return false;
         };
         entry.trusted = false;
@@ -303,16 +310,35 @@ impl Registry {
         true
     }
 
-    /// Esquece o worker por inteiro: registro vivo e credencial guardada. Se o worker continuar rodando, ele
-    /// se apresenta de novo como um worker novo e pendente. False se o worker é desconhecido.
+    /// Esquece o worker por inteiro (ADR-027): some do registro e perde a confiança, a chave fixada e o
+    /// direito a renovar. A credencial fica como lápide: quem a apresentar é recusado (`removed`), e só um
+    /// registro sem credencial, isto é, um convite, entra de novo como pendente. Um worker que continue
+    /// rodando não volta sozinho. False se o worker é desconhecido ou já foi removido.
     pub fn forget(&self, node_id: &str) -> bool {
         let live = self.lock().remove(node_id).is_some();
         let mut known = self.lock_known();
-        let had = known.remove(node_id).is_some();
+        let had = match known.get_mut(node_id).filter(|entry| !entry.removed) {
+            Some(entry) => {
+                entry.removed = true;
+                entry.trusted = false;
+                entry.quarantined = false;
+                entry.key.clear();
+                true
+            }
+            None => false,
+        };
         if had {
             self.save(&known);
         }
         live || had
+    }
+
+    /// Whether `presented` is the credential of a worker the operator removed (ADR-027). Only the holder
+    /// of that credential is refused; a join without one is a new worker.
+    pub fn removed(&self, node_id: &str, presented: &[u8]) -> bool {
+        self.lock_known().get(node_id).is_some_and(|known| {
+            known.removed && same_token(known.credential.as_bytes(), presented)
+        })
     }
 
     /// Counts an invalid result against a node; at `limit` in a row it is quarantined.
@@ -413,6 +439,10 @@ impl Registry {
         // Drawn before the lock: if entropy fails the panic must not poison the registry.
         let fresh = new_credential();
         let mut nodes = self.lock();
+        // Removido pelo operador (ADR-027): a credencial dele não volta; só um convite (sem credencial) entra.
+        if self.removed(&identity.node_id, presented) {
+            return None;
+        }
         if !self.auto_approve {
             let prior = nodes
                 .get(&identity.node_id)
@@ -799,6 +829,82 @@ mod tests {
         let again = registry.register(identity("n1"), CapabilityReport::default(), 2);
         assert_ne!(again.credential, first.credential);
         assert!(!registry.is_trusted("n1"));
+    }
+
+    #[test]
+    fn um_worker_removido_com_a_credencial_nao_volta_e_so_um_convite_entra() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        registry.approve("n1");
+        assert!(registry.forget("n1"));
+        let old = first.credential.as_bytes();
+        // O processo que segue rodando apresenta a credencial dele: recusado, e não reaparece no registro.
+        assert!(registry.removed("n1", old));
+        assert!(!registry.renews("n1", old));
+        assert!(
+            registry
+                .register_as(identity("n1"), CapabilityReport::default(), 2, old)
+                .is_none()
+        );
+        assert!(registry.list().is_empty());
+        // Um convite (sem credencial) entra como pendente, com outra credencial: a lápide sai.
+        let newcomer = registry
+            .register_as(identity("n1"), CapabilityReport::default(), 3, b"")
+            .unwrap();
+        assert!(!newcomer.trusted);
+        assert_ne!(newcomer.credential, first.credential);
+        assert!(!registry.removed("n1", old));
+    }
+
+    #[test]
+    fn a_lapide_de_remocao_sobrevive_a_um_reinicio_do_controller() {
+        let path = std::env::temp_dir().join(format!("aic-removed-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let registry = Registry::requiring_approval().persisted(&path);
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        assert!(registry.forget("n1"));
+        let restarted = Registry::requiring_approval().persisted(&path);
+        assert!(restarted.removed("n1", first.credential.as_bytes()));
+        assert!(
+            restarted
+                .register_as(
+                    identity("n1"),
+                    CapabilityReport::default(),
+                    2,
+                    first.credential.as_bytes()
+                )
+                .is_none()
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn revogar_ou_aposentar_um_worker_removido_nao_apaga_a_lapide() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        assert!(registry.forget("n1"));
+        assert!(!registry.revoke("n1"));
+        assert!(!registry.retire("n1"));
+        assert!(registry.removed("n1", first.credential.as_bytes()));
+    }
+
+    #[test]
+    fn aposentar_nao_e_remover_o_worker_aposentado_volta_com_a_credencial() {
+        let registry = Registry::requiring_approval();
+        let first = registry.register(identity("n1"), CapabilityReport::default(), 1);
+        registry.approve("n1");
+        assert!(registry.retire("n1"));
+        assert!(!registry.removed("n1", first.credential.as_bytes()));
+        assert!(
+            registry
+                .register_as(
+                    identity("n1"),
+                    CapabilityReport::default(),
+                    2,
+                    first.credential.as_bytes()
+                )
+                .is_some()
+        );
     }
 
     #[test]

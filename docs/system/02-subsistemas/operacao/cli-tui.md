@@ -38,7 +38,8 @@ Ver [[seguranca]] para os papéis de cada token.
 | `aic cluster node show <id>` | Um worker, com capability, saúde e confiança completas. |
 | `aic cluster node approve <worker>` | Aprova um worker pendente para receber trabalho. |
 | `aic cluster node revoke <worker>` | Retira a aprovação e a credencial do worker, devolve o trabalho em voo à fila e deixa o worker pendente. |
-| `aic cluster node retire <worker>` / `remove <worker>` | Tira o worker do trabalho mantendo a identidade, ou o esquece por inteiro. |
+| `aic cluster node retire <worker>` | Tira o worker do trabalho mantendo a identidade: segue conectado, pendente, com a mesma credencial. |
+| `aic cluster node remove <worker>` | Esquece o worker por inteiro e guarda a credencial dele como lápide: o processo que ainda a usa é recusado até um convite novo (ADR-027). |
 
 A instalação com aprovação (`aic cluster install list|approve|reject|open|close`) e o convite (`aic cluster invite`) estão na referência de [[cli]].
 

@@ -118,6 +118,16 @@ fn cada_comando_delegado_repassa_a_linha_ao_setup() {
                 "pt",
             ],
         ),
+        (
+            &[
+                "worker", "join", "--server", "10.0.0.5", "--code", "123456", "--name", "pc-1",
+                "--yes",
+            ],
+            &[
+                "worker", "join", "--server", "10.0.0.5", "--code", "123456", "--name", "pc-1",
+                "--yes",
+            ],
+        ),
         (&["worker", "status"], &["worker", "status"]),
         (&["worker", "logs", "-f"], &["worker", "logs", "-f"]),
         (&["worker", "role"], &["worker", "role"]),

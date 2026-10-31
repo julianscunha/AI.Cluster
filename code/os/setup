@@ -7,7 +7,7 @@
 #   sudo ./setup controller status | logs [-f] [-n N]
 #   sudo ./setup gateway install --server IP[:8099] --code CÓDIGO [--models-dir DIR] [--yes] [--lang pt|en]
 #   sudo ./setup gateway status | logs [-f] [-n N]
-#   sudo ./setup worker join --server IP[:8099] --code CÓDIGO [--yes] [--lang pt|en]
+#   sudo ./setup worker join --server IP[:8099] --code CÓDIGO [--name NOME] [--yes] [--lang pt|en]
 #   sudo ./setup worker status | logs [-f] [-n N]
 #   sudo ./setup worker role | change | passwd     só no AI Cluster OS (aqui responde que não existe)
 #   sudo ./setup cluster invite [--minutes 15] [--port 8099]
@@ -666,17 +666,20 @@ cmd_gateway_install() {
 # ---------- worker ----------
 # `worker join`: entra no cluster pelo convite. O script `join` do convite faz o trabalho (ver abaixo).
 cmd_worker_join() {
-  SERVER=""; CODE=""; ROLE=worker
+  SERVER=""; CODE=""; ROLE=worker; WNAME=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --server) [ $# -ge 2 ] || die "$(t '--server pede um valor' '--server needs a value')"; SERVER=$2; shift 2 ;;
       --code) [ $# -ge 2 ] || die "$(t '--code pede um valor' '--code needs a value')"; CODE=$(printf '%s' "$2" | tr a-z A-Z); shift 2 ;;
+      --name) [ $# -ge 2 ] || die "$(t '--name pede um valor' '--name needs a value')"; WNAME=$2; shift 2 ;;
       --yes|-y) shift ;;
       --lang) [ $# -ge 2 ] || die "$(t '--lang pede um valor' '--lang needs a value')"; set_lang "$2"; shift 2 ;;
       *) die "$(t "argumento desconhecido: $1" "unknown argument: $1")" ;;
     esac
   done
   need_root
+  case "$WNAME" in *[!A-Za-z0-9.-]*|-*) die "$(t '--name só aceita letras, dígitos, ponto e hífen (até 40)' '--name accepts only letters, digits, dot and hyphen (up to 40)')" ;; esac
+  [ ${#WNAME} -le 40 ] || die "$(t '--name tem mais de 40 caracteres' '--name is longer than 40 characters')"
   case "$CODE" in ""|*[!A-Za-z0-9]*) die "$(t "informe o código do convite: --code (aparece no 'sudo aic cluster invite' do controller)" "give the invitation code: --code (shown by 'sudo aic cluster invite' on the controller)")" ;; esac
   [ -n "$SERVER" ] || die "$(t 'informe o servidor: --server IP[:porta do convite]' 'give the server: --server IP[:invitation port]')"
   case "$SERVER" in *[!A-Za-z0-9.:_-]*) die "$(t '--server com caracteres inválidos' '--server with invalid characters')" ;; esac
@@ -688,7 +691,7 @@ cmd_worker_join() {
     || { rm -rf "$jd"; die "$(t "o convite em $SERVER não respondeu ou o código está errado; rode 'sudo aic cluster invite' no servidor e confira o código" "the invitation at $SERVER did not respond or the code is wrong; run 'sudo aic cluster invite' on the server and check the code")"; }
   # O idioma do convite é o do servidor: o script que ele entrega não herda o deste comando.
   unset AIC_LANG
-  rc=0; AIC_ARCH="${AIC_HW_ARCH:-}" sh "$jd/join" || rc=$?
+  rc=0; AIC_NAME="$WNAME" AIC_ARCH="${AIC_HW_ARCH:-}" sh "$jd/join" || rc=$?
   rm -rf "$jd"
   exit $rc
 }
@@ -864,7 +867,8 @@ exec /opt/ai-cluster/bin/aic "\$@"
 AIC_WRAP
 chmod 755 /usr/local/bin/aic
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
-NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
+if [ "\${1:-}" = --name ]; then AIC_NAME=\${2:-}; fi
+NAME=\$(printf '%s' "\${AIC_NAME:-\$(hostname)}" | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 # Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do worker
 # no certificado, então um worker comprometido não se passa por outro.
 command -v openssl >/dev/null || { echo "needs openssl (apt install openssl)" >&2; exit 1; }
@@ -948,7 +952,8 @@ printf 'ROLE=worker\nBASE=$RBASE\nVERSION=$RVER\nSUMS=$RSUMS\n' > /etc/ai-cluste
 touch /etc/ai-cluster/.installed
 echo pt > /etc/ai-cluster/lang
 printf '%s\n' "$JOIN" > "\$T/join-token"; chmod 600 "\$T/join-token"
-NAME=\$(hostname | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
+if [ "\${1:-}" = --name ]; then AIC_NAME=\${2:-}; fi
+NAME=\$(printf '%s' "\${AIC_NAME:-\$(hostname)}" | sed 's/[^A-Za-z0-9.-]/-/g' | cut -c1-40)
 # Chave própria: nasce e fica neste computador. O servidor só assina o pedido (CSR), com o nome do worker
 # no certificado, então um worker comprometido não se passa por outro.
 command -v openssl >/dev/null || { echo "precisa do openssl (apt install openssl)" >&2; exit 1; }

@@ -161,6 +161,9 @@ pub enum Worker {
         /// Código do convite.
         #[arg(long)]
         code: String,
+        /// Nome do worker no cluster (padrão: o hostname deste computador).
+        #[arg(long)]
+        name: Option<String>,
         /// Não pergunta nada: aceita os padrões.
         #[arg(long)]
         yes: bool,
@@ -210,12 +213,14 @@ impl Worker {
             Self::Join {
                 server,
                 code,
+                name,
                 yes,
                 lang,
             } => {
                 let mut out = vec!["join".to_string()];
                 valor(&mut out, "--server", Some(server));
                 valor(&mut out, "--code", Some(code));
+                valor(&mut out, "--name", name.as_ref());
                 marca(&mut out, "--yes", *yes);
                 valor(&mut out, "--lang", lang.as_ref());
                 out

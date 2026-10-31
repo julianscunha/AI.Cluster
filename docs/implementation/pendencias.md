@@ -116,7 +116,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Revogação | Lista de revogação de chaves de release e de certificados de worker (o controller já não renova nem anuncia o worker revogado, ADR-026; falta CRL para quem não é o controller); revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). | código |
+| Revogação | Lista de revogação de chaves de release e de certificados de worker (o controller já não renova nem anuncia o worker revogado, ADR-026; falta CRL para quem não é o controller); revogação e rotação de tokens de operador e de recuperação (uso único, ADR-017). Worker revogado que se reinicia entra pendente com credencial nova; só `remove` põe lápide (ADR-027). Falta decidir se revogar também deve barrar o retorno, e lápide que sobreviva à reinstalação do controller. | código, decisão |
 | mTLS | Ligar o certificado ao `node_id`; rotação, CRL e emissão automática; TLS no exportador de métricas. | código |
 | Rollout | HTTPS no download (hoje HTTP, segue redirecionamento); marca guarda uma versão só; downgrade legítimo (decisão); ondas com mais de um worker. | código, decisão, hardware |
 | Integridade de boot | dm-verity com root hash assinado; TPM e secure boot; medida de 512 MiB leva 25 a 40 s no SD. | hardware |

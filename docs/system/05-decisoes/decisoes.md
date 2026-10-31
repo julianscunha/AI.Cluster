@@ -39,6 +39,7 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-024-interface-de-comandos-unica-aic]] | decidido | 2026-10-30 | Um único comando de usuário, `aic <recurso> <ação>` (cluster, controller, gateway, worker, update); nomes antigos removidos sem apelidos; `status` sempre da máquina; opções com nome único; cabeçalho e cores iguais |
 | [[adr-025-gatilho-de-atualizacao-assinada-linux]] | decidido | 2026-10-30 | Chave de Linux comum (separada da do AI Cluster OS) assina o SHA256SUMS; a pública é pinada na instalação e o `update` confere antes de qualquer hash; worker Linux recebe o gatilho pelo rollout e aplica por unit root |
 | [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
+| [[adr-027-worker-removido-so-volta-por-convite]] | decidido | 2026-10-31 | Remover deixa uma lápide com a credencial: o worker que a apresenta é recusado e só volta por convite (`aic worker join`); retirar mantém a identidade; revogar segue como rotação |
 
 ## Notas
 

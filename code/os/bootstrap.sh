@@ -16,7 +16,8 @@
 # worker, com systemd se houver, senão em segundo plano. Rodar de novo atualiza o binário e o
 # ambiente. Trocar o --node-id de uma máquina já instalada exige --force (o worker antigo ficaria
 # órfão no controller). O worker entra no cluster pelo caminho de sempre (join + aprovação);
-# este script não aprova.
+# este script não aprova. Com AIC_INVITED=1 (o script do convite) a credencial guardada é apagada:
+# quem volta por convite entra como worker novo, pendente (ADR-027).
 #
 # Atualização (F19): rodar de novo com outro binário troca o worker e guarda o anterior em
 # `bin/ai-cluster-worker.prev`. Com systemd, a versão nova só vale se o serviço ficar ativo e
@@ -177,6 +178,9 @@ mv -f "$PREFIX/bin/ai-cluster-worker.new" "$PREFIX/bin/ai-cluster-worker"
 # Guarda o ambiente anterior: se o worker novo não ficar saudável, o ambiente antigo volta junto com o binário.
 ENV_HAD=0
 if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
+# Entrar por convite é entrada nova (ADR-027): a credencial guardada sai, senão um worker que o operador
+# removeu seria recusado para sempre. Rodar sem convite (atualização) mantém a credencial e a aprovação.
+if [ "${AIC_INVITED:-0}" = 1 ]; then rm -f "$PREFIX/state/credential"; fi
 # O ambiente é do root e legível pelo grupo do worker: o serviço lê o token, não o reescreve.
 {
   echo "AI_CLUSTER_CONTROLLER=$CONTROLLER"

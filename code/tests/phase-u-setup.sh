@@ -184,11 +184,13 @@ echo "OK: join grava a release e instala aic e setup"
 # B0) ADR-025: o worker que entra pelo convite direto (curl | sh, sem o install.sh) recebe a chave de release do
 # servidor e pina; o pedido assinado passa pelo --verify dele.
 docker run -d --name aic-wj --network $NET aic-test-base sleep 900 >/dev/null
-OUT=$(docker exec aic-wj sh -c "curl -fsSL http://$SIP:8099/join-$WCODE | sh" 2>&1) || { echo "$OUT" | tail -6; fail "o worker que entra por curl | sh não entrou"; }
+OUT=$(docker exec aic-wj sh -c "curl -fsSL http://$SIP:8099/join-$WCODE | sh -s -- --name wj-pc.1" 2>&1) || { echo "$OUT" | tail -6; fail "o worker que entra por curl | sh não entrou"; }
 [ "$(docker exec aic-wj sha256sum /etc/ai-cluster/release.pub | cut -d' ' -f1)" = "$(sha256sum "$(dirname "$0")/../os/linux.pub" | cut -d' ' -f1)" ] \
   || fail "o worker do convite deveria pinar a chave de release (/etc/ai-cluster/release.pub)"
 docker exec aic-wj runuser -u ai-cluster -- /opt/ai-cluster/bin/aic-update-linux --verify "$(cat "$DISTU/VERSION")" "$BASE" x x "$(cat "$DISTU/SHA256SUMS.sig")" >/dev/null 2>&1 \
   || fail "o worker do convite deveria aceitar o pedido assinado (--verify)"
+docker exec aic-wj grep -qx 'AI_CLUSTER_NODE_ID=wj-pc.1' /opt/ai-cluster/worker.env || fail "--name no convite deveria dar o nome ao worker (e não o hostname)"
+falha_com "--name só aceita" docker exec aic-wk aic worker join --server "$SIP:8099" --code "$WCODE" --name "a b"
 echo "OK B0: worker do convite (curl | sh) pina a chave de release e o --verify aceita o pedido assinado"
 
 echo "=== B1) worker com systemd de mentira: habilitado no boot, com Restart=always ==="

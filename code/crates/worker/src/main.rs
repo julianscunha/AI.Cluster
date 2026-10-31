@@ -14,7 +14,9 @@ use ai_cluster_protocol::cluster::{
     NodeIdentity, ProbeLinkRequest, RegisterNodeRequest, Release, RequestWorkRequest, StateReplica,
     StorageDevice, SubmitWorkResultRequest, WorkResult, WorkUnit,
 };
-use ai_cluster_protocol::metadata::{ProbeClient, connect_node, connect_probe};
+use ai_cluster_protocol::metadata::{
+    NODE_REMOVED_MESSAGE, ProbeClient, connect_node, connect_probe,
+};
 use prost::Message;
 use tokio::sync::Semaphore;
 use tokio::time;
@@ -241,6 +243,11 @@ fn store_credential(value: &str) {
     }
 }
 
+/// O controller recusou este worker porque o operador o removeu (ADR-027).
+fn removed_by_operator(err: &tonic::Status) -> bool {
+    err.code() == tonic::Code::PermissionDenied && err.message() == NODE_REMOVED_MESSAGE
+}
+
 /// Epoch of the copy this node holds, for the heartbeat request. Zero when it holds none.
 ///
 /// The controller compares this against its own epoch and sends a copy only when its own is
@@ -438,14 +445,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = state_replica_path() {
         load_state_replica(&path);
     }
-    let registered = client
-        .register_node(RegisterNodeRequest {
-            identity: Some(identity.clone()),
-            capability: Some(capability.clone()),
-            replica: state_replica(),
-        })
-        .await?
-        .into_inner();
+    // Removido pelo operador (ADR-027): a credencial guardada não volta. Confere de novo com backoff, uma
+    // linha por tentativa, até um convite (`aic worker join`) limpar a credencial; sem isso o systemd
+    // reiniciaria o processo a cada 3 s.
+    let mut wait = Duration::from_secs(30);
+    let registered = loop {
+        match client
+            .register_node(RegisterNodeRequest {
+                identity: Some(identity.clone()),
+                capability: Some(capability.clone()),
+                replica: state_replica(),
+            })
+            .await
+        {
+            Ok(reply) => break reply.into_inner(),
+            Err(err) if removed_by_operator(&err) => {
+                println!("{}; nova conferência em {}s", err.message(), wait.as_secs());
+                time::sleep(wait).await;
+                wait = (wait * 2).min(Duration::from_secs(600));
+            }
+            Err(err) => return Err(err.into()),
+        }
+    };
     credential.set(&registered.node_credential);
     store_credential(&registered.node_credential);
     println!(
@@ -667,6 +688,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 refused = 0;
                 work.into_inner()
             }
+            Err(err) if removed_by_operator(&err) => {
+                println!("{}; saindo", err.message());
+                break;
+            }
             // Refused for good (revoked, bad credential): leave cleanly instead of dropping
             // units that are still running.
             Err(err)
@@ -807,12 +832,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     stop_tx.send(()).ok();
     let _ = heartbeat_task.await;
 
-    let left = client
+    let left = match client
         .leave_node(LeaveNodeRequest {
             node_id: node_id.clone(),
         })
-        .await?
-        .into_inner();
+        .await
+    {
+        Ok(reply) => reply.into_inner(),
+        // Removido enquanto rodava: já não há o que deixar no controller.
+        Err(err) if removed_by_operator(&err) => {
+            println!("{}", err.message());
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
     println!(
         "saiu do cluster node_id={node_id} aceito={} requeued={}",
         left.accepted, left.requeued

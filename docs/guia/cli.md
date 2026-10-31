@@ -32,8 +32,8 @@ aic <recurso> <ação> [alvo] [--opções]
 | `aic cluster node show <id>` | Tudo que o controller sabe sobre um worker: capacidade, saúde, confiança e reserva. |
 | `aic cluster node approve <id> --fingerprint <fp>` | Aprova um worker pendente para ele receber trabalho. Confere a impressão digital da credencial (`IMPRESSÃO` em `nodes`, também impressa pelo worker ao registrar-se); se o id foi tomado por outro registro, recusa. `--trust-listed` aceita a impressão que o controller mostra agora, sem conferir (anula a proteção). Também tira um worker da quarentena. |
 | `aic cluster node retire <id>` | Tira o worker do trabalho **mantendo a identidade**: as unidades em voo voltam à fila, e a credencial e a impressão continuam as mesmas. Volta com `approve` e a impressão de antes. Registra `node_retired`. |
-| `aic cluster node revoke <id>` | **Revoga a credencial**: retira a aprovação, invalida a credencial, devolve as unidades em voo à fila e registra `node_revoked`. O worker revogado encerra e só volta com um novo join; o certificado do túnel RPC dele deixa de ser renovado (ADR-026). |
-| `aic cluster node remove <id>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e credencial). Se o processo continuar rodando, ele se apresenta de novo como worker novo e pendente. Registra `node_removed`. |
+| `aic cluster node revoke <id>` | **Revoga a credencial**: retira a aprovação, troca a credencial, devolve as unidades em voo à fila e registra `node_revoked`. O worker vivo encerra; reiniciado, entra como worker novo e pendente, com credencial nova. O certificado do túnel RPC dele deixa de ser renovado (ADR-026). |
+| `aic cluster node remove <id>` | Remove o worker do cluster: o controller o **esquece por inteiro** (registro e confiança) e guarda a credencial dele como lápide. Um worker que ainda roda com ela é **recusado** e não volta sozinho; só volta por um convite novo (`aic worker join`), como pendente (ADR-027). Registra `node_removed`. |
 
 ### Instalação com aprovação (ADR-023)
 
@@ -102,7 +102,7 @@ Uma reserva retém um worker para uma requisição futura.
 | `aic gateway install --server IP[:8099] --code CÓDIGO [--models-dir DIR] [--yes] [--lang pt\|en]` | Instala o gateway de inferência neste Linux, apontado para o controller do convite. |
 | `aic gateway status` | Estado do gateway deste Linux. |
 | `aic gateway logs [-f] [-n N]` | Registros do gateway. |
-| `aic worker join --server IP[:8099] --code CÓDIGO [--yes] [--lang pt\|en]` | Entra no cluster com um convite: instala o worker neste Linux ou no AI Cluster OS. |
+| `aic worker join --server IP[:8099] --code CÓDIGO [--name NOME] [--yes] [--lang pt\|en]` | Entra no cluster com um convite: instala o worker neste Linux ou no AI Cluster OS. O nome do worker é o hostname; `--name` escolhe outro (letras, dígitos, ponto e hífen, até 40). Pelo `curl`: `curl -fsSL http://IP:8099/join-CÓDIGO \| sudo sh -s -- --name NOME`. |
 | `aic worker status` | Estado do worker deste computador. |
 | `aic worker logs [-f] [-n N]` | Registros do worker. |
 

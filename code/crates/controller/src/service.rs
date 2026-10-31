@@ -576,7 +576,17 @@ fn authorize_node<T>(
     node_id: &str,
 ) -> Result<(), Status> {
     require_recovery_scope(request, node_id)?;
-    if require_operator(request).is_ok() || registry.authorizes(node_id, node_credential(request)) {
+    if require_operator(request).is_ok() {
+        return Ok(());
+    }
+    let presented = node_credential(request);
+    // Um worker removido pelo operador não fala mais por nó nenhum (ADR-027).
+    if registry.removed(node_id, presented) {
+        return Err(Status::permission_denied(
+            ai_cluster_protocol::metadata::NODE_REMOVED_MESSAGE,
+        ));
+    }
+    if registry.authorizes(node_id, presented) {
         Ok(())
     } else {
         Err(Status::unauthenticated(
@@ -689,6 +699,11 @@ impl ClusterControl for ClusterControlService {
             now,
             &presented,
         ) else {
+            if self.registry.removed(&node_id, &presented) {
+                return Err(Status::permission_denied(
+                    ai_cluster_protocol::metadata::NODE_REMOVED_MESSAGE,
+                ));
+            }
             return Err(Status::failed_precondition(
                 "worker já registrado com outra credencial; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um worker pendente fica livre quando para de responder)",
             ));
@@ -3091,6 +3106,77 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn worker_removido_com_a_credencial_nao_volta_so_um_convite_volta() {
+        let registry = Arc::new(Registry::requiring_approval());
+        let service = ClusterControlService::new(
+            registry.clone(),
+            Arc::new(WorkStore::new()),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
+        let register = |credential: &str| {
+            with_credential(
+                Request::new(RegisterNodeRequest {
+                    identity: Some(identity("node-a")),
+                    capability: Some(CapabilityReport::default()),
+                    replica: None,
+                }),
+                credential,
+            )
+        };
+        let first = service
+            .register_node(register(""))
+            .await
+            .unwrap()
+            .into_inner()
+            .node_credential;
+        service
+            .approve_node(op(ApproveNodeRequest {
+                node_id: "node-a".into(),
+                fingerprint: ai_cluster_protocol::metadata::credential_fingerprint(&first),
+            }))
+            .await
+            .unwrap();
+        // Remove com o worker vivo: ele segue rodando com a credencial dele.
+        assert!(
+            service
+                .remove_node(op(RemoveNodeRequest {
+                    node_id: "node-a".into(),
+                }))
+                .await
+                .unwrap()
+                .into_inner()
+                .removed
+        );
+        let refused = service.register_node(register(&first)).await.unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::PermissionDenied);
+        assert_eq!(
+            refused.message(),
+            ai_cluster_protocol::metadata::NODE_REMOVED_MESSAGE
+        );
+        let beat = service
+            .heartbeat(with_credential(
+                Request::new(HeartbeatRequest {
+                    node_id: "node-a".into(),
+                    ..Default::default()
+                }),
+                &first,
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(beat.code(), tonic::Code::PermissionDenied);
+        assert!(registry.list().is_empty());
+        // Um convite (sem credencial) entra de novo, pendente.
+        let back = service
+            .register_node(register(""))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_ne!(back.node_credential, first);
+        assert!(registry.awaiting_approval("node-a"));
     }
 
     fn with_credential<T>(mut request: Request<T>, credential: &str) -> Request<T> {

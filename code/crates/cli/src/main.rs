@@ -205,7 +205,8 @@ enum NodeAction {
         /// Worker a revogar.
         id: String,
     },
-    /// Remove o worker do cluster: o controller o esquece por inteiro.
+    /// Remove o worker do cluster: o controller o esquece por inteiro e recusa a credencial dele. A máquina
+    /// só volta por um convite novo (`aic worker join`), como worker pendente (ADR-027).
     Remove {
         /// Worker a remover.
         id: String,
@@ -433,7 +434,10 @@ async fn run_cluster(
                     .await?
                     .into_inner();
                 if reply.removed {
-                    println!("WORKER removido no={id} reenfileiradas={}", reply.requeued);
+                    println!(
+                        "WORKER removido no={id} reenfileiradas={}; a máquina dele só volta com um convite novo (aic worker join)",
+                        reply.requeued
+                    );
                 } else {
                     println!("WORKER não encontrado no={id}");
                 }
