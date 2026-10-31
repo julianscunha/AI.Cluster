@@ -1,0 +1,8 @@
+#!/bin/sh
+# AI Cluster — comando de atualização do worker Linux comum (ADR-025). O worker o chama com a release que o
+# controller empurrou: `--verify V URL SHA IMG SIG` só confere a assinatura; `V URL SHA IMG SIG` confere e deixa
+# o pedido para o ai-cluster-update (root, por caminho), que aplica. O worker não tem sudo (NoNewPrivileges).
+set -eu
+SETUP=/opt/ai-cluster/libexec/setup
+if [ "${1:-}" = --verify ]; then shift; exec "$SETUP" update linux-check "$@"; fi
+exec "$SETUP" update linux-request "$@"

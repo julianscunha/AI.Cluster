@@ -30,10 +30,11 @@ Como o protocolo evolui sem derrubar o cluster, e como o operador atualiza o sis
 
 ## Atualização do sistema nos nós (release)
 
-O operador define a versão desejada do sistema com `SetRelease`. Ela tem cinco campos: `version`, `url`, `sha256` (do artefato), `image_sha256` (do conteúdo do slot depois de gravado) e `signature` (Ed25519 em base64, sobre placa, versão, `sha256` e `image_sha256`). O controller recusa a release se:
+O operador define a versão desejada do sistema com `SetRelease`. Ela tem seis campos: `version`, `url`, `sha256` (do artefato), `image_sha256` (do conteúdo do slot depois de gravado), `signature` (Ed25519 em base64, sobre placa, versão, `sha256` e `image_sha256`, para AI Cluster OS) e `linux_signature` (Ed25519 em base64 sobre o `SHA256SUMS` da release Linux comum, ADR-025). Uma release leva `signature`, `linux_signature` ou as duas. O controller recusa a release se:
 
 - a versão tiver caracteres fora de letras, números, `.`, `_`, `-` e `+`;
-- algum hash não tiver 64 hexadecimais, ou a assinatura não for base64 de 64 bytes;
+- algum hash não tiver 64 hexadecimais, ou alguma assinatura não for base64 de 64 bytes;
+- não houver nenhuma assinatura, ou a release Linux não tiver URL (o worker Linux busca o `SHA256SUMS` nela);
 - a URL não for `http(s)`, ou tiver usuário, query ou caracteres especiais.
 
 Fluxo:
@@ -43,6 +44,7 @@ Fluxo:
 3. Depois do canário, os nós recebem a release em ondas. `AI_CLUSTER_ROLLOUT_WAVE` limita quantos atualizam ao mesmo tempo; zero significa todos.
 4. Se o canário não chega à versão em 10 min, o rollout pausa e nada mais é anunciado.
 5. Cancelar com `SetRelease` de versão em branco interrompe o rollout.
+6. A release Linux comum segue o mesmo canal: o nó Linux (com `AI_CLUSTER_UPDATE_KIND=linux`) confere `linux_signature` antes de drenar e aplica pelo gatilho (ADR-025). Um nó AI Cluster OS a ignora.
 
 O nó sai do cluster de forma ordenada (`LeaveNode`), roda o comando de atualização e reinicia. Numa imagem com dois slots, o atualizador confere a assinatura e o SHA-256 antes de gravar o slot inativo. Se o slot novo não sobe, o nó volta ao anterior e não tenta de novo a mesma versão. Quando a release é aceita, o nó mede o slot gravado e informa `image_sha256` no próximo registro, que é como o controller sabe que a atualização terminou.
 

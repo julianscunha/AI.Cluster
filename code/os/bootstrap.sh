@@ -5,6 +5,7 @@
 #        [--binary ./ai-cluster-worker] [--node-id nome] [--prefix /opt/ai-cluster] \
 #        [--model-dir /var/lib/ai-cluster/models] [--insecure] [--force] [--health-timeout 90]
 #        [--rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls]
+#        [--update-cmd /opt/ai-cluster/bin/aic-update-linux]
 #
 # `--rpc-server-bin` e `--rpc-tls-dir` ligam o RPC do llama.cpp neste nó (modelos GGUF, ADR-022): o
 # worker roda o `ggml-rpc-server` em loopback atrás de um túnel mTLS. A pasta de TLS tem de ter
@@ -42,13 +43,14 @@ PREFIX="/opt/ai-cluster"
 MODEL_DIR=""
 RPC_BIN=""
 RPC_TLS_DIR=""
+UPDATE_CMD=""   # comando que o worker chama para a atualização empurrada pelo controller (ADR-025)
 INSECURE=0
 FORCE=0
 HEALTH_TIMEOUT=90
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --controller|--token|--token-file|--binary|--node-id|--prefix|--model-dir|--rpc-server-bin|--rpc-tls-dir|--health-timeout)
+    --controller|--token|--token-file|--binary|--node-id|--prefix|--model-dir|--rpc-server-bin|--rpc-tls-dir|--update-cmd|--health-timeout)
       [ $# -ge 2 ] || { echo "$(t "$1 pede um valor" "$1 needs a value")" >&2; exit 2; } ;;
   esac
   case "$1" in
@@ -61,6 +63,7 @@ while [ $# -gt 0 ]; do
     --model-dir) MODEL_DIR=$2; shift 2 ;;
     --rpc-server-bin) RPC_BIN=$2; shift 2 ;;
     --rpc-tls-dir) RPC_TLS_DIR=$2; shift 2 ;;
+    --update-cmd) UPDATE_CMD=$2; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
     --force) FORCE=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT=$2; shift 2 ;;
@@ -113,6 +116,8 @@ allowed --prefix "$PREFIX"
 [ -z "$MODEL_DIR" ] || allowed --model-dir "$MODEL_DIR"
 [ -z "$RPC_BIN" ] || allowed --rpc-server-bin "$RPC_BIN"
 [ -z "$RPC_TLS_DIR" ] || allowed --rpc-tls-dir "$RPC_TLS_DIR"
+[ -z "$UPDATE_CMD" ] || allowed --update-cmd "$UPDATE_CMD"
+[ -z "$UPDATE_CMD" ] || case "$UPDATE_CMD" in /*) ;; *) die "$(t '--update-cmd deve ser um caminho absoluto' '--update-cmd must be an absolute path')" ;; esac
 # RPC é tudo ou nada: o binário e a pasta de TLS vêm juntos, com os três arquivos.
 if [ -n "$RPC_BIN" ] || [ -n "$RPC_TLS_DIR" ]; then
   [ -n "$RPC_BIN" ] && [ -n "$RPC_TLS_DIR" ] || die "$(t '--rpc-server-bin e --rpc-tls-dir vêm juntos' '--rpc-server-bin and --rpc-tls-dir come together')"
@@ -185,6 +190,12 @@ if [ -f "$ENV_FILE" ]; then ENV_HAD=1; cp -p "$ENV_FILE" "$ENV_FILE.prev"; fi
     echo "AI_CLUSTER_RPC_TLS_CERT=$RPC_TLS_DIR/worker.crt"
     echo "AI_CLUSTER_RPC_TLS_KEY=$RPC_TLS_DIR/worker.key"
     echo "AI_CLUSTER_RPC_TLS_CLIENT_CA=$RPC_TLS_DIR/ca.crt"
+  fi
+  # Sem systemd não há quem aplique o pedido: o nó não se declara atualizável (fica fora do rollout).
+  if [ -n "$UPDATE_CMD" ] && [ -d /run/systemd/system ]; then
+    echo "AI_CLUSTER_UPDATE_CMD=$UPDATE_CMD"
+    echo "AI_CLUSTER_UPDATE_KIND=linux"
+    echo "AI_CLUSTER_UPDATE_MARK=$PREFIX/state/update-tried"
   fi
   true
 } > "$ENV_FILE.new"

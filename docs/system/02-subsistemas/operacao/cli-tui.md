@@ -77,7 +77,7 @@ Ver [[observabilidade]] para o significado de cada campo.
 
 | Comando | Função |
 |---|---|
-| `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` | Define a release que os nós devem rodar. |
+| `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` (ou `--url <diretório> --linux-signature <base64>` para os workers Linux comum) | Define a release que os nós devem rodar. |
 | `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
 
 O `sign-release.sh` do repositório gera os argumentos de `rollout` a partir do artefato assinado. O fluxo está em [[ai-cluster-os]].

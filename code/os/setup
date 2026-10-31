@@ -736,6 +736,9 @@ fetch_worker_pack() { # fetch_worker_pack <arquitetura>
   t=$(mktemp -d)
   curl -fsSL "$base/SHA256SUMS" -o "$t/S" 2>/dev/null && curl -fsSL "$base/$f" -o "$t/f" 2>/dev/null \
     || { rm -rf "$t"; PACK_MOTIVO="sem rede: não consegui baixar $f de $base"; return 1; }
+  # A assinatura do SHA256SUMS vem antes de qualquer hash dele (ADR-025).
+  curl -fsSL "$base/SHA256SUMS.sig" -o "$t/Ssig" 2>/dev/null || : > "$t/Ssig"
+  confere_assinatura "$t/S" "$t/Ssig" || { rm -rf "$t"; PACK_MOTIVO="$SIG_MOTIVO"; return 1; }
   want=$(awk -v f="$f" '$2==f {print $1}' "$t/S")
   [ -n "$want" ] || { rm -rf "$t"; PACK_MOTIVO="$f não consta no SHA256SUMS da release"; return 1; }
   have=$(sha256sum "$t/f" | cut -d' ' -f1)
@@ -794,7 +797,11 @@ cmd_invite() {
   sed -e "s#^AI_CLUSTER_CONTROLLER=.*#AI_CLUSTER_CONTROLLER=http://$IP:$GRPC_PORT#" -e '/^AI_CLUSTER_GATEWAY_URL=/d' "$CONF/gateway.env" > "$g/gateway.env"
   tar -C "$g" -czf "$WEB/gw-$GCODE.tar.gz" .
   rm -rf "$g"
+  # A chave de release deste servidor vai ao worker que entra pelo convite: ele a pina como o install.sh faz (ADR-025).
+  [ -f "$CONF/release.pub" ] || die "$(t 'este servidor não tem a chave de release (/etc/ai-cluster/release.pub): rode de novo o install.sh desta versão' 'this server has no release key (/etc/ai-cluster/release.pub): run install.sh of this version again')"
+  cp "$CONF/release.pub" "$WEB/release.pub"
   BSUM=$(sha256sum "$WEB/bootstrap.sh" | cut -d' ' -f1); PSUM=$(sha256sum "$WEB/pki-worker.tar.gz" | cut -d' ' -f1)
+  KSUM=$(sha256sum "$WEB/release.pub" | cut -d' ' -f1)
   SETSUM=$(sha256sum "$WEB/setup" | cut -d' ' -f1)
   # A release do servidor vai gravada no worker (release): é a origem da atualização dele.
   RBASE=$(get "$CONF/release" BASE); RVER=$(get "$CONF/release" VERSION); RSUMS=$(get "$CONF/release" SUMS)
@@ -823,15 +830,19 @@ mkdir "\$T/w"; tar -C "\$T/w" -xzf "\$T/w.tgz"
 curl -fsS http://$IP:$PORT/bootstrap.sh -o "\$T/bootstrap.sh"
 curl -fsS http://$IP:$PORT/setup -o "\$T/setup"
 curl -fsS http://$IP:$PORT/pki-worker.tar.gz -o "\$T/pki.tgz"
+curl -fsS http://$IP:$PORT/release.pub -o "\$T/release.pub"
 echo "$BSUM  \$T/bootstrap.sh" | sha256sum -c - >/dev/null || { echo "bootstrap.sh tampered" >&2; exit 1; }
 echo "$SETSUM  \$T/setup" | sha256sum -c - >/dev/null || { echo "setup tampered" >&2; exit 1; }
 echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificates tampered" >&2; exit 1; }
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
+echo "$KSUM  \$T/release.pub" | sha256sum -c - >/dev/null || { echo "release key tampered / chave de release adulterada" >&2; exit 1; }
 mkdir -p /etc/ai-cluster/rpc-tls /opt/ai-cluster/bin /opt/ai-cluster/libexec
+install -m 644 "\$T/release.pub" /etc/ai-cluster/release.pub
 tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
 chmod 644 /etc/ai-cluster/rpc-tls/ca.crt
 install -m 755 "\$T/w/ggml-rpc-server" /usr/local/bin/ggml-rpc-server
 install -m 755 "\$T/w/aic" /opt/ai-cluster/bin/aic
+install -m 755 "\$T/w/aic-update-linux" /opt/ai-cluster/bin/aic-update-linux
 install -m 755 "\$T/setup" /opt/ai-cluster/libexec/setup
 rm -f /usr/local/bin/ai-cluster /usr/local/bin/aic-setup
 cat > /usr/local/bin/aic <<'AIC_WRAP'
@@ -869,7 +880,8 @@ chmod 644 /etc/ai-cluster/rpc-tls/worker.crt
 chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
 AIC_INVITED=1 AIC_LANG=en sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
   --token-file "\$T/join-token" --binary "\$T/w/ai-cluster-worker" --node-id "\$NAME" \
-  --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls </dev/null
+  --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls --update-cmd /opt/ai-cluster/bin/aic-update-linux </dev/null
+/opt/ai-cluster/libexec/setup update linux-trigger
 # Só agora, com o bootstrap feito, a máquina fica marcada como instalada (um join que falha não deixa marca).
 printf '%s\n' "ROLE=worker" "BASE=$RBASE" "VERSION=$RVER" "SUMS=$RSUMS" > /etc/ai-cluster/release
 touch /etc/ai-cluster/.installed
@@ -899,15 +911,19 @@ mkdir "\$T/w"; tar -C "\$T/w" -xzf "\$T/w.tgz"
 curl -fsS http://$IP:$PORT/bootstrap.sh -o "\$T/bootstrap.sh"
 curl -fsS http://$IP:$PORT/setup -o "\$T/setup"
 curl -fsS http://$IP:$PORT/pki-worker.tar.gz -o "\$T/pki.tgz"
+curl -fsS http://$IP:$PORT/release.pub -o "\$T/release.pub"
 echo "$BSUM  \$T/bootstrap.sh" | sha256sum -c - >/dev/null || { echo "bootstrap.sh adulterado" >&2; exit 1; }
 echo "$SETSUM  \$T/setup" | sha256sum -c - >/dev/null || { echo "setup adulterado" >&2; exit 1; }
 echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificados adulterados" >&2; exit 1; }
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
+echo "$KSUM  \$T/release.pub" | sha256sum -c - >/dev/null || { echo "release key tampered / chave de release adulterada" >&2; exit 1; }
 mkdir -p /etc/ai-cluster/rpc-tls /opt/ai-cluster/bin /opt/ai-cluster/libexec
+install -m 644 "\$T/release.pub" /etc/ai-cluster/release.pub
 tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
 chmod 644 /etc/ai-cluster/rpc-tls/ca.crt
 install -m 755 "\$T/w/ggml-rpc-server" /usr/local/bin/ggml-rpc-server
 install -m 755 "\$T/w/aic" /opt/ai-cluster/bin/aic
+install -m 755 "\$T/w/aic-update-linux" /opt/ai-cluster/bin/aic-update-linux
 install -m 755 "\$T/setup" /opt/ai-cluster/libexec/setup
 rm -f /usr/local/bin/ai-cluster /usr/local/bin/aic-setup
 cat > /usr/local/bin/aic <<'AIC_WRAP'
@@ -948,7 +964,8 @@ chmod 644 /etc/ai-cluster/rpc-tls/worker.crt
 chown root:ai-cluster /etc/ai-cluster/rpc-tls/worker.key; chmod 640 /etc/ai-cluster/rpc-tls/worker.key
 AIC_INVITED=1 AIC_LANG=pt sh "\$T/bootstrap.sh" --controller http://$IP:$GRPC_PORT --insecure \
   --token-file "\$T/join-token" --binary "\$T/w/ai-cluster-worker" --node-id "\$NAME" \
-  --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls </dev/null
+  --rpc-server-bin /usr/local/bin/ggml-rpc-server --rpc-tls-dir /etc/ai-cluster/rpc-tls --update-cmd /opt/ai-cluster/bin/aic-update-linux </dev/null
+/opt/ai-cluster/libexec/setup update linux-trigger
 # Só agora, com o bootstrap feito, a máquina fica marcada como instalada (um join que falha não deixa marca).
 printf '%s\n' "ROLE=worker" "BASE=$RBASE" "VERSION=$RVER" "SUMS=$RSUMS" > /etc/ai-cluster/release
 touch /etc/ai-cluster/.installed
@@ -1224,6 +1241,134 @@ PYSERVER
   fi
 }
 
+# ---------- assinatura da release (ADR-025) ----------
+# A release traz SHA256SUMS.sig: a assinatura Ed25519 do SHA256SUMS, feita com a chave de Linux comum. Quem
+# confere é a chave pinada nesta instalação (/etc/ai-cluster/release.pub): nenhum hash da release é confiado
+# antes disso. A chave só é gravada pelos comandos de instalação (pina_chave); a atualização nunca a busca
+# de novo na origem. SIG_MOTIVO guarda por que a conferência falhou (uma frase, pronta para mostrar).
+pina_chave() {
+  need_root
+  mkdir -p "$CONF"
+  [ -f "$HERE/release.pub" ] || return 0
+  install -m 644 "$HERE/release.pub" "$CONF/release.pub"
+}
+confere_assinatura() { # confere_assinatura <SHA256SUMS> <SHA256SUMS.sig, base64>
+  SIG_MOTIVO=""
+  # -rawin (Ed25519 bruta) só existe no OpenSSL 3; o Debian 12 traz o 3.
+  if ! openssl version 2>/dev/null | grep -Eq '^OpenSSL (3|[4-9])'; then
+    SIG_MOTIVO=$(t 'OpenSSL 3 ou mais novo é necessário para conferir a assinatura (apt install openssl)' 'OpenSSL 3 or newer is required to check the signature (apt install openssl)')
+    return 1
+  fi
+  if [ ! -f "$CONF/release.pub" ]; then
+    SIG_MOTIVO=$(t "esta instalação não tem a chave de release ($CONF/release.pub): ela é anterior à assinatura. Para migrar, rode de novo o install.sh desta versão (ele grava a chave) e depois aic update apply" "this installation has no release key ($CONF/release.pub): it predates signing. To migrate, run install.sh of this version again (it saves the key), then aic update apply")
+    return 1
+  fi
+  if [ -s "$2" ]; then
+    s=$(mktemp) || return 1
+    if base64 -d < "$2" > "$s" 2>/dev/null && [ "$(wc -c < "$s" | tr -d ' ')" = 64 ] \
+      && openssl pkeyutl -verify -pubin -inkey "$CONF/release.pub" -rawin -in "$1" -sigfile "$s" >/dev/null 2>&1; then
+      rm -f "$s"; return 0
+    fi
+    rm -f "$s"
+    SIG_MOTIVO=$(t 'a assinatura da release não confere com a chave desta instalação (adulterada ou de outra chave); nada foi trocado' 'the release signature does not match this installation key (tampered or another key); nothing was changed')
+  else
+    SIG_MOTIVO=$(t 'a release não tem assinatura (SHA256SUMS.sig); nada foi trocado' 'the release has no signature (SHA256SUMS.sig); nothing was changed')
+  fi
+  return 1
+}
+
+# O worker Linux pede a atualização (ADR-025). linux_check confere o pedido sem gravar nada (o worker o chama
+# antes de drenar): a assinatura tem de cobrir o SHA256SUMS da URL e a versão dela tem de ser a pedida.
+# Recebe os cinco argumentos do comando de atualização; na release Linux os dois hashes não valem.
+linux_check() { # linux_check <versão> <URL> <SHA256> <SHA da imagem> <assinatura>
+  [ $# -eq 5 ] || { echo "uso: aic-update-linux [--verify] <versão> <url> <sha256> <sha256-imagem> <assinatura>" >&2; return 3; }
+  case "$1" in ''|*[!0-9A-Za-z.+-]*) echo "versão inválida" >&2; return 3 ;; esac
+  case "$2" in http://*|https://*) ;; *) echo "url inválida" >&2; return 3 ;; esac
+  case "$2" in *[!A-Za-z0-9._~:/%+-]*) echo "url com caracteres inválidos" >&2; return 3 ;; esac
+  case "$5" in *[!A-Za-z0-9+/=]*) echo "assinatura inválida" >&2; return 3 ;; esac
+  [ "${#5}" = 88 ] || { echo "assinatura inválida" >&2; return 3; }
+  t_=$(mktemp -d) || return 3
+  PROTO=""; case "$2" in https://*) PROTO="--proto =https --tlsv1.2" ;; esac
+  if ! curl -fsSL $PROTO -o "$t_/SHA256SUMS" "$2/SHA256SUMS" || ! curl -fsSL $PROTO -o "$t_/VERSION" "$2/VERSION"; then
+    rm -rf "$t_"; echo "não consegui ler a release em $2" >&2; return 3
+  fi
+  printf '%s' "$5" > "$t_/sig"
+  if ! confere_assinatura "$t_/SHA256SUMS" "$t_/sig"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
+  want=$(awk '$2=="VERSION" {print $1}' "$t_/SHA256SUMS")
+  if [ -z "$want" ] || [ "$want" != "$(sha256sum "$t_/VERSION" | cut -d' ' -f1)" ]; then
+    rm -rf "$t_"; echo "o VERSION da release não confere com o SHA256SUMS assinado" >&2; return 3
+  fi
+  v_=$(cat "$t_/VERSION"); rm -rf "$t_"
+  [ "$v_" = "$1" ] || { echo "a release assinada é a $v_, não a $1" >&2; return 3; }
+}
+# O worker chama com <versão> <URL> <SHA> <SHA da imagem> <assinatura> e o pedido vai para o ai-cluster-update.
+linux_request() {
+  linux_check "$@" || return 3
+  printf '%s %s %s\n' "$1" "$2" "$5" > "$PREFIX/state/update-request.tmp" \
+    && mv -f "$PREFIX/state/update-request.tmp" "$PREFIX/state/update-request"
+}
+# ai-cluster-update (root, por caminho): lê o pedido, confere de novo e aplica como `update apply`. Um motivo de
+# recusa ou uma atualização desfeita vai para update-result, que o worker mostra e não repete.
+# Origem de uma URL: esquema e host (sem o caminho). O caminho pode ser latest/download ou vX.
+origem_de() { case "$1" in http://*|https://*) r=${1#*://}; printf '%s://%s' "${1%%://*}" "${r%%/*}" ;; esac; }
+# O state é do worker (dono ai-cluster): o root nunca segue um link nele. O resultado é criado com O_EXCL
+# (set -C), que não segue link; antes, o link antigo é removido.
+grava_resultado() { rm -f "$R"; ( set -C; printf '%s\n' "$1" > "$R" ) 2>/dev/null || true; }
+linux_apply() {
+  need_root
+  P="$PREFIX/state/update-request"; R="$PREFIX/state/update-result"
+  if [ -L "$P" ]; then rm -f "$P"; grava_resultado "pedido de atualização é um link simbólico: recusado"; return 1; fi
+  [ -f "$P" ] || return 0
+  read -r LV LURL LSIG < "$P" || true
+  rm -f "$P" "$R"
+  if ! motivo=$(linux_check "$LV" "$LURL" "" "" "$LSIG" 2>&1); then
+    grava_resultado "$motivo"; return 1
+  fi
+  # O pedido só fala com a origem desta instalação (esquema e host de /etc/ai-cluster/release), nunca com outro host.
+  BASE_ATUAL=$(get "$CONF/release" BASE)
+  if [ -z "$BASE_ATUAL" ] || [ "$(origem_de "$LURL")" != "$(origem_de "$BASE_ATUAL")" ]; then
+    grava_resultado "$(t "a URL do pedido ($LURL) não é da origem desta instalação (${BASE_ATUAL:-vazia}): recusado" "the request URL ($LURL) is not from this installation's origin (${BASE_ATUAL:-empty}): refused")"
+    return 1
+  fi
+  if ! ( AIC_UPDATE_BASE=$LURL cmd_update apply --yes ) >>"$SETUP_LOG" 2>&1; then
+    grava_resultado "$(t "a atualização para $LV não concluiu (veja $SETUP_LOG)" "the update to $LV did not finish (see $SETUP_LOG)")"
+    return 1
+  fi
+}
+# Gatilho do worker Linux: o comando de atualização vai ao worker.env e, com systemd, o ai-cluster-update (root)
+# passa a rodar quando aparece um pedido. Sem systemd não há quem aplique: a atualização fica manual.
+gatilho_linux() {
+  [ -f "$PREFIX/worker.env" ] || return 0
+  # Sem systemd não há quem aplique o pedido: o nó não se declara atualizável, então o rollout não o escolhe.
+  if ! have_systemd; then
+    echo "AVISO: sem systemd o worker não recebe atualização do controller; atualize com aic update apply"
+    return 0
+  fi
+  ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_CMD "$PREFIX/bin/aic-update-linux" || return 1
+  ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_KIND linux || return 1
+  ensure_env "$PREFIX/worker.env" AI_CLUSTER_UPDATE_MARK "$PREFIX/state/update-tried" || return 1
+  cat > /etc/systemd/system/ai-cluster-update.path <<UNIT
+[Unit]
+Description=AI Cluster: aplica a atualização que o worker pediu
+
+[Path]
+PathExists=$PREFIX/state/update-request
+Unit=ai-cluster-update.service
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  cat > /etc/systemd/system/ai-cluster-update.service <<UNIT
+[Unit]
+Description=AI Cluster: atualização pedida pelo worker
+
+[Service]
+Type=oneshot
+ExecStart=$PREFIX/libexec/setup update linux-apply
+UNIT
+  systemctl daemon-reload && systemctl enable --now ai-cluster-update.path >/dev/null 2>&1
+}
+
 # ---------- atualização ----------
 # Acrescenta KEY=VALOR a um arquivo de ambiente se a chave ainda não existe (config nova de uma versão nova).
 # O arquivo tem de existir; sem a quebra de linha final, a chave nova iria parar na linha do último valor.
@@ -1275,6 +1420,8 @@ aplica_nova() {
     if [ "$ROLE" = both ]; then gw_ip=$(cat "$CONF/server-ip" 2>/dev/null || true); else gw_ip=$(lan_ip); fi
     if [ -n "$gw_ip" ]; then ensure_env "$CONF/gateway.env" AI_CLUSTER_GATEWAY_URL "http://$gw_ip:$HTTP_PORT" || return 1; fi
   fi
+  # O worker Linux ganha o gatilho (e a chave de pedido) antes de reiniciar, para o novo ambiente já valer.
+  if [ "$ROLE" = worker ]; then gatilho_linux || return 1; fi
   reinicia_e_espera || return 1
   retira_nomes_antigos
 }
@@ -1311,7 +1458,8 @@ cmd_update() {
   ROLE=$(get "$CONF/release" ROLE); [ -n "$ROLE" ] || ROLE=both
   case "$ROLE" in both|controller|gateway|worker) ;; *) die "$(t "papel desconhecido em $CONF/release: $ROLE" "unknown role in $CONF/release: $ROLE")" ;; esac
   BASE=$(get "$CONF/release" BASE)
-  if [ -n "$WANT" ]; then
+  if [ -n "${AIC_UPDATE_BASE:-}" ]; then BASE=$AIC_UPDATE_BASE   # o worker Linux aplica da URL do pedido (ADR-025)
+  elif [ -n "$WANT" ]; then
     case "$WANT" in ''|*[!0-9A-Za-z.+-]*) die "$(t '--version aceita só letras, dígitos e . + -' '--version accepts only letters, digits and . + -')" ;; esac
     BASE="https://github.com/julianscunha/Real.AI.Cluster/releases/download/v$WANT"
   fi
@@ -1324,8 +1472,16 @@ cmd_update() {
   PROTO=""; case "$BASE" in https://*) PROTO="--proto =https --tlsv1.2" ;; esac
   banner atualização "$(versao)" "$(t 'Atualização' 'Update')"
   U=$(mktemp -d); trap 'rm -rf "$U"' EXIT
-  curl -fsSL $PROTO -o "$U/SHA256SUMS" "$BASE/SHA256SUMS" && curl -fsSL $PROTO -o "$U/VERSION" "$BASE/VERSION" \
+  curl -fsSL $PROTO -o "$U/SHA256SUMS" "$BASE/SHA256SUMS" \
     || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
+  # A assinatura vem antes de qualquer hash da release (ADR-025): sem ela, ou com outra chave, nada é trocado.
+  curl -fsSL $PROTO -o "$U/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" 2>/dev/null || : > "$U/SHA256SUMS.sig"
+  confere_assinatura "$U/SHA256SUMS" "$U/SHA256SUMS.sig" || die "$SIG_MOTIVO"
+  curl -fsSL $PROTO -o "$U/VERSION" "$BASE/VERSION" \
+    || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
+  want=$(awk '$2=="VERSION" {print $1}' "$U/SHA256SUMS")
+  [ -n "$want" ] && [ "$want" = "$(sha256sum "$U/VERSION" | cut -d' ' -f1)" ] \
+    || die "$(t 'VERSION não confere com o SHA256SUMS assinado' 'VERSION does not match the signed SHA256SUMS')"
   NEWV=$(cat "$U/VERSION"); OLDV=$(get "$CONF/release" VERSION)
   # A versão vai para o arquivo de release e para a tela: só letras, dígitos e . + - (sem quebra nem caractere de sed).
   case "$NEWV" in ''|*[!0-9A-Za-z.+-]*) die "$(t 'a release traz uma versão inválida' 'the release has an invalid version')" ;; esac
@@ -1344,12 +1500,17 @@ cmd_update() {
     printf '  %s✔%s %s\n\n' "$G" "$Z" "$(t "já está na versão mais recente (${NEWV})" "already on the latest version (${NEWV})")"
     return 0
   fi
+  # Versão mais antiga só com --force: o pedido do controller nunca faz voltar a versão sem o operador pedir.
+  if [ "$FORCE" != 1 ] && [ -n "$OLDV" ] && [ "$NEWV" != "$OLDV" ] \
+    && [ "$(printf '%s\n%s\n' "$OLDV" "$NEWV" | sort -V | head -n 1)" = "$NEWV" ]; then
+    die "$(t "a release $NEWV é mais antiga que a instalada ($OLDV); use --force para voltar" "release $NEWV is older than the installed one ($OLDV); use --force to go back")"
+  fi
   note "$(t "Versão instalada: ${OLDV:-?}  ->  disponível: $NEWV" "Installed version: ${OLDV:-?}  ->  available: $NEWV")"
   case "$ROLE" in
     both) NEED="tools controller-linux-$A gateway-linux-$A"; SERVICES="controller gateway"; BINS="$BINS_SERVIDOR" ;;
     controller) NEED="tools controller-linux-$A"; SERVICES="controller"; BINS="ai-cluster-controller aic" ;;
     gateway) NEED="tools gateway-linux-$A"; SERVICES="gateway"; BINS="ai-cluster-gateway llama-server aic" ;;
-    worker) NEED="worker-linux-$A"; SERVICES=""; BINS="ai-cluster-worker ggml-rpc-server aic" ;;
+    worker) NEED="worker-linux-$A"; SERVICES=""; BINS="ai-cluster-worker ggml-rpc-server aic aic-update-linux" ;;
   esac
   if [ "$YES" != 1 ] && [ -t 0 ]; then
     if [ "$LANG_AIC" = en ]; then
@@ -1414,7 +1575,7 @@ cmd_update() {
 sub_controller() {
   verbo=${1:-}; [ $# -eq 0 ] || shift
   case "$verbo" in
-    install) cmd_controller_install "$@" ;;
+    install) pina_chave; cmd_controller_install "$@" ;;
     status) need_root; mostra_estado controller ai-cluster-controller "$DATA/state/controller.pid" "$GRPC_PORT" "$ENROLL_PORT" ;;
     logs) need_root; mostra_logs ai-cluster-controller "$LOGDIR/controller.log" "$@" ;;
     *) usage ;;
@@ -1424,7 +1585,7 @@ sub_controller() {
 sub_gateway() {
   verbo=${1:-}; [ $# -eq 0 ] || shift
   case "$verbo" in
-    install) cmd_gateway_install "$@" ;;
+    install) pina_chave; cmd_gateway_install "$@" ;;
     status) need_root; mostra_estado gateway ai-cluster-gateway "$DATA/state/gateway.pid" "$HTTP_PORT" ;;
     logs) need_root; mostra_logs ai-cluster-gateway "$LOGDIR/gateway.log" "$@" ;;
     *) usage ;;
@@ -1434,7 +1595,7 @@ sub_gateway() {
 sub_worker() {
   verbo=${1:-}; [ $# -eq 0 ] || shift
   case "$verbo" in
-    join) cmd_worker_join "$@" ;;
+    join) pina_chave; cmd_worker_join "$@" ;;
     status) need_root; mostra_estado worker ai-cluster-worker "$PREFIX/state/worker.pid" ;;
     logs) need_root; mostra_logs ai-cluster-worker "$PREFIX/state/worker.log" "$@" ;;
     role|change|passwd) worker_so ;;
@@ -1455,6 +1616,14 @@ case "${1:-}" in
   gateway) shift; sub_gateway "$@" ;;
   worker) shift; sub_worker "$@" ;;
   cluster) shift; sub_cluster "$@" ;;
-  update) shift; cmd_update "$@" ;;
+  update) shift
+    case "${1:-}" in
+      # Internos (ADR-025): o aic-update-linux (sem root) confere e pede; o ai-cluster-update (root) aplica.
+      linux-check) shift; linux_check "$@" ;;   # versão, URL, SHA, SHA da imagem, assinatura
+      linux-request) shift; linux_request "$@" ;;
+      linux-apply) linux_apply ;;
+      linux-trigger) need_root; gatilho_linux ;;
+      *) cmd_update "$@" ;;
+    esac ;;
   *) usage ;;
 esac

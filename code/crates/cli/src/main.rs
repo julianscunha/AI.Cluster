@@ -156,6 +156,10 @@ enum ClusterAction {
         /// Assinatura Ed25519 em base64 (ver os/image/sign-release.sh).
         #[arg(long, default_value = "")]
         signature: String,
+        /// Assinatura Ed25519 em base64 do SHA256SUMS da release Linux comum (scripts/package-release.sh).
+        /// `--url` é então o diretório da release (ADR-025).
+        #[arg(long, default_value = "")]
+        linux_signature: String,
         /// Cancela o rollout em andamento.
         #[arg(long)]
         cancel: bool,
@@ -566,6 +570,7 @@ async fn run_cluster(
             sha256,
             image_sha256,
             signature,
+            linux_signature,
             cancel,
         } => {
             let mut client = connect_operator(controller.to_string()).await?;
@@ -575,6 +580,7 @@ async fn run_cluster(
                 sha256,
                 image_sha256,
                 signature,
+                linux_signature,
             });
             client.set_release(SetReleaseRequest { release }).await?;
             println!(

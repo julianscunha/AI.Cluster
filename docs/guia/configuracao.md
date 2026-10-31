@@ -75,7 +75,9 @@ Convenções:
 | `AI_CLUSTER_RPC_CACHE_DIR` | diretório do usuário do llama.cpp | Onde o `rpc-server` guarda o cache (`LLAMA_CACHE`). No Compose é o volume `worker-cache` em `/cache`; fora de contêiner, aponte para o disco real do nó, não para tmpfs. |
 | `AI_CLUSTER_RPC_ADVERTISE_HOST` / `AI_CLUSTER_RPC_VERSION` | — | Endereço que o gateway usa e versão do llama.cpp com o patch; o nó anuncia os dois. |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | `1` ou `true`: diretório de modelo sem `manifest.json` é erro. |
-| `AI_CLUSTER_UPDATE_CMD` | — | Comando de atualização, executado sem shell com versão, URL, SHA-256 da release, SHA-256 da imagem e assinatura. Sem ele o nó não participa do rollout. |
+| `AI_CLUSTER_UPDATE_CMD` | — | Comando de atualização, executado sem shell com versão, URL, SHA-256 da release, SHA-256 da imagem e assinatura. Sem ele o nó não participa do rollout. No worker Linux comum com systemd é `/opt/ai-cluster/bin/aic-update-linux` (o `join` o grava; sem systemd o nó não se declara atualizável). |
+| `AI_CLUSTER_UPDATE_KIND` | `os` | `linux` no worker Linux comum: o nó usa a assinatura de Linux da release (`linux_signature`). Sem ele, a de AI Cluster OS. |
+| `AI_CLUSTER_UPDATE_MARK` | `/data/state/update-tried` | Arquivo com a última versão tentada (um nó não tenta a mesma de novo). O resultado de uma recusa vai para `update-result` ao lado dele. No worker Linux comum, `/opt/ai-cluster/state/update-tried`. |
 | `AI_CLUSTER_UPDATE_MARK` | `/data/state/update-tried` | Arquivo com a última versão tentada. Impede repetir a atualização depois de um rollback. |
 | `AI_CLUSTER_RELEASE_FILE` | `/etc/aic-release` | Arquivo com a versão que o nó roda. Sem ele, vale a versão do binário. |
 | `AI_CLUSTER_MEASURE_FILE` | `/run/aic-measure` | Arquivo com a medida (SHA-256) do slot ativo, reportada ao controller. |

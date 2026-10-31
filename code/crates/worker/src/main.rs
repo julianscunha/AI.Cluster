@@ -255,9 +255,10 @@ fn state_replica_epoch() -> u64 {
 
 /// Release aceita para instalar: o worker só age se `AI_CLUSTER_UPDATE_CMD` estiver definido, a versão
 /// difere da que roda, ainda não foi tentada (evita laço quando a nova volta por rollback) e tudo
-/// o que vai ao comando está em caracteres seguros. Downgrade não é detectado aqui (sem ordem
-/// total de versões): quem define a release é o operador; assinatura virá depois.
-fn accept_update(release: &Release, current: &str, tried: &str) -> bool {
+/// o que vai ao comando está em caracteres seguros. `linux` escolhe a assinatura deste nó: a de AI
+/// Cluster OS (com URL e hashes da imagem) ou a de Linux comum (ADR-025). Downgrade não é detectado
+/// aqui: o setup do Linux recusa versão mais antiga sem --force.
+fn accept_update(release: &Release, current: &str, tried: &str, linux: bool) -> bool {
     let safe = |text: &str, extra: &str| {
         !text.is_empty()
             && text.len() <= 200
@@ -265,33 +266,53 @@ fn accept_update(release: &Release, current: &str, tried: &str) -> bool {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
     };
+    let assinada = |text: &str| {
+        text.len() == 88
+            && text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
+    };
+    let hash = |h: &str| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit());
     release.version != current
         && release.version != tried.trim()
         && safe(&release.version, "._-+")
         && safe(&release.url, ":/._-%+")
-        && [&release.sha256, &release.image_sha256]
-            .iter()
-            .all(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
-        && release.signature.len() == 88
-        && release
-            .signature
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
+        && if linux {
+            assinada(&release.linux_signature)
+        } else {
+            hash(&release.sha256) && hash(&release.image_sha256) && assinada(&release.signature)
+        }
 }
 
-/// Pergunta ao comando de atualização (`--verify`) se a assinatura da release confere, antes de o
-/// worker drenar: sem isso um controller malicioso tira o nó do cluster com uma versão inventada.
-async fn update_verified(command: &str, release: &Release) -> bool {
-    // Roda no laço do heartbeat: sem prazo, um comando travado faria o controller dar o nó por morto.
-    let run = tokio::process::Command::new(command)
-        .arg("--verify")
-        .args([
+/// Os cinco argumentos do comando de atualização: versão, URL, SHA-256, SHA-256 da imagem e assinatura. Na
+/// release Linux os dois hashes não valem e vão vazios, e a assinatura é a de Linux.
+fn update_args(release: &Release, linux: bool) -> [&str; 5] {
+    if linux {
+        [
+            &release.version,
+            &release.url,
+            "",
+            "",
+            &release.linux_signature,
+        ]
+    } else {
+        [
             &release.version,
             &release.url,
             &release.sha256,
             &release.image_sha256,
             &release.signature,
-        ])
+        ]
+    }
+}
+
+/// Pergunta ao comando de atualização (`--verify`) se a assinatura da release confere, antes de o
+/// worker drenar: sem isso um controller malicioso tira o nó do cluster com uma versão inventada.
+async fn update_verified(command: &str, release: &Release, linux: bool) -> bool {
+    // Roda no laço do heartbeat: sem prazo, um comando travado faria o controller dar o nó por morto.
+    let run = tokio::process::Command::new(command)
+        .arg("--verify")
+        .args(update_args(release, linux))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
@@ -327,15 +348,13 @@ fn update_mark_path() -> PathBuf {
 
 /// Roda o comando de atualização (sem shell) com versão, URL e SHA-256. Numa imagem A/B ele grava o
 /// slot inativo e reinicia; se voltar, a atualização falhou.
-fn run_update(command: &str, release: &Release) -> std::io::Result<std::process::ExitStatus> {
+fn run_update(
+    command: &str,
+    release: &Release,
+    linux: bool,
+) -> std::io::Result<std::process::ExitStatus> {
     std::process::Command::new(command)
-        .args([
-            &release.version,
-            &release.url,
-            &release.sha256,
-            &release.image_sha256,
-            &release.signature,
-        ])
+        .args(update_args(release, linux))
         .status()
 }
 
@@ -510,6 +529,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let update_cmd = std::env::var("AI_CLUSTER_UPDATE_CMD")
         .ok()
         .filter(|c| !c.is_empty());
+    // Worker Linux comum (ADR-025): a release que chega traz a assinatura de Linux, não a de AI Cluster OS.
+    let linux_update =
+        std::env::var("AI_CLUSTER_UPDATE_KIND").is_ok_and(|kind| kind.trim() == "linux");
     let heartbeat_task = tokio::spawn({
         let mut client = client.clone();
         let node_id = node_id.clone();
@@ -548,11 +570,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         {
                             let tried =
                                 std::fs::read_to_string(update_mark_path()).unwrap_or_default();
-                            let key = format!("{}/{}", release.version, release.signature);
-                            if accept_update(&release, &runtime_version(), &tried)
+                            let key = format!(
+                                "{}/{}",
+                                release.version,
+                                update_args(&release, linux_update)[4]
+                            );
+                            if accept_update(&release, &runtime_version(), &tried, linux_update)
                                 && rejected != key
                             {
-                                if update_verified(command, &release).await {
+                                if update_verified(command, &release, linux_update).await {
                                     println!("atualização pedida versão={}", release.version);
                                     *update.lock().unwrap_or_else(|p| p.into_inner()) =
                                         Some(release);
@@ -796,7 +822,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // resultado de uma tentativa anterior não vale para esta
         let _ = std::fs::remove_file(update_mark_path().with_file_name("update-result"));
         println!("atualizando para {}", release.version);
-        let status = run_update(&command, &release);
+        let status = run_update(&command, &release, linux_update);
         if status.as_ref().is_ok_and(|s| s.success()) {
             // O pedido foi entregue e a máquina vai reiniciar: ficar fora do cluster até lá, em vez de
             // voltar a pegar trabalho. Se o updater recusar (assinatura, versão, espaço), ele deixa
@@ -2436,13 +2462,14 @@ mod tests {
             sha256: "a".repeat(64),
             image_sha256: "b".repeat(64),
             signature: format!("{}==", "A".repeat(86)),
+            linux_signature: String::new(),
         };
         // só aceita se o primeiro argumento for --verify e houver os cinco campos
         let ok = script("ok.sh", r#"[ "$1" = --verify ] && [ $# -eq 6 ]"#);
         let recusa = script("no.sh", "exit 3");
-        assert!(update_verified(&ok, &release).await);
-        assert!(!update_verified(&recusa, &release).await);
-        assert!(!update_verified("/nao/existe", &release).await);
+        assert!(update_verified(&ok, &release, false).await);
+        assert!(!update_verified(&recusa, &release, false).await);
+        assert!(!update_verified("/nao/existe", &release, false).await);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2471,21 +2498,53 @@ mod tests {
             sha256: "a".repeat(64),
             image_sha256: "b".repeat(64),
             signature: format!("{}==", "A".repeat(86)),
+            linux_signature: String::new(),
         };
         let ok = release("2", "http://h:8080/x.gz");
-        assert!(accept_update(&ok, "1", ""));
+        assert!(accept_update(&ok, "1", "", false));
         // já roda essa versão, ou já tentou (voltou por rollback): não repete
-        assert!(!accept_update(&ok, "2", ""));
-        assert!(!accept_update(
-            &ok, "1", "2
-"
-        ));
+        assert!(!accept_update(&ok, "2", "", false));
+        assert!(!accept_update(&ok, "1", "2\n", false));
         // nada de caracteres que um comando poderia interpretar
-        assert!(!accept_update(&release("2; reboot", "http://h/x"), "1", ""));
-        assert!(!accept_update(&release("2", "http://h/x y"), "1", ""));
+        assert!(!accept_update(
+            &release("2; reboot", "http://h/x"),
+            "1",
+            "",
+            false
+        ));
+        assert!(!accept_update(
+            &release("2", "http://h/x y"),
+            "1",
+            "",
+            false
+        ));
         let mut bad = ok.clone();
         bad.sha256 = "xyz".into();
-        assert!(!accept_update(&bad, "1", ""));
+        assert!(!accept_update(&bad, "1", "", false));
+    }
+
+    #[test]
+    fn o_worker_linux_so_aceita_a_assinatura_linux() {
+        let so_os = Release {
+            version: "2".into(),
+            url: "http://h:8080/release".into(),
+            signature: format!("{}==", "A".repeat(86)),
+            ..Default::default()
+        };
+        // sem a assinatura de Linux, o nó Linux não age, mesmo com a de AI Cluster OS
+        assert!(!accept_update(&so_os, "1", "", true));
+        let so_linux = Release {
+            linux_signature: format!("{}==", "B".repeat(86)),
+            ..so_os.clone()
+        };
+        assert!(accept_update(&so_linux, "1", "", true));
+        // e o nó de AI Cluster OS não age com a só de Linux (ele exige os hashes da imagem)
+        assert!(!accept_update(&so_linux, "1", "", false));
+        // os argumentos do comando: na release Linux, os hashes vão vazios e a assinatura é a de Linux
+        let args = update_args(&so_linux, true);
+        assert_eq!(args[0], "2");
+        assert_eq!(args[2], "");
+        assert_eq!(args[4], so_linux.linux_signature);
     }
 
     #[test]

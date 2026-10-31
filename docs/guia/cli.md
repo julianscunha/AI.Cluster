@@ -88,7 +88,7 @@ Uma reserva retém um nó para uma requisição futura.
 
 | Comando | O que faz |
 |---|---|
-| `aic cluster rollout <versão> --url URL --sha256 HEX --image-sha256 HEX --signature B64` | Define a release que os nós com AI Cluster OS devem rodar. O canário atualiza primeiro. Os argumentos saem de `os/image/sign-release.sh`. O controller confere só o formato; a assinatura é conferida no nó. |
+| `aic cluster rollout <versão> --url URL --sha256 HEX --image-sha256 HEX --signature B64` ou `aic cluster rollout <versão> --url DIR --linux-signature B64` | Define a release que os nós devem rodar. Com `--signature` (AI Cluster OS) o canário atualiza primeiro; com `--linux-signature` (Linux comum, o `SHA256SUMS.sig`) o `--url` é o diretório da release. Pode levar as duas. Os argumentos saem de `os/image/sign-release.sh` e de `scripts/package-release.sh`. O controller confere só o formato; a assinatura é conferida no nó. |
 | `aic cluster rollout --cancel` | Encerra o rollout em andamento. |
 | `aic cluster invite [--minutes N] [--port P]` | Abre o convite para computadores novos entrarem (instalador). Mostra o código de 8 caracteres e a linha de instalação; fecha ao sair. |
 
@@ -123,7 +123,7 @@ Estes comandos respondem que não existem nos Linux comuns.
 | Comando | O que faz |
 |---|---|
 | `aic update status` | Versão instalada × disponível, ou o resultado da última atualização assinada. |
-| `aic update apply [--version V] [--force] [--yes] [--lang pt\|en]` | Atualiza este computador. Em Linux, baixa da origem da instalação e troca o que o papel usa. No AI Cluster OS, pede ao `aic-updater` que cheque agora. Ver [[operacao]]. |
+| `aic update apply [--version V] [--force] [--yes] [--lang pt\|en]` | Atualiza este computador. Em Linux, confere a assinatura do `SHA256SUMS` com a chave pinada antes de qualquer hash, baixa da origem da instalação e troca o que o papel usa; recusa versão mais antiga sem `--force`. No AI Cluster OS, pede ao `aic-updater` que cheque agora. Ver [[operacao]]. |
 | `aic version` | Versão do `aic` e do sistema. |
 
 ## Migração dos comandos

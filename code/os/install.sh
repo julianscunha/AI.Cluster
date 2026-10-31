@@ -344,6 +344,20 @@ REL=$(cat "$STAGE/VERSION")
 case "$REL" in ''|*[!0-9A-Za-z.+-]*) die "$(t 'a release traz uma versão inválida' 'the release has an invalid version')" ;; esac
 printf '\n'; banner instalador "$REL" "$(t "Baixando a versão $REL" "Downloading version $REL")"
 
+# A assinatura do SHA256SUMS (ADR-025), com a chave que vem no tools desta release (release.pub). Feita logo
+# depois do tools: antes dela nenhum outro pacote é usado.
+verifica_release() {
+  openssl version 2>/dev/null | grep -Eq '^OpenSSL (3|[4-9])' || die "$(t 'a conferência da assinatura precisa do OpenSSL 3 ou mais novo (apt install openssl)' 'signature check needs OpenSSL 3 or newer (apt install openssl)')"
+  [ -f "$STAGE/aic/release.pub" ] || die "$(t 'o pacote tools desta release não traz a chave (release.pub)' 'the tools package of this release has no key (release.pub)')"
+  curl -fsSL $PROTO -o "$STAGE/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" \
+    || die "$(t "a release não tem SHA256SUMS.sig em $BASE" "the release has no SHA256SUMS.sig at $BASE")"
+  b="$STAGE/sums.sig.bin"
+  base64 -d < "$STAGE/SHA256SUMS.sig" > "$b" 2>/dev/null && [ "$(wc -c < "$b" | tr -d ' ')" = 64 ] \
+    && openssl pkeyutl -verify -pubin -inkey "$STAGE/aic/release.pub" -rawin -in "$STAGE/SHA256SUMS" -sigfile "$b" >/dev/null 2>&1 \
+    || die "$(t 'a assinatura da release não confere com a chave que vem na release (adulterada?)' 'the release signature does not match the key shipped with the release (tampered?)')"
+  ok "$(t 'assinatura da release' 'release signature')"
+}
+
 mkdir -p "$STAGE/aic"
 need=""
 case "$ROLE" in
@@ -356,6 +370,7 @@ for f in $need; do
   fetch "$f.tar.gz"
   tar -C "$STAGE/aic" -xzf "$STAGE/$f.tar.gz"
   ok "$f"
+  [ "$f" != tools ] || verifica_release
 done
 
 # ---------- instalação ----------

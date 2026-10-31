@@ -55,7 +55,11 @@ O pacote do worker de cada processador vem do próprio servidor, na mesma versã
 
 Sem perguntas (automação): `sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 --kind fisico|vm|conteiner [--server IP] --yes`.
 
-O `install.sh` baixa `VERSION`, `SHA256SUMS` e os pacotes `tools`, `controller-linux-<arq>`, `gateway-linux-x86_64` e `worker-linux-<arq>`, e confere o SHA-256 de cada um. `bash code/scripts/package-release.sh` gera esses arquivos (nomes sem versão, para `releases/latest/download/`). Sobre um Linux existente o desempenho é compartilhado com o que já roda nele e o cluster confia no sistema operacional da máquina; o modo dedicado existe para evitar os dois problemas.
+O `install.sh` baixa `VERSION`, `SHA256SUMS`, `SHA256SUMS.sig` e os pacotes `tools`, `controller-linux-<arq>`, `gateway-linux-x86_64` e `worker-linux-<arq>`. Confere a assinatura do `SHA256SUMS` com a chave que vem no `tools` (`release.pub`) antes de usar qualquer outro arquivo, e o SHA-256 de cada pacote. A chave fica gravada em `/etc/ai-cluster/release.pub`, e é com ela que as atualizações futuras são conferidas. `bash code/scripts/package-release.sh` gera esses arquivos (nomes sem versão, para `releases/latest/download/`) e assina o `SHA256SUMS` com `~/.aic/linux.key` (gerada por `bash os/image/release-keys.sh linux`; a privada nunca vai para o repositório). Sobre um Linux existente o desempenho é compartilhado com o que já roda nele e o cluster confia no sistema operacional da máquina; o modo dedicado existe para evitar os dois problemas.
+
+Requisito: **OpenSSL 3 ou mais novo** (`openssl version`). A conferência da assinatura usa Ed25519 bruta (`-rawin`), que o OpenSSL 1.1 não tem; o Debian 12 traz o 3. Sem ele, o instalador e o `aic update` recusam com essa mensagem.
+
+O `install.sh` é **TOFU** (confiança no primeiro uso): a chave que confere a assinatura vem com o `tools` da origem que você usou (GitHub, por HTTPS). Quem controla essa origem no momento da instalação controla o pino. A proteção real vem nas atualizações seguintes: depois de instalado, só uma release assinada pela chave pinada atualiza a máquina.
 
 ### Apresentar um computador para instalar o AI Cluster OS
 
@@ -76,7 +80,9 @@ sudo aic update apply --force    # reinstala a versão atual (mesmo sem novidade
 sudo aic update apply --version 0.2.1
 ```
 
-O que cada componente recebe, e o que o controller empurra, está em [[operacao#Atualização de cada componente]]. Em resumo: controller e gateway em Linux, e o worker em Linux, se atualizam com `aic update apply`, sem perder tokens, certificados, workers aprovados nem modelos; o worker em AI Cluster OS é atualizado pela release assinada que o controller empurra (`aic cluster rollout`).
+O que cada componente recebe, e o que o controller empurra, está em [[operacao#Atualização de cada componente]]. Em resumo: controller e gateway em Linux, e o worker em Linux, se atualizam com `aic update apply`, sem perder tokens, certificados, workers aprovados nem modelos; o worker em Linux comum recebe a atualização que o controller empurra, assinada com a chave de Linux ([ADR-025](../system/05-decisoes/adr-025-gatilho-de-atualizacao-assinada-linux.md)); o worker em AI Cluster OS é atualizado pela release assinada que o controller empurra (`aic cluster rollout`).
+
+Servidores instalados antes da assinatura (sem `/etc/ai-cluster/release.pub`) recusam `aic update` com a instrução de migração: rode de novo o `install.sh` desta versão, com o mesmo papel, e depois `sudo aic update apply`. Ele grava a chave e não mexe no resto.
 
 O pacote do worker que o convite entrega é o da versão do servidor: depois de atualizar, o próximo `aic cluster invite` baixa o novo. Os workers que já estão no cluster não precisam de nada.
 
@@ -237,7 +243,7 @@ Sequência de build, a partir de `code/`:
 
 Para o nó chegar ao ambiente de recuperação pela rede, `os/netboot/` traz `build-initramfs.sh` (monta o initramfs com o worker e um servidor SSH), `tftpd.py` (servidor TFTP somente leitura; `--allow` lista os IPs que podem baixar) e `install-netboot.sh` (liga o boot pela rede num Linux armv7 existente, com prazo e volta ao cartão).
 
-Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh`. Veja [[operacao]].
+Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh` (AI Cluster OS) e com `scripts/package-release.sh` (Linux comum, `SHA256SUMS.sig`). Veja [[operacao]].
 
 ## Imagem com a sua própria chave (fora da release)
 

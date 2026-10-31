@@ -96,9 +96,11 @@ A medida prova que o conteúdo do slot é o esperado. Ela não prova que o nó �
 
 Cada release de imagem é assinada com Ed25519 pelo operador. A chave privada fica fora do repositório e do controller. A assinatura cobre a versão, a placa, o SHA-256 do arquivo comprimido e o SHA-256 da imagem ext4. O URL fica fora da assinatura, então trocar de espelho não exige assinar de novo.
 
+Linux comum tem chave própria (`linux.key`, separada da do AI Cluster OS; ADR-025). Ela assina o `SHA256SUMS` da release, e a pública é pinada na instalação em `/etc/ai-cluster/release.pub`. Todo `aic update` confere essa assinatura antes de qualquer hash, e não busca a chave de novo na origem.
+
 - O nó confere a assinatura antes de baixar qualquer coisa, com as chaves públicas gravadas na imagem.
 - Mais de uma chave pública pode estar na imagem, e vale qualquer uma que confira. É isso que permite rotação.
-- A versão precisa ser maior que a instalada. Não há downgrade pela via normal.
+- A versão precisa ser maior que a instalada. Não há downgrade pela via normal; no Linux comum, `aic update apply` recusa versão mais antiga sem `--force`.
 - O download só vem do host do controller, e só é gravado depois de conferir o SHA-256 e a estrutura gzip.
 - Assinatura inválida é recusada, e o nó volta ao cluster. Ver [[ai-cluster-os]] para o fluxo completo.
 

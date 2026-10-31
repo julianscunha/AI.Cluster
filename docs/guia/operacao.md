@@ -149,15 +149,24 @@ Limites:
 | Componente | Quem atualiza | Como | De onde vem |
 |---|---|---|---|
 | Controller e gateway (Linux) | Cada máquina, com `aic update apply` | Baixa os pacotes do papel, confere o SHA-256, guarda os binários anteriores em `/opt/ai-cluster/bin/.prev`, troca, acrescenta à configuração só o que a versão nova espera, reinicia e **volta sozinho** se a versão nova não subir. Tokens, certificados, workers aprovados e modelos continuam como estavam. | A origem da instalação (`/etc/ai-cluster/release`) |
-| Worker (Linux) | Cada máquina, com `aic update apply` | Baixa `worker-linux-<arq>` da mesma origem (gravada pelo `aic worker join`), confere, troca `ai-cluster-worker` e `ggml-rpc-server` e reinicia o serviço. | A origem do `join` |
+| Worker (Linux) | O controller **empurra** a release assinada com a chave de Linux (`aic cluster rollout … --linux-signature`); ou cada máquina, com `aic update apply` | Confere a assinatura do `SHA256SUMS` com a chave pinada (`/etc/ai-cluster/release.pub`) antes de qualquer hash; baixa `worker-linux-<arq>`, confere, troca `ai-cluster-worker`, `ggml-rpc-server`, `aic` e o `setup`, e reinicia o serviço com o mesmo rollback. O pedido do controller passa pelo `aic-update-linux` e é aplicado pelo `ai-cluster-update` (root). Ver [[adr-025-gatilho-de-atualizacao-assinada-linux]]. | A origem do `join` (a assinatura vem com ela) |
 | Worker (AI Cluster OS) | O controller **empurra** a release assinada | Imagem em slots A/B, com canário (`aic cluster rollout`, abaixo). `aic update apply` só pede que o `aic-updater` cheque agora, e hoje não faz essa checagem local ([[pendencias]]). | Release assinada pelo operador |
 
 Regras gerais:
 
-- O controller empurra **apenas** a release assinada, e só para nós com AI Cluster OS. Ele não empurra atualização para workers nem gateways em Linux comum.
+- O controller empurra a release assinada para nós com AI Cluster OS (assinatura do AI Cluster OS) e para workers em Linux comum (assinatura de Linux, [[adr-025-gatilho-de-atualizacao-assinada-linux]]). Não empurra para controller nem gateway em Linux comum: cada um roda `aic update apply`.
 - Falhas no meio do `aic update apply` desfazem tudo: os binários, o `setup`, o `bootstrap.sh`, o wrapper `aic` e os arquivos `.env` voltam ao que eram (guardados em `/opt/ai-cluster/bin/.prev`; a geração anterior só é substituída depois de a nova subir), o serviço antigo é reiniciado e confirmado, e o comando sai com erro (com texto distinto se o antigo também não subir). O worker confirma o registro no controller depois de reiniciar. Sem `BASE` na release de origem, o update do worker recusa em vez de cair no último lançamento público do GitHub; informe `--version`.
 
-Em Linux comum não há empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada nó, para o operador ver quem está para trás.
+Controller e gateway em Linux comum não recebem empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada nó, para o operador ver quem está para trás.
+
+### Assinatura da release Linux comum
+
+`scripts/package-release.sh` assina o `SHA256SUMS` com `~/.aic/linux.key` (Ed25519) e grava `SHA256SUMS.sig`; a chave pública (`os/linux.pub`) vai no pacote `tools` como `release.pub`. A instalação grava essa chave em `/etc/ai-cluster/release.pub` e a usa para conferir **toda** atualização, antes de qualquer hash. Só a instalação grava a chave: `update` nunca a busca de novo na origem.
+
+- Assinatura ausente, inválida ou de outra chave: `aic update status` e `apply` recusam com a causa e nada é baixado nem trocado.
+- Servidor instalado antes dessa versão (sem `release.pub`): a recusa diz o que fazer. Rode de novo o `install.sh` desta versão (grava a chave) e depois `aic update apply`.
+- `aic update apply` recusa versão mais antiga que a instalada sem `--force`.
+- Chave nova (rotação): instale a pública nova com o `install.sh` de uma release assinada pela chave nova, em cada máquina. O pino só muda na instalação.
 - Trocar o controller de um worker (AI Cluster OS) não é atualização: é `aic worker change` ([[cli]]).
 
 ### Worker em Linux sem o `aic`
@@ -167,7 +176,7 @@ O `os/bootstrap.sh` continua servindo para pôr o worker num Linux sem o `aic`. 
 ### Rollout pelo controller (imagem A/B, armv7 e x86_64)
 
 1. Gere o `.gz` do rootfs (`gzip -n -k os/image/build/rootfs.ext4`; o `build-rootfs.sh` produz só o `.ext4`) e assine a release: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]`. O script imprime os argumentos do passo seguinte.
-2. Publique a release: `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>`.
+2. Publique a release: `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>`. Para os workers em Linux comum, `aic cluster rollout <versão> --url <diretório da release> --linux-signature <base64 de SHA256SUMS.sig>` (o `package-release.sh` imprime a linha pronta). Uma release pode levar as duas assinaturas, e cada nó confere a sua. Sem systemd o worker não recebe o pedido.
 3. O controller anuncia a release pelo heartbeat, só para nós que declaram que podem atualizar (`AI_CLUSTER_UPDATE_CMD`). O primeiro nó apto é o canário.
 4. O canário baixa a imagem, grava o slot inativo, reinicia, confere a medida do slot e reporta a versão nova. Só então os demais recebem a release. Com `AI_CLUSTER_ROLLOUT_WAVE=N`, no máximo N atualizam ao mesmo tempo.
 5. Se o canário não reportar a versão nova em 10 minutos, o rollout pausa (evento `rollout`). Para retomar, publique de novo ou use `aic cluster rollout --cancel`.
@@ -213,6 +222,9 @@ Não há lista de revogação. Uma chave vazada vale até a imagem que a retira 
 | Gateway responde `429 CAPACITY_UNAVAILABLE` no embedding. | Fila de unidades do controller cheia (256). | Espere e tente de novo; reduza a carga. |
 | Rollout pausado: "canário ... não chegou a ...". | Canário não reportou a versão em 10 minutos. | Veja o log do canário e o `update-result` no nó. Cancele com `aic cluster rollout --cancel` ou publique de novo. |
 | Nó registra "assinatura inválida" ou "versão ... não é mais nova". | Release mal assinada, ou versão antiga. | Assine de novo com a chave certa e use uma versão maior. |
+| `aic update` recusa: "não confere com a chave desta instalação". | Release de outra chave, ou `SHA256SUMS` alterado depois de assinado. | Confira a origem (`/etc/ai-cluster/release`). Se a release é sua, confira se `os/linux.pub` é a chave com que ela foi assinada. |
+| `aic update` recusa: "anterior à assinatura". | Instalação sem `/etc/ai-cluster/release.pub`. | Rode de novo o `install.sh` desta versão (ele grava a chave) e depois `aic update apply`. |
+| Worker Linux: "atualização recusada: …" no log. | O pedido do controller não confere (assinatura, versão ou URL). | O motivo fica em `/opt/ai-cluster/state/update-result`. O worker não tenta de novo essa versão; publique uma release assinada certa. |
 | `/metrics` responde `401`. | Token de operador ausente ou errado no bearer. | Use `Authorization: Bearer <token de operador>`. |
 | Após reinício, eventos ou fila sumiram. | Variável `AI_CLUSTER_EVENTS` ou `AI_CLUSTER_STATE` não definida. | Defina os caminhos em volume persistente. |
 | Após reinício, todos os nós voltaram a `pendente`. | `AI_CLUSTER_NODES` não definido. | Defina o caminho e aprove de novo uma vez. |

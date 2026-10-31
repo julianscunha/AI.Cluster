@@ -2395,6 +2395,7 @@ mod tests {
             sha256: "a".repeat(64),
             image_sha256: "b".repeat(64),
             signature: format!("{}==", "A".repeat(86)),
+            ..Default::default()
         };
         // sem release definida, nada a anunciar
         assert!(

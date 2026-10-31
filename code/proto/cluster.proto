@@ -282,6 +282,10 @@ message Release {
   /// Assinatura Ed25519 (base64) do operador sobre placa, versão, sha256 e image_sha256. Quem
   /// verifica é o nó (chave pública na imagem), não o controller.
   string signature = 5;
+  /// Assinatura Ed25519 (base64) do SHA256SUMS da release Linux comum (chave de Linux, ADR-025).
+  /// `url` aponta para o diretório da release. Vazia nas releases só de AI Cluster OS; quem a usa é
+  /// o worker Linux, que confere com a chave pinada em /etc/ai-cluster/release.pub.
+  string linux_signature = 6;
 }
 
 message SetReleaseRequest {

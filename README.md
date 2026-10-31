@@ -105,8 +105,8 @@ Num computador com Linux que vai virar AI Cluster OS dedicado, o convite mostra 
 
 ### Atualizar e serviços no boot
 
-- `aic update status` mostra a versão instalada e a disponível; `sudo aic update apply` atualiza este computador (controller, gateway ou worker em Linux).
-- No AI Cluster OS, o controller empurra a release assinada. `aic cluster nodes` mostra a `VERSÃO` de cada nó, para ver quem está para trás.
+- `aic update status` mostra a versão instalada e a disponível; `sudo aic update apply` atualiza este computador (controller, gateway ou worker em Linux). Em Linux, a atualização confere a assinatura da release com a chave de Linux, gravada na instalação.
+- No AI Cluster OS e nos workers em Linux comum, o controller empurra a release assinada. `aic cluster nodes` mostra a `VERSÃO` de cada nó, para ver quem está para trás.
 - Os serviços sobem sozinhos ao ligar o computador (systemd, com reinício automático). Em contêiner sem systemd, eles não voltam sozinhos depois de reiniciar o contêiner. O que cada componente faz no `aic update` está em [a operação](docs/guia/operacao.md).
 
 ## Instalação passo a passo

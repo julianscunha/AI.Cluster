@@ -102,8 +102,8 @@ On a Linux computer that will become a dedicated AI Cluster OS, the invite also 
 
 ### Update and services on boot
 
-- `aic update status` shows the installed and the available version; `sudo aic update apply` updates this computer (controller, gateway or worker on Linux).
-- On AI Cluster OS, the controller pushes the signed release. `aic cluster nodes` shows the `VERSION` of each node, so you can see who is behind.
+- `aic update status` shows the installed and the available version; `sudo aic update apply` updates this computer (controller, gateway or worker on Linux). On Linux, the update checks the release signature with the Linux key, stored at install.
+- On AI Cluster OS and on Linux workers, the controller pushes the signed release. `aic cluster nodes` shows the `VERSION` of each node, so you can see who is behind.
 - Services start by themselves when the computer boots (systemd, with automatic restart). In a container without systemd they do not come back by themselves after the container restarts. What each component does on `aic update` is in [the operations guide](docs/guia/operacao.md).
 
 
