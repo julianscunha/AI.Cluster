@@ -505,6 +505,26 @@ fn usage_field(text: &[u8], field: &str) -> Option<u64> {
     rest.parse().ok()
 }
 
+/// O número (decimal) que vem depois de `"campo":` no último `timings` de um texto.
+fn float_field(text: &[u8], field: &str) -> Option<f64> {
+    let text = std::str::from_utf8(text).ok()?;
+    let key = format!("\"{field}\"");
+    let rest = text[text.rfind(&key)? + key.len()..].trim_start_matches([' ', ':']);
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | 'e' | 'E' | '+')))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok().filter(|v: &f64| v.is_finite())
+}
+
+/// `timings` do `llama-server` (no fim de um stream ou numa resposta inteira); `None` sem eles.
+pub fn timings(text: &[u8]) -> Option<crate::metrics::Timings> {
+    Some(crate::metrics::Timings {
+        prompt_ms: float_field(text, "prompt_ms")?,
+        per_token_ms: float_field(text, "predicted_per_token_ms").unwrap_or(0.0),
+        per_second: float_field(text, "predicted_per_second").unwrap_or(0.0),
+    })
+}
+
 /// `total_tokens` do último `usage` num texto.
 pub fn total_tokens(text: &[u8]) -> Option<u64> {
     usage_field(text, "total_tokens")
@@ -558,6 +578,7 @@ impl Tap {
             self.first.map(|first| first.duration_since(self.started)),
             self.started.elapsed(),
             self.streamed,
+            timings(&self.tail),
         );
         let tokens = usage.unwrap_or(self.seen.div_ceil(4));
         if tokens > 0 {
@@ -1466,11 +1487,32 @@ data: [DONE]
             Some(Duration::from_millis(300)),
             Duration::from_millis(900),
             true,
+            None,
         );
         let depois = crate::metrics::stats();
         assert!(depois.requests > antes.requests);
         assert!(depois.generated_tokens >= antes.generated_tokens + 7);
         assert!(depois.prompt_tokens >= antes.prompt_tokens + 12);
+    }
+
+    #[test]
+    fn os_timings_do_llama_server_alimentam_ttft_itl_e_ritmo() {
+        let _g = crate::metrics::TEST_LOCK.blocking_lock();
+        let fim = br#"data: {"timings":{"prompt_n":5,"prompt_ms":123.5,"predicted_n":7,"predicted_per_token_ms":50.25,"predicted_per_second":19.9}}"#;
+        let t = timings(fim).expect("timings");
+        assert_eq!(
+            (t.prompt_ms, t.per_token_ms, t.per_second),
+            (123.5, 50.25, 19.9)
+        );
+        assert!(timings(b"data: {\"usage\":{}}").is_none());
+        let antes = crate::metrics::counts();
+        crate::metrics::record_proxied(true, 5, 7, None, Duration::from_secs(1), false, Some(t));
+        let depois = crate::metrics::counts();
+        assert_eq!((depois.4 - antes.4, depois.5 - antes.5), (1, 1));
+        let s = crate::metrics::stats();
+        assert!(
+            s.ttft_p50_seconds > 0.0 && s.itl_p50_seconds > 0.0 && s.decode_tokens_per_second > 0.0
+        );
     }
 
     /// Um stream pronto, sem depender de uma biblioteca de streams nos testes.

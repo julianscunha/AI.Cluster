@@ -89,11 +89,21 @@ pub struct Sampler {
     tokens: usize,
 }
 
+/// Medidas do `timings` que o `llama-server` põe na resposta (ms e tokens por segundo).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timings {
+    pub prompt_ms: f64,
+    pub per_token_ms: f64,
+    pub per_second: f64,
+}
+
 /// Registra uma requisição que o gateway apenas repassou ao `llama-server` (ADR-022): sem o laço de
 /// geração própria não há um `Sampler`, então as medidas vêm do que o repasse viu. `ttft` é o tempo
 /// até o primeiro pedaço da resposta; só conta com stream que deu certo (sem stream o primeiro
 /// pedaço é o fim; erro não é geração). O ritmo exige ao menos 50 ms de geração e mais de um token.
-/// O intervalo entre tokens (ITL) não é medido aqui.
+/// Se a resposta trouxe `timings` do `llama-server`, eles valem mais que o relógio do repasse (que
+/// inclui rede e fila): TTFT = `prompt_ms`, ITL = `predicted_per_token_ms`, ritmo =
+/// `predicted_per_second`. Sem eles, o ITL não é medido.
 pub fn record_proxied(
     ok: bool,
     prompt_tokens: u64,
@@ -101,6 +111,7 @@ pub fn record_proxied(
     ttft: Option<std::time::Duration>,
     total: std::time::Duration,
     streamed: bool,
+    timings: Option<Timings>,
 ) {
     let mut inner = lock();
     inner.requests += 1;
@@ -109,7 +120,17 @@ pub fn record_proxied(
     }
     inner.prompt_tokens += prompt_tokens;
     inner.generated_tokens += generated_tokens;
-    if let Some(ttft) = ttft.filter(|_| streamed && ok) {
+    if let Some(t) = timings.filter(|_| ok) {
+        push(&mut inner.ttft_us, (t.prompt_ms * 1e3) as u64);
+        inner.ttft_seen += 1;
+        if t.per_token_ms > 0.0 {
+            push(&mut inner.itl_us, (t.per_token_ms * 1e3) as u64);
+        }
+        if t.per_second > 0.0 {
+            push(&mut inner.tokens_per_second, t.per_second);
+            inner.rate_seen += 1;
+        }
+    } else if let Some(ttft) = ttft.filter(|_| streamed && ok) {
         push(&mut inner.ttft_us, ttft.as_micros() as u64);
         inner.ttft_seen += 1;
         // Abaixo de 50 ms o relógio e o ruído dominam a taxa.
