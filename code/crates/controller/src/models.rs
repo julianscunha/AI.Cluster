@@ -673,6 +673,15 @@ impl Orchestrator {
     }
 
     /// O pedido atual, o último estado reportado para ele e os prefixos das chaves.
+    /// O modelo do plano em vigor se este worker faz parte dele; vazio se não.
+    pub fn serving_model(&self, node_id: &str) -> String {
+        let inner = self.lock();
+        match &inner.wanted {
+            Some(w) if inner.applied.iter().any(|e| e.node_id == node_id) => w.model_id.clone(),
+            _ => String::new(),
+        }
+    }
+
     pub fn status(&self, now_ms: u64) -> (Option<DesiredModel>, Option<ModelStatus>, Vec<String>) {
         let _ = now_ms;
         let inner = self.lock();
@@ -813,6 +822,8 @@ mod tests {
             false,
         );
         let plan = o.plan(cands(&["b", "a"]), 10).unwrap();
+        assert_eq!(o.serving_model("a"), "m");
+        assert_eq!(o.serving_model("fora"), "");
         assert_eq!(
             (plan.generation, plan.gpu_layers, plan.endpoints.len()),
             (g1, 99, 2)

@@ -33,6 +33,7 @@ Regras:
 - **Piso de 0,05.** Um worker medido nunca reporta exatamente 0, porque 0 significa "não reportado" para o placement.
 - **Sem sensor não penaliza.** Temperatura zero significa que nenhum sensor está visível, e o domínio é ignorado.
 - **O worker também fica sabendo se foi aprovado:** a resposta do heartbeat traz `trusted`, e o worker grava `aprovado` ou `pendente` em `trust`, ao lado do arquivo da credencial. O console do AI Cluster OS mostra isso em "Aprovacao" no "Estado do worker", para o operador ver que falta `aic cluster node approve`.
+- **O worker sabe em que modelo está:** a resposta do heartbeat traz `serving_model` (o modelo do plano em vigor, vazio se o worker está fora dele) e o worker o grava em `model`, ao lado de `trust`. O console mostra "processando - modelo X" na linha "Worker" quando o `ggml-rpc-server` tem conexão aberta, "em execucao - modelo X (ocioso)" quando não, e a data e a hora no centro da barra de cima (redesenhadas sem limpar a tela).
 - O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um worker degradado perde para um saudável de capacidade igual.
 
 Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para todo hardware.

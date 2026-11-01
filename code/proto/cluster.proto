@@ -285,6 +285,9 @@ message HeartbeatResponse {
   /// O operador já aprovou este worker (`aic cluster node approve`). O worker o mostra no console, para o
   /// operador ver que ainda falta aprovar.
   bool trusted = 5;
+  /// Modelo do llama.cpp em que o plano atual usa este worker (vazio = fora do plano). O worker o grava
+  /// ao lado da credencial para o console mostrar "processando - modelo X".
+  string serving_model = 6;
 }
 
 /// Uma versão do sistema e onde buscá-la (F19). O SHA-256 é do artefato e a assinatura Ed25519

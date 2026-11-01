@@ -988,6 +988,7 @@ impl ClusterControl for ClusterControlService {
             release: release.filter(|_| !recovery),
             cancel_work_ids: self.work.take_cancels(&request.node_id),
             trusted: self.registry.is_trusted(&request.node_id),
+            serving_model: self.orchestrator.serving_model(&request.node_id),
         }))
     }
 

@@ -85,9 +85,24 @@ statline() { # linha coluna-do-painel largura cor-da-bolinha rótulo valor
 	printf '%s%s %s%-12s%s%s%s' "$4" "$G_NODE" "$C_LOGO" "$5" "$C_VALUE" "$value" "$C_RESET"
 }
 
+# O rpc-server atende alguém? Conexão ESTABLISHED na porta em que ele escuta (o -p da linha de comando).
+rpc_busy() {
+	local pid port
+	pid=$(pidof ggml-rpc-server | cut -d' ' -f1) || return 1
+	port=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | sed -n 's/.* -p \([0-9]*\).*/\1/p')
+	[ -n "$port" ] || return 1
+	awk -v p="$(printf ':%04X' "$port")" '$2 ~ p "$" && $4 == "01" { f = 1 } END { exit !f }' /proc/net/tcp
+}
+
+# Data e hora no centro da barra de cima, sem redesenhar a tela (nada pisca).
+clock() {
+	[ "$COLS_N" -ge 70 ] || return 0
+	at 1 $(((COLS_N - 16) / 2)); printf '%s%s%s' "$C_BAR" "$(date '+%d/%m/%Y %H:%M')" "$C_RESET"
+}
+
 draw() {
 	local release slot board cpu cores mem ip node controller worker registered role
-	local dot_worker dot_net dot_reg ip_short top b pc pw fpr trust dot_trust rpc dot_rpc
+	local dot_worker dot_net dot_reg ip_short top b pc pw fpr trust dot_trust rpc dot_rpc model
 	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
 	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
@@ -110,9 +125,14 @@ draw() {
 	pendente) dot_trust=$C_WARN; trust="pendente: aprove no controller" ;;
 	*) dot_trust=$C_WARN; trust="aguardando o controller" ;;
 	esac
+	# o controller grava em "model" o modelo em que o plano usa este worker; conexão aberta no rpc-server = processando
+	model=$(cat "$(dirname "${cred:-/nonexistent/x}")/model" 2>/dev/null)
 	if pidof ai-cluster-worker >/dev/null 2>&1; then
 		worker="em execucao"
 		dot_worker=$C_OK
+		if [ -n "$model" ]; then
+			if rpc_busy; then worker="processando - modelo $model"; else worker="em execucao - modelo $model (ocioso)"; fi
+		fi
 	else
 		worker="parado"
 		dot_worker=$C_BAD
@@ -464,6 +484,7 @@ while :; do
 		printf '%s' "$screen"
 		shown=$screen
 	fi
+	clock
 	case "$(key 5)" in
 	f2) login && menu; shown= ;;
 	f12) login && power_dialog; shown= ;;
