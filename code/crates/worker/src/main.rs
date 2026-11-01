@@ -129,6 +129,26 @@ fn cancel_running(work_ids: &[String]) {
     }
 }
 
+/// Leaves "aprovado" or "pendente" next to the credential file, for the OS console to show; written
+/// only when it changes. Without a credential file there is nowhere to put it.
+fn store_trust(trusted: bool) {
+    let Some(dir) =
+        credential_file().and_then(|file| Path::new(&file).parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    let (path, text) = (
+        dir.join("trust"),
+        if trusted { "aprovado" } else { "pendente" },
+    );
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+        return;
+    }
+    if let Err(err) = std::fs::write(&path, text) {
+        eprintln!("não gravei {}: {err}", path.display());
+    }
+}
+
 /// Where this node keeps its copy, from `AI_CLUSTER_STATE_REPLICA`. Unset means it keeps
 /// none: a plain compute node, with the controller's own files as the only copy of the state.
 fn state_replica_path() -> Option<PathBuf> {
@@ -597,6 +617,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             store_state_replica(&replica);
                         }
                         cancel_running(&beat.cancel_work_ids);
+                        store_trust(beat.trusted);
                         if let Some(release) = beat.release
                             && let Some(command) = update_cmd.as_deref()
                         {

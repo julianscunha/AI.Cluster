@@ -87,7 +87,7 @@ statline() { # linha coluna-do-painel largura cor-da-bolinha rótulo valor
 
 draw() {
 	local release slot board cpu cores mem ip node controller worker registered role
-	local dot_worker dot_net dot_reg ip_short top b pc pw fpr
+	local dot_worker dot_net dot_reg ip_short top b pc pw fpr trust dot_trust
 	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
 	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
@@ -103,6 +103,13 @@ draw() {
 	if [ -n "$cred" ] && [ -s "$cred" ]; then registered="sim (credencial salva)"; else registered="ainda nao (sem credencial)"; fi
 	# a impressão da credencial é o que o operador digita em `aic cluster node approve --fingerprint`
 	fpr=$(sed -n 's/^impressão da credencial: \([0-9a-f]*\).*//p' /var/log/ai-cluster-worker.log 2>/dev/null | tail -n 1)
+	# o controller informa a cada batida se o operador já aprovou (arquivo "trust" ao lado da credencial)
+	trust=$(cat "$(dirname "${cred:-/nonexistent/x}")/trust" 2>/dev/null)
+	case "$trust" in
+	aprovado) dot_trust=$C_OK ;;
+	pendente) dot_trust=$C_WARN; trust="pendente: aprove no controller" ;;
+	*) dot_trust=$C_WARN; trust="aguardando o controller" ;;
+	esac
 	if pidof ai-cluster-worker >/dev/null 2>&1; then
 		worker="em execucao"
 		dot_worker=$C_OK
@@ -134,7 +141,7 @@ draw() {
 	else
 		b=$top
 	fi
-	box "$b" "$pc" "$pw" 9 "Estado do worker"
+	box "$b" "$pc" "$pw" 10 "Estado do worker"
 	statline $((b + 1)) "$pc" "$pw" "$C_OK" "Papel" "$role"
 	statline $((b + 2)) "$pc" "$pw" "$dot_worker" "Worker" "$worker"
 	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "${ip:-sem endereco}"
@@ -142,11 +149,12 @@ draw() {
 	statline $((b + 5)) "$pc" "$pw" "$C_OK" "Controller" "${controller:-nao configurado}"
 	statline $((b + 6)) "$pc" "$pw" "$dot_reg" "Registro" "${registered:-?}"
 	statline $((b + 7)) "$pc" "$pw" "$dot_reg" "Impressao" "${fpr:-ainda nao registrado}"
+	statline $((b + 8)) "$pc" "$pw" "$dot_trust" "Aprovacao" "$trust"
 
-	if [ "$LINES_N" -ge 23 ]; then
-		at $((b + 10)) "$pc"; printf '%sPara gerenciar este worker use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
-		at $((b + 11)) $((pc + 2)); printf '%saic cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
-		at $((b + 12)) "$pc"; printf '%sNeste no:%s  %saic --help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
+	if [ "$LINES_N" -ge 24 ]; then
+		at $((b + 11)) "$pc"; printf '%sPara gerenciar este worker use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
+		at $((b + 12)) $((pc + 2)); printf '%saic cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
+		at $((b + 13)) "$pc"; printf '%sNeste no:%s  %saic --help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
 	fi
 	if ! has_password; then
 		at $((LINES_N - 1)) "$pc"

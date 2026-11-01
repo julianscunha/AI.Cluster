@@ -970,6 +970,7 @@ impl ClusterControl for ClusterControlService {
             // o worker de recuperação não recebe a release nem a cópia do estado
             release: release.filter(|_| !recovery),
             cancel_work_ids: self.work.take_cancels(&request.node_id),
+            trusted: self.registry.is_trusted(&request.node_id),
         }))
     }
 

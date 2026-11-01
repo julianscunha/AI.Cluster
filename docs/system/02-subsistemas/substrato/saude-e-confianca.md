@@ -32,6 +32,7 @@ Regras:
 - **CPU não entra no escore.** Utilização mede carga, não condição. A carga é tratada pelo termo de fila do custo de placement.
 - **Piso de 0,05.** Um worker medido nunca reporta exatamente 0, porque 0 significa "não reportado" para o placement.
 - **Sem sensor não penaliza.** Temperatura zero significa que nenhum sensor está visível, e o domínio é ignorado.
+- **O worker também fica sabendo se foi aprovado:** a resposta do heartbeat traz `trusted`, e o worker grava `aprovado` ou `pendente` em `trust`, ao lado do arquivo da credencial. O console do AI Cluster OS mostra isso em "Aprovacao" no "Estado do worker", para o operador ver que falta `aic cluster node approve`.
 - O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um worker degradado perde para um saudável de capacidade igual.
 
 Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para todo hardware.
