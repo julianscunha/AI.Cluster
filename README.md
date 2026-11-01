@@ -106,7 +106,7 @@ Num computador com Linux que vai virar AI Cluster OS dedicado, o convite mostra 
 ### Atualizar e serviços no boot
 
 - `aic update status` mostra a versão instalada e a disponível; `sudo aic update apply` atualiza este computador (controller, gateway ou worker em Linux). Em Linux, a atualização confere a assinatura da release com a chave de Linux, gravada na instalação.
-- No AI Cluster OS e nos workers em Linux comum, o controller empurra a release assinada. `aic cluster nodes` mostra a `VERSÃO` de cada worker, para ver quem está para trás.
+- No AI Cluster OS e nos workers em Linux convencional, o controller empurra a release assinada. `aic cluster nodes` mostra a `VERSÃO` de cada worker, para ver quem está para trás.
 - Os serviços sobem sozinhos ao ligar o computador (systemd, com reinício automático). Em contêiner sem systemd, eles não voltam sozinhos depois de reiniciar o contêiner. O que cada componente faz no `aic update` está em [a operação](docs/guia/operacao.md).
 
 ## Instalação passo a passo
@@ -198,7 +198,7 @@ O **motor próprio** (GPT-2 e SmolLM2 em safetensors, com as projeções fatiada
 
 ### 6. AI Cluster OS: o dispositivo vira um worker dedicado
 
-O **AI Cluster OS** é o destino do projeto para qualquer dispositivo: uma imagem Alpine imutável, com dois slots (A/B), que apaga o sistema anterior e deixa a máquina só com o que um worker precisa. O operador assina a atualização; o controller a anuncia, um worker canário atualiza primeiro e os demais seguem em ondas. Se o worker novo não ficar saudável, o boot volta ao slot anterior sozinho.
+O **AI Cluster OS** é o destino do projeto para cada dispositivo suportado: uma imagem Alpine imutável, com dois slots (A/B), que apaga o sistema anterior e deixa a máquina só com o que um worker precisa. O operador assina a atualização; o controller a anuncia, um worker canário atualiza primeiro e os demais seguem em ondas. Se o worker novo não ficar saudável, o boot volta ao slot anterior sozinho.
 
 **Disponibilidade hoje:** placas **ARMv7** (testado em Orange Pi PC) e PCs **x86_64 UEFI** (validado em QEMU com OVMF, falta testar em hardware real; exige Secure Boot desligado; veja o [guia](docs/guia/instalacao.md#imagem-do-ai-cluster-os-x86_64-uefi)). **Ainda não existe imagem para ARM64**, que é o próximo passo do projeto (veja [`pendencias.md`](docs/implementation/pendencias.md)). Até lá, desktops e servidores usam o caminho de transição do passo 3.
 

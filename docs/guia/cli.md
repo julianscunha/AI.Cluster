@@ -110,7 +110,7 @@ Uma reserva retém um worker para uma requisição futura.
 
 ## Só no AI Cluster OS
 
-Estes comandos respondem que não existem nos Linux comuns.
+Estes comandos respondem que não existem nos Linux convencionais.
 
 | Comando | O que faz |
 |---|---|

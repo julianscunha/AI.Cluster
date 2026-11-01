@@ -54,7 +54,7 @@ function Banner([string]$componente, [string]$detalhe = "") {
   Write-Host ""
   Linha @("   ", "White", "■", "White", "───", "Cyan", "■", "White")
   Linha @("  / \ / \     ", "Cyan", "AI.Cluster $componente", "White")
-  Linha @(" ", "White", "■", "White", "───", "Cyan", "■", "White", "───", "Cyan", "■", "White", "    IA distribuida em hardware comum", "DarkGray")
+  Linha @(" ", "White", "■", "White", "───", "Cyan", "■", "White", "───", "Cyan", "■", "White", "    IA distribuída em hardware heterogêneo", "DarkGray")
   Linha @("  \ / \ /", "Cyan")
   Linha @("   ", "White", "■", "White", "───", "Cyan", "■", "White", "      $detalhe", "Cyan")
   Write-Host ""

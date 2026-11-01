@@ -34,7 +34,7 @@ Regras:
 - **Sem sensor não penaliza.** Temperatura zero significa que nenhum sensor está visível, e o domínio é ignorado.
 - O escore entra no custo de placement como fator multiplicativo (peso 1,0). Um worker degradado perde para um saudável de capacidade igual.
 
-Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para qualquer hardware.
+Os limites de temperatura são genéricos (80 °C e 100 °C), iguais para todo hardware.
 
 ## Confiança
 

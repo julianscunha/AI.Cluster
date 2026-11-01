@@ -209,7 +209,7 @@ The project's own engine (GPT-2 and SmolLM2 in safetensors, with projections sli
 
 ### 6. AI Cluster OS: the device becomes a dedicated worker
 
-**AI Cluster OS** is the project's destination for any device: an immutable Alpine image with two slots (A/B) that wipes the previous system and leaves the machine with only what a worker needs. The operator signs an update; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
+**AI Cluster OS** is the project's destination for every supported device: an immutable Alpine image with two slots (A/B) that wipes the previous system and leaves the machine with only what a worker needs. The operator signs an update; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
 
 **Availability today:** **ARMv7** boards (tested on an Orange Pi PC) and **x86_64 UEFI** PCs (validated in QEMU with OVMF, real hardware still to be tested; needs Secure Boot off; see the [guide](docs/guia/instalacao.md#imagem-do-ai-cluster-os-x86_64-uefi)). **There is no image yet for ARM64**, which is the project's next step (see [`pendencias.md`](docs/implementation/pendencias.md)). Until then, desktops and servers use the transition path from step 3.
 

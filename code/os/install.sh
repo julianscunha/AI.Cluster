@@ -53,7 +53,7 @@ banner() { # banner <componente> <versão, ou vazio> <detalhe>
   if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
   printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
   printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
-  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
+  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuída em hardware heterogêneo%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
   if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
   else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
   printf '   %s■%s───%s■%s      %s%s%s\n\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"
@@ -91,7 +91,7 @@ banner instalador "" "$(t Bem-vindo Welcome)"
 if [ -z "$ROLE" ] || [ -z "$MODE" ] || [ -z "$ARCH" ]; then
   if [ "$LANG_AIC" = en ]; then
     cat <<EOF
-  The AI Cluster joins ordinary computers, new or old, to run AI models that do not fit in just one.
+  The AI Cluster joins computers of different kinds, new or old, to run AI models that do not fit in just one.
   It has 3 components:
 
    ${B}Controller${Z}  the brain. Registers the computers, decides where each task runs and keeps the
@@ -103,7 +103,7 @@ if [ -z "$ROLE" ] || [ -z "$MODE" ] || [ -z "$ARCH" ]; then
 EOF
   else
     cat <<EOF
-  O AI Cluster junta computadores comuns, novos ou velhos, para rodar modelos de IA que não cabem
+  O AI Cluster junta computadores de tipos diferentes, novos ou velhos, para rodar modelos de IA que não cabem
   em um só. Ele tem 3 componentes:
 
    ${B}Controller${Z}  o cérebro. Registra os computadores, decide onde cada tarefa roda e guarda
@@ -226,7 +226,7 @@ EOF
     cat <<EOF
 
   ${B}3. Qual é o processador deste computador?${Z}
-     1) PC ou servidor comum  ${D}(x86_64: Intel e AMD de 64 bits)${Z}
+     1) PC ou servidor ${D}(x86_64: Intel e AMD de 64 bits)${Z}
      2) ARM de 32 bits        ${D}(armv7: Orange Pi, Raspberry Pi antigo)${Z}
      3) ARM de 64 bits        ${D}(aarch64: Raspberry Pi 4/5, celulares, servidores ARM)${Z}
 EOF
