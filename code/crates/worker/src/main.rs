@@ -2608,6 +2608,7 @@ mod tests {
             image_sha256: "b".repeat(64),
             signature: format!("{}==", "A".repeat(86)),
             linux_signature: String::new(),
+            arch: String::new(),
         };
         // só aceita se o primeiro argumento for --verify e houver os cinco campos
         let ok = script("ok.sh", r#"[ "$1" = --verify ] && [ $# -eq 6 ]"#);
@@ -2644,6 +2645,7 @@ mod tests {
             image_sha256: "b".repeat(64),
             signature: format!("{}==", "A".repeat(86)),
             linux_signature: String::new(),
+            arch: String::new(),
         };
         let ok = release("2", "http://h:8080/x.gz");
         assert!(accept_update(&ok, "1", "", false));

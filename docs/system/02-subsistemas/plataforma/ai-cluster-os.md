@@ -74,7 +74,7 @@ Uma atualização troca a imagem inteira, não arquivos isolados. O operador ass
 ### Preparar a release
 
 1. `sign-release.sh <versão> <rootfs.gz> <rootfs.ext4>` calcula os SHA-256 do arquivo comprimido e da imagem, assina e imprime os argumentos do rollout.
-2. `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>` define a release.
+2. `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64> --arch <armv7|x86_64>` define a release; o `--arch` limita o canário e o anúncio à placa.
 3. `aic cluster nodes` mostra a versão e a medida de cada worker. `aic cluster events` mostra o andamento.
 4. `aic cluster rollout --cancel` encerra o rollout.
 

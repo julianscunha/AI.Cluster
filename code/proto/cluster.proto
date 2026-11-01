@@ -306,6 +306,9 @@ message Release {
   /// `url` aponta para o diretório da release. Vazia nas releases só de AI Cluster OS; quem a usa é
   /// o worker Linux, que confere com a chave pinada em /etc/ai-cluster/release.pub.
   string linux_signature = 6;
+  /// Placa a que a release vale (`armv7`, `x86_64`). Vazia vale para todas (releases antigas): o
+  /// controller só anuncia e elege canário entre workers dessa arquitetura.
+  string arch = 7;
 }
 
 message SetReleaseRequest {

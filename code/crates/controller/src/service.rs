@@ -973,6 +973,7 @@ impl ClusterControl for ClusterControlService {
             .unwrap_or_default();
         let (release, event) = self.rollout.announce(
             self.registry.update_channel(&request.node_id),
+            &self.registry.architecture(&request.node_id),
             &request.node_id,
             &version,
             |node| self.registry.version(node),

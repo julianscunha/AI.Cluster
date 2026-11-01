@@ -17,4 +17,5 @@ win() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
 MSG=$(mktemp); trap 'rm -f "$MSG" "$MSG.sig"' EXIT
 printf 'aic-release-v1\n%s\n%s\n%s\n%s\n' "$BOARD" "$VERSION" "$SHA" "$IMG" > "$MSG"
 openssl pkeyutl -sign -inkey "$(win "$KEY")" -rawin -in "$(win "$MSG")" -out "$(win "$MSG.sig")"
-echo "$VERSION --sha256 $SHA --image-sha256 $IMG --signature $(base64 -w0 < "$MSG.sig")"
+# --arch: a placa do nome (armv7-opipc -> armv7); o controller só anuncia a release a essa arquitetura
+echo "$VERSION --sha256 $SHA --image-sha256 $IMG --signature $(base64 -w0 < "$MSG.sig") --arch ${BOARD%%-*}"

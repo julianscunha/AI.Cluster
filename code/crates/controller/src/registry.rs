@@ -619,6 +619,14 @@ impl Registry {
         })
     }
 
+    /// Arquitetura que o nó declarou no registro (vazia se não declarou).
+    pub fn architecture(&self, node_id: &str) -> String {
+        self.lock()
+            .get(node_id)
+            .map(|record| record.identity.architecture.clone())
+            .unwrap_or_default()
+    }
+
     /// Canal de atualização que o nó declarou; `None` se ele não sabe atualizar ou declarou um canal desconhecido.
     pub fn update_channel(&self, node_id: &str) -> Option<Canal> {
         self.lock().get(node_id).and_then(|record| {

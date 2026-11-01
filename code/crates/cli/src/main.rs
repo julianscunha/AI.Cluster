@@ -166,6 +166,10 @@ enum ClusterAction {
         /// `--url` é então o diretório da release (ADR-025).
         #[arg(long, default_value = "")]
         linux_signature: String,
+        /// Placa que a release vale: `armv7` ou `x86_64`. Vazia vale para todas. Com duas placas, um
+        /// rollout por placa: o canário é só da placa.
+        #[arg(long, default_value = "", value_parser = ["", "armv7", "x86_64"])]
+        arch: String,
         /// Cancela o rollout em andamento.
         #[arg(long)]
         cancel: bool,
@@ -612,6 +616,7 @@ async fn run_cluster(
             image_sha256,
             signature,
             linux_signature,
+            arch,
             cancel,
         } => {
             let mut client = connect_operator(controller.to_string()).await?;
@@ -622,6 +627,7 @@ async fn run_cluster(
                 image_sha256,
                 signature,
                 linux_signature,
+                arch,
             });
             client.set_release(SetReleaseRequest { release }).await?;
             println!(
