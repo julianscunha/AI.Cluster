@@ -130,7 +130,13 @@ lan_ip() {
 }
 get() { sed -n "s/^$2=//p" "$1" | head -n 1; }   # get <arquivo> <CHAVE>
 # A versão instalada: a da release gravada; no instalador, a que ele acabou de baixar.
-versao() { v=${AIC_RELEASE_VERSION:-}; [ -n "$v" ] || v=$(get "$CONF/release" VERSION 2>/dev/null); printf '%s' "$v"; }
+# Fonte única: a versão do produto é a do binário (ADR-029); o arquivo "release" é só o registro de quando instalou.
+versao() {
+  v=${AIC_RELEASE_VERSION:-}
+  [ -n "$v" ] || v=$("$PREFIX/bin/aic" version --short 2>/dev/null)
+  [ -n "$v" ] || v=$(get "$CONF/release" VERSION 2>/dev/null)
+  printf '%s' "$v"
+}
 # Pid guardado (sem systemd) só vale se é mesmo o processo do serviço: número maior que 1 e o nome dele em
 # /proc/<pid>/comm (o kernel corta o nome em 15 letras, então o início do nome casa).
 pid_do_servico() { # pid_do_servico <arquivo-do-pid> <nome-do-processo>

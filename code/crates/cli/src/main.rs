@@ -63,7 +63,11 @@ enum Command {
         action: delegados::Update,
     },
     /// Versão do aic e do sistema.
-    Version,
+    Version {
+        /// Só o número (X.Y.Z), para scripts.
+        #[arg(long)]
+        short: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -395,7 +399,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Gateway { action } => delegados::encaminha("gateway", action.args()),
         Command::Worker { action } => delegados::encaminha("worker", action.args()),
         Command::Update { action } => delegados::encaminha("update", action.args()),
-        Command::Version => versao(),
+        Command::Version { short } => versao(short),
     }
     Ok(())
 }
@@ -409,7 +413,11 @@ fn sistema_so_worker(controller: &str) -> bool {
 }
 
 /// `aic version`: a versão deste comando e, se o computador grava uma release, a do sistema.
-fn versao() {
+fn versao(short: bool) {
+    if short {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     println!(
         "{}",
         ai_cluster_common::brand::banner(
@@ -2532,6 +2540,7 @@ mod tests {
             &["aic", "update", "apply", "--version", "1.2.0", "--force"],
             &["aic", "update", "status"],
             &["aic", "version"],
+            &["aic", "version", "--short"],
         ];
         for args in aceitos {
             assert!(
