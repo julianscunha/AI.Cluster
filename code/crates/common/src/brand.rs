@@ -147,7 +147,7 @@ pub fn banner(component: &str, version: &str, detail: &str) -> String {
     let text = [
         String::new(),
         paint(&format!("AI.Cluster {component}"), Tone::Strong),
-        paint("IA distribuida em hardware comum", Tone::Dim),
+        paint("IA distribuída em hardware heterogêneo", Tone::Dim),
         paint(&format!("versao {version}"), Tone::Dim),
         paint(detail, Tone::Accent),
     ];
