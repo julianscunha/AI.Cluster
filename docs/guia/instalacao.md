@@ -112,6 +112,56 @@ Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o clust
 - **Pela rede (boot de rede):** restrito. O usuário informa o **MAC** de cada worker e só esses endereços recebem a imagem; o boot de rede é só instalador e recuperação, nunca modo de operação. Hoje o servidor TFTP já limita as origens por IP (`--allow`), com limite de boots; falta o filtro por MAC.
 - **Por pendrive:** quando a rede não tem DHCP ou o computador não é visível nela, o controller entrega um `usb.zip` pelo navegador (passo a passo abaixo). Nenhum dd, Rufus ou terminal no computador novo.
 
+### Hardware e requisitos
+
+| Aparelho | Estado | Observações medidas |
+|---|---|---|
+| x86_64 UEFI | **Testado** em notebook (i7-8565U, 8 GB de RAM, NVMe, Ethernet 1 Gb/s) | Cabo a 1 Gb/s sem erros. O Wi-Fi do notebook não funciona (a imagem não traz o firmware); use cabo. |
+| armv7, Orange Pi PC | **Testado** (cartão SD, Ethernet 100 Mb/s, 1 GB de RAM) | 100 Mb/s é o limite da placa. O SD é lento sob gravação com `fsync` (cerca de 97 ms por gravação de 4 KiB, contra 4,7 ms no NVMe). |
+| BIOS legado/CSM, Wi-Fi, Secure Boot, ARM64, GPU/NPU | **Não testados** | A imagem x86 exige UEFI com Secure Boot desligado; não há imagem ARM64; GPU e NPU não são usadas. |
+
+Requisitos mínimos reais:
+
+- **RAM:** a do worker (o processo usa poucos MB) mais a do instalador x86, que mantém a imagem comprimida na RAM durante a gravação (a imagem tem 3 GiB descomprimida). Foi testado com 8 GB.
+- **Disco:** maior que a imagem (3 GiB) mais os dados do worker (modelos e fatias ficam em `/data`, que ocupa o resto do disco). O disco escolhido é **apagado por inteiro**.
+- **Rede:** Ethernet com DHCP, alcançando o controller (portas 8099 e 50051 por padrão). Sem DHCP o instalador não sobe a rede.
+- **Teclado e monitor:** opcionais. Sem eles, o pendrive entra sozinho em 5 s e a escolha do disco é feita no controller; com eles, você escolhe o disco na tela e usa o console (F2).
+
+### Modos de inicialização
+
+| Modo | Estado | Como é |
+|---|---|---|
+| Pendrive gerado pelo controller (x86_64 UEFI) | Disponível | Convite (`sudo aic cluster invite`) entrega o `usb.zip`; você o extrai num pendrive FAT32. O GRUB UEFI procura `/aic/grub.cfg` em todos os discos e partições (sem depender de rótulo ou letra), mostra um menu por setas (**Instalar AI Cluster OS**, entra em 5 s; **Reiniciar**) e o instalador pede a escolha do disco na tela. |
+| Cartão SD (Orange Pi) | Disponível | Grava-se a imagem no cartão (veja "Imagem do AI Cluster OS (armv7)"). Depois, a atualização é a assinada pelo caminho A/B (`aic cluster rollout`), sem regravar. |
+| Rede/PXE | **Não implementado** para x86 | Previsto como instalador e recuperação, nunca modo de operação ([[adr-017-instalacao-a-b-e-boot-de-rede]]). Hoje só existe o boot de rede do armv7 (u-boot e TFTP, `os/netboot/`); PXE em x86 aparece em [[pendencias]] (J1) e a restrição por MAC também. |
+
+### Etapas de ponta a ponta (x86_64)
+
+1. **Abrir o convite**, no controller: `sudo aic cluster invite` (ou só a porta de espera, `aic cluster install open`). Ele mostra o endereço e o SHA-256 do `usb.zip`.
+2. **Gerar o pendrive:** baixe o `usb.zip`, confira o SHA-256, formate o pendrive em FAT32 e extraia o zip na raiz (passo a passo em "Pendrive pelo navegador").
+3. **Dar boot no aparelho** pelo pendrive em modo UEFI (Secure Boot desligado). A tela mostra a **impressão digital**, o IP e o MAC.
+4. **Conferir:** no controller, `aic cluster install list` mostra os aparelhos; a impressão digital deve ser igual à da tela.
+5. **Aprovar:** `aic cluster install approve` (ou `... approve <impressão> --disk <disco>`). Mostra `vai apagar <disco> <modelo> <tamanho>` e pede confirmação.
+6. **Instalação:** o aparelho confere a assinatura e o SHA-256 da imagem, mostra 10 s para desistir, apaga o disco, grava a imagem e pede para tirar o pendrive. Depois **reinicia** pelo disco.
+7. **Aprovar o worker:** ele se registra como pendente. No controller, `aic cluster nodes` mostra a `IMPRESSÃO`; aprove com `aic cluster node approve <id> --fingerprint <impressão>`.
+8. **Conferir no console** do aparelho (monitor): o painel "Estado do worker" mostra Registro, Impressão e Aprovação; **F2** abre o menu, e "Saúde do computador" mostra CPU, memória, temperatura, disco e rede.
+9. **SSH:** `ssh root@<ip-do-worker>` com a chave do operador (a que estava em `authorized_keys` de quem rodou o convite). Defina a senha do console com `aic worker passwd`.
+10. **Atualizar depois:** `aic cluster rollout <versão> ... --url <endereço>` com a release assinada; o worker grava o outro slot (A/B), reinicia e volta sozinho ao slot anterior se não se registrar ([[operacao]]).
+
+### Solução de problemas
+
+| Sintoma | Causa e saída |
+|---|---|
+| Prompt `grub>` | O pendrive não foi extraído na raiz (ou o zip está incompleto). Extraia o `usb.zip` na raiz, em FAT32, e confira que existem `EFI` e `aic`. Se aparecer o menu "Tentar de novo", é o mesmo caso. |
+| Tela sem texto | Tente outra saída de vídeo ou outro modo de boot UEFI; a imagem não traz firmware de vídeo, e sem ele a tela pode ficar preta. Acompanhe pelo controller (`aic cluster install list`). |
+| Sem DHCP | O instalador não alcança o controller. Confira o cabo, o DHCP da rede e que o controller é alcançável a partir dela. Wi-Fi não é suportado. |
+| "assinatura do SHA256SUMS não confere" | A chave pinada no instalador não é a que assinou a release. Reconstrua o instalador com a chave certa (`build-installer.sh`) ou use o pendrive do mesmo controller. Nada é apagado antes dessa conferência. |
+| Hora errada e certificado | Sem RTC ou com RTC atrasado, o certificado pode parecer expirado. O worker corrige a hora pela rede (DNS e chrony); confira `date` no aparelho e a rede. Veja "Contêiner do worker" e `certificate expired`. |
+| F2/F12 não respondem em notebook | Muitos notebooks exigem a tecla Fn junto (Fn+F12 para o menu de boot, Fn+F2 para a BIOS ou o console). |
+| Disco removível recusado | Pendrives e USBs só são apagados com `--force-removable` no `approve`; se for a única opção, confira se é mesmo o disco que quer. |
+| Convite expirado ou porta fechada | A porta de espera fecha sozinha (padrão 15 min). Abra de novo com `aic cluster install open`; o pendrive serve para o mesmo controller. |
+| 409 / nome já usado | O nome do worker já existe no controller. Aprove com outro nome ou revogue o antigo (`aic cluster node revoke`). |
+
 ### Pendrive pelo navegador (Windows, Linux ou Mac)
 
 Precisa de um controller instalado com uma release que traz a imagem x86 (`install.sh` mostra "modo dedicado (imagem x86 e pendrive)"). Sem ela, o bloco "Dedicar um computador" diz que o pendrive está indisponível nesta release.
@@ -293,7 +343,7 @@ Para um Linux ARM64 qualquer, compile o binário para essa arquitetura e use `bo
 
 ## Imagem do AI Cluster OS (x86_64 UEFI)
 
-A imagem x86_64 formata o disco do PC, notebook ou servidor e o deixa só como worker: GPT com ESP, slots A e B e `/data`, GRUB EFI, kernel `linux-lts` do Alpine dentro do slot, atualização assinada e rollback automático ([[adr-019-imagem-x86-uefi-com-grub]]). **Validada em QEMU/UEFI; ainda não em hardware real.** Requer UEFI com Secure Boot desligado. Os comandos rodam em `code/`, numa máquina com Docker e as chaves de release (`release-keys.sh`):
+A imagem x86_64 formata o disco do PC, notebook ou servidor e o deixa só como worker: GPT com ESP, slots A e B e `/data`, GRUB EFI, kernel `linux-lts` do Alpine dentro do slot, atualização assinada e rollback automático ([[adr-019-imagem-x86-uefi-com-grub]]). **Validada em QEMU/UEFI e num notebook real (veja "Hardware e requisitos").** Requer UEFI com Secure Boot desligado. Os comandos rodam em `code/`, numa máquina com Docker e as chaves de release (`release-keys.sh`):
 
 ```bash
 bash scripts/build-armv7.sh            # só na primeira vez: cria a imagem de build aic-rust-zig:1
@@ -322,7 +372,7 @@ Para experimentar sem hardware, `bash os/image/x86/run-qemu.sh` sobe o disco num
 
 A mídia de boot é o `usb.zip` do convite (seção acima): `build-installer.sh` gera também `build/installer/BOOTX64.EFI` (GRUB com o cfg embutido `x86/embed.cfg`, que percorre os discos atrás de `/aic/grub.cfg`; o GRUB não aceita bloco `{ }` solto depois de `||`, dá `syntax error` e cai no prompt `grub>`). O controller serve `/imagem/disk-x86.img.gz`, `SHA256SUMS`, `SHA256SUMS.sig` e `VERSION` enquanto o convite está aberto. Para isso, a release precisa de `dedicado.tar.gz`: `AIC_RELEASE=<versão> bash os/image/x86/build-installer.sh`, `os/image/x86/mk-disk.sh` (com `build/disk-x86.img.gz` ou `.img`) e depois `bash code/scripts/package-release.sh`, que assina a pasta com a chave de Linux. Controllers já instalados só ganham o modo dedicado com uma instalação nova (ver [[pendencias]]).
 
-Testado sem hardware: `code/tests/phase-u-usb.sh` (estrutura do zip, chave de teste, servidor do convite e conferência do `aic-install.sh`). O boot do pendrive foi reproduzido e corrigido em QEMU/OVMF (pendrive MBR e GPT, qualquer ordem de discos, até o instalador subir). **Num PC real com o cfg novo ainda não foi visto.**
+Testado sem hardware: `code/tests/phase-u-usb.sh` (estrutura do zip, chave de teste, servidor do convite e conferência do `aic-install.sh`). O boot do pendrive foi reproduzido e corrigido em QEMU/OVMF (pendrive MBR e GPT, qualquer ordem de discos, até o instalador subir). Num PC real, o boot do pendrive com o cfg atual ainda precisa ser revisto em mais modelos.
 
 ## Pesos dos modelos
 

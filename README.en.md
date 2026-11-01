@@ -49,7 +49,7 @@ Usage flow:
 
 0. **Just to try it**, everything on one computer with Docker: see the [quick start](#quick-start-on-one-computer-docker).
 1. **Install the controller** on the server and save the two tokens (join and operator).
-2. **Turn each device into a worker.** The project's path is **AI Cluster OS**: its own immutable, lean system that **replaces the device's operating system** (the device is wiped) and dedicates it to being a worker, with signed updates and automatic rollback. Today the image exists for **ARMv7 boards** (tested on hardware) and **x86_64 UEFI PCs** (validated in QEMU, not yet on real hardware); for **ARM64 it does not exist yet**. Where there is no image the worker can be installed on top of the Linux the device already runs (transition path, nothing is wiped).
+2. **Turn each device into a worker.** The project's path is **AI Cluster OS**: its own immutable, lean system that **replaces the device's operating system** (the device is wiped) and dedicates it to being a worker, with signed updates and automatic rollback. Today the image exists for **ARMv7 boards** (tested on hardware) and **x86_64 UEFI PCs** (validated in QEMU, validated on a real laptop too); for **ARM64 it does not exist yet**. Where there is no image the worker can be installed on top of the Linux the device already runs (transition path, nothing is wiped).
 3. **Approve** each new node and **monitor** everything with the CLI.
 4. **Put a GGUF model in the controller's folder and run `aic cluster model start`** (step 5). Point your applications at the gateway with the key it shows.
 
@@ -211,7 +211,7 @@ The project's own engine (GPT-2 and SmolLM2 in safetensors, with projections sli
 
 **AI Cluster OS** is the project's destination for every supported device: an immutable Alpine image with two slots (A/B) that wipes the previous system and leaves the machine with only what a worker needs. The operator signs an update; the controller announces it, a canary node updates first and the rest follow in waves. If the new node is not healthy, boot returns to the previous slot by itself.
 
-**Availability today:** **ARMv7** boards (tested on an Orange Pi PC) and **x86_64 UEFI** PCs (validated in QEMU with OVMF, real hardware still to be tested; needs Secure Boot off; see the [guide](docs/guia/instalacao.md#imagem-do-ai-cluster-os-x86_64-uefi)). **There is no image yet for ARM64**, which is the project's next step (see [`pendencias.md`](docs/implementation/pendencias.md)). Until then, desktops and servers use the transition path from step 3.
+**Availability today:** **ARMv7** boards (tested on an Orange Pi PC) and **x86_64 UEFI** PCs (validated in QEMU with OVMF and on a real laptop; needs UEFI with Secure Boot off; legacy BIOS and Wi-Fi untested, PXE not implemented; USB stick from the invite, requirements, steps and troubleshooting in the [guide](docs/guia/instalacao.md#hardware-e-requisitos), in Portuguese). **There is no image yet for ARM64**, which is the project's next step (see [`pendencias.md`](docs/implementation/pendencias.md)). Until then, desktops and servers use the transition path from step 3.
 
 <p align="center">
   <img src="docs/assets/os-update.svg" alt="Signed update flow with A/B slots" width="100%">

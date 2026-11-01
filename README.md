@@ -49,7 +49,7 @@ Fluxo de uso:
 
 0. **Só para experimentar**, tudo em um computador com Docker: veja o [início rápido](#início-rápido-em-um-computador-docker).
 1. **Instale o controller** no servidor e anote os dois tokens (join e operador).
-2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7** (testada em hardware) e para **PCs x86_64 UEFI** (validada em QEMU, ainda não em hardware real); para **ARM64 ainda não existe**. Nos casos sem imagem o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
+2. **Transforme cada dispositivo em worker.** O caminho do projeto é o **AI Cluster OS**: um sistema próprio, imutável e enxuto que **substitui o sistema do dispositivo** (ele é formatado) e o deixa dedicado a ser worker, com atualização assinada e rollback automático. Hoje a imagem existe para **placas ARMv7** (testada em hardware) e para **PCs x86_64 UEFI** (validada em QEMU e num notebook real); para **ARM64 ainda não existe**. Nos casos sem imagem o worker pode ser instalado sobre o Linux que o dispositivo já tem (caminho de transição, sem formatar).
 3. **Aprove** cada worker novo e **monitore** tudo pela CLI.
 4. **Ponha um modelo GGUF na pasta do controller e rode `aic cluster model start`** (passo 5). Aponte seus aplicativos para o gateway com a chave que ele mostrar.
 
@@ -200,7 +200,7 @@ O **motor próprio** (GPT-2 e SmolLM2 em safetensors, com as projeções fatiada
 
 O **AI Cluster OS** é o destino do projeto para cada dispositivo suportado: uma imagem Alpine imutável, com dois slots (A/B), que apaga o sistema anterior e deixa a máquina só com o que um worker precisa. O operador assina a atualização; o controller a anuncia, um worker canário atualiza primeiro e os demais seguem em ondas. Se o worker novo não ficar saudável, o boot volta ao slot anterior sozinho.
 
-**Disponibilidade hoje:** placas **ARMv7** (testado em Orange Pi PC) e PCs **x86_64 UEFI** (validado em QEMU com OVMF, falta testar em hardware real; exige Secure Boot desligado; veja o [guia](docs/guia/instalacao.md#imagem-do-ai-cluster-os-x86_64-uefi)). **Ainda não existe imagem para ARM64**, que é o próximo passo do projeto (veja [`pendencias.md`](docs/implementation/pendencias.md)). Até lá, desktops e servidores usam o caminho de transição do passo 3.
+**Disponibilidade hoje:** placas **ARMv7** (testado em Orange Pi PC) e PCs **x86_64 UEFI** (validado em QEMU com OVMF e num notebook real; exige UEFI com Secure Boot desligado; BIOS legado, Wi-Fi e PXE não testados ou não implementados; pendrive pelo convite, requisitos, etapas e solução de problemas no [guia](docs/guia/instalacao.md#hardware-e-requisitos)). **Ainda não existe imagem para ARM64**, que é o próximo passo do projeto (veja [`pendencias.md`](docs/implementation/pendencias.md)). Até lá, desktops e servidores usam o caminho de transição do passo 3.
 
 <p align="center">
   <img src="docs/assets/os-update.svg" alt="Fluxo de atualização assinada com slots A/B" width="100%">
