@@ -118,6 +118,7 @@ Estes comandos respondem que não existem nos Linux convencionais.
 | `aic worker change --server IP[:8099] --code CÓDIGO` | Troca o convite (e o controller) do worker. |
 | `aic worker change --controller URL --token T` | Troca só o controller, com o token de join. |
 | `aic worker change --controller URL --token-file ARQUIVO` | O mesmo, com o token lido de um arquivo: espaços e quebras de linha saem, e o token não aparece no `ps`. Recusa arquivo ausente, vazio ou legível por outros (use `chmod 600`). Não combina com `--token` nem com `--server`. |
+| `aic worker change ... --yes` | Não pergunta a confirmação (o mesmo que `AIC_ASSUME_YES=1`); vale para as três formas acima. |
 | `aic worker passwd [--remove]` | Senha do console local. `--remove` deixa o console sem login. |
 
 ## Atualização e versão

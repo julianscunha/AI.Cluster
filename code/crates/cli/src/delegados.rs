@@ -275,6 +275,9 @@ pub enum Worker {
         /// Arquivo com o token de join (alternativa a `--token`, que aparece no `ps`).
         #[arg(long, value_name = "ARQUIVO", requires = "controller", conflicts_with_all = ["server", "code"])]
         token_file: Option<String>,
+        /// Não pergunta nada: aceita os padrões.
+        #[arg(long)]
+        yes: bool,
     },
     /// Senha do console do AI Cluster OS (só no AI Cluster OS).
     Passwd {
@@ -311,6 +314,7 @@ impl Worker {
                 controller,
                 token,
                 token_file,
+                yes,
             } => {
                 let mut out = vec!["change".to_string()];
                 valor(&mut out, "--server", server.as_ref());
@@ -318,6 +322,7 @@ impl Worker {
                 valor(&mut out, "--controller", controller.as_ref());
                 valor(&mut out, "--token", token.as_ref());
                 valor(&mut out, "--token-file", token_file.as_ref());
+                marca(&mut out, "--yes", *yes);
                 out
             }
             Self::Passwd { remove } => {
@@ -466,6 +471,22 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("setup"), "#!/bin/sh\n").unwrap();
         dir
+    }
+
+    #[test]
+    fn worker_change_repassa_yes() {
+        let w = Worker::Change {
+            server: Some("1.2.3.4".into()),
+            code: Some("C".into()),
+            controller: None,
+            token: None,
+            token_file: None,
+            yes: true,
+        };
+        assert_eq!(
+            w.args(),
+            ["change", "--server", "1.2.3.4", "--code", "C", "--yes"]
+        );
     }
 
     #[test]
