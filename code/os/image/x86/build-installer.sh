@@ -8,8 +8,8 @@
 #   AIC_CONTROLLER=http://controller:50052 bash ... (opcional: grava /aic/installer.conf)
 #
 # Pré-requisitos: o aic-wait estático em musl no volume aic-target-x86 (bash code/scripts/build-x86.sh;
-# AIC_WAIT_FILE aponta outro binário) e a chave pública da release (padrão ~/.aic/release.pub, a mesma
-# que build-rootfs.sh pina).
+# AIC_WAIT_FILE aponta outro binário) e a chave pública que assina o dedicado (padrão os/linux.pub; a pinada
+# tem de ser a da assinatura do SHA256SUMS, senão o instalador recusa a imagem).
 # Kernel (linux-lts), busybox, e2fsprogs, efibootmgr, openssl e lsblk vêm do Alpine 3.20 da imagem.
 # sgdisk vem do Debian (glibc, com as bibliotecas copiadas): o Alpine não empacota o sgdisk.
 # Nada é gravado em disco aqui; é só montagem de arquivos.
@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # versão mínima aceita pelo instalador (não aceita imagem mais antiga, replay/downgrade): a deste build (a do produto)
 AIC_RELEASE=$(sh ../../scripts/version.sh); export AIC_RELEASE   # versão única (ADR-029)
-PUB=${1:-${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}}
+PUB=${1:-${AIC_PUBS:-../linux.pub}}   # a chave que assina o dedicado (package-release.sh, ADR-025)
 [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh ou passe a chave como argumento)" >&2; exit 2; }
 HOSTDIR=$(pwd -W 2>/dev/null || pwd)
 rm -rf build/installer
