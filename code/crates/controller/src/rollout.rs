@@ -527,12 +527,22 @@ mod tests {
         let rollout = Rollout::new(None);
         rollout.set(Some(arm));
         // worker x86 não recebe nem vira canário: não pausa o rollout de armv7
-        assert!(rollout.announce(OS, "x86_64", "x86", "1", none, 0).0.is_none());
+        assert!(
+            rollout
+                .announce(OS, "x86_64", "x86", "1", none, 0)
+                .0
+                .is_none()
+        );
         // o worker armv7 (o Rust reporta "arm") é o canário
         assert!(rollout.announce(OS, "arm", "a", "1", none, 1).0.is_some());
         // sem arch, a release vale para todos
         rollout.set(Some(release("3")));
-        assert!(rollout.announce(OS, "x86_64", "x86", "1", none, 2).0.is_some());
+        assert!(
+            rollout
+                .announce(OS, "x86_64", "x86", "1", none, 2)
+                .0
+                .is_some()
+        );
     }
 
     #[test]
