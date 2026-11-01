@@ -2,7 +2,7 @@
 # Monta o ambiente de instalação do AI Cluster OS x86_64 (ADR-023): um kernel e um initramfs que rodam
 # em RAM, sobem a rede, esperam a aprovação do controller e gravam a imagem com install-disk.sh.
 # Saída: build/installer/vmlinuz, initramfs.gz e BOOTX64.EFI (em code/os/image/). O BOOTX64.EFI é o GRUB do
-# pendrive (UEFI): acha o pendrive pelo rótulo AIC e carrega aic/grub.cfg, que o convite grava (code/os/mkusb.py).
+# pendrive (UEFI): acha o pendrive pelo arquivo /aic/grub.cfg e carrega aic/grub.cfg, que o convite grava (code/os/mkusb.py).
 #
 #   bash code/os/image/x86/build-installer.sh [chave-pública-pinada]
 #   AIC_CONTROLLER=http://controller:50052 bash ... (opcional: grava /aic/installer.conf)
