@@ -374,6 +374,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     match cli.command {
         Command::Cluster { controller, action } => {
+            if sistema_so_worker(&controller) {
+                return Err(idioma::t(
+                    "este computador é um worker do AI Cluster OS e não tem controller: rode `aic cluster` no servidor, ou aqui `aic worker status` e `aic update status`",
+                    "this computer is an AI Cluster OS worker and has no controller: run `aic cluster` on the server, or here `aic worker status` and `aic update status`",
+                )
+                .into());
+            }
             ai_cluster_protocol::metadata::check_secret_files()?;
             run_cluster(&controller, action).await?
         }
@@ -384,6 +391,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Version => versao(),
     }
     Ok(())
+}
+
+/// No AI Cluster OS (grava /etc/aic-release) só roda o worker: sem controller informado, o padrão
+/// 127.0.0.1 não existe ali.
+fn sistema_so_worker(controller: &str) -> bool {
+    controller == "http://127.0.0.1:50051"
+        && std::env::var_os("AI_CLUSTER_CONTROLLER").is_none()
+        && std::path::Path::new("/etc/aic-release").exists()
 }
 
 /// `aic version`: a versão deste comando e, se o computador grava uma release, a do sistema.
