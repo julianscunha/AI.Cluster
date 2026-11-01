@@ -87,7 +87,7 @@ Como o controller escolhe: os workers mais rápidos primeiro, **só até a RAM s
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| `model start` diz NOK | A RAM somada dos workers com RPC não comporta o modelo, ou não há worker com RPC | Acrescente workers (o NOK diz quantos) ou reduza o contexto (`--ctx`) |
+| `model start` diz NOK | A RAM somada dos workers com RPC não comporta o modelo, ou não há worker com RPC | Acrescente workers (o NOK diz quantos) ou reduza o contexto (`--ctx`). Para exercitar a divisão com um worker lento, use `--workers a,b` ou `--spread` |
 | Status `FALHOU` com "os workers de agora oferecem X GB" | Um worker saiu e a RAM não basta | Traga o worker de volta: o plano volta sozinho |
 | Status `FALHOU` com "llama-server saiu (signal: 6)" | O `rpc-server` de um worker caiu (sem memória) ou recusou a conexão | Veja o log do worker; confira a hora do worker e o certificado |
 | Worker fica fora do plano | Sem `rpc_port` (RPC desligado), reprovado, sem endereço válido, ou `rpc-server` de outra versão (`aic cluster model status` mostra `AVISO`) | `aic cluster node show <id>`; confira as variáveis `AI_CLUSTER_RPC_*` e `AI_CLUSTER_RPC_VERSION` |

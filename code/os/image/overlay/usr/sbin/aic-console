@@ -87,7 +87,7 @@ statline() { # linha coluna-do-painel largura cor-da-bolinha rótulo valor
 
 draw() {
 	local release slot board cpu cores mem ip node controller worker registered role
-	local dot_worker dot_net dot_reg ip_short top b pc pw fpr trust dot_trust
+	local dot_worker dot_net dot_reg ip_short top b pc pw fpr trust dot_trust rpc dot_rpc
 	release=$(cat /etc/aic-release 2>/dev/null || echo dev)
 	slot=$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)
 	board=$(sed -n 's/^board=//p' /etc/aic-board 2>/dev/null)
@@ -117,6 +117,12 @@ draw() {
 		worker="parado"
 		dot_worker=$C_BAD
 	fi
+	# túnel RPC: precisa do certificado (aic worker change / claim) e do ggml-rpc-server vivo
+	if [ -s /data/rpc-tls/worker.crt ] && [ -s /data/rpc-tls/worker.key ] && [ -s /data/rpc-tls/ca.crt ] && pidof ggml-rpc-server >/dev/null 2>&1; then
+		rpc="ligado"; dot_rpc=$C_OK
+	else
+		rpc="desligado: sem certificado (aic worker change)"; dot_rpc=$C_WARN
+	fi
 	if [ -n "$ip" ]; then dot_net=$C_OK; else dot_net=$C_BAD; fi
 	case "$registered" in
 	sim*) dot_reg=$C_OK ;;
@@ -141,7 +147,7 @@ draw() {
 	else
 		b=$top
 	fi
-	box "$b" "$pc" "$pw" 10 "Estado do worker"
+	box "$b" "$pc" "$pw" 11 "Estado do worker"
 	statline $((b + 1)) "$pc" "$pw" "$C_OK" "Papel" "$role"
 	statline $((b + 2)) "$pc" "$pw" "$dot_worker" "Worker" "$worker"
 	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "${ip:-sem endereco}"
@@ -150,6 +156,7 @@ draw() {
 	statline $((b + 6)) "$pc" "$pw" "$dot_reg" "Registro" "${registered:-?}"
 	statline $((b + 7)) "$pc" "$pw" "$dot_reg" "Impressao" "${fpr:-ainda nao registrado}"
 	statline $((b + 8)) "$pc" "$pw" "$dot_trust" "Aprovacao" "$trust"
+	statline $((b + 9)) "$pc" "$pw" "$dot_rpc" "Tunel RPC" "$rpc"
 
 	if [ "$LINES_N" -ge 24 ]; then
 		at $((b + 11)) "$pc"; printf '%sPara gerenciar este worker use, de outra maquina:%s' "$C_TEXT" "$C_RESET"

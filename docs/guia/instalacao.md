@@ -77,7 +77,7 @@ O script confere o processador, o firmware e o espaço, baixa só o `aic-wait` d
 sudo aic update status           # versão instalada × disponível
 sudo aic update apply            # pergunta antes; --yes não pergunta
 sudo aic update apply --force    # reinstala a versão atual (mesmo sem novidade)
-sudo aic update apply --version 0.2.2
+sudo aic update apply --version 0.2.3
 ```
 
 O que cada componente recebe, e o que o controller empurra, está em [[operacao#Atualização de cada componente]]. Em resumo: controller e gateway em Linux, e o worker em Linux, se atualizam com `aic update apply`, sem perder tokens, certificados, workers aprovados nem modelos; o worker em Linux comum recebe a atualização que o controller empurra, assinada com a chave de Linux ([ADR-025](../system/05-decisoes/adr-025-gatilho-de-atualizacao-assinada-linux.md)); o worker em AI Cluster OS é atualizado pela release assinada que o controller empurra (`aic cluster rollout`).
@@ -116,13 +116,14 @@ Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o clust
 
 | Aparelho | Estado | Observações medidas |
 |---|---|---|
-| x86_64 UEFI | **Testado** em notebook (i7-8565U, 8 GB de RAM, NVMe, Ethernet 1 Gb/s) | Cabo a 1 Gb/s sem erros. O Wi-Fi do notebook não funciona (a imagem não traz o firmware); use cabo. |
+| x86_64 UEFI | **Testado** em notebook (i7-8565U, 8 GB de RAM, NVMe, Ethernet 1 Gb/s) | Cabo a 1 Gb/s sem erros. O Wi-Fi do notebook não funciona (a imagem não traz o firmware); use cabo. A NIC Realtek funciona: a imagem traz o firmware dela (`linux-firmware-rtl_nic`, `rtl8168h-2.fw`). |
 | armv7, Orange Pi PC | **Testado** (cartão SD, Ethernet 100 Mb/s, 1 GB de RAM) | 100 Mb/s é o limite da placa. O SD é lento sob gravação com `fsync` (cerca de 97 ms por gravação de 4 KiB, contra 4,7 ms no NVMe). |
 | BIOS legado/CSM, Wi-Fi, Secure Boot, ARM64, GPU/NPU | **Não testados** | A imagem x86 exige UEFI com Secure Boot desligado; não há imagem ARM64; GPU e NPU não são usadas. |
 
 Requisitos mínimos reais:
 
-- **RAM:** a do worker (o processo usa poucos MB) mais a do instalador x86, que mantém a imagem comprimida na RAM durante a gravação (a imagem tem 3 GiB descomprimida). Foi testado com 8 GB.
+- **RAM:** a do worker (o processo usa poucos MB) mais a do instalador x86, que mantém a imagem comprimida na RAM durante a gravação (a imagem tem 3 GiB descomprimida). Foi testado com 8 GB. O mínimo de RAM do instalador é **estimado, não medido**.
+- **Firmware opcional (fora da imagem):** a imagem x86 inclui só o da NIC Realtek (`linux-firmware-rtl_nic`, poucos MB; tamanho não medido). Vídeo Intel (`linux-firmware-i915`), Wi-Fi Atheros (`linux-firmware-ath10k`) e `wireless-regdb` ficam de fora de propósito, porque cada um soma megabytes (alguns, dezenas) a uma imagem que cabe em disco pequeno; se precisar de algum, acrescente o pacote Alpine ao `apk add` de `os/image/x86/Dockerfile` e reconstrua a imagem. Sem Wi-Fi, use cabo.
 - **Disco:** maior que a imagem (3 GiB) mais os dados do worker (modelos e fatias ficam em `/data`, que ocupa o resto do disco). O disco escolhido é **apagado por inteiro**.
 - **Rede:** Ethernet com DHCP, alcançando o controller (portas 8099 e 50051 por padrão). Sem DHCP o instalador não sobe a rede.
 - **Teclado e monitor:** opcionais. Sem eles, o pendrive entra sozinho em 5 s e a escolha do disco é feita no controller; com eles, você escolhe o disco na tela e usa o console (F2).
@@ -160,7 +161,8 @@ Requisitos mínimos reais:
 | F2/F12 não respondem em notebook | Muitos notebooks exigem a tecla Fn junto (Fn+F12 para o menu de boot, Fn+F2 para a BIOS ou o console). |
 | Disco removível recusado | Pendrives e USBs só são apagados com `--force-removable` no `approve`; se for a única opção, confira se é mesmo o disco que quer. |
 | Convite expirado ou porta fechada | A porta de espera fecha sozinha (padrão 15 min). Abra de novo com `aic cluster install open`; o pendrive serve para o mesmo controller. |
-| 409 / nome já usado | O nome do worker já existe no controller. Aprove com outro nome ou revogue o antigo (`aic cluster node revoke`). |
+| 409 / nome já usado | HTTP 409 do `/sign` do convite: este convite já assinou o certificado com esse nome (cada nome vale uma vez por convite). Abra outro convite (`sudo aic cluster invite`) ou use outro nome. Se o 409 vier do registro no controller, o nome já existe lá: revogue o antigo (`aic cluster node revoke`). |
+| `aic worker change`: "worker já registrado com outra credencial" | O novo controller já tem um worker com esse id e outra credencial. No **novo** controller rode `aic cluster node revoke <id>` e repita `aic worker change`; o comando mostra isso em vez de esperar os 30 s. |
 
 ### Pendrive pelo navegador (Windows, Linux ou Mac)
 

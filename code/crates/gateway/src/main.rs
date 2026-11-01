@@ -2131,6 +2131,16 @@ Buffers: 1 kB
     use super::*;
 
     #[test]
+    fn o_corpo_do_chat_aceita_utf8_e_recusa_outro_encoding() {
+        let utf8 = r#"{"model":"m","messages":[{"role":"user","content":"olá, é você?"}]}"#;
+        let ok = axum::Json::<ChatRequest>::from_bytes(utf8.as_bytes()).unwrap();
+        assert_eq!(ok.0.messages[0].content, "olá, é você?");
+        // O mesmo texto em Latin-1/CP1252 (o que um terminal do Windows envia) não é UTF-8: 400.
+        let latin1: Vec<u8> = utf8.chars().map(|c| c as u8).collect();
+        assert!(axum::Json::<ChatRequest>::from_bytes(&latin1).is_err());
+    }
+
+    #[test]
     fn a_benched_node_hands_its_bands_to_the_live_ones() {
         let band = |node: &str, start: u32| Slice {
             node: node.into(),
