@@ -1905,7 +1905,7 @@ fn pretty_dashboard(
         "painel",
         env!("CARGO_PKG_VERSION"),
         &format!(
-            "{}  -  {}/{} nos disponiveis",
+            "{}  -  {}/{} workers disponiveis",
             clean(endpoint),
             metrics.nodes_available,
             metrics.nodes_total
@@ -1916,11 +1916,11 @@ fn pretty_dashboard(
     .collect();
 
     out.push(String::new());
-    out.push(rule("Nos", WIDTH));
+    out.push(rule("Workers", WIDTH));
     out.push(paint(
         &format!(
             "    {:<18} {:<11} {:<8} {:>4} {:>8} {:>7} {:>6} {:>6}  {}",
-            "NO", "ESTADO", "ARQ", "THR", "RAM", "COMPUTE", "SAUDE", "CPU", "VERSAO"
+            "WORKER", "ESTADO", "ARQ", "THR", "RAM", "COMPUTE", "SAUDE", "CPU", "VERSAO"
         ),
         Tone::Dim,
     ));
@@ -1989,7 +1989,7 @@ fn pretty_dashboard(
     ));
 
     out.push(String::new());
-    out.push(rule("Capacidade media dos nos prontos", WIDTH));
+    out.push(rule("Capacidade media dos workers prontos", WIDTH));
     out.push(format!(
         "    rede {:.2}   escrita {:.2}   leitura {:.2}   latencia de escrita {:.2} ms",
         metrics.avg_network_score,
@@ -2831,7 +2831,7 @@ mod tests {
             );
         for expected in [
             "AI.Cluster painel",
-            "1/2 nos disponiveis",
+            "1/2 workers disponiveis",
             "orangepi-ab",
             "pendente de aprovacao",
             "concluidas 3",
