@@ -18,6 +18,8 @@ struct State {
     paused: bool,
     /// Workers liberados depois do canário que ainda não chegaram à versão (worker → quando foi liberado).
     wave: std::collections::HashMap<String, u64>,
+    /// Workers sem `arch` já avisados nesta release (um aviso por worker, não um por heartbeat).
+    sem_arch: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -238,6 +240,20 @@ impl Rollout {
         let no_canal = !canal.is_some_and(|canal| canal.atende(&desired));
         let outra_placa =
             !desired.arch.is_empty() && arquitetura(&desired.arch) != arquitetura(arch);
+        // worker que não declara a arquitetura não casa com release de placa: ficaria de fora sem aviso
+        if outra_placa
+            && arch.is_empty()
+            && version != desired.version
+            && state.sem_arch.insert(node.to_string())
+        {
+            return (
+                None,
+                Some(format!(
+                    "rollout ignora o worker {node}: não informou a arquitetura e a release {} é só {}",
+                    desired.version, desired.arch
+                )),
+            );
+        }
         if no_canal || outra_placa || version == desired.version || state.paused {
             return (None, None);
         }
@@ -543,6 +559,19 @@ mod tests {
                 .0
                 .is_some()
         );
+    }
+
+    #[test]
+    fn worker_sem_arch_e_ignorado_com_um_unico_aviso() {
+        let none = |_: &str| None;
+        let mut arm = release("2");
+        arm.arch = "armv7".into();
+        let rollout = Rollout::new(None);
+        rollout.set(Some(arm));
+        let (r, evento) = rollout.announce(OS, "", "w", "1", none, 0);
+        assert!(r.is_none());
+        assert!(evento.is_some_and(|e| e.contains("worker w") && e.contains("arquitetura")));
+        assert!(rollout.announce(OS, "", "w", "1", none, 1).1.is_none());
     }
 
     #[test]
