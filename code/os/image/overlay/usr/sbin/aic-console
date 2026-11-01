@@ -51,9 +51,9 @@ has_password() { [ -e "$PASSFILE" ]; }
 uptime_s() { cut -d. -f1 /proc/uptime; }
 
 # Lê uma tecla e devolve um nome: f2, f12, up, down, enter, esc ou o próprio caractere.
-key() { # espera em segundos
+key() { # espera em segundos; sem segundos, espera sem limite (o menu F2)
 	local k c seq=
-	IFS= read -rsn1 -t "$1" k || return 1
+	if [ -n "${1:-}" ]; then IFS= read -rsn1 -t "$1" k || return 1; else IFS= read -rsn1 k || return 1; fi
 	if [ -z "$k" ]; then
 		echo enter
 		return 0
@@ -440,7 +440,7 @@ menu() {
 		done
 		at "$LINES_N" 1
 		printf '%s %-*s%s' "$C_FOOT" $((COLS_N - 1)) "Setas ou numero escolhem   Enter abre   Esc volta" "$C_RESET"
-		k=$(key 120) || return 0
+		k=$(key) || return 0
 		case "$k" in
 		up) [ "$sel" -gt 1 ] && sel=$((sel - 1)) ;;
 		down) [ "$sel" -lt "$total" ] && sel=$((sel + 1)) ;;
