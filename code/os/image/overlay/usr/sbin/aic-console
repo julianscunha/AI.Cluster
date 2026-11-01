@@ -102,7 +102,7 @@ draw() {
 	cred=$(env_value AI_CLUSTER_NODE_CREDENTIAL_FILE)
 	if [ -n "$cred" ] && [ -s "$cred" ]; then registered="sim (credencial salva)"; else registered="ainda nao (sem credencial)"; fi
 	# a impressão da credencial é o que o operador digita em `aic cluster node approve --fingerprint`
-	fpr=$(sed -n 's/^impressão da credencial: \([0-9a-f]*\).*//p' /var/log/ai-cluster-worker.log 2>/dev/null | tail -n 1)
+	fpr=$(sed -n 's/^impressão da credencial: \([0-9a-f]*\).*/\1/p' /var/log/ai-cluster-worker.log 2>/dev/null | tail -n 1)
 	# o controller informa a cada batida se o operador já aprovou (arquivo "trust" ao lado da credencial)
 	trust=$(cat "$(dirname "${cred:-/nonexistent/x}")/trust" 2>/dev/null)
 	case "$trust" in
