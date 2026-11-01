@@ -268,7 +268,7 @@ Sequência de build, a partir de `code/`:
 
 Para o worker chegar ao ambiente de recuperação pela rede, `os/netboot/` traz `build-initramfs.sh` (monta o initramfs com o worker e um servidor SSH), `tftpd.py` (servidor TFTP somente leitura; `--allow` lista os IPs que podem baixar) e `install-netboot.sh` (liga o boot pela rede num Linux armv7 existente, com prazo e volta ao cartão).
 
-Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh` (AI Cluster OS) e com `scripts/package-release.sh` (Linux comum, `SHA256SUMS.sig`). Veja [[operacao]].
+Releases assinadas para a atualização pelo controller são geradas com `os/image/sign-release.sh` (AI Cluster OS) e com `scripts/package-release.sh` (Linux, `SHA256SUMS.sig`). Veja [[operacao]].
 
 ## Imagem com a sua própria chave (fora da release)
 
@@ -294,7 +294,7 @@ A imagem x86_64 formata o disco do PC, notebook ou servidor e o deixa só como w
 ```bash
 bash scripts/build-armv7.sh            # só na primeira vez: cria a imagem de build aic-rust-zig:1
 bash scripts/build-x86.sh              # worker musl x86_64
-AIC_RELEASE=1.0 bash os/image/x86/build-rootfs.sh        # build/rootfs-x86.ext4 (kernel, initramfs e worker)
+bash os/image/x86/build-rootfs.sh                       # versão = a do produto (scripts/version.sh); build/rootfs-x86.ext4 (kernel, initramfs e worker)
 bash os/image/x86/mk-disk.sh --controller https://controller.exemplo:50051 \
   --token <token> --node-id no-1 [--insecure] [--ssh-key chave.pub]   # build/disk-x86.img
 ```

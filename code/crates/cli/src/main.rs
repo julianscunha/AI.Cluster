@@ -158,7 +158,7 @@ enum ClusterAction {
         /// Assinatura Ed25519 em base64 (ver os/image/sign-release.sh).
         #[arg(long, default_value = "")]
         signature: String,
-        /// Assinatura Ed25519 em base64 do SHA256SUMS da release Linux comum (scripts/package-release.sh).
+        /// Assinatura Ed25519 em base64 do SHA256SUMS da release Linux (scripts/package-release.sh).
         /// `--url` é então o diretório da release (ADR-025).
         #[arg(long, default_value = "")]
         linux_signature: String,

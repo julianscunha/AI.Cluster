@@ -264,7 +264,7 @@ fn state_replica_epoch() -> u64 {
 /// Release aceita para instalar: o worker só age se `AI_CLUSTER_UPDATE_CMD` estiver definido, a versão
 /// difere da que roda, ainda não foi tentada (evita laço quando a nova volta por rollback) e tudo
 /// o que vai ao comando está em caracteres seguros. `linux` escolhe a assinatura deste worker: a de AI
-/// Cluster OS (com URL e hashes da imagem) ou a de Linux comum (ADR-025). Downgrade não é detectado
+/// Cluster OS (com URL e hashes da imagem) ou a de Linux (ADR-025). Downgrade não é detectado
 /// aqui: o setup do Linux recusa versão mais antiga sem --force.
 fn accept_update(release: &Release, current: &str, tried: &str, linux: bool) -> bool {
     let safe = |text: &str, extra: &str| {
@@ -349,7 +349,7 @@ async fn update_verified(command: &str, release: &Release, linux: bool) -> bool 
     }
 }
 
-/// Canal declarado no identity (`AI_CLUSTER_UPDATE_KIND`): "linux" para Linux comum, "os" no resto (ADR-025).
+/// Canal declarado no identity (`AI_CLUSTER_UPDATE_KIND`): "linux" para Linux, "os" no resto (ADR-025).
 fn update_kind() -> &'static str {
     if std::env::var("AI_CLUSTER_UPDATE_KIND").is_ok_and(|kind| kind.trim() == "linux") {
         "linux"
@@ -562,7 +562,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let update_cmd = std::env::var("AI_CLUSTER_UPDATE_CMD")
         .ok()
         .filter(|c| !c.is_empty());
-    // Worker Linux comum (ADR-025): a release que chega traz a assinatura de Linux, não a de AI Cluster OS.
+    // Worker Linux (ADR-025): a release que chega traz a assinatura de Linux, não a de AI Cluster OS.
     let linux_update = update_kind() == "linux";
     let heartbeat_task = tokio::spawn({
         let mut client = client.clone();

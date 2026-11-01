@@ -28,8 +28,7 @@ STAGE="$OUT/.stage-$$"; mkdir -p "$STAGE"
 CID=""
 trap 'rm -rf "$STAGE"; [ -z "$CID" ] || docker rm -f "$CID" >/dev/null 2>&1' EXIT
 
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$HERE/crates/controller/Cargo.toml" | head -n 1)
-[ -n "$VERSION" ] || { echo "não achei a versão em crates/controller/Cargo.toml" >&2; exit 1; }
+VERSION=$(sh "$HERE/scripts/version.sh") || exit 1   # fonte única (ADR-029)
 LINUX_KEY=${AIC_LINUX_KEY:-$HOME/.aic/linux.key}
 [ -f "$LINUX_KEY" ] || { echo "falta a chave $LINUX_KEY (rode os/image/release-keys.sh linux)" >&2; exit 2; }
 # openssl nativo do Windows não lê caminhos /d/…: converte quando há cygpath

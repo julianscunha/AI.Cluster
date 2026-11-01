@@ -174,7 +174,7 @@ Estas não são lidas pelos binários.
 | `TARGET` | `scripts/build-armv7.sh` | Alvo de compilação. Para a imagem Alpine use `armv7-unknown-linux-musleabihf`. |
 | `AIC_KEYS` | `os/image/*.sh` | Diretório das chaves de release (padrão `~/.aic`). |
 | `AIC_PUBS` | `os/image/build-rootfs.sh` | Chaves públicas embutidas na imagem, separadas por espaço. Mais de uma permite a transição de rotação. |
-| `AIC_RELEASE` | `os/image/build-rootfs.sh` | Versão gravada em `/etc/aic-release` (padrão `dev`). |
+| `AIC_RELEASE` | `scripts/version.sh` (usado por `os/image/**/build-rootfs.sh`, `build-installer.sh`, `package-release.sh`) | Sobrescreve, só para teste, a versão X.Y.Z do `[workspace.package]` de `code/Cargo.toml` (ADR-029). Padrão: a do Cargo.toml. |
 | `CARD_BYTES` | `os/image/mk-disk-image.sh` | Tamanho do cartão para o layout A/B (padrão 3.933.208.576 bytes). |
 | `AIC_RUST_IMAGE` | `scripts/dev-cluster.sh` | Imagem Rust usada pelo cluster de desenvolvimento (padrão `rust:1-bookworm`). |
 | `AIC_SSH_PASSWORD` | `os/image/install-disk.py` | Senha SSH do worker em recuperação. Não vai na linha de comando. |

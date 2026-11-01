@@ -150,3 +150,9 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 | Texto maior/centralizado na tela do instalador e do SO | Fonte do console (fbcon=font ou setfont) não avaliada; o texto fica pequeno no canto superior esquerdo | kernel com fonte grande no initramfs |
 | Textos do console F2 (reiniciar o serviço do worker) | O código muda, mas só vale na imagem de disco reconstruída (build-rootfs.sh + mk-disk.sh) | nova imagem x86 |
 | `phase-u-usb.sh` no Windows | Falha por caminho `/d/...` no Python do Windows (ambiente, não o código) | rodar em Linux/WSL |
+
+## Versão única (ADR-029)
+
+- Regravar o Pi (netboot/SSH ou cartão) com a primeira release do regime único; a imagem antiga (12.x) não entra no novo regime.
+- Limpar `code/os/image/build/rootfs-*.ext4` antigos (numeração 1.0/2.0/3.0 e 12.x).
+- Rebuild final (imagens, initramfs, instalador e pacotes) com a versão do `[workspace.package]` ainda não feito.

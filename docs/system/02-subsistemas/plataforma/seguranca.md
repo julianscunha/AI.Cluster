@@ -86,7 +86,7 @@ Sem `AI_CLUSTER_TLS_CLIENT_CA`, o cliente não apresenta certificado, e a creden
 
 ## Atestação de software
 
-Nas imagens do AI Cluster OS, cada worker mede o próprio slot de boot (SHA-256 da partição ativa) e informa a medida e a versão da imagem. O controller marca um worker como `attested` quando versão e medida são iguais às da release assinada. A coluna `MEDIDA` de `aic cluster nodes` mostra `confere` nesse caso.
+Nas imagens do AI Cluster OS, cada worker mede o próprio slot de boot (SHA-256 da partição ativa) e informa a medida e a versão do produto (X.Y.Z, [[adr-029-versao-unica-do-produto]]). O controller marca um worker como `attested` quando versão e medida são iguais às da release assinada. A coluna `MEDIDA` de `aic cluster nodes` mostra `confere` nesse caso.
 
 A medida prova que o conteúdo do slot é o esperado. Ela não prova que o worker é íntegro: quem controla o worker controla o que ele informa. Não há TPM, secure boot nem dm-verity nesta versão.
 

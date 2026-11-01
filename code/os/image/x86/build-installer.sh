@@ -15,8 +15,8 @@
 # Nada é gravado em disco aqui; é só montagem de arquivos.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# versão mínima aceita pelo instalador (não aceita imagem mais antiga, replay/downgrade): a deste build
-case ${AIC_RELEASE:-} in ''|*[!0-9.]*|.*|*.) echo "AIC_RELEASE é obrigatório: versão numérica (ex.: 1.0) = mínima aceita" >&2; exit 2;; esac
+# versão mínima aceita pelo instalador (não aceita imagem mais antiga, replay/downgrade): a deste build (a do produto)
+AIC_RELEASE=$(sh ../../scripts/version.sh); export AIC_RELEASE   # versão única (ADR-029)
 PUB=${1:-${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}}
 [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh ou passe a chave como argumento)" >&2; exit 2; }
 HOSTDIR=$(pwd -W 2>/dev/null || pwd)

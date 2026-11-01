@@ -47,15 +47,13 @@ fn assinatura_ok(text: &str) -> bool {
 }
 
 /// Valida o que vai ser repassado a todos os workers e, depois, a um comando do worker. Uma release
-/// leva a assinatura de AI Cluster OS, a de Linux comum, ou as duas: cada worker confere a sua (ADR-025).
+/// leva a assinatura de AI Cluster OS, a de Linux, ou as duas: cada worker confere a sua (ADR-025).
 pub fn validate(release: &Release) -> Result<(), String> {
     if !palavra(&release.version, "._-+") {
         return Err("versão inválida".into());
     }
     if release.signature.is_empty() && release.linux_signature.is_empty() {
-        return Err(
-            "a release precisa de assinatura (AI Cluster OS, Linux comum ou as duas)".into(),
-        );
+        return Err("a release precisa de assinatura (AI Cluster OS, Linux ou as duas)".into());
     }
     if !release.signature.is_empty() {
         if release.sha256.len() != 64 || !release.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -93,7 +91,7 @@ pub fn validate(release: &Release) -> Result<(), String> {
 pub enum Canal {
     /// AI Cluster OS (imagem A/B): `signature`, com URL e hashes da imagem.
     Os,
-    /// Linux comum: `linux_signature`.
+    /// Linux: `linux_signature`.
     Linux,
     /// Worker antigo, que não declara o canal: pode ser de imagem ou Linux (v0.2.1); serve a qualquer assinatura.
     Legado,

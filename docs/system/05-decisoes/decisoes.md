@@ -41,6 +41,7 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-026-renovacao-e-revogacao-do-certificado-do-no]] | decidido | 2026-10-30 | Controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker (sem convite aberto); revogar corta a renovação e o tráfego; sem CRL |
 | [[adr-027-worker-removido-so-volta-por-convite]] | decidido | 2026-10-31 | Remover deixa uma lápide com a credencial: o worker que a apresenta é recusado e só volta por convite (`aic worker join`); retirar mantém a identidade; revogar segue como rotação |
 | [[adr-028-canal-de-atualizacao-declarado-pelo-worker]] | decidido | 2026-10-31 | O worker declara o canal de atualização (`update_kind`: `os` ou `linux`) e o controller só leva a release aos workers cujo canal ela traz; release só-Linux não tem worker de imagem como canário |
+| [[adr-029-versao-unica-do-produto]] | decidido | 2026-11-01 | A release SemVer X.Y.Z vale para crates, setup, binários, imagens do SO, instalador e dedicado; fonte única no `[workspace.package]` (`scripts/version.sh`), `AIC_RELEASE` só sobrescreve em teste; atualizador compara por SemVer |
 
 ## Notas
 

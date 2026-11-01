@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assina uma release (F19) e imprime os argumentos de `aic cluster rollout`.
 #
-#   bash code/os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]
+#   bash code/os/image/sign-release.sh <versão = $(sh code/scripts/version.sh), ADR-029> <rootfs.gz> <rootfs.ext4> [placa] [chave]
 #
 # A chave privada (Ed25519) fica fora do repositório, por padrão em ~/.aic/release.key (gere com
 # release-keys.sh). A mensagem assinada é a mesma que o aic-updater monta no worker:

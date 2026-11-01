@@ -158,12 +158,12 @@ Limites:
 
 Regras gerais:
 
-- O controller empurra a release assinada para workers com AI Cluster OS (assinatura do AI Cluster OS) e para workers em Linux comum (assinatura de Linux, [[adr-025-gatilho-de-atualizacao-assinada-linux]]). Não empurra para controller nem gateway em Linux comum: cada um roda `aic update apply`.
+- O controller empurra a release assinada para workers com AI Cluster OS (assinatura do AI Cluster OS) e para workers em Linux (assinatura de Linux, [[adr-025-gatilho-de-atualizacao-assinada-linux]]). Não empurra para controller nem gateway em Linux: cada um roda `aic update apply`.
 - Falhas no meio do `aic update apply` desfazem tudo: os binários, o `setup`, o `bootstrap.sh`, o wrapper `aic` e os arquivos `.env` voltam ao que eram (guardados em `/opt/ai-cluster/bin/.prev`; a geração anterior só é substituída depois de a nova subir), o serviço antigo é reiniciado e confirmado, e o comando sai com erro (com texto distinto se o antigo também não subir). O worker confirma o registro no controller depois de reiniciar. Sem `BASE` na release de origem, o update do worker recusa em vez de cair no último lançamento público do GitHub; informe `--version`.
 
-Controller e gateway em Linux comum não recebem empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada worker, para o operador ver quem está para trás.
+Controller e gateway em Linux não recebem empurrão: cada máquina roda `aic update apply`. Por isso `aic cluster nodes` mostra a coluna `VERSÃO` de cada worker, para o operador ver quem está para trás.
 
-### Assinatura da release Linux comum
+### Assinatura da release Linux
 
 `scripts/package-release.sh` assina o `SHA256SUMS` com `~/.aic/linux.key` (Ed25519) e grava `SHA256SUMS.sig`; a chave pública (`os/linux.pub`) vai no pacote `tools` como `release.pub`. A instalação grava essa chave em `/etc/ai-cluster/release.pub` e a usa para conferir **toda** atualização, antes de qualquer hash. Só a instalação grava a chave: `update` nunca a busca de novo na origem.
 
@@ -180,8 +180,9 @@ O `os/bootstrap.sh` continua servindo para pôr o worker num Linux sem o `aic`. 
 
 ### Rollout pelo controller (imagem A/B, armv7 e x86_64)
 
+0. **Versão.** Suba o `version` do `[workspace.package]` em `code/Cargo.toml` (X.Y.Z, [[adr-029-versao-unica-do-produto]]). Todos os artefatos (crates, setup, binários Linux, imagens do SO, instalador, pasta dedicado) tomam essa versão por `code/scripts/version.sh`; o `<versão>` abaixo é `$(sh code/scripts/version.sh)`. A imagem só atualiza para versão maior (comparação numérica por componente); rebuild com a mesma versão é recusado.
 1. Gere o `.gz` do rootfs (`gzip -n -k os/image/build/rootfs.ext4`; o `build-rootfs.sh` produz só o `.ext4`) e assine a release: `bash os/image/sign-release.sh <versão> <rootfs.gz> <rootfs.ext4> [placa] [chave]`. O script imprime os argumentos do passo seguinte.
-2. Publique a release: `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>`. Para os workers em Linux comum, `aic cluster rollout <versão> --url <diretório da release> --linux-signature <base64 de SHA256SUMS.sig>` (o `package-release.sh` imprime a linha pronta). Uma release pode levar as duas assinaturas, e cada worker confere a sua. Sem systemd o worker não recebe o pedido.
+2. Publique a release: `aic cluster rollout <versão> --url <url> --sha256 <hex> --image-sha256 <hex> --signature <base64>`. Para os workers em Linux, `aic cluster rollout <versão> --url <diretório da release> --linux-signature <base64 de SHA256SUMS.sig>` (o `package-release.sh` imprime a linha pronta). Uma release pode levar as duas assinaturas, e cada worker confere a sua. Sem systemd o worker não recebe o pedido.
 3. O controller anuncia a release pelo heartbeat, só para workers que declaram que podem atualizar (`AI_CLUSTER_UPDATE_CMD`) e cujo canal (`AI_CLUSTER_UPDATE_KIND`: `os` ou `linux`) a release traz assinado. O primeiro worker apto é o canário; uma release só-Linux não usa worker de imagem, e vice-versa (ADR-028).
 4. O canário baixa a imagem, grava o slot inativo, reinicia, confere a medida do slot e reporta a versão nova. Só então os demais recebem a release. Com `AI_CLUSTER_ROLLOUT_WAVE=N`, no máximo N atualizam ao mesmo tempo.
 5. Se o canário não reportar a versão nova em 10 minutos, o rollout pausa (evento `rollout`). Para retomar, publique de novo ou use `aic cluster rollout --cancel`.

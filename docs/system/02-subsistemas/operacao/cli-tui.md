@@ -43,7 +43,7 @@ Ver [[seguranca]] para os papéis de cada token.
 
 A instalação com aprovação (`aic cluster install list|approve|reject|open|close`) e o convite (`aic cluster invite`) estão na referência de [[cli]].
 
-A tabela de workers traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão da imagem) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
+A tabela de workers traz as colunas `CONFIANÇA` (`pendente` ou `aprovado`), `VERSÃO` (versão do produto, X.Y.Z, [[adr-029-versao-unica-do-produto]]) e `MEDIDA` (`confere` quando a medida do slot bate com a da release assinada).
 
 ### Reservas
 

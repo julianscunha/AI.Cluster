@@ -28,7 +28,8 @@ for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
   cp "$PUB" "aic-release.d/$(basename "$PUB")"
 done
-docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=${AIC_RELEASE:-dev}" -t aic-os-rootfs:dev .
+REL=$(sh ../../scripts/version.sh)   # versão única (ADR-029)
+docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=$REL" -t aic-os-rootfs:dev .
 rm -rf ai-cluster-worker ggml-rpc-server aic aic-release.d
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar

@@ -14,3 +14,6 @@ members = [
   "crates/tunnel",
   "crates/wait",
 ]
+
+[workspace.package]
+version = "0.2.1"   # fonte única da versão do produto (ADR-029); scripts leem por scripts/version.sh
