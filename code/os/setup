@@ -1265,7 +1265,7 @@ PYSERVER
         "Valid for $MIN min. Linux with systemd and, on x86_64, libgomp1."
     printf '\n  %sWaiting for computers… (Ctrl+C ends the invitation)%s\n\n' "$D" "$Z"
   else
-    box "Worker (qualquer computador x86_64 ou ARM de 32 bits), rode:" "" \
+    box "Worker (computador x86_64 ou ARM de 32 bits), rode:" "" \
         "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" "" \
         "Gateway noutro computador: sudo aic gateway install --server $IP:$PORT --code $GCODE" "" \
         "Instalar o AI Cluster OS (modo dedicado) num computador que já tem Linux:" "" \
@@ -1331,7 +1331,7 @@ PYSERVER
 }
 
 # ---------- assinatura da release (ADR-025) ----------
-# A release traz SHA256SUMS.sig: a assinatura Ed25519 do SHA256SUMS, feita com a chave de Linux comum. Quem
+# A release traz SHA256SUMS.sig: a assinatura Ed25519 do SHA256SUMS, feita com a chave de Linux. Quem
 # confere é a chave pinada nesta instalação (/etc/ai-cluster/release.pub): nenhum hash da release é confiado
 # antes disso. A chave só é gravada pelos comandos de instalação (pina_chave); a atualização nunca a busca
 # de novo na origem. SIG_MOTIVO guarda por que a conferência falhou (uma frase, pronta para mostrar).

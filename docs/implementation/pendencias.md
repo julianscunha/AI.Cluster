@@ -142,3 +142,11 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 | Item | O que falta | Dependência |
 |---|---|---|
 | Certificado por worker | Renovação e revogação prontas (ADR-026): o controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker, com chave fixada por worker e escrita atômica no worker. Falta: rotação da CA; trocar a chave do worker na renovação; CRL para quem não é o controller; worker esquecido ou revogado offline volta só com novo convite (regra de operação, sem imposição no código); entrada de worker novo, que ainda passa pelo convite; sem systemd e em instalação antiga a renovação fica desligada; renovação ainda não exercitada ponta a ponta nem em hardware. | código, decisão |
+
+## Modo dedicado x86: ajustes do primeiro teste real
+
+| Item | O que falta | Dependência |
+|---|---|---|
+| Texto maior/centralizado na tela do instalador e do SO | Fonte do console (fbcon=font ou setfont) não avaliada; o texto fica pequeno no canto superior esquerdo | kernel com fonte grande no initramfs |
+| Textos do console F2 (reiniciar o serviço do worker) | O código muda, mas só vale na imagem de disco reconstruída (build-rootfs.sh + mk-disk.sh) | nova imagem x86 |
+| `phase-u-usb.sh` no Windows | Falha por caminho `/d/...` no Python do Windows (ambiente, não o código) | rodar em Linux/WSL |
