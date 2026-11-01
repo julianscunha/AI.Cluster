@@ -80,7 +80,8 @@ chmod 755 "$R/usr/sbin/sgdisk"
 # de carga (o modprobe -D dá a cadeia; o insmod carrega cada arquivo, já descomprimido)
 K=$(ls /lib/modules | head -n 1)
 for m in simpledrm af_packet virtio_net e1000 e1000e igc igb r8169 realtek tg3 ixgbe nvme ahci ata_piix sd_mod usb_storage uas \
-         xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci uhci_hcd virtio_pci virtio_blk efivarfs \n         r8152 ax88179_178a cdc_ether cdc_ncm atlantic bnx2 bnx2x sky2 e1000 alx atl1c; do
+         xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci uhci_hcd virtio_pci virtio_blk efivarfs \
+         r8152 ax88179_178a cdc_ether cdc_ncm atlantic bnx2 bnx2x sky2 e1000 alx atl1c; do
   modprobe -S "$K" -D "$m" 2>/dev/null
 done | sed -n "s|^insmod ||p" | awk "!seen[\$0]++" > /tmp/modulos.txt
 : > "$R/etc/aic/modules"
