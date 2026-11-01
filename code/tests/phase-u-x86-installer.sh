@@ -98,6 +98,24 @@ cand=$(for n in sda sdb sdc nvme0n1; do disco disco_ok "$n" 2>/dev/null && print
 [ "$cand" = "sda nvme0n1 " ] || fail "lista sem force: '$cand' (esperado 'sda nvme0n1 ')"
 echo "OK: sem force sai 'sda nvme0n1'; com force o removível entra, o AIC não; blkid com erro e serial trocado recusam; modelo sanitizado"
 
+# menu de disco na tela: ordem (maior primeiro), teclas (setas, dígito, Enter), tempo esgotado e candidato único
+esc() { ( export AIC_TECLAS="$1"; disco eval 'escolhe_disco >/dev/null 2>&1; echo $PREFERIDO' ); }
+[ "$(disco candidatos | awk '{print $1}' | tr '\n' ' ')" = "nvme0n1 sda sdd " ] || fail "candidatos fora de ordem (maior primeiro) ou com removível/AIC"
+[ "$(esc 'enter')" = nvme0n1 ] || fail "Enter não escolheu o sugerido (maior interno)"
+[ "$(esc 'baixo enter')" = sda ] || fail "seta para baixo + Enter não escolheu o 2o"
+[ "$(esc 'baixo baixo cima enter')" = sda ] || fail "navegação com setas errada"
+[ "$(esc '2')" = sda ] || fail "dígito 2 não escolheu o 2o disco"
+[ "$(esc '9 outra enter')" = nvme0n1 ] || fail "dígito fora da lista deve ser ignorado"
+[ "$(esc '')" = nvme0n1 ] || fail "sem tecla (60 s) deve seguir com o sugerido"
+cp "$R/aic-discos.txt" "$T/discos.todos"
+grep '^nvme0n1 ' "$T/discos.todos" > "$R/aic-discos.txt"
+[ "$(esc 'baixo')" = nvme0n1 ] || fail "candidato único deve ser usado sem perguntar"
+cp "$T/discos.todos" "$R/aic-discos.txt"
+tela=$(export AIC_TECLAS=""; disco eval 'CAND=$(candidatos); desenha_discos 1')
+echo "$tela" | grep -q "sugerido" || fail "a tela não marca o sugerido"
+echo "$tela" | grep -q "APAGADO" || fail "a tela não avisa que o disco será APAGADO"
+echo "OK: menu de disco (setas, dígito, Enter, 60 s e candidato único)"
+
 echo "=== C) conferência da imagem: assinatura, SHA-256, VERSION e versão mínima ==="
 K=$T/k; mkdir -p "$K"
 (

@@ -34,9 +34,12 @@ fn descreve(disco: &InstallDisk) -> String {
     )
 }
 
-/// O disco que a aprovação sugere: o único interno (não removível). Com dois internos, ou só
-/// removíveis, quem escolhe é o operador.
+/// O disco que a aprovação sugere: o que o usuário escolheu na tela do aparelho; senão o único
+/// interno (não removível). Com dois internos, ou só removíveis, quem escolhe é o operador.
 pub fn disco_sugerido(discos: &[InstallDisk]) -> Option<&InstallDisk> {
+    if let Some(escolhido) = discos.iter().find(|d| d.preferred) {
+        return Some(escolhido);
+    }
     let mut internos = discos.iter().filter(|d| !d.removable);
     let primeiro = internos.next()?;
     internos.next().is_none().then_some(primeiro)
@@ -389,6 +392,7 @@ mod tests {
             size_bytes: 500_000_000_000,
             model: "SSD".into(),
             removable: removivel,
+            preferred: false,
         }
     }
 
@@ -399,6 +403,13 @@ mod tests {
             disco_sugerido(&um_interno).map(|d| d.name.as_str()),
             Some("mmcblk0")
         );
+    }
+
+    #[test]
+    fn sugere_o_disco_escolhido_na_tela_do_aparelho() {
+        let mut dois = [disco("sda", false), disco("sdc", false)];
+        dois[1].preferred = true;
+        assert_eq!(disco_sugerido(&dois).map(|d| d.name.as_str()), Some("sdc"));
     }
 
     #[test]

@@ -92,6 +92,86 @@ disco_ok() { # disco_ok <nome>: existe no anúncio e não mudou; não é o pendr
 	[ -z "$sr" ] || [ "$(seriais | awk -v n="$n" '$1==n')" = "$sr" ] || { echo "disco $n trocou de número de série ou WWN desde o anúncio" >&2; return 1; }
 }
 
+candidatos() { # discos que podem ser apagados, maior primeiro: internos; removíveis só se não houver interno
+	for forca in false true; do
+		out=
+		for n in $(awk '{print $1}' "$RUN/aic-discos.txt"); do
+			( FORCADO=$forca; disco_ok "$n" ) >/dev/null 2>&1 && out="$out$n "
+		done
+		[ -n "$out" ] || continue
+		for n in $out; do awk -v n="$n" '$1==n' "$RUN/aic-discos.txt"; done | sort -k2,2nr
+		return 0
+	done
+}
+
+tecla() { # lê uma tecla em TECLA: cima, baixo, enter, 1-9, esc, outra ou vazio (nada no tempo); AIC_TECLAS é a fila de teste
+	if [ -n "${AIC_TECLAS+x}" ]; then
+		set -- $AIC_TECLAS; TECLA=${1:-}; [ $# -gt 0 ] && shift; AIC_TECLAS="$*"; return 0
+	fi
+	h=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+	case $h in
+	'') TECLA= ;;
+	0a|0d) TECLA=enter ;;
+	1b)
+		stty min 0 time 2 2>/dev/null
+		q=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+		stty min 0 time 10 2>/dev/null
+		case $q in 5b41|4f41) TECLA=cima;; 5b42|4f42) TECLA=baixo;; *) TECLA=esc;; esac ;;
+	6b) TECLA=cima ;;
+	6a) TECLA=baixo ;;
+	3[1-9]) TECLA=${h#3} ;;
+	*) TECLA=outra ;;
+	esac
+}
+
+desenha_discos() { # desenha_discos <selecionado (1..n)>
+	printf '\033[2J\033[H'
+	fala "== AI.Cluster - em qual disco instalar? =="
+	fala ""
+	fala "Use as setas (cima/baixo) e Enter, ou digite o número do disco."
+	fala ""
+	printf '%s\n' "$CAND" | awk -v sel="$1" '{
+		m=$4; for (i=5;i<=NF;i++) m=m " " $i
+		t=($3==1)?"removível":"interno"
+		printf "  %s %d) %-10s %6.0f GB  %-28s %s%s\n", (NR==sel)?">":" ", NR, $1, $2/1000000000, m, t, (NR==1)?"  [sugerido]":""
+	}'
+	fala ""
+	fala "ATENÇÃO: o disco escolhido será APAGADO por completo (inclusive o Windows ou outro sistema que esteja nele)."
+	fala "Nada é apagado agora: depois você aprova no controller (aic cluster install approve)."
+	fala "Sem escolha em 60 s, o sugerido é anunciado ao controller."
+}
+
+escolhe_disco() { # define PREFERIDO (e AIC_PREFERRED_DISK, que o aic-wait anuncia); com mais de um candidato, pergunta na tela
+	PREFERIDO=
+	CAND=$(candidatos)
+	[ -n "$CAND" ] || { fala "Nenhum disco deste computador pode ser apagado (veja os avisos do controller)."; return 0; }
+	total=$(printf '%s\n' "$CAND" | wc -l)
+	PREFERIDO=$(printf '%s\n' "$CAND" | head -n 1 | cut -d' ' -f1)
+	if [ "$total" -gt 1 ] && { [ -t 0 ] || [ -n "${AIC_TECLAS+x}" ]; }; then
+		[ "$total" -le 9 ] || { CAND=$(printf '%s\n' "$CAND" | head -n 9); total=9; }
+		salva=$(stty -g 2>/dev/null)
+		stty -icanon -echo min 0 time 10 2>/dev/null
+		sel=1; ocioso=0
+		desenha_discos "$sel"
+		while [ "$ocioso" -lt 60 ]; do
+			tecla
+			case $TECLA in
+			'') ocioso=$((ocioso + 1)); continue ;;
+			cima) [ "$sel" -gt 1 ] && sel=$((sel - 1)) ;;
+			baixo) [ "$sel" -lt "$total" ] && sel=$((sel + 1)) ;;
+			[1-9]) [ "$TECLA" -le "$total" ] && { sel=$TECLA; TECLA=enter; } ;;
+			esac
+			ocioso=0
+			[ "$TECLA" = enter ] && { PREFERIDO=$(printf '%s\n' "$CAND" | sed -n "${sel}p" | cut -d' ' -f1); break; }
+			desenha_discos "$sel"
+		done
+		[ -n "$salva" ] && stty "$salva" 2>/dev/null
+		printf '\033[2J\033[H'
+	fi
+	AIC_PREFERRED_DISK=$PREFERIDO; export AIC_PREFERRED_DISK
+	fala "Disco para instalar: $PREFERIDO (anunciado ao controller; nada é apagado antes da sua aprovação)."
+}
+
 contagem() { # 10 s para desligar antes da escrita
 	l=$(awk -v n="$1" '$1==n' "$RUN/aic-discos.txt")
 	gb=$(echo "$l" | awk '{printf "%d GB", $2 / 1000000000}')
@@ -161,6 +241,7 @@ main() {
 	[ -n "$IMGURL" ] || IMGURL="$CTRL/imagem"
 	discos > "$RUN/aic-discos.txt"
 	seriais > "$RUN/aic-seriais.txt"
+	escolhe_disco
 	fala ""
 	fala "Aguardando a aprovação no controller $CTRL."
 	fala "Confira a impressão digital acima com a do controller antes de aprovar."

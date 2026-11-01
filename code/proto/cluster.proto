@@ -1066,6 +1066,8 @@ message InstallDisk {
   string model = 3;
   /// Removível (USB ou flag `removable` do kernel). O controller só aprova com `force_removable`.
   bool removable = 4;
+  /// Disco que o usuário escolheu na tela do aparelho; `aic cluster install approve` o sugere.
+  bool preferred = 5;
 }
 
 /// O que a etapa de espera conta sobre o aparelho. Chega sem credencial: nada aqui é confiável até

@@ -3996,6 +3996,7 @@ mod tests {
                         size_bytes: 1,
                         model: String::new(),
                         removable: false,
+                        preferred: false,
                     }],
                     ..Default::default()
                 },

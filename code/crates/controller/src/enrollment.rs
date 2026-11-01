@@ -178,6 +178,7 @@ impl Enrollments {
                 size_bytes: disk.size_bytes,
                 model: clean(&disk.model, 40),
                 removable: disk.removable,
+                preferred: disk.preferred,
             })
             .collect();
         let secret_hash = hash(&request.secret);
@@ -570,6 +571,7 @@ mod tests {
             size_bytes: 16_000_000_000,
             model: "SD".into(),
             removable: false,
+            preferred: false,
         }
     }
 

@@ -110,7 +110,9 @@ fn disks() -> Vec<InstallDisk> {
             let model = fs::read_to_string(entry.path().join("device/model")).unwrap_or_default();
             let flag = fs::read_to_string(entry.path().join("removable")).unwrap_or_default();
             let real = fs::canonicalize(entry.path()).unwrap_or_default();
+            let preferred = std::env::var("AIC_PREFERRED_DISK").is_ok_and(|p| p == name);
             Some(InstallDisk {
+                preferred,
                 removable: removivel(&flag, &real.to_string_lossy()),
                 name,
                 size_bytes: sectors * 512,
