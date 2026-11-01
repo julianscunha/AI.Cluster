@@ -149,7 +149,7 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 |---|---|---|
 | Texto maior/centralizado na tela do instalador e do SO | Fonte do console (fbcon=font ou setfont) não avaliada; o texto fica pequeno no canto superior esquerdo | kernel com fonte grande no initramfs |
 | Textos do console F2 (reiniciar o serviço do worker) | O código muda, mas só vale na imagem de disco reconstruída (build-rootfs.sh + mk-disk.sh) | nova imagem x86 |
-| Relógio e DNS da imagem x86 | Achado: o notebook ficou 3 h atrasado e sem DNS (`resolv.conf` vazio), e `aic worker change` falhou ('certificado não confere com a CA'). O Dockerfile x86 agora habilita `aic-dns` e `makestep 1 -1` do chrony, como a imagem do Pi; só vale na imagem reconstruída. | nova imagem x86 |
+| Relógio e DNS da imagem x86 | Achado: o notebook ficou 3 h atrasado e sem DNS (`resolv.conf` vazio), e `aic worker change` falhou ('certificado não confere com a CA'). O Dockerfile x86 agora habilita `aic-dns` e `makestep 1 -1` do chrony, como a imagem do Pi; só vale na imagem reconstruída. Verificado no notebook com a 0.2.2 (slot B, por rollout): `aic-dns` e `chronyd` sobem, mas `/etc/resolv.conf` continua um arquivo vazio e o chrony fica sem fontes (data atrasada), porque `x86/build-rootfs.sh` não fazia o link `/etc/resolv.conf` -> `/run/resolv.conf` que o do Pi faz. O script já foi corrigido; vale a partir da próxima versão (a 0.2.2 não pode ser regravada por rollout). | nova versão (0.2.3) com rootfs x86 |
 | `phase-u-usb.sh` no Windows | Falha por caminho `/d/...` no Python do Windows (ambiente, não o código) | rodar em Linux/WSL |
 
 ## Versão única (ADR-029)

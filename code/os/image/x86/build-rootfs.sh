@@ -35,6 +35,7 @@ docker rm "$CID" >/dev/null
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" debian:12-slim sh -c "
   apt-get update -qq >/dev/null && apt-get install -y -qq e2fsprogs >/dev/null &&
   rm -rf /r && mkdir /r && tar -xf /b/rootfs-x86.tar -C /r && rm -f /r/.dockerenv &&
+  rm -f /r/etc/resolv.conf && ln -s /run/resolv.conf /r/etc/resolv.conf &&
   rm -f /b/rootfs-x86.ext4 && mke2fs -q -t ext4 -O ^has_journal,^orphan_file -L aicroot -d /r -E root_owner=0:0 /b/rootfs-x86.ext4 $SLOT &&
   e2fsck -fn /b/rootfs-x86.ext4 | tail -1 && du -sh /r && ls -l /r/boot"
 ls -l build/rootfs-x86.ext4
