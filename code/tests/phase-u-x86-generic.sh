@@ -19,9 +19,11 @@ cp "$SRC/mk-disk.sh" "$SRC/grub.cfg" "$T/os/image/x86/"
 head -c 1048576 /dev/zero > "$T/os/image/build/rootfs-x86.ext4"   # o mk-disk só copia os bytes
 printf 'AI_CLUSTER_CONTROLLER=https://controller.teste:50051\nAI_CLUSTER_JOIN_TOKEN=tok-teste\nAI_CLUSTER_NODE_ID=no-gravado\n' > "$T/env/novo.env"
 printf 'AI_CLUSTER_NODE_ID=velho\n' > "$T/env/velho.env"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIteste op@pc
+' > "$T/env/chaves"
 # funções de gravação, extraídas do próprio script (sem cópia no teste)
-sed -n '/^grava_env() {/,/^}/p; /^entrada_efi() {/,/^}/p' "$SRC/install-disk.sh" > "$T/env/funcoes.sh"
-[ "$(grep -c '^grava_env() {\|^entrada_efi() {' "$T/env/funcoes.sh")" = 2 ] || fail "não achei grava_env/entrada_efi em install-disk.sh"
+sed -n '/^grava_env() {/,/^}/p; /^grava_ssh() {/,/^}/p; /^entrada_efi() {/,/^}/p' "$SRC/install-disk.sh" > "$T/env/funcoes.sh"
+[ "$(grep -c '^grava_env() {\|^grava_ssh() {\|^entrada_efi() {' "$T/env/funcoes.sh")" = 3 ] || fail "não achei grava_env/grava_ssh/entrada_efi em install-disk.sh"
 
 echo "=== A) imagem genérica: sem identidade, sem worker.env ==="
 ( cd "$T/os/image" && DISK_MIB=2200 bash x86/mk-disk.sh ) >"$T/mk-generic.log" 2>&1 || { cat "$T/mk-generic.log"; fail "mk-disk genérico falhou"; }
@@ -45,6 +47,10 @@ debugfs -R "stat worker.env" p4.img 2>/dev/null | grep -o "User: *[0-9]*   Group
 debugfs -R "cat worker.env" p4.img 2>/dev/null | cmp /w/env/novo.env - && echo "conteudo_1_ok"
 grava_env /w/os/image/build/p4.img /w/env/velho.env && echo "gravou_2"
 debugfs -R "cat worker.env" p4.img 2>/dev/null | cmp /w/env/velho.env - && echo "regravacao_ok"
+grava_ssh /w/os/image/build/p4.img /w/env/chaves && echo "ssh_gravou"
+debugfs -R "stat ssh/authorized_keys" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/chave /"
+debugfs -R "stat ssh" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/dir /"
+grava_ssh /w/os/image/build/p4.img /w/env/chaves && echo "ssh_regravou"
 ' > "$T/b.log" 2>&1 || { cat "$T/b.log"; fail "passo B falhou"; }
 cat "$T/b.log"
 grep -q TEM_WORKER_ENV "$T/b.log" && fail "imagem genérica já tem worker.env"
@@ -55,7 +61,9 @@ grep -q "User: *0   Group: *0" "$T/b.log" || fail "worker.env não ficou com don
 grep -q "conteudo_1_ok" "$T/b.log" || fail "conteúdo gravado não confere"
 grep -q "gravou_2" "$T/b.log" || fail "regravação falhou"
 grep -q "regravacao_ok" "$T/b.log" || fail "regravação não substituiu o worker.env"
-echo "OK: p4 sem worker.env na genérica; --env grava, com 0600 e root, e regrava"
+grep -q "ssh_gravou" "$T/b.log" && grep -q "ssh_regravou" "$T/b.log" || fail "grava_ssh falhou"
+grep -q "chave Mode: *0600" "$T/b.log" && grep -q "dir Mode: *0700" "$T/b.log" || fail "ssh/authorized_keys sem 0600 ou ssh sem 0700"
+echo "OK: p4 sem worker.env na genérica; --ssh grava ssh/authorized_keys 0600 em dir 0700; --env grava, com 0600 e root, e regrava"
 
 echo "=== C) efibootmgr: ausente avisa e segue; presente sem NVRAM devolve erro ==="
 # a imagem tem efibootmgr: a ausência é simulada com um PATH sem ele

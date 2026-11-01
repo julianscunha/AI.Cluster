@@ -49,6 +49,8 @@ O modo dedicado instala o AI Cluster OS por rede ou pendrive ([[adr-017-instalac
 
 - Janela de abertura: a porta anônima existe, mas responde "indisponível" até o operador abrir (`SetEnrollment`, até 120 min, fecha sozinha). O `aic cluster invite` abre pelos minutos do convite e fecha ao sair; o convite serve o script `/wait` para quem já tem Linux (confere o ambiente, baixa só o `aic-wait` do pacote do worker e o roda).
 
+- Chave SSH do operador: `ClaimInstallResponse.ssh_authorized_keys` (campo 4, repetido) devolve as chaves públicas do arquivo `AI_CLUSTER_AUTHORIZED_KEYS`, relido a cada claim e filtrado (só `ssh-ed25519`/`ssh-rsa`/`ecdsa-sha2-*` sem opções, até 16). O instalador as grava em `/ssh/authorized_keys` do worker; sem elas o worker fica sem SSH. Uma chave pública não é segredo, mas o filtro impede que o arquivo injete `command=` ou linhas extras no worker.
+
 ## Alternativas
 
 - **Lista de MACs obrigatória:** descartada. O usuário nem sempre sabe o MAC, e o MAC é falsificável.

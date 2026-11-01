@@ -281,13 +281,17 @@ main() {
 	disco_ok "$DISCO" || pare "o disco $DISCO mudou durante a contagem; nada foi apagado."
 
 	fala "Pegando a configuração do worker no controller..."
-	AIC_INSTALL_TOKEN="$TOKEN" aic-wait "$CTRL" --out "$RUN/worker.env" \
+	rm -f "$RUN/authorized_keys"   # sobra de tentativa anterior não pode valer como chave atual
+	AIC_INSTALL_TOKEN="$TOKEN" aic-wait "$CTRL" --out "$RUN/worker.env" --ssh-out "$RUN/authorized_keys" \
 		|| pare "o controller não entregou a configuração (veja a mensagem acima). Nada foi apagado; aprove o aparelho de novo no controller."
 
 	# de novo logo antes de gravar: a rede e o claim levam tempo, e o disco pode ter sido trocado nesse meio
 	disco_ok "$DISCO" || pare "o disco $DISCO mudou depois da aprovação, antes da gravação. Nada foi apagado; aprove de novo (o token já foi usado)."
 	fala "Gravando $DISCO..."
-	install-disk.sh "$RUN/img/$IMGNAME" "$DEV/$DISCO" --yes --env "$RUN/worker.env" --efi-entry \
+	# chaves SSH do operador (o claim as entrega); sem elas o worker instala igual, mas sem SSH
+	SSHARG=; [ -s "$RUN/authorized_keys" ] && SSHARG="--ssh $RUN/authorized_keys"
+	# shellcheck disable=SC2086
+	install-disk.sh "$RUN/img/$IMGNAME" "$DEV/$DISCO" --yes --env "$RUN/worker.env" $SSHARG --efi-entry \
 		|| pare "a gravação em $DEV/$DISCO falhou (veja a mensagem acima). O disco pode ter ficado pela metade: aprove o aparelho de novo no controller."
 	sync
 	fala ""
@@ -295,6 +299,8 @@ main() {
 	fala "  INSTALADO."
 	fala "  RETIRE O PENDRIVE e aperte Enter para reiniciar."
 	fala "  O aparelho vai dar boot pelo disco."
+	if [ -n "$SSHARG" ]; then fala "  SSH liberado para as chaves do operador (usuário root)."
+	else fala "  ATENCAO: o controller não tinha chave SSH; este worker ficou SEM SSH."; fi
 	fala "=================================================="
 	# Espera o operador (a tela fica; ele precisa ler). Sem teclado/tty: reinicia após 60 s.
 	if [ -t 0 ]; then read -r _ || sleep 60; else sleep 60; fi

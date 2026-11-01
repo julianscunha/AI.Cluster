@@ -2,7 +2,7 @@
 //! impressão digital na tela e aguarda o operador aprovar. Nada é instalado nem apagado aqui.
 //!
 //!   aic-wait http://controller:50052 [--once]
-//!   aic-wait http://controller:50052 --claim-file token.txt --out worker.env [--name <nome>]  (ou AIC_INSTALL_TOKEN; --claim <token> expõe o token no ps)
+//!   aic-wait http://controller:50052 --claim-file token.txt --out worker.env [--ssh-out authorized_keys] [--name <nome>]  (ou AIC_INSTALL_TOKEN; --claim <token> expõe o token no ps)
 //!
 //! Com `https://` a CA vem de `AI_CLUSTER_TLS_CA` (e o nome do servidor de `AI_CLUSTER_TLS_DOMAIN`).
 //! Aprovado, grava `/run/aic-install.json` (ou `AIC_INSTALL_OUT`) com o token e o disco, e sai 0.
@@ -116,6 +116,33 @@ fn write_install(path: &str, token: &str, disk: &str, forced: bool) -> std::io::
 /// `worker.env` com o controller, o token e o id do worker (e o que a imagem do SO precisa para guardar credencial e receber atualização). O join token é segredo: o arquivo fica 600 mesmo se já
 /// existia com outra permissão.
 fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::Result<()> {
+    let mut text = format!(
+        "AI_CLUSTER_CONTROLLER={controller}
+AI_CLUSTER_JOIN_TOKEN={join}
+AI_CLUSTER_NODE_ID={node}
+"
+    );
+    // O que a imagem com identidade fixa (mk-disk.sh) também grava: a credencial do worker e os modelos
+    // ficam no /data, e o gatilho de atualização é o do AI Cluster OS. Sem isto o worker registrava, mas
+    // não guardava a credencial nem recebia atualização.
+    text.push_str(
+        "AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential
+AI_CLUSTER_MODEL_DIR=/data/models
+AI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request
+",
+    );
+    // Controller sem TLS aceito pelo operador (claim em claro): o worker só abre http:// com INSECURE.
+    if controller.to_ascii_lowercase().starts_with("http://") {
+        text.push_str(
+            "AI_CLUSTER_INSECURE=1
+",
+        );
+    }
+    write_private(path, &text)
+}
+
+/// Grava `text` em `path` (600), atômico e sem seguir link.
+fn write_private(path: &str, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     // Escreve num .tmp novo e troca de uma vez: quem lê nunca vê o arquivo pela metade. Um .tmp de
     // antes (ou um link no lugar dele) sai antes; create_new e O_NOFOLLOW recusam seguir link.
@@ -129,21 +156,7 @@ fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::R
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(&tmp)?;
-    writeln!(
-        file,
-        "AI_CLUSTER_CONTROLLER={controller}\nAI_CLUSTER_JOIN_TOKEN={join}\nAI_CLUSTER_NODE_ID={node}"
-    )?;
-    // O que a imagem com identidade fixa (mk-disk.sh) também grava: a credencial do worker e os modelos
-    // ficam no /data, e o gatilho de atualização é o do AI Cluster OS. Sem isto o worker registrava, mas
-    // não guardava a credencial nem recebia atualização.
-    writeln!(
-        file,
-        "AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\nAI_CLUSTER_MODEL_DIR=/data/models\nAI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request"
-    )?;
-    // Controller sem TLS aceito pelo operador (claim em claro): o worker só abre http:// com INSECURE.
-    if controller.to_ascii_lowercase().starts_with("http://") {
-        writeln!(file, "AI_CLUSTER_INSECURE=1")?;
-    }
+    file.write_all(text.as_bytes())?;
     file.sync_all()?;
     std::fs::rename(&tmp, path)
 }
@@ -175,6 +188,7 @@ async fn claim(
     token: &str,
     node_name: &str,
     out: &str,
+    ssh_out: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect(url)?;
     let reply = client
@@ -201,7 +215,45 @@ async fn claim(
         "Worker {} pré-aprovado; configuração em {out}",
         reply.node_id
     );
+    if let Some(path) = ssh_out {
+        // Só a chave pública do operador; o controller já filtrou, mas quem grava no disco confere de novo.
+        let keys: Vec<&str> = reply
+            .ssh_authorized_keys
+            .iter()
+            .map(String::as_str)
+            .filter(|k| safe_key_line(k))
+            .collect();
+        if keys.is_empty() {
+            println!("Sem chave SSH do operador no controller: este worker ficará sem SSH");
+        } else {
+            let text = keys
+                .iter()
+                .map(|k| {
+                    format!(
+                        "{k}
+"
+                    )
+                })
+                .collect::<String>();
+            write_private(path, &text)?;
+            println!("{} chave(s) SSH do operador em {path}", keys.len());
+        }
+    }
     Ok(())
+}
+
+/// Uma linha só, ASCII sem controle, no formato `tipo base64 [comentário]` sem opções.
+fn safe_key_line(line: &str) -> bool {
+    let mut parts = line.splitn(3, ' ');
+    let kind = parts.next().unwrap_or("");
+    let blob = parts.next().unwrap_or("");
+    (kind == "ssh-ed25519" || kind == "ssh-rsa" || kind.starts_with("ecdsa-sha2-"))
+        && !blob.is_empty()
+        && blob
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+        && line.len() <= 1024
+        && line.bytes().all(|b| (0x20..0x7f).contains(&b))
 }
 
 /// Motivo de uma falha do controller, em português. Porta fechada pede ação do operador, não espera.
@@ -235,7 +287,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if flag("--claim").is_some() || flag("--claim-file").is_some() || env_token.is_some() {
         let token = claim_token(flag("--claim-file"), flag("--claim"), env_token)?;
         let out = flag("--out").ok_or("--claim exige --out <arquivo>")?;
-        return claim(&url, &token, &flag("--name").unwrap_or_default(), &out).await;
+        return claim(
+            &url,
+            &token,
+            &flag("--name").unwrap_or_default(),
+            &out,
+            flag("--ssh-out").as_deref(),
+        )
+        .await;
     }
     let once = argv.iter().any(|arg| arg == "--once");
     let mut client = connect(&url)?;
@@ -350,6 +409,35 @@ mod tests {
         assert_eq!(
             text,
             "AI_CLUSTER_CONTROLLER=https://c:50051\nAI_CLUSTER_JOIN_TOKEN=join\nAI_CLUSTER_NODE_ID=x86-ddee01\nAI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\nAI_CLUSTER_MODEL_DIR=/data/models\nAI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn as_chaves_ssh_saem_600_e_so_linhas_seguras() {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(safe_key_line("ssh-ed25519 AAAAC3Nza op@pc"));
+        assert!(!safe_key_line("command=\"x\" ssh-ed25519 AAAA"));
+        assert!(!safe_key_line("ssh-ed25519 AAAA;id"));
+        assert!(!safe_key_line("ssh-ed25519 AAAA c"));
+        let dir = std::env::temp_dir().join(format!("aic-claim-ssh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("authorized_keys");
+        std::fs::write(&path, "velho").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(
+            path.to_str().unwrap(),
+            "ssh-ed25519 AAAA k
+",
+        )
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ssh-ed25519 AAAA k
+"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

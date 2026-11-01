@@ -305,6 +305,31 @@ install_files() {
   chown -R ai-cluster:ai-cluster "$DATA" "$LOGDIR"
 }
 
+# Chaves SSH do operador que o claim entrega ao worker instalado (ADR-023). Só preenche se o arquivo ainda
+# não existe ou está vazio: o que o operador já pôs nunca é sobrescrito. Origem: quem invocou o sudo.
+prepara_chaves_ssh() { # prepara_chaves_ssh [quieto]
+  KEYS=$CONF/authorized_keys
+  if [ -s "$KEYS" ]; then
+    [ "${1:-}" = quieto ] || note "$(t "chaves SSH do operador: mantive $KEYS ($(grep -c . "$KEYS") linha(s))" "operator SSH keys: kept $KEYS ($(grep -c . "$KEYS") line(s))")"
+  else
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then h=$(getent passwd "$SUDO_USER" | cut -d: -f6); else h=/root; fi
+    src=${h:-/root}/.ssh/authorized_keys
+    # o dono do arquivo tem de ser o usuário de origem (e não um link para fora)
+    if [ -f "$src" ] && [ ! -L "$src" ] && [ ! -L "${src%/*}" ]; then
+      # só chave pública pura (sem opções command=/from=), uma por linha
+      grep -E '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]+( [^[:cntrl:]]*)?$' "$src" | head -n 16 > "$KEYS.new" || true
+    else : > "$KEYS.new"; fi
+    if [ -s "$KEYS.new" ]; then
+      chown root:ai-cluster "$KEYS.new" 2>/dev/null || true; chmod 640 "$KEYS.new"; mv -f "$KEYS.new" "$KEYS"
+      [ "${1:-}" = quieto ] || note "$(t "chaves SSH do operador: copiei $(grep -c . "$KEYS") de $src para $KEYS; os workers instalados pelo convite terão SSH com elas" "operator SSH keys: copied $(grep -c . "$KEYS") from $src to $KEYS; workers installed by the invitation will get SSH with them")"
+    else
+      rm -f "$KEYS.new"
+      [ "${1:-}" = quieto ] || warn "$(t "sem chave SSH do operador: não achei chaves em $src. Sem chave, o worker instalado pelo convite fica SEM SSH. Para ter: ssh-keygen -t ed25519 e cole a .pub em $KEYS (uma por linha), antes de convidar" "no operator SSH key: found none in $src. Without a key the worker installed by the invitation gets NO SSH. To fix: ssh-keygen -t ed25519 and put the .pub in $KEYS (one per line) before inviting")"
+    fi
+  fi
+  ensure_env "$CONF/controller.env" AI_CLUSTER_AUTHORIZED_KEYS "$KEYS" || true
+}
+
 make_credentials() {
   umask 077
   JOIN=$(rand); OPERATOR=$(rand); INFERENCE=$(rand); API_KEY="aic_$(rand)"
@@ -550,6 +575,7 @@ cmd_controller_install() {
   step "$(t 'Instalando os programas' 'Installing the programs')" install_files
   instala_dedicado
   step "$(t 'Gerando credenciais e o comando aic' 'Generating credentials and the aic command')" make_credentials
+  prepara_chaves_ssh
   step "$(t 'Criando a CA e os certificados do túnel RPC' 'Creating the CA and the RPC tunnel certificates')" make_pki
   step "$(t 'Configurando os serviços' 'Configuring the services')" write_units
   step "$(t 'Subindo o controller' 'Starting the controller')" svc_start controller
@@ -1252,6 +1278,10 @@ PYSERVER
     svc_start controller
     sleep 2
   fi
+  # Chaves SSH para o worker do claim; se o controller ainda não as conhecia, reinicia uma vez para ler o caminho.
+  if ! grep -q '^AI_CLUSTER_AUTHORIZED_KEYS=' "$CONF/controller.env"; then
+    prepara_chaves_ssh; svc_start controller; sleep 2
+  else prepara_chaves_ssh; fi
   /usr/local/bin/aic cluster install open --minutes "$MIN" >/dev/null 2>&1 \
     || warn "$(t 'não consegui abrir a porta de espera da instalação; o /wait não vai funcionar' 'could not open the installation waiting port; /wait will not work')"
   if [ "$LANG_AIC" = en ]; then
@@ -1550,6 +1580,7 @@ aplica_nova() {
     if [ "$ROLE" = both ]; then gw_ip=$(cat "$CONF/server-ip" 2>/dev/null || true); else gw_ip=$(lan_ip); fi
     if [ -n "$gw_ip" ]; then ensure_env "$CONF/gateway.env" AI_CLUSTER_GATEWAY_URL "http://$gw_ip:$HTTP_PORT" || return 1; fi
   fi
+  if [ "$ROLE" = both ] || [ "$ROLE" = controller ]; then prepara_chaves_ssh quieto; fi
   # O worker Linux ganha o gatilho (e a chave de pedido) antes de reiniciar, para o novo ambiente já valer.
   if [ "$ROLE" = worker ]; then gatilho_linux || return 1; fi
   reinicia_e_espera || return 1

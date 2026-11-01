@@ -402,6 +402,72 @@ pub struct ClaimSetup {
     pub tls: bool,
     /// `AI_CLUSTER_ALLOW_PLAIN_CLAIM=1`: aceita o claim sem TLS, com aviso no log a cada uso.
     pub plain_allowed: bool,
+    /// Arquivo de chaves públicas SSH do operador (`AI_CLUSTER_AUTHORIZED_KEYS`); lido a cada claim.
+    pub ssh_keys_file: Option<String>,
+}
+
+const MAX_SSH_KEYS: usize = 16;
+const MAX_SSH_KEY_LINE: usize = 1024;
+const MAX_SSH_KEYS_FILE: u64 = 64 * 1024;
+
+/// Aceita só `tipo base64 [comentário]`, sem opções (`command=`, `from=`...) e sem controle. O prefixo
+/// do base64 tem de bater com o tipo declarado. Devolve a linha normalizada (comentário sem controle).
+pub fn valid_ssh_key(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() || line.len() > MAX_SSH_KEY_LINE || !line.is_ascii() {
+        return None;
+    }
+    if line.chars().any(|c| c.is_ascii_control()) {
+        return None;
+    }
+    let mut parts = line.splitn(3, [' ', '\t']);
+    let kind = parts.next()?;
+    let blob = parts.next()?;
+    let prefix = match kind {
+        "ssh-ed25519" => "AAAAC3NzaC1lZDI1NTE5",
+        "ssh-rsa" => "AAAAB3NzaC1yc2E",
+        "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521" => {
+            "AAAAE2VjZHNhLXNoYTItbmlzdHA"
+        }
+        _ => return None,
+    };
+    if !blob.starts_with(prefix)
+        || !blob
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+    {
+        return None;
+    }
+    let comment = parts.next().unwrap_or("").trim();
+    Some(if comment.is_empty() {
+        format!("{kind} {blob}")
+    } else {
+        format!("{kind} {blob} {comment}")
+    })
+}
+
+/// Lê `AI_CLUSTER_AUTHORIZED_KEYS`: linhas inválidas são ignoradas (com aviso), no máximo 16 chaves.
+pub fn load_authorized_keys(path: &str) -> Vec<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    let read =
+        std::fs::File::open(path).and_then(|f| f.take(MAX_SSH_KEYS_FILE).read_to_string(&mut text));
+    if let Err(err) = read {
+        println!("AVISO: não li {path} ({err}): o claim não entregará chave SSH");
+        return Vec::new();
+    }
+    let mut keys = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+    {
+        match valid_ssh_key(line) {
+            Some(key) if keys.len() < MAX_SSH_KEYS => keys.push(key),
+            Some(_) => println!("AVISO: {path}: mais de {MAX_SSH_KEYS} chaves, ignorei o resto"),
+            None => println!("AVISO: {path}: linha ignorada (só chave pública sem opções)"),
+        }
+    }
+    keys
 }
 
 /// O lado sem credencial: `Announce` e `ClaimInstall`, na porta própria.
@@ -468,6 +534,12 @@ impl Enrollment for EnrollmentService {
             controller_url: url,
             join_token: self.setup.join_token.clone(),
             node_id,
+            ssh_authorized_keys: self
+                .setup
+                .ssh_keys_file
+                .as_deref()
+                .map(load_authorized_keys)
+                .unwrap_or_default(),
         }))
     }
 }
@@ -821,6 +893,7 @@ mod tests {
             Arc::new(Registry::new()),
             ClaimSetup {
                 public_url: None,
+                ssh_keys_file: None,
                 join_token: String::new(),
                 tls: false,
                 plain_allowed: false,
@@ -913,12 +986,24 @@ mod tests {
         let registry = Arc::new(Registry::requiring_approval());
         let now = crate::registry::unix_ms();
         let token = aprovado(&enrollments, 1, MAC, now);
+        let keys_file = {
+            let path = std::env::temp_dir().join(format!("aic-keys-{}", std::process::id()));
+            std::fs::write(
+                &path,
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIx op
+command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
+",
+            )
+            .unwrap();
+            path
+        };
         let claim = |url: Option<&str>| {
             EnrollmentService::new(
                 enrollments.clone(),
                 registry.clone(),
                 ClaimSetup {
                     public_url: url.map(String::from),
+                    ssh_keys_file: Some(keys_file.to_string_lossy().into()),
                     join_token: "join-secreto".into(),
                     tls: true,
                     plain_allowed: false,
@@ -942,6 +1027,7 @@ mod tests {
         assert_eq!(got.controller_url, "https://ctl:50051");
         assert_eq!(got.join_token, "join-secreto");
         assert_eq!(got.node_id, "x86-ddee01");
+        assert_eq!(got.ssh_authorized_keys.len(), 1);
         let again = claim(Some("https://ctl:50051"))
             .claim_install(request())
             .await
@@ -958,6 +1044,7 @@ mod tests {
         let tls = aprovado(&enrollments, 2, "aa:bb:cc:dd:ee:02", now);
         let setup = |tls: bool, plain_allowed: bool| ClaimSetup {
             public_url: Some("https://ctl:50051".into()),
+            ssh_keys_file: None,
             join_token: "join-secreto".into(),
             tls,
             plain_allowed,
@@ -991,5 +1078,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ok_tls.into_inner().node_id, "x86-ddee02");
+    }
+
+    #[test]
+    fn so_chave_publica_ssh_sem_opcoes_passa() {
+        let ok = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc juliano@pc";
+        assert_eq!(valid_ssh_key(ok).as_deref(), Some(ok));
+        assert!(valid_ssh_key("ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB").is_some());
+        for bad in [
+            "command=\"rm -rf /\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA",
+            "from=\"*\",ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA",
+            "ssh-ed25519 AAAAB3NzaC1yc2EAAAA",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA x
+ssh-rsa y",
+            "ssh-dss AAAAB3NzaC1kc3M",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5;id",
+            "ssh-ed25519",
+            "",
+        ] {
+            assert!(valid_ssh_key(bad).is_none(), "{bad}");
+        }
     }
 }

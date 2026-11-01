@@ -318,6 +318,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tls: identity.is_some(),
             plain_allowed: std::env::var("AI_CLUSTER_ALLOW_PLAIN_CLAIM")
                 .is_ok_and(|value| value.trim() == "1"),
+            // Chaves SSH do operador que o claim entrega ao worker instalado (sem elas, sem SSH).
+            ssh_keys_file: std::env::var("AI_CLUSTER_AUTHORIZED_KEYS")
+                .ok()
+                .map(|path| path.trim().to_string())
+                .filter(|path| !path.is_empty()),
         };
         let service =
             EnrollmentServer::new(EnrollmentService::new(enrollments, registry.clone(), setup))

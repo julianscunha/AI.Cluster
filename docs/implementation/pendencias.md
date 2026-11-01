@@ -160,5 +160,4 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 ## Worker instalado pelo claim x GRUB da imagem com identidade (varredura 2026-11-01)
 
 - Corrigido: o `worker.env` do claim agora traz `NODE_CREDENTIAL_FILE`, `MODEL_DIR` e `UPDATE_CMD` (igual a `mk-disk.sh`).
-- Sem acesso ao worker instalado pelo claim: a imagem genérica não traz `authorized_keys`, então não há SSH, e a senha do console (`aic worker passwd`) só se define por SSH. Opções: o claim entregar a chave pública do operador (a do `aic cluster invite`), ou um item "Definir senha do console" no F2.
 - Sem TLS no modo dedicado: o worker instalado só fala com controller `http://` (`AI_CLUSTER_INSECURE=1`); o claim não entrega a CA. Fica para a etapa 7 (CA fixada no instalador).

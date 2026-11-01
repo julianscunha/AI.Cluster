@@ -1113,6 +1113,9 @@ message ClaimInstallResponse {
   string join_token = 2;
   /// Id do worker, pré-aprovado: o primeiro registro com ele nasce confiável.
   string node_id = 3;
+  /// Chaves públicas SSH do operador (linhas `authorized_keys` sem opções); o instalador as grava no
+  /// worker. Vazio: o worker instalado fica sem SSH.
+  repeated string ssh_authorized_keys = 4;
 }
 
 message PendingInstall {
