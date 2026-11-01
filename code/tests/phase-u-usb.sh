@@ -24,6 +24,8 @@ export AIC_INSTALL_LIB=1   # o aic-install.sh só carrega as funções
 
 echo "=== A) sintaxe ==="
 sh -n "$HERE/os/setup" || fail "setup com erro de sintaxe"
+grep -q -- "search --no-floppy --file /aic/grub.cfg" "$X86/build-installer.sh" || fail "o GRUB do pendrive não acha /aic/grub.cfg (não pode depender de rótulo)"
+! grep -q -- "--label" "$X86/build-installer.sh" || fail "build-installer.sh voltou a procurar o pendrive por rótulo"
 bash -n "$X86/build-installer.sh" || fail "build-installer.sh com erro de sintaxe"
 "$PY" -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$HERE/os/mkusb.py" || fail "mkusb.py com erro de sintaxe"
 sed -n "/<<'PYSERVER'/,/^PYSERVER/p" "$HERE/os/setup" | sed '1d;$d' > "$T/invite.py"
@@ -75,7 +77,7 @@ assert f"aic.controller=http://{ip}:50052" in linha[0], linha
 assert f"aic.image=http://{ip}:8099/imagem" in linha[0], linha
 assert "initrd /aic/initramfs.gz" in cfg, cfg
 leia = z.read("LEIAME.txt").decode("utf-8")
-assert "FAT32" in leia and "AIC" in leia and "UEFI" in leia and "Secure Boot" in leia, leia
+assert "FAT32" in leia and "AIC" not in leia and "UEFI" in leia and "Secure Boot" in leia, leia
 assert "Formate" in leia and "Format the pendrive" in leia, leia  # pt e en
 assert ip in leia, leia
 print("estrutura ok:", len(nomes), "arquivos")

@@ -3,8 +3,8 @@
 
   python3 mkusb.py <pasta dedicado> <saída.zip> <ip do controller> <porta de espera> <porta do convite>
 
-O zip é extraído num pendrive FAT32 com rótulo AIC. EFI/BOOT/BOOTX64.EFI é o GRUB (feito no build, com
-grub-mkstandalone): acha o pendrive pelo rótulo e carrega aic/grub.cfg, que leva na linha do kernel o
+O zip é extraído na raiz de um pendrive FAT32 qualquer (sem rótulo, letra ou ordem de disco). EFI/BOOT/BOOTX64.EFI é o GRUB
+(feito no build, com grub-mkstandalone): acha o disco que tem /aic/grub.cfg e o carrega; ele leva na linha do kernel o
 endereço deste controller (a espera de aprovação é a porta de espera; a imagem vem do convite). Stdlib apenas.
 """
 
@@ -38,9 +38,9 @@ def installer_conf(ip, espera, convite):
 LEIAME = """AI Cluster - pendrive de instalacao (modo dedicado)
 ====================================================
 
-1. Formate o pendrive em FAT32 com o rotulo AIC.
+1. Formate o pendrive em FAT32 (qualquer rotulo serve).
    No Windows: clique com o botao direito na unidade > Formatar > sistema de
-   arquivos FAT32 > Rotulo do volume: AIC. (A janela do Windows so oferece FAT32
+   arquivos FAT32. (A janela do Windows so oferece FAT32
    em pendrives de ate 32 GB; use um deles.)
    APAGA tudo que estiver no pendrive.
 2. Extraia o conteudo deste usb.zip na RAIZ do pendrive. Devem aparecer as pastas
@@ -60,8 +60,8 @@ Endereco deste controller: {ip}   (convite: porta {convite})
 
 AI Cluster - installation pendrive (dedicated mode)
 
-1. Format the pendrive as FAT32 with the label AIC.
-   On Windows: right-click the drive > Format > file system FAT32 > Volume label: AIC.
+1. Format the pendrive as FAT32 (any label works).
+   On Windows: right-click the drive > Format > file system FAT32.
    (The Windows dialog only offers FAT32 on pendrives up to 32 GB; use one of those.)
    This ERASES everything on the pendrive.
 2. Extract the contents of this usb.zip to the ROOT of the pendrive. The folders

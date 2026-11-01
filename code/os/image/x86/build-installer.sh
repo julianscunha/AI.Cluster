@@ -119,18 +119,18 @@ cd "$R" && find . -print | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9 > /
 echo "modulos: $(wc -l < /tmp/modulos.txt)  kernel: $K"
 ls -l /o/vmlinuz /o/initramfs.gz
 '
-# BOOTX64.EFI: o GRUB do pendrive, com o cfg embutido que acha o pendrive pelo rótulo AIC e lê aic/grub.cfg
+# BOOTX64.EFI: o GRUB do pendrive, com o cfg embutido que acha o pendrive pelo arquivo /aic/grub.cfg (sem depender de rótulo, letra ou ordem dos discos)
 # dele (o endereço do controller fica nesse arquivo, gerado por convite). Sem IP aqui: o binário é o mesmo.
 cat > build/installer/in/embed.cfg <<'EMBED'
 set timeout=0
-search --no-floppy --label AIC --set=root || { echo "AI Cluster: pendrive com o rotulo AIC nao encontrado (formate FAT32 com AIC)"; sleep 30; halt; }
+search --no-floppy --file /aic/grub.cfg --set=root || { echo "AI Cluster: nao achei /aic/grub.cfg em nenhum disco (extraia o zip na raiz do pendrive)"; sleep 30; halt; }
 configfile /aic/grub.cfg
 EMBED
 MSYS_NO_PATHCONV=1 docker run --rm --platform linux/amd64 -v "$HOSTDIR/build/installer:/o" alpine:3.20 sh -c '
   set -e
   apk add -q --no-cache grub-efi >/dev/null
   grub-mkstandalone -O x86_64-efi -o /o/BOOTX64.EFI \
-    --modules="part_gpt part_msdos fat search search_label configfile normal linux echo sleep halt test" \
+    --modules="part_gpt part_msdos fat search search_fs_file configfile normal linux echo sleep halt test" \
     "boot/grub/grub.cfg=/o/in/embed.cfg"
 '
 
