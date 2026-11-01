@@ -9,7 +9,7 @@ type: guia
 
 Referência dos modelos de pesos abertos que o AI Cluster tem como alvo, do mais simples ao mais avançado. O nome do modelo é o link de download. Volte ao [[guia]] para o índice.
 
-**Estado real hoje:** só os modelos com ✅ rodam e foram testados no cluster (GPT-2 e SmolLM2, motor próprio). Os demais são o alvo do plano do [[adr-022-fluxo-de-modelos-e-motor-hibrido]]: entram em ✅ quando passarem no teste de ponta a ponta. O cluster não tem teto de tamanho: um modelo cabe se a soma da RAM dos workers comportar.
+**Estado real hoje:** só os modelos com ✅ rodam e foram testados no cluster (GPT-2 e SmolLM2 135M no motor próprio; SmolLM2 360M e Qwen2.5 1.5B pelo llama.cpp, em hardware real). Os demais são o alvo do plano do [[adr-022-fluxo-de-modelos-e-motor-hibrido]]: entram em ✅ quando passarem no teste de ponta a ponta. O cluster não tem teto de tamanho: um modelo cabe se a soma da RAM dos workers comportar.
 
 > **Legenda.** ✅ homologado no cluster · 🔒 exige login e aceite de licença no Hugging Face · ⛔ não suportado ainda
 > **Nv** (por parâmetros totais): 1 até 1B · 2 de 1B a 4B · 3 de 7B a 15B · 4 de 20B a 50B · 5 de 60B a 100B · 6 acima de 100B (MoE gigantes: só uma parte dos parâmetros calcula por token, mas todos precisam estar na RAM)
@@ -18,6 +18,18 @@ Referência dos modelos de pesos abertos que o AI Cluster tem como alvo, do mais
 > **Mod** (entrada→saída): 📝 texto · 🖼️ imagem · 🔊 áudio
 > **Notas (0–100):** **Rac** raciocínio (MMLU-Pro; `*` = MMLU) · **Cód** código (HumanEval) · **Mat** matemática (GSM8K; `†` = MATH, `‡` = MATH-500) · **Ins** instruções (IFEval) · **Fer** chamada de ferramentas (BFCL). `—` = a ficha oficial não publica.
 > **Idi:** `pt` = português listado na ficha · **Esp:** 🧮 matemática · 👁️ visão
+
+## Medido em hardware real (0.2.3, llama.cpp)
+
+Notebook x86_64 (i7, 8 GB, 1 Gb/s) e Orange Pi PC armv7 (1 GB, 100 Mb/s), os dois por cabo, com o controller e o gateway em outra máquina. Chat pelo gateway, `temperature 0`, prompt curto em inglês.
+
+| Modelo | Workers | Geração | Observação |
+|---|---|---|---|
+| SmolLM2 360M Q4 | notebook | 5,2 tok/s | prompt 12,7 tok/s; 61 tokens em 14,6 s |
+| Qwen2.5 1.5B Instruct Q4_K_M | notebook | 2,3 tok/s | 51 tokens em ~24 s; a 1ª chamada leva ~80 s (carga dos pesos pelo túnel) |
+| Qwen2.5 1.5B Instruct Q4_K_M | notebook + Pi (`--spread`, 94 % / 6 %) | 1,6 a 1,8 tok/s | o Pi atrasa ~25 %: rede de 100 Mb/s e CPU lenta |
+
+Sem `--spread` o plano usa só o worker mais rápido que já comporta o modelo. Dividir com um worker lento só vale quando o modelo não cabe no mais rápido. Llama 3.2 3B e os de 7B ainda não foram medidos.
 
 ## Como rodar um modelo (3 comandos)
 
@@ -52,10 +64,10 @@ ainda não vão nas imagens do SO (veja [[pendencias]]).
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | [GPT-2](https://huggingface.co/openai-community/gpt2) | 124M | 0,1 | 1 | 📝→📝 | — | — | — | — | — | — | | | ✅ |
 | 1 | [SmolLM2 135M](https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF) | 135M | 0,1 | — | 📝→📝 | — | 29,3* | — | 1,4 | 29,9 | — | | | ✅ |
-| 1 | [SmolLM2 360M](https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF) | 360M | 0,2 | — | 📝→📝 | — | 32,8* | — | 7,4 | 41,0 | — | | | |
+| 1 | [SmolLM2 360M](https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF) | 360M | 0,2 | — | 📝→📝 | — | 32,8* | — | 7,4 | 41,0 | — | | | ✅ |
 | 1 | [Qwen2.5 0.5B](https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF) | 0,5B | 0,3 | 32 | 📝→📝 | — | 15,0 | 35,4 | 49,6 | 27,9 | — | pt | | |
 | 2 | [Llama 3.2 1B](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF) 🔒 | 1,2B | 0,7 | 128 | 📝→📝 | — | 49,3* | — | 44,4 | 59,5 | 25,7 | pt | | |
-| 2 | [Qwen2.5 1.5B](https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF) | 1,5B | 0,9 | 32 | 📝→📝 | — | 32,4 | 61,6 | 73,2 | 42,5 | — | pt | | |
+| 2 | [Qwen2.5 1.5B](https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF) | 1,5B | 0,9 | 32 | 📝→📝 | — | 32,4 | 61,6 | 73,2 | 42,5 | — | pt | | ✅ |
 | 2 | [SmolLM2 1.7B](https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF) | 1,7B | 1,0 | — | 📝→📝 | — | 19,3 | — | 48,2 | 56,7 | 27 | | | |
 | 2 | [Gemma 2 2B](https://huggingface.co/bartowski/gemma-2-2b-it-GGUF) 🔒 | 2,6B | 1,6 | — | 📝→📝 | — | 51,3* | 17,7 | 23,9 | — | — | | | |
 | 2 | [Qwen2.5 3B](https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF) | 3,1B | 1,9 | 32 | 📝→📝 | — | 43,7 | 74,4 | 86,7 | 58,2 | — | pt | | |
