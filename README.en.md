@@ -135,7 +135,7 @@ cargo build --release --workspace
 # binaries in target/release/: ai-cluster-controller, ai-cluster-gateway, ai-cluster-worker, aic
 ```
 
-Copy `ai-cluster-controller` and `ai-cluster-gateway` to the server, `aic` to whoever administers, and `ai-cluster-worker` to each device **of the same architecture**. For ARMv7 boards build with `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (see the [installation guide](docs/guia/instalacao.md)). For x86_64 there is a ready-made package in the [v0.2.1 release](https://github.com/julianscunha/AI.Cluster/releases/tag/v0.2.1).
+Copy `ai-cluster-controller` and `ai-cluster-gateway` to the server, `aic` to whoever administers, and `ai-cluster-worker` to each device **of the same architecture**. For ARMv7 boards build with `TARGET=armv7-unknown-linux-musleabihf bash scripts/build-armv7.sh` (see the [installation guide](docs/guia/instalacao.md)). For x86_64 there is a ready-made package in the [v0.2.4 release](https://github.com/julianscunha/AI.Cluster/releases/tag/v0.2.4).
 
 ### 2. Controller (on the server)
 
