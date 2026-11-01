@@ -440,7 +440,7 @@ menu() {
 		done
 		at "$LINES_N" 1
 		printf '%s %-*s%s' "$C_FOOT" $((COLS_N - 1)) "Setas ou numero escolhem   Enter abre   Esc volta" "$C_RESET"
-		k=$(key) || return 0
+		k=$(key 900) || return 0
 		case "$k" in
 		up) [ "$sel" -gt 1 ] && sel=$((sel - 1)) ;;
 		down) [ "$sel" -lt "$total" ] && sel=$((sel + 1)) ;;

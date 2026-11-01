@@ -168,7 +168,7 @@ enum ClusterAction {
         linux_signature: String,
         /// Placa que a release vale: `armv7` ou `x86_64`. Vazia vale para todas. Com duas placas, um
         /// rollout por placa: o canário é só da placa.
-        #[arg(long, default_value = "", value_parser = ["", "armv7", "x86_64"])]
+        #[arg(long, default_value = "", value_parser = ["", "armv7", "x86_64", "aarch64"])]
         arch: String,
         /// Cancela o rollout em andamento.
         #[arg(long)]
