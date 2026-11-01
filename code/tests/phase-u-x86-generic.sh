@@ -21,9 +21,13 @@ printf 'AI_CLUSTER_CONTROLLER=https://controller.teste:50051\nAI_CLUSTER_JOIN_TO
 printf 'AI_CLUSTER_NODE_ID=velho\n' > "$T/env/velho.env"
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIteste op@pc
 ' > "$T/env/chaves"
+mkdir -p "$T/env/rpc"; printf 'chave-privada
+' > "$T/env/rpc/worker.key"; printf 'cert
+' > "$T/env/rpc/worker.crt"; printf 'ca
+' > "$T/env/rpc/ca.crt"
 # funções de gravação, extraídas do próprio script (sem cópia no teste)
-sed -n '/^grava_env() {/,/^}/p; /^grava_ssh() {/,/^}/p; /^entrada_efi() {/,/^}/p' "$SRC/install-disk.sh" > "$T/env/funcoes.sh"
-[ "$(grep -c '^grava_env() {\|^grava_ssh() {\|^entrada_efi() {' "$T/env/funcoes.sh")" = 3 ] || fail "não achei grava_env/grava_ssh/entrada_efi em install-disk.sh"
+sed -n '/^grava_env() {/,/^}/p; /^grava_ssh() {/,/^}/p; /^grava_rpc() {/,/^}/p; /^entrada_efi() {/,/^}/p' "$SRC/install-disk.sh" > "$T/env/funcoes.sh"
+[ "$(grep -c '^grava_env() {\|^grava_ssh() {\|^grava_rpc() {\|^entrada_efi() {' "$T/env/funcoes.sh")" = 4 ] || fail "não achei grava_env/grava_ssh/grava_rpc/entrada_efi em install-disk.sh"
 
 echo "=== A) imagem genérica: sem identidade, sem worker.env ==="
 ( cd "$T/os/image" && DISK_MIB=2200 bash x86/mk-disk.sh ) >"$T/mk-generic.log" 2>&1 || { cat "$T/mk-generic.log"; fail "mk-disk genérico falhou"; }
@@ -51,6 +55,12 @@ grava_ssh /w/os/image/build/p4.img /w/env/chaves && echo "ssh_gravou"
 debugfs -R "stat ssh/authorized_keys" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/chave /"
 debugfs -R "stat ssh" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/dir /"
 grava_ssh /w/os/image/build/p4.img /w/env/chaves && echo "ssh_regravou"
+grava_rpc /w/os/image/build/p4.img /w/env/rpc && echo "rpc_gravou"
+debugfs -R "stat rpc-tls/worker.key" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/rpckey /"
+debugfs -R "stat rpc-tls/worker.crt" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/rpccrt /"
+debugfs -R "stat rpc-tls/ca.crt" p4.img 2>/dev/null | grep -o "User: *[0-9]*   Group: *[0-9]*" | sed "s/^/rpcca /"
+debugfs -R "stat rpc-tls" p4.img 2>/dev/null | grep -o "Mode: *[0-9]*" | sed "s/^/rpcdir /"
+grava_rpc /w/os/image/build/p4.img /w/env/rpc && echo "rpc_regravou"
 ' > "$T/b.log" 2>&1 || { cat "$T/b.log"; fail "passo B falhou"; }
 cat "$T/b.log"
 grep -q TEM_WORKER_ENV "$T/b.log" && fail "imagem genérica já tem worker.env"
@@ -63,6 +73,10 @@ grep -q "gravou_2" "$T/b.log" || fail "regravação falhou"
 grep -q "regravacao_ok" "$T/b.log" || fail "regravação não substituiu o worker.env"
 grep -q "ssh_gravou" "$T/b.log" && grep -q "ssh_regravou" "$T/b.log" || fail "grava_ssh falhou"
 grep -q "chave Mode: *0600" "$T/b.log" && grep -q "dir Mode: *0700" "$T/b.log" || fail "ssh/authorized_keys sem 0600 ou ssh sem 0700"
+grep -q "rpc_gravou" "$T/b.log" && grep -q "rpc_regravou" "$T/b.log" || fail "grava_rpc falhou"
+grep -q "rpckey Mode: *0600" "$T/b.log" && grep -q "rpccrt Mode: *0644" "$T/b.log" && grep -q "rpcdir Mode: *0700" "$T/b.log" || fail "rpc-tls com modo errado (chave 0600, certificado 0644, dir 0700)"
+grep -q "rpcca User: *0   Group: *0" "$T/b.log" || fail "rpc-tls não ficou com dono root"
+echo "OK: --rpc-tls grava rpc-tls/ (chave 0600, certificados 0644, dir 0700, root) e regrava"
 echo "OK: p4 sem worker.env na genérica; --ssh grava ssh/authorized_keys 0600 em dir 0700; --env grava, com 0600 e root, e regrava"
 
 echo "=== C) efibootmgr: ausente avisa e segue; presente sem NVRAM devolve erro ==="

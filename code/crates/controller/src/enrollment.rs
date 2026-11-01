@@ -404,6 +404,8 @@ pub struct ClaimSetup {
     pub plain_allowed: bool,
     /// Arquivo de chaves públicas SSH do operador (`AI_CLUSTER_AUTHORIZED_KEYS`); lido a cada claim.
     pub ssh_keys_file: Option<String>,
+    /// CA do cluster: assina o CSR do túnel RPC que o aparelho manda no claim. `None`: sem certificado.
+    pub ca: Option<Arc<crate::certs::CaSigner>>,
 }
 
 const MAX_SSH_KEYS: usize = 16;
@@ -524,13 +526,46 @@ impl Enrollment for EnrollmentService {
                 "controller sem AI_CLUSTER_PUBLIC_URL: o aparelho não sabe onde se ligar",
             ));
         };
+        // CSR ruim é recusado antes de gastar o token (a chave nunca passou por aqui, só a pública).
+        // Sem TLS na porta um intermediário trocaria o certificado e a CA que voltam: nada é assinado.
+        let csr = if self.setup.tls && self.setup.ca.is_some() {
+            request.csr_pem.as_str()
+        } else {
+            ""
+        };
+        if !csr.is_empty() {
+            crate::certs::CaSigner::check_csr(csr).map_err(Status::invalid_argument)?;
+            // Nome dado ao claim que não cabe num certificado: recusa antes de gastar o token.
+            let name = request.node_name.trim();
+            if !name.is_empty() && !crate::certs::valid_cert_id(name) {
+                return Err(Status::invalid_argument(
+                    "com certificado do túnel, o nome do worker tem até 40 letras, números, ponto ou traço",
+                ));
+            }
+        }
         let now = crate::registry::unix_ms();
         let node_id =
             self.enrollments
                 .claim(request.token.trim(), request.node_name.trim(), now, |id| {
                     self.registry.pre_approve(id, now, now + PREAPPROVAL_MS)
                 })?;
+        // O nome do certificado sai do id que o claim acabou de reservar. Falha aqui não desfaz o claim
+        // (o token já foi gasto): o aparelho instala sem certificado e a tela final avisa.
+        let (rpc_cert_pem, rpc_ca_pem) = match (&self.setup.ca, csr.is_empty()) {
+            (Some(ca), false) => {
+                match ca.sign_worker(&node_id, csr, time::OffsetDateTime::now_utc()) {
+                    Ok(cert) => (cert, ca.cert_pem().to_string()),
+                    Err(error) => {
+                        println!("AVISO: claim de {node_id} sem certificado do túnel: {error}");
+                        Default::default()
+                    }
+                }
+            }
+            _ => Default::default(),
+        };
         Ok(Response::new(ClaimInstallResponse {
+            rpc_cert_pem,
+            rpc_ca_pem,
             controller_url: url,
             join_token: self.setup.join_token.clone(),
             node_id,
@@ -894,6 +929,7 @@ mod tests {
             ClaimSetup {
                 public_url: None,
                 ssh_keys_file: None,
+                ca: None,
                 join_token: String::new(),
                 tls: false,
                 plain_allowed: false,
@@ -1004,6 +1040,7 @@ command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
                 ClaimSetup {
                     public_url: url.map(String::from),
                     ssh_keys_file: Some(keys_file.to_string_lossy().into()),
+                    ca: None,
                     join_token: "join-secreto".into(),
                     tls: true,
                     plain_allowed: false,
@@ -1014,6 +1051,7 @@ command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
             Request::new(ClaimInstallRequest {
                 token: token.clone(),
                 node_name: String::new(),
+                csr_pem: String::new(),
             })
         };
         // Sem URL o claim é recusado antes de gastar o token.
@@ -1045,6 +1083,7 @@ command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
         let setup = |tls: bool, plain_allowed: bool| ClaimSetup {
             public_url: Some("https://ctl:50051".into()),
             ssh_keys_file: None,
+            ca: None,
             join_token: "join-secreto".into(),
             tls,
             plain_allowed,
@@ -1056,6 +1095,7 @@ command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
             Request::new(ClaimInstallRequest {
                 token: token.into(),
                 node_name: String::new(),
+                csr_pem: String::new(),
             })
         };
         // Porta sem TLS e sem a permissão: recusa, e o token continua valendo.
@@ -1078,6 +1118,119 @@ command=\"x\" ssh-rsa AAAAB3NzaC1yc2EAAAA
             .await
             .unwrap();
         assert_eq!(ok_tls.into_inner().node_id, "x86-ddee02");
+    }
+
+    fn ca_de_teste() -> Arc<crate::certs::CaSigner> {
+        use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair, KeyUsagePurpose};
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec![]).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let cert = params.self_signed(&key).unwrap();
+        Arc::new(crate::certs::CaSigner::from_pem(&cert.pem(), &key.serialize_pem()).unwrap())
+    }
+
+    fn csr_de(key: &rcgen::KeyPair) -> String {
+        rcgen::CertificateParams::new(vec!["pedido-nao-vale".to_string()])
+            .unwrap()
+            .serialize_request(key)
+            .unwrap()
+            .pem()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn claim_com_csr_devolve_o_certificado_do_id_e_csr_ruim_nao_gasta_o_token() {
+        let enrollments = Arc::new(Enrollments::default());
+        let registry = Arc::new(Registry::requiring_approval());
+        let now = crate::registry::unix_ms();
+        let token = aprovado(&enrollments, 1, MAC, now);
+        let ca = ca_de_teste();
+        let service = EnrollmentService::new(
+            enrollments.clone(),
+            registry.clone(),
+            ClaimSetup {
+                public_url: Some("https://ctl:50051".into()),
+                ssh_keys_file: None,
+                ca: Some(ca.clone()),
+                join_token: "j".into(),
+                tls: true,
+                plain_allowed: false,
+            },
+        );
+        let pedido = |csr: String| {
+            Request::new(ClaimInstallRequest {
+                token: token.clone(),
+                node_name: String::new(),
+                csr_pem: csr,
+            })
+        };
+        // CSR com chave que não é P-256, lixo e grande demais: recusados, e o token continua valendo.
+        let rsa_like = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+        for ruim in [csr_de(&rsa_like), "lixo".into(), "x".repeat(5000)] {
+            let err = service.claim_install(pedido(ruim)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        let key = rcgen::KeyPair::generate().unwrap();
+        let ok = service
+            .claim_install(pedido(csr_de(&key)))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(ok.node_id, "x86-ddee01");
+        assert_eq!(ok.rpc_ca_pem, ca.cert_pem());
+        let der = x509_parser::pem::parse_x509_pem(ok.rpc_cert_pem.as_bytes())
+            .unwrap()
+            .1
+            .contents;
+        let (_, cert) = x509_parser::parse_x509_certificate(&der).unwrap();
+        let san = format!(
+            "{:?}",
+            cert.subject_alternative_name().unwrap().unwrap().value
+        );
+        assert!(san.contains("aic-worker-x86-ddee01") && !san.contains("pedido-nao-vale"));
+        // Uso único: o mesmo token com outro CSR não rende um segundo certificado.
+        let again = service
+            .claim_install(pedido(csr_de(&key)))
+            .await
+            .unwrap_err();
+        assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+        // Porta sem TLS: o CSR é ignorado, nada é assinado e o claim segue.
+        let sem_tls = aprovado(&enrollments, 3, "aa:bb:cc:dd:ee:03", now);
+        let plano = EnrollmentService::new(
+            enrollments.clone(),
+            registry.clone(),
+            ClaimSetup {
+                public_url: Some("http://ctl:50051".into()),
+                ssh_keys_file: None,
+                ca: Some(ca.clone()),
+                join_token: "j".into(),
+                tls: false,
+                plain_allowed: true,
+            },
+        );
+        let r = plano
+            .claim_install(Request::new(ClaimInstallRequest {
+                token: sem_tls,
+                node_name: String::new(),
+                csr_pem: csr_de(&key),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(r.rpc_cert_pem.is_empty() && r.rpc_ca_pem.is_empty());
+        // Sem CSR (aparelho antigo) ou sem CA: o claim segue, sem certificado.
+        let sem = aprovado(&enrollments, 2, "aa:bb:cc:dd:ee:02", now);
+        let r = service
+            .claim_install(Request::new(ClaimInstallRequest {
+                token: sem,
+                node_name: String::new(),
+                csr_pem: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(r.rpc_cert_pem.is_empty() && r.rpc_ca_pem.is_empty());
     }
 
     #[test]

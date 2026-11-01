@@ -365,8 +365,8 @@ impl ClusterControlService {
     }
 
     /// Liga a renovação do certificado do túnel RPC com a CA do cluster (ADR-026).
-    pub fn with_ca(mut self, ca: crate::certs::CaSigner) -> Self {
-        self.ca = Some(std::sync::Arc::new(ca));
+    pub fn with_ca(mut self, ca: std::sync::Arc<crate::certs::CaSigner>) -> Self {
+        self.ca = Some(ca);
         self
     }
 
@@ -3256,7 +3256,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
-        let service = service.with_ca(test_ca());
+        let service = service.with_ca(std::sync::Arc::new(test_ca()));
         let cert = service
             .renew_node_certificate(ask(&credential))
             .await
@@ -3276,7 +3276,7 @@ mod tests {
     #[tokio::test]
     async fn a_renovacao_recusa_outra_chave_do_mesmo_no() {
         let (service, _, _) = service_with_registry_and_work();
-        let service = service.with_ca(test_ca());
+        let service = service.with_ca(std::sync::Arc::new(test_ca()));
         let credential = service
             .register_node(Request::new(RegisterNodeRequest {
                 identity: Some(identity("node-a")),

@@ -29,6 +29,11 @@ inst=$(grep -n 'install-disk.sh "\$RUN' "$X86/aic-install.sh" | cut -d: -f1)
 gz=$(grep -n 'gzip -t' "$X86/install-disk.sh" | head -n 1 | cut -d: -f1)
 dd_=$(grep -n 'dd of=' "$X86/install-disk.sh" | head -n 1 | cut -d: -f1)
 [ -n "$gz" ] && [ "$gz" -lt "$dd_" ] || fail "gzip -t não vem antes do dd em install-disk.sh"
+# claim: a chave do túnel RPC nasce no aparelho; só o pedido (CSR) vai ao controller, e o certificado volta por --rpc-tls
+grep -q 'openssl ecparam -name prime256v1 -genkey' "$X86/aic-install.sh" || fail "o instalador não gera a chave do túnel RPC no aparelho"
+grep -q -- '--csr "\$RUN/rpc.csr" --rpc-out "\$RUN/rpc-tls"' "$X86/aic-install.sh" || fail "aic-wait sem --csr/--rpc-out"
+grep -q -- '\$RPCARG --efi-entry' "$X86/aic-install.sh" || fail "install-disk.sh sem --rpc-tls"
+! grep -n 'aic-wait.*worker\.key' "$X86/aic-install.sh" || fail "a chave do túnel não pode ir ao aic-wait"
 echo "OK"
 
 echo "=== B) disco: pendrive AIC sempre fora; removível só forçado; blkid e serial conferidos ==="

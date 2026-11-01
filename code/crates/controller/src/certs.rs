@@ -11,6 +11,18 @@ use time::{Duration, OffsetDateTime};
 /// Validade do certificado emitido (a mesma do convite).
 pub const WORKER_CERT_DAYS: i64 = 825;
 
+/// Teto do CSR aceito de um aparelho sem credencial (um CSR EC P-256 tem uns 400 bytes).
+pub const MAX_CSR_BYTES: usize = 4096;
+
+/// Mesmo conjunto aceito pelo convite: o id vai para um SAN de DNS.
+pub fn valid_cert_id(node_id: &str) -> bool {
+    !node_id.is_empty()
+        && node_id.len() <= 40
+        && node_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+}
+
 /// Variáveis que apontam para a CA: certificado e chave, sempre juntos.
 pub const CA_CERT_ENV: &str = "AI_CLUSTER_RPC_CA_CERT";
 pub const CA_KEY_ENV: &str = "AI_CLUSTER_RPC_CA_KEY";
@@ -18,6 +30,7 @@ pub const CA_KEY_ENV: &str = "AI_CLUSTER_RPC_CA_KEY";
 /// A CA do cluster, pronta para assinar. A chave dá o poder de emitir: só o controller a lê
 /// (o gateway não vê o arquivo, ver a unit no `setup`).
 pub struct CaSigner {
+    cert_pem: String,
     issuer: rcgen::Certificate,
     key: KeyPair,
 }
@@ -58,7 +71,29 @@ impl CaSigner {
             return Err("a chave não é a da CA".into());
         }
         let issuer = params.self_signed(&key).map_err(|e| format!("CA: {e}"))?;
-        Ok(Self { issuer, key })
+        Ok(Self {
+            cert_pem: cert_pem.to_string(),
+            issuer,
+            key,
+        })
+    }
+
+    /// O certificado (público) da CA: é o `ca.crt` que o worker confere nos clientes do túnel.
+    pub fn cert_pem(&self) -> &str {
+        &self.cert_pem
+    }
+
+    /// Recusa CSR grande demais ou com chave que não é EC P-256 (a que o instalador gera e o túnel usa).
+    pub fn check_csr(csr_pem: &str) -> Result<(), String> {
+        if csr_pem.len() > MAX_CSR_BYTES {
+            return Err("pedido de certificado grande demais".into());
+        }
+        let request = CertificateSigningRequestParams::from_pem(csr_pem)
+            .map_err(|e| format!("pedido de certificado recusado: {e}"))?;
+        if request.public_key.algorithm() != &rcgen::PKCS_ECDSA_P256_SHA256 {
+            return Err("o pedido de certificado deve usar chave EC P-256".into());
+        }
+        Ok(())
     }
 
     /// Impressão digital (SHA-256, hex) da chave pública do CSR: é o que o controller fixa por worker.
@@ -79,13 +114,7 @@ impl CaSigner {
         csr_pem: &str,
         now: OffsetDateTime,
     ) -> Result<String, String> {
-        // Mesmo conjunto aceito pelo convite: o nome vai para um SAN de DNS.
-        let valid = !node_id.is_empty()
-            && node_id.len() <= 40
-            && node_id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
-        if !valid {
+        if !valid_cert_id(node_id) {
             return Err("node_id inválido para um certificado de worker".into());
         }
         let request = CertificateSigningRequestParams::from_pem(csr_pem)

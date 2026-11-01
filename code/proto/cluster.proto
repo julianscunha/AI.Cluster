@@ -1107,6 +1107,9 @@ message ClaimInstallRequest {
   string token = 1;
   /// Nome do worker; vazio usa `x86-` mais os últimos 6 hex do MAC.
   string node_name = 2;
+  /// Opcional: pedido de certificado (CSR PEM, EC P-256) para o túnel RPC; a chave nasceu no aparelho e
+  /// nunca sai dele. O nome do certificado vem do id do worker, nunca do pedido.
+  string csr_pem = 3;
 }
 
 message ClaimInstallResponse {
@@ -1119,6 +1122,10 @@ message ClaimInstallResponse {
   /// Chaves públicas SSH do operador (linhas `authorized_keys` sem opções); o instalador as grava no
   /// worker. Vazio: o worker instalado fica sem SSH.
   repeated string ssh_authorized_keys = 4;
+  /// Certificado do túnel RPC assinado pela CA do controller (SAN `aic-worker-<node_id>`) e a CA. Vazios
+  /// quando o pedido não trouxe CSR ou o controller não tem CA: o worker instala sem participar da inferência distribuída.
+  string rpc_cert_pem = 5;
+  string rpc_ca_pem = 6;
 }
 
 message PendingInstall {

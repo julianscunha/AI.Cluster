@@ -282,7 +282,14 @@ main() {
 
 	fala "Pegando a configuração do worker no controller..."
 	rm -f "$RUN/authorized_keys"   # sobra de tentativa anterior não pode valer como chave atual
+	# A chave do túnel RPC nasce aqui (EC P-256, 600, em RAM) e nunca sai do aparelho: só o pedido (CSR) vai ao controller.
+	rm -rf "$RUN/rpc-tls" "$RUN/rpc.csr"
+	( umask 077; mkdir "$RUN/rpc-tls" \
+		&& openssl ecparam -name prime256v1 -genkey -noout -out "$RUN/rpc-tls/worker.key" \
+		&& openssl req -new -key "$RUN/rpc-tls/worker.key" -subj "/CN=aic-worker-claim" -out "$RUN/rpc.csr" ) >/dev/null 2>&1 \
+		|| pare "não consegui gerar a chave do túnel RPC (openssl)."
 	AIC_INSTALL_TOKEN="$TOKEN" aic-wait "$CTRL" --out "$RUN/worker.env" --ssh-out "$RUN/authorized_keys" \
+		--csr "$RUN/rpc.csr" --rpc-out "$RUN/rpc-tls" \
 		|| pare "o controller não entregou a configuração (veja a mensagem acima). Nada foi apagado; aprove o aparelho de novo no controller."
 
 	# de novo logo antes de gravar: a rede e o claim levam tempo, e o disco pode ter sido trocado nesse meio
@@ -290,8 +297,10 @@ main() {
 	fala "Gravando $DISCO..."
 	# chaves SSH do operador (o claim as entrega); sem elas o worker instala igual, mas sem SSH
 	SSHARG=; [ -s "$RUN/authorized_keys" ] && SSHARG="--ssh $RUN/authorized_keys"
+	# certificado do túnel RPC (o controller só o devolve se tiver a CA); sem ele o worker instala, mas fora da inferência distribuída
+	RPCARG=; [ -s "$RUN/rpc-tls/worker.crt" ] && [ -s "$RUN/rpc-tls/ca.crt" ] && RPCARG="--rpc-tls $RUN/rpc-tls"
 	# shellcheck disable=SC2086
-	install-disk.sh "$RUN/img/$IMGNAME" "$DEV/$DISCO" --yes --env "$RUN/worker.env" $SSHARG --efi-entry \
+	install-disk.sh "$RUN/img/$IMGNAME" "$DEV/$DISCO" --yes --env "$RUN/worker.env" $SSHARG $RPCARG --efi-entry \
 		|| pare "a gravação em $DEV/$DISCO falhou (veja a mensagem acima). O disco pode ter ficado pela metade: aprove o aparelho de novo no controller."
 	sync
 	fala ""
@@ -301,6 +310,7 @@ main() {
 	fala "  O aparelho vai dar boot pelo disco."
 	if [ -n "$SSHARG" ]; then fala "  SSH liberado para as chaves do operador (usuário root)."
 	else fala "  ATENCAO: o controller não tinha chave SSH; este worker ficou SEM SSH."; fi
+	if [ -z "$RPCARG" ]; then fala "  ATENCAO: o controller não entregou o certificado (sem CA do cluster, ou porta sem TLS); este worker ficou SEM o certificado do túnel e não entra na inferência distribuída."; fi
 	fala "=================================================="
 	# Espera o operador (a tela fica; ele precisa ler). Sem teclado/tty: reinicia após 60 s.
 	if [ -t 0 ]; then read -r _ || sleep 60; else sleep 60; fi

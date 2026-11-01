@@ -168,20 +168,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ADR-026: com a CA do cluster o controller renova o certificado dos workers. Sem ela, ou com a CA
     // ilegível, a renovação fica desligada (aviso) e o controller sobe mesmo assim: o certificado atual
     // de cada worker segue válido até vencer.
-    let service = match ai_cluster_controller::certs::CaSigner::from_env() {
+    let (service, ca) = match ai_cluster_controller::certs::CaSigner::from_env() {
         Ok(Some(ca)) => {
             println!("renovação de certificado de worker ligada (CA do cluster)");
-            service.with_ca(ca)
+            let ca = Arc::new(ca);
+            (service.with_ca(ca.clone()), Some(ca))
         }
         Ok(None) => {
             println!(
                 "AVISO: sem AI_CLUSTER_RPC_CA_CERT/KEY a renovação do certificado de worker fica desligada"
             );
-            service
+            (service, None)
         }
         Err(error) => {
             println!("AVISO: renovação do certificado de worker desligada: {error}");
-            service
+            (service, None)
         }
     };
     let enrollments = service.enrollments().clone();
@@ -319,6 +320,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             plain_allowed: std::env::var("AI_CLUSTER_ALLOW_PLAIN_CLAIM")
                 .is_ok_and(|value| value.trim() == "1"),
             // Chaves SSH do operador que o claim entrega ao worker instalado (sem elas, sem SSH).
+            // A CA assina o certificado do túnel do worker instalado (ADR-023); sem ela o claim segue sem certificado.
+            ca: ca.clone(),
             ssh_keys_file: std::env::var("AI_CLUSTER_AUTHORIZED_KEYS")
                 .ok()
                 .map(|path| path.trim().to_string())

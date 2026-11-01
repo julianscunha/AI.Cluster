@@ -2,31 +2,34 @@
 # Grava a imagem x86_64 do AI Cluster OS (build/disk-x86.img, de mk-disk.sh) num disco e usa o disco
 # inteiro: move a GPT de backup para o fim, sorteia os GUIDs e estende a partição de dados.
 #
-#   x86/install-disk.sh <imagem[.gz]> <dispositivo> --yes [--env <arquivo>] [--ssh <arquivo>] [--efi-entry]
+#   x86/install-disk.sh <imagem[.gz]> <dispositivo> --yes [--env <arquivo>] [--ssh <arquivo>] [--rpc-tls <pasta>] [--efi-entry]
 #
 # Com .gz (o instalador do pendrive/rede baixa comprimido) a imagem vai descomprimida direto para o disco.
 #
 # --env grava o arquivo como /worker.env na partição de dados (p4), com debugfs, sem montar.
 # --ssh grava o arquivo como /ssh/authorized_keys (dir 700, arquivo 600, root) na partição de dados.
+# --rpc-tls grava worker.key, worker.crt e ca.crt da pasta em /rpc-tls (dir 700, chave 600, certificados 644, root):
+#   o certificado do túnel RPC que o claim obteve; o worker os lê em /data/rpc-tls.
 # --efi-entry cria a entrada de boot "AI Cluster OS" na NVRAM de quem roda o script (só com efibootmgr).
 #
 # Rode como root num Linux qualquer (um pendrive de recuperação serve), com o disco de destino
 # desmontado. APAGA O DISCO INTEIRO. Precisa de: dd, sgdisk (gdisk), e2fsck e resize2fs (e2fsprogs);
 # com --env, também debugfs e cmp.
 set -eu
-[ $# -ge 2 ] || { echo "uso: $0 <imagem> <dispositivo-de-bloco> --yes [--env <arquivo>] [--ssh <arquivo>] [--efi-entry]" >&2; exit 2; }
+[ $# -ge 2 ] || { echo "uso: $0 <imagem> <dispositivo-de-bloco> --yes [--env <arquivo>] [--ssh <arquivo>] [--rpc-tls <pasta>] [--efi-entry]" >&2; exit 2; }
 IMG=$1; DEV=$2; shift 2
-YES=; ENVF=; SSHF=; EFI=0
+YES=; ENVF=; SSHF=; RPCD=; EFI=0
 while [ $# -gt 0 ]; do
 	case $1 in
 		--yes) YES=--yes; shift;;
 		--env) [ $# -ge 2 ] || { echo "--env exige um arquivo" >&2; exit 2; }; ENVF=$2; shift 2;;
 		--ssh) [ $# -ge 2 ] || { echo "--ssh exige um arquivo" >&2; exit 2; }; SSHF=$2; shift 2;;
+		--rpc-tls) [ $# -ge 2 ] || { echo "--rpc-tls exige uma pasta" >&2; exit 2; }; RPCD=$2; shift 2;;
 		--efi-entry) EFI=1; shift;;
 		*) echo "argumento desconhecido: $1" >&2; exit 2;;
 	esac
 done
-[ -f "$IMG" ] && [ -b "$DEV" ] || { echo "uso: $0 <imagem> <dispositivo-de-bloco> --yes [--env <arquivo>] [--ssh <arquivo>] [--efi-entry]" >&2; exit 2; }
+[ -f "$IMG" ] && [ -b "$DEV" ] || { echo "uso: $0 <imagem> <dispositivo-de-bloco> --yes [--env <arquivo>] [--ssh <arquivo>] [--rpc-tls <pasta>] [--efi-entry]" >&2; exit 2; }
 DEV=$(readlink -f "$DEV")   # symlinks (by-id, mapper) viram o nome real antes das checagens
 [ "$(lsblk -dno TYPE "$DEV" 2>/dev/null)" = disk ] || { echo "$DEV não é um disco inteiro (partição, md ou lvm); abortando" >&2; exit 2; }
 if [ -n "$(lsblk -nro MOUNTPOINT "$DEV" | tr -d '[:space:]')" ]; then echo "$DEV tem partição montada; abortando" >&2; exit 2; fi
@@ -35,9 +38,10 @@ for h in /sys/block/"${DEV##*/}"/holders/* /sys/block/"${DEV##*/}"/*/holders/*; 
 done
 [ "$YES" = --yes ] || { echo "isto apaga $DEV inteiro; confirme com --yes" >&2; exit 2; }
 [ -z "$SSHF" ] || [ -f "$SSHF" ] || { echo "--ssh: $SSHF não é um arquivo" >&2; exit 2; }
+[ -z "$RPCD" ] || { [ -f "$RPCD/worker.key" ] && [ -f "$RPCD/worker.crt" ] && [ -f "$RPCD/ca.crt" ]; } || { echo "--rpc-tls: $RPCD precisa de worker.key, worker.crt e ca.crt" >&2; exit 2; }
 [ -z "$ENVF" ] || [ -f "$ENVF" ] || { echo "--env: $ENVF não é um arquivo" >&2; exit 2; }
 for t in dd sgdisk e2fsck resize2fs; do command -v "$t" >/dev/null || { echo "falta $t" >&2; exit 2; }; done
-if [ -n "$ENVF$SSHF" ]; then for t in debugfs cmp; do command -v "$t" >/dev/null || { echo "falta $t (--env)" >&2; exit 2; }; done; fi
+if [ -n "$ENVF$SSHF$RPCD" ]; then for t in debugfs cmp; do command -v "$t" >/dev/null || { echo "falta $t (--env)" >&2; exit 2; }; done; fi
 # nunca no disco que está em uso
 if grep -q "^$DEV" /proc/mounts || grep -q "^${DEV}p\?[0-9]" /proc/mounts; then echo "$DEV tem partição montada; abortando" >&2; exit 2; fi
 # .gz (o instalador baixa comprimido): tamanho sem compactar é o ISIZE do gzip (módulo 4 GiB, a imagem é menor)
@@ -70,6 +74,23 @@ grava_ssh() {
 	debugfs -w -R "sif ssh/authorized_keys mode 0100600" "$1" >/dev/null || return 1
 	debugfs -R "cat ssh/authorized_keys" "$1" 2>/dev/null | cmp -s - "$2"
 }
+# certificado do túnel RPC: /rpc-tls/{worker.key 600, worker.crt 644, ca.crt 644}, dono root; o cmp confere cada um.
+# O serviço do worker passa o dono ao usuário dele no boot (o uid não existe aqui).
+grava_rpc() {
+	debugfs -w -R "mkdir rpc-tls" "$1" >/dev/null 2>&1 || true
+	debugfs -w -R "sif rpc-tls uid 0" "$1" >/dev/null || return 1
+	debugfs -w -R "sif rpc-tls gid 0" "$1" >/dev/null || return 1
+	debugfs -w -R "sif rpc-tls mode 040700" "$1" >/dev/null || return 1
+	for par in worker.key:0100600 worker.crt:0100644 ca.crt:0100644; do
+		f=${par%%:*}; m=${par##*:}
+		debugfs -w -R "rm rpc-tls/$f" "$1" >/dev/null 2>&1 || true
+		debugfs -w -R "write $2/$f rpc-tls/$f" "$1" >/dev/null || return 1
+		debugfs -w -R "sif rpc-tls/$f uid 0" "$1" >/dev/null || return 1
+		debugfs -w -R "sif rpc-tls/$f gid 0" "$1" >/dev/null || return 1
+		debugfs -w -R "sif rpc-tls/$f mode $m" "$1" >/dev/null || return 1
+		debugfs -R "cat rpc-tls/$f" "$1" 2>/dev/null | cmp -s - "$2/$f" || return 1
+	done
+}
 # entrada de boot na NVRAM desta máquina; sem efibootmgr só avisa (o caminho EFI/BOOT já dá boot)
 entrada_efi() {
 	command -v efibootmgr >/dev/null || { echo "efibootmgr não existe; entrada de boot não criada" >&2; return 0; }
@@ -100,6 +121,7 @@ e2fsck -fy "$P4" >/dev/null || [ $? -lt 4 ] || { echo "e2fsck falhou em $P4" >&2
 resize2fs "$P4" >/dev/null
 [ -z "$ENVF" ] || grava_env "$P4" "$ENVF" || { echo "não consegui gravar $ENVF como worker.env em $P4" >&2; exit 1; }
 [ -z "$SSHF" ] || grava_ssh "$P4" "$SSHF" || { echo "não consegui gravar $SSHF como ssh/authorized_keys em $P4" >&2; exit 1; }
+[ -z "$RPCD" ] || grava_rpc "$P4" "$RPCD" || { echo "não consegui gravar o certificado do túnel de $RPCD como rpc-tls em $P4" >&2; exit 1; }
 if [ "$EFI" = 1 ]; then entrada_efi "$DEV" || echo "aviso: efibootmgr falhou; crie a entrada de boot à mão" >&2; fi
 sync
 echo "instalado em $DEV; desligue, remova o pendrive de recuperação e dê boot pelo disco (UEFI, Secure Boot desligado)"

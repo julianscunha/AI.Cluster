@@ -26,6 +26,10 @@ start_pre() {
 	# rpc-server do llama.cpp (ADR-022): liga sozinho quando o instalador deixou o certificado do túnel
 	# em /data/rpc-tls (worker.crt, worker.key e ca.crt, a CA que assina só o gateway). Sem eles o nó
 	# não expõe o rpc-server.
+	# O claim (pendrive) grava esses arquivos como root, sem saber o uid do usuário do worker: aqui ele os recebe.
+	if [ -d /data/rpc-tls ] && [ ! -L /data/rpc-tls ]; then
+		chown -h ai-cluster:ai-cluster /data/rpc-tls /data/rpc-tls/worker.key /data/rpc-tls/worker.crt /data/rpc-tls/ca.crt || ewarn "nao consegui dar o dono ao /data/rpc-tls"
+	fi
 	if [ -r /data/rpc-tls/worker.key ] && [ -r /data/rpc-tls/worker.crt ] && [ -r /data/rpc-tls/ca.crt ] && [ -x /usr/bin/ggml-rpc-server ]; then
 		export AI_CLUSTER_RPC_SERVER_BIN=/usr/bin/ggml-rpc-server
 		export AI_CLUSTER_RPC_TLS_CERT=/data/rpc-tls/worker.crt

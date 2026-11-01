@@ -161,4 +161,5 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 ## Worker instalado pelo claim x GRUB da imagem com identidade (varredura 2026-11-01)
 
 - Corrigido: o `worker.env` do claim agora traz `NODE_CREDENTIAL_FILE`, `MODEL_DIR` e `UPDATE_CMD` (igual a `mk-disk.sh`).
-- Sem TLS no modo dedicado: o worker instalado só fala com controller `http://` (`AI_CLUSTER_INSECURE=1`); o claim não entrega a CA. Fica para a etapa 7 (CA fixada no instalador).
+- Sem TLS no modo dedicado: o worker instalado só fala com controller `http://` (`AI_CLUSTER_INSECURE=1`); o claim não entrega a CA do join (TLS do controller), fica para a etapa 7 (CA fixada no instalador).
+- Corrigido: o claim entrega o certificado do túnel RPC (CSR gerado no aparelho, assinado pela CA do controller; ADR-023), então o worker instalado liga o `ggml-rpc-server`. Só vale na imagem/instalador reconstruídos, e falta testar de ponta a ponta no hardware (claim real → inferência distribuída).

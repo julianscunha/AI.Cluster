@@ -2,11 +2,13 @@
 //! impressão digital na tela e aguarda o operador aprovar. Nada é instalado nem apagado aqui.
 //!
 //!   aic-wait http://controller:50052 [--once]
-//!   aic-wait http://controller:50052 --claim-file token.txt --out worker.env [--ssh-out authorized_keys] [--name <nome>]  (ou AIC_INSTALL_TOKEN; --claim <token> expõe o token no ps)
+//!   aic-wait http://controller:50052 --claim-file token.txt --out worker.env [--ssh-out authorized_keys] [--csr pedido.csr --rpc-out pasta] [--name <nome>]  (ou AIC_INSTALL_TOKEN; --claim <token> expõe o token no ps)
 //!
 //! Com `https://` a CA vem de `AI_CLUSTER_TLS_CA` (e o nome do servidor de `AI_CLUSTER_TLS_DOMAIN`).
 //! Aprovado, grava `/run/aic-install.json` (ou `AIC_INSTALL_OUT`) com o token e o disco, e sai 0.
 //! Enter pergunta de novo na hora. `--once` pergunta uma vez e sai (teste).
+//! `--csr` manda o pedido de certificado do túnel RPC (a chave fica no aparelho, gerada pelo instalador) e
+//! `--rpc-out` recebe `worker.crt` e `ca.crt` (644); sem CA no controller o claim segue sem eles.
 //! `--claim` troca o token de uso único por `worker.env` (600): URL, join token e id do worker.
 
 mod hardware;
@@ -143,6 +145,11 @@ AI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request
 
 /// Grava `text` em `path` (600), atômico e sem seguir link.
 fn write_private(path: &str, text: &str) -> std::io::Result<()> {
+    write_mode(path, text, 0o600)
+}
+
+/// Como `write_private`, com a permissão à escolha (o certificado é público: 644).
+fn write_mode(path: &str, text: &str, mode: u32) -> std::io::Result<()> {
     use std::io::Write;
     // Escreve num .tmp novo e troca de uma vez: quem lê nunca vê o arquivo pela metade. Um .tmp de
     // antes (ou um link no lugar dele) sai antes; create_new e O_NOFOLLOW recusam seguir link.
@@ -153,8 +160,10 @@ fn write_private(path: &str, text: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        options.mode(mode).custom_flags(libc::O_NOFOLLOW);
     }
+    #[cfg(not(unix))]
+    let _ = mode;
     let mut file = options.open(&tmp)?;
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
@@ -189,12 +198,18 @@ async fn claim(
     node_name: &str,
     out: &str,
     ssh_out: Option<&str>,
+    rpc: Option<(&str, &str)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect(url)?;
+    let csr_pem = match rpc {
+        Some((csr, _)) => std::fs::read_to_string(csr).map_err(|e| format!("--csr {csr}: {e}"))?,
+        None => String::new(),
+    };
     let reply = client
         .claim_install(ClaimInstallRequest {
             token: token.into(),
             node_name: node_name.into(),
+            csr_pem,
         })
         .await
         .map_err(|status| match status.code() {
@@ -215,6 +230,21 @@ async fn claim(
         "Worker {} pré-aprovado; configuração em {out}",
         reply.node_id
     );
+    if let Some((_, dir)) = rpc {
+        if reply.rpc_cert_pem.is_empty() || reply.rpc_ca_pem.is_empty() {
+            println!(
+                "O controller não entregou o certificado (sem CA, ou porta sem TLS): este worker ficará SEM o certificado do túnel (não entra na inferência distribuída)"
+            );
+        } else {
+            // Só PEM de certificado; a chave não passa por aqui. O que o controller mandou é conferido antes de gravar.
+            if !pem_cert(&reply.rpc_cert_pem) || !pem_cert(&reply.rpc_ca_pem) {
+                return Err("o controller devolveu um certificado do túnel inválido".into());
+            }
+            write_mode(&format!("{dir}/worker.crt"), &reply.rpc_cert_pem, 0o644)?;
+            write_mode(&format!("{dir}/ca.crt"), &reply.rpc_ca_pem, 0o644)?;
+            println!("Certificado do túnel RPC em {dir}");
+        }
+    }
     if let Some(path) = ssh_out {
         // Só a chave pública do operador; o controller já filtrou, mas quem grava no disco confere de novo.
         let keys: Vec<&str> = reply
@@ -240,6 +270,21 @@ async fn claim(
         }
     }
     Ok(())
+}
+
+/// Um PEM de certificado e nada mais: ASCII, sem controle fora de quebra de linha, tamanho limitado.
+fn pem_cert(pem: &str) -> bool {
+    let t = pem.trim_end();
+    t.len() <= 16 * 1024
+        && t.starts_with(
+            "-----BEGIN CERTIFICATE-----
+",
+        )
+        && t.ends_with(
+            "
+-----END CERTIFICATE-----",
+        )
+        && t.bytes().all(|b| b == b'\n' || (0x20..0x7f).contains(&b))
 }
 
 /// Uma linha só, ASCII sem controle, no formato `tipo base64 [comentário]` sem opções.
@@ -293,6 +338,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &flag("--name").unwrap_or_default(),
             &out,
             flag("--ssh-out").as_deref(),
+            match (flag("--csr"), flag("--rpc-out")) {
+                (Some(csr), Some(out)) => Some((csr, out)),
+                (None, None) => None,
+                _ => return Err("--csr e --rpc-out vêm juntos".into()),
+            }
+            .as_ref()
+            .map(|(c, o)| (c.as_str(), o.as_str())),
         )
         .await;
     }
@@ -438,6 +490,48 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "ssh-ed25519 AAAA k
 "
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn so_pem_de_certificado_vai_para_o_disco() {
+        let ok = "-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----
+";
+        assert!(pem_cert(ok));
+        assert!(!pem_cert(
+            "-----BEGIN PRIVATE KEY-----
+AA
+-----END PRIVATE KEY-----
+"
+        ));
+        assert!(!pem_cert(&format!("{ok}{}", char::from(7))));
+        assert!(!pem_cert(&ok.replace("MIIB", "MI\0B")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn o_certificado_sai_644_atomico_e_nao_segue_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aic-claim-crt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("alvo.txt");
+        std::fs::write(&victim, "intocado").unwrap();
+        let path = dir.join("worker.crt");
+        std::os::unix::fs::symlink(&victim, dir.join("worker.crt.tmp")).unwrap();
+        write_mode(
+            path.to_str().unwrap(),
+            "cert
+",
+            0o644,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "intocado");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
