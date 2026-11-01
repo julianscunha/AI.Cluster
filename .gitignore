@@ -21,3 +21,6 @@ deploy/models/
 
 # Chaves privadas (a de Linux comum, e qualquer outra)
 *.key
+
+# Arquivos temporários de testes e builds locais (nada fora da pasta do projeto)
+/.tmp/
