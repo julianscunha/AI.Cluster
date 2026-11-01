@@ -172,3 +172,4 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 - **Imagem x86:** `mk-disk.sh` deve conferir os dois slots antes de entregar (saiu uma imagem com o slot A zerado).
 - **Rede:** o IP do notebook muda por DHCP e a chave de host do SSH muda a cada reinstalação (o `known_hosts` recusa). Reserva de IP no roteador ou nome no controller.
 - **Modelos:** Qwen2.5 1.5B e Llama 3.2 3B homologados; o Pi atrasa 25 a 33% quando entra com `--spread` (rede de 100 Mb/s). O 7B no notebook de 8 GB deve ficar sem folga: `model check` antes de subir.
+- **Painel, seção "Inferência":** mostra TTFT, ITL, decodificação e taxa zerados com o llama.cpp (8 requisições, 438 tokens gerados): o gateway não alimenta essas métricas no caminho do `llama-server`. O tok/s que vale é o da seção "API" (`model status`) e o `timings` da resposta do chat.
