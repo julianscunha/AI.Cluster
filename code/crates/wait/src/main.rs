@@ -113,7 +113,7 @@ fn write_install(path: &str, token: &str, disk: &str, forced: bool) -> std::io::
     )
 }
 
-/// `worker.env` com os três valores do worker. O join token é segredo: o arquivo fica 600 mesmo se já
+/// `worker.env` com o controller, o token e o id do worker (e o que a imagem do SO precisa para guardar credencial e receber atualização). O join token é segredo: o arquivo fica 600 mesmo se já
 /// existia com outra permissão.
 fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::Result<()> {
     use std::io::Write;
@@ -132,6 +132,13 @@ fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::R
     writeln!(
         file,
         "AI_CLUSTER_CONTROLLER={controller}\nAI_CLUSTER_JOIN_TOKEN={join}\nAI_CLUSTER_NODE_ID={node}"
+    )?;
+    // O que a imagem com identidade fixa (mk-disk.sh) também grava: a credencial do worker e os modelos
+    // ficam no /data, e o gatilho de atualização é o do AI Cluster OS. Sem isto o worker registrava, mas
+    // não guardava a credencial nem recebia atualização.
+    writeln!(
+        file,
+        "AI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\nAI_CLUSTER_MODEL_DIR=/data/models\nAI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request"
     )?;
     // Controller sem TLS aceito pelo operador (claim em claro): o worker só abre http:// com INSECURE.
     if controller.to_ascii_lowercase().starts_with("http://") {
@@ -342,7 +349,7 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             text,
-            "AI_CLUSTER_CONTROLLER=https://c:50051\nAI_CLUSTER_JOIN_TOKEN=join\nAI_CLUSTER_NODE_ID=x86-ddee01\n"
+            "AI_CLUSTER_CONTROLLER=https://c:50051\nAI_CLUSTER_JOIN_TOKEN=join\nAI_CLUSTER_NODE_ID=x86-ddee01\nAI_CLUSTER_NODE_CREDENTIAL_FILE=/data/state/credential\nAI_CLUSTER_MODEL_DIR=/data/models\nAI_CLUSTER_UPDATE_CMD=/usr/sbin/aic-update-request\n"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
