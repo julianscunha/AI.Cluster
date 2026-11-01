@@ -32,12 +32,15 @@ conf() { # conf <chave>: aic.<chave>= na linha do kernel, senão <chave>= em /ai
 
 rede() { # DHCP em cada placa (a primeira que pega IP serve); mostra MAC e IP
 	fala "Procurando rede..."
+	placas=$(ls "$SYS"/class/net 2>/dev/null | grep -v '^lo$' | tr '
+' ' ')
+	[ -n "$placas" ] && fala "  placas de rede detectadas: $placas" 		|| fala "  nenhuma placa de rede detectada (driver ausente neste instalador?)"
 	for rodada in 1 2 3; do
 		for n in "$SYS"/class/net/*; do
 			i=${n##*/}; [ "$i" = lo ] && continue
 			ip link set "$i" up 2>/dev/null
 			fala "  placa $i  MAC $(cat "$n/address" 2>/dev/null): pedindo IP..."
-			udhcpc -i "$i" -n -q -t 4 -T 3 -s /etc/aic/udhcpc.sh >/dev/null 2>&1 || continue
+			udhcpc -i "$i" -n -q -t 4 -T 3 -s /etc/aic/udhcpc.sh >"$RUN/udhcpc-$i.log" 2>&1 || { tail -n 2 "$RUN/udhcpc-$i.log" | sed 's/^/    /'; continue; }
 			fala "  placa $i  IP $(cat "$RUN/aic-ip-$i" 2>/dev/null)"
 			return 0
 		done
@@ -230,11 +233,16 @@ preparar() { # sistemas de arquivos do ambiente e os módulos de rede, disco e f
 }
 
 main() {
+	fala ""
+	fala "== AI.Cluster - instalador do AI Cluster OS (versão mínima $(cat /etc/aic/min-version 2>/dev/null)) =="
+	fala ""
+	fala "Carregando drivers..."
 	preparar
-	fala ""
-	fala "== AI.Cluster - instalador do AI Cluster OS =="
-	fala ""
-	rede || pare "sem rede. Confira o cabo e o DHCP do roteador; depois desligue e ligue o aparelho."
+	rede || {
+		fala "Placas e o que o kernel disse delas:"; ls "$SYS"/class/net 2>/dev/null | sed 's/^/  /'
+		dmesg 2>/dev/null | grep -iE 'eth|r8169|e1000|igb|igc|tg3|link|firmware' | tail -n 6 | sed 's/^/  /'
+		pare "sem rede. Confira o cabo e o DHCP do roteador (ou a placa pode não ter driver aqui); depois desligue e ligue o aparelho."
+	}
 	CTRL=$(conf controller)
 	IMGURL=$(conf image)
 	[ -n "$CTRL" ] || pare "falta o endereço do controller (aic.controller= na linha do kernel, ou controller= em /aic/installer.conf)."

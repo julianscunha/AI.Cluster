@@ -23,7 +23,7 @@ def grub_cfg(ip, espera, convite):
         "set timeout=5\n"
         "set default=0\n"
         'menuentry "Instalar AI Cluster OS" {\n'
-        "  linux /aic/vmlinuz console=tty0 console=ttyS0,115200 panic=10 "
+        "  linux /aic/vmlinuz console=ttyS0,115200 console=tty0 panic=10 "
         f"aic.controller=http://{ip}:{espera} aic.image=http://{ip}:{convite}/imagem\n"
         "  initrd /aic/initramfs.gz\n"
         "}\n"

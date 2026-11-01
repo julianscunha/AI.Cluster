@@ -75,11 +75,12 @@ done
 cp -a /o/glibc/. "$R"/
 chmod 755 "$R/usr/sbin/sgdisk"
 
+# af_packet: sem ele o udhcpc falha (AF_PACKET, "Address family not supported"). simpledrm primeiro: o linux-lts tem DRM modular, sem ele não há tela (o console do EFI some depois do EFI stub).
 # módulos: a lista de quem as interfaces de rede, disco e firmware precisam, com as dependências na ordem
 # de carga (o modprobe -D dá a cadeia; o insmod carrega cada arquivo, já descomprimido)
 K=$(ls /lib/modules | head -n 1)
-for m in virtio_net e1000 e1000e igc igb r8169 realtek tg3 ixgbe nvme ahci ata_piix sd_mod usb_storage uas \
-         xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci uhci_hcd virtio_pci virtio_blk efivarfs; do
+for m in simpledrm af_packet virtio_net e1000 e1000e igc igb r8169 realtek tg3 ixgbe nvme ahci ata_piix sd_mod usb_storage uas \
+         xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci uhci_hcd virtio_pci virtio_blk efivarfs \n         r8152 ax88179_178a cdc_ether cdc_ncm atlantic bnx2 bnx2x sky2 e1000 alx atl1c; do
   modprobe -S "$K" -D "$m" 2>/dev/null
 done | sed -n "s|^insmod ||p" | awk "!seen[\$0]++" > /tmp/modulos.txt
 : > "$R/etc/aic/modules"
