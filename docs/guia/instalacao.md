@@ -77,7 +77,7 @@ O script confere o processador, o firmware e o espaço, baixa só o `aic-wait` d
 sudo aic update status           # versão instalada × disponível
 sudo aic update apply            # pergunta antes; --yes não pergunta
 sudo aic update apply --force    # reinstala a versão atual (mesmo sem novidade)
-sudo aic update apply --version 0.2.1
+sudo aic update apply --version 0.2.2
 ```
 
 O que cada componente recebe, e o que o controller empurra, está em [[operacao#Atualização de cada componente]]. Em resumo: controller e gateway em Linux, e o worker em Linux, se atualizam com `aic update apply`, sem perder tokens, certificados, workers aprovados nem modelos; o worker em Linux comum recebe a atualização que o controller empurra, assinada com a chave de Linux ([ADR-025](../system/05-decisoes/adr-025-gatilho-de-atualizacao-assinada-linux.md)); o worker em AI Cluster OS é atualizado pela release assinada que o controller empurra (`aic cluster rollout`).
