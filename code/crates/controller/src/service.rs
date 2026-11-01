@@ -441,10 +441,16 @@ impl ClusterControlService {
                 let capability = node.capability?;
                 // O protocolo do RPC muda entre commits: worker com outra versão do rpc-server
                 // derrubaria o llama-server do gateway. Versão vazia de um lado é "não sei": passa.
+                // Versão vazia no worker com o gateway versionado é "desconhecida": fora do plano,
+                // porque um rpc-server de outro commit derruba o llama-server. Versão vazia no
+                // gateway desliga a conferência.
                 if !gateway_version.is_empty()
-                    && !capability.rpc_version.is_empty()
                     && rpc_commit(&capability.rpc_version) != rpc_commit(&gateway_version)
                 {
+                    eprintln!(
+                        "controller: worker {id} fora do plano: rpc_version {:?} e o gateway usa {gateway_version:?}",
+                        capability.rpc_version
+                    );
                     warnings.push(format!(
                         "worker {id} fora do plano: rpc-server {} e o gateway usa {gateway_version}",
                         capability.rpc_version
@@ -689,6 +695,15 @@ impl ClusterControl for ClusterControlService {
         if identity.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
+        // O id entra em linhas de estado separadas por tab e em listas separadas por vírgula.
+        if identity.node_id.len() > 128
+            || identity.node_id.contains(',')
+            || identity.node_id.chars().any(char::is_control)
+        {
+            return Err(Status::invalid_argument(
+                "node_id inválido: até 128 caracteres, sem vírgula nem controles",
+            ));
+        }
         let node_id = identity.node_id.clone();
         let now = unix_ms();
         let seen = format!("{} v{}", identity.architecture, identity.runtime_version);
@@ -706,9 +721,9 @@ impl ClusterControl for ClusterControlService {
                     ai_cluster_protocol::metadata::NODE_REMOVED_MESSAGE,
                 ));
             }
-            return Err(Status::failed_precondition(
-                "worker já registrado com outra credencial; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um worker pendente fica livre quando para de responder)",
-            ));
+            return Err(Status::failed_precondition(format!(
+                "worker já registrado com {OTHER_CREDENTIAL_MARK}; se aprovado, o operador precisa rodar `aic cluster node revoke` antes (um worker pendente fica livre quando para de responder)"
+            )));
         };
         // S2: an unapproved node must not be able to write controller state, so its copy is
         // ignored until it is trusted. A node that comes back after approval offers it again.
@@ -1013,7 +1028,9 @@ impl ClusterControl for ClusterControlService {
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
         .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
-        let nodes = self.rpc_node_memory(&request.workers);
+        let forced =
+            crate::models::clean_workers(&request.workers).map_err(Status::invalid_argument)?;
+        let nodes = self.rpc_node_memory(&forced);
         let Some(model) = self.pick_model(&found, &wanted, request.context, &nodes) else {
             return Err(Status::not_found(format!(
                 "modelo {wanted} não está na pasta"
@@ -1059,9 +1076,8 @@ impl ClusterControl for ClusterControlService {
             );
         };
         let mut candidates = self.rpc_candidates();
-        if !request.workers.is_empty() {
-            if let Some(missing) = request
-                .workers
+        if !forced.is_empty() {
+            if let Some(missing) = forced
                 .iter()
                 .find(|id| !candidates.iter().any(|c| &c.endpoint.node_id == *id))
             {
@@ -1072,7 +1088,7 @@ impl ClusterControl for ClusterControlService {
                     None,
                 );
             }
-            candidates.retain(|c| request.workers.contains(&c.endpoint.node_id));
+            candidates.retain(|c| forced.contains(&c.endpoint.node_id));
         }
         let verdict = ai_cluster_catalog::check::check(
             &model,
@@ -1113,11 +1129,9 @@ impl ClusterControl for ClusterControlService {
             required,
             endpoints,
             split,
+            forced,
+            request.spread,
         );
-        if !request.workers.is_empty() || request.spread {
-            self.orchestrator
-                .set_placement(request.workers.clone(), request.spread);
-        }
         self.events.record(unix_ms(), "model_started", wanted);
         Ok(Response::new(StartModelResponse {
             ok: true,
@@ -2427,6 +2441,11 @@ impl LinkProbe for LinkProbeService {
     }
 }
 
+/// Trecho estável da recusa "worker já registrado com outra credencial". O script `aic worker change`
+/// (code/os/image/overlay/usr/libexec/aic/change, constante OTHER_CREDENTIAL_MARK) procura este texto
+/// no log do worker: mudar um lado exige mudar o outro (o teste `o_change_procura_o_mesmo_trecho` confere).
+const OTHER_CREDENTIAL_MARK: &str = "outra credencial";
+
 /// Parte da `rpc_version` que decide a compatibilidade: o commit do llama.cpp, sem o sufixo de
 /// arquitetura (`llama.cpp-8ca4060+armv7`); gateway x86 e worker ARM do mesmo commit combinam.
 fn rpc_commit(version: &str) -> &str {
@@ -2439,6 +2458,31 @@ mod tests {
     use ai_cluster_protocol::cluster::{
         CapabilityReport, HealthReport, NodeIdentity, WorkResult, WorkUnit,
     };
+
+    #[test]
+    fn o_change_procura_o_mesmo_trecho() {
+        let change = include_str!("../../../os/image/overlay/usr/libexec/aic/change");
+        assert!(change.contains(&format!(
+            r#"OTHER_CREDENTIAL_MARK="{OTHER_CREDENTIAL_MARK}""#
+        )));
+    }
+
+    #[test]
+    fn o_commit_do_llama_cpp_e_o_mesmo_nos_tres_lugares() {
+        let build = include_str!("../../../third_party/llama.cpp/build.sh");
+        let commit = build
+            .lines()
+            .find_map(|l| l.strip_prefix("COMMIT="))
+            .expect("COMMIT= em build.sh");
+        let tag = format!("llama.cpp-{}", &commit[..7]);
+        let setup = include_str!("../../../os/setup");
+        let init = include_str!("../../../os/image/overlay/etc/init.d/ai-cluster-worker");
+        assert!(
+            setup.contains(&format!("AI_CLUSTER_RPC_VERSION={tag}")),
+            "setup"
+        );
+        assert!(init.contains(&format!("{tag}+")), "init.d do worker");
+    }
 
     #[test]
     fn a_arquitetura_nao_conta_na_comparacao_da_rpc_version() {

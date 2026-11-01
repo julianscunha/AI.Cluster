@@ -2258,18 +2258,35 @@ fn temperature_c() -> f64 {
     thermal_zone_c(Path::new("/sys/class/thermal"))
 }
 
-/// Zones that carry the package temperature, best first. Other zones (a wifi chip, say) are a
-/// fallback; `acpitz` is often a fixed firmware value and `INT3400 Thermal` has no sensor, so
-/// both are ignored.
+/// Zones that carry the package temperature, best first. Other zones are a fallback (the hottest
+/// wins); zones of a battery, wifi chip or NVMe are not the CPU, and `acpitz` is often a fixed
+/// firmware value while `INT3400 Thermal` has no sensor, so those are ignored.
 const THERMAL_PREFERRED: [&str; 4] = ["x86_pkg_temp", "coretemp", "cpu-thermal", "cpu_thermal"];
-const THERMAL_IGNORED: [&str; 2] = ["INT3400 Thermal", "acpitz"];
 
-/// Reads `root/thermal_zone*/{type,temp}` and picks the zone by [`THERMAL_PREFERRED`], then any
-/// zone not in [`THERMAL_IGNORED`]; 0 when none has a usable reading.
+fn thermal_ignored(kind: &str) -> bool {
+    kind == "acpitz"
+        || kind.starts_with("INT3400")
+        || ["battery", "iwlwifi", "nvme"]
+            .iter()
+            .any(|prefix| kind.starts_with(prefix))
+}
+
+/// Reads every `root/thermal_zone*/{type,temp}`; picks the best [`THERMAL_PREFERRED`] kind present
+/// (hottest zone of that kind), else the hottest zone not ignored; 0 when none has a reading.
 fn thermal_zone_c(root: &Path) -> f64 {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0.0;
+    };
     let mut best: Option<(usize, f64)> = None;
-    for zone in 0..16 {
-        let dir = root.join(format!("thermal_zone{zone}"));
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("thermal_zone")
+        {
+            continue;
+        }
+        let dir = entry.path();
         let Some(raw) = read_trimmed(&dir.join("temp").to_string_lossy())
             .and_then(|value| value.parse::<f64>().ok())
         else {
@@ -2282,12 +2299,14 @@ fn thermal_zone_c(root: &Path) -> f64 {
         let kind = read_trimmed(&dir.join("type").to_string_lossy()).unwrap_or_default();
         let rank = match THERMAL_PREFERRED.iter().position(|k| *k == kind) {
             Some(rank) => rank,
-            None if THERMAL_IGNORED.contains(&kind.as_str()) => continue,
+            None if thermal_ignored(&kind) => continue,
             None => THERMAL_PREFERRED.len(),
         };
-        if best.is_none_or(|(r, _)| rank < r) {
-            best = Some((rank, raw / 1000.0));
-        }
+        let celsius = raw / 1000.0;
+        best = match best {
+            Some((r, c)) if r < rank || (r == rank && c >= celsius) => Some((r, c)),
+            _ => Some((rank, celsius)),
+        };
     }
     best.map_or(0.0, |(_, c)| c)
 }
@@ -2427,6 +2446,8 @@ fn health() -> HealthReport {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn thermal_zone_prefers_the_package_sensor_and_skips_sensorless_zones() {
         let root = std::env::temp_dir().join(format!("aic-thermal-{}", std::process::id()));
@@ -2434,7 +2455,9 @@ mod tests {
         for (i, (kind, milli)) in [
             ("INT3400 Thermal", "20000"),
             ("acpitz", "20000"),
-            ("iwlwifi_1", "38000"),
+            ("iwlwifi_1", "70000"),
+            ("pch_cannonlake", "38000"),
+            ("other", "41000"),
             ("x86_pkg_temp", "45000"),
         ]
         .iter()
@@ -2446,14 +2469,18 @@ mod tests {
             std::fs::write(dir.join("temp"), format!("{milli}\n")).unwrap();
         }
         assert_eq!(thermal_zone_c(&root), 45.0);
-        std::fs::remove_dir_all(root.join("thermal_zone3")).unwrap();
-        assert_eq!(thermal_zone_c(&root), 38.0);
-        std::fs::remove_dir_all(root.join("thermal_zone2")).unwrap();
+        std::fs::remove_dir_all(root.join("thermal_zone5")).unwrap();
+        assert_eq!(
+            thermal_zone_c(&root),
+            41.0,
+            "sem pacote: a mais quente das demais"
+        );
+        for i in [3, 4] {
+            std::fs::remove_dir_all(root.join(format!("thermal_zone{i}"))).unwrap();
+        }
         assert_eq!(thermal_zone_c(&root), 0.0);
         let _ = std::fs::remove_dir_all(&root);
     }
-
-    use super::*;
 
     #[test]
     fn parses_meminfo_values() {

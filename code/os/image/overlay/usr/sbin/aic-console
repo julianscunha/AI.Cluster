@@ -118,10 +118,12 @@ draw() {
 		dot_worker=$C_BAD
 	fi
 	# túnel RPC: precisa do certificado (aic worker change / claim) e do ggml-rpc-server vivo
-	if [ -s /data/rpc-tls/worker.crt ] && [ -s /data/rpc-tls/worker.key ] && [ -s /data/rpc-tls/ca.crt ] && pidof ggml-rpc-server >/dev/null 2>&1; then
-		rpc="ligado"; dot_rpc=$C_OK
+	if ! { [ -s /data/rpc-tls/worker.crt ] && [ -s /data/rpc-tls/worker.key ] && [ -s /data/rpc-tls/ca.crt ]; }; then
+		rpc="desligado: sem certificado"; dot_rpc=$C_WARN
+	elif ! pidof ggml-rpc-server >/dev/null 2>&1; then
+		rpc="parado: ggml-rpc-server"; dot_rpc=$C_BAD
 	else
-		rpc="desligado: sem certificado (aic worker change)"; dot_rpc=$C_WARN
+		rpc="ligado"; dot_rpc=$C_OK
 	fi
 	if [ -n "$ip" ]; then dot_net=$C_OK; else dot_net=$C_BAD; fi
 	case "$registered" in

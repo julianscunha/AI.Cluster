@@ -124,6 +124,7 @@ Requisitos mínimos reais:
 
 - **RAM:** a do worker (o processo usa poucos MB) mais a do instalador x86, que mantém a imagem comprimida na RAM durante a gravação (a imagem tem 3 GiB descomprimida). Foi testado com 8 GB. O mínimo de RAM do instalador é **estimado, não medido**.
 - **Firmware opcional (fora da imagem):** a imagem x86 inclui só o da NIC Realtek (`linux-firmware-rtl_nic`, poucos MB; tamanho não medido). Vídeo Intel (`linux-firmware-i915`), Wi-Fi Atheros (`linux-firmware-ath10k`) e `wireless-regdb` ficam de fora de propósito, porque cada um soma megabytes (alguns, dezenas) a uma imagem que cabe em disco pequeno; se precisar de algum, acrescente o pacote Alpine ao `apk add` de `os/image/x86/Dockerfile` e reconstrua a imagem. Sem Wi-Fi, use cabo.
+- **Watchdog (x86):** o serviço `aic-watchdog` só liga se o `/dev/watchdog` existir (o `iTCO_wdt` o cria em muitos PCs); sem o dispositivo o boot segue sem ele.
 - **Disco:** maior que a imagem (3 GiB) mais os dados do worker (modelos e fatias ficam em `/data`, que ocupa o resto do disco). O disco escolhido é **apagado por inteiro**.
 - **Rede:** Ethernet com DHCP, alcançando o controller (portas 8099 e 50051 por padrão). Sem DHCP o instalador não sobe a rede.
 - **Teclado e monitor:** opcionais. Sem eles, o pendrive entra sozinho em 5 s e a escolha do disco é feita no controller; com eles, você escolhe o disco na tela e usa o console (F2).

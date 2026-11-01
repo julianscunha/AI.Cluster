@@ -158,6 +158,24 @@ fn usable_split(endpoints: &[RpcEndpoint], split: &[f64]) -> Vec<f64> {
     }
 }
 
+/// Valida e deduplica o `--workers` do operador: até 64 ids de até 128 caracteres, sem vírgula,
+/// tabulação, quebra de linha nem outro controle (o estado é gravado em linhas separadas por tab).
+pub fn clean_workers(workers: &[String]) -> Result<Vec<String>, String> {
+    if workers.len() > 64 {
+        return Err("--workers aceita no máximo 64 workers".into());
+    }
+    let mut out: Vec<String> = Vec::new();
+    for id in workers {
+        if id.is_empty() || id.len() > 128 || id.contains(',') || id.chars().any(char::is_control) {
+            return Err(format!("id de worker inválido em --workers: {id:?}"));
+        }
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// O tenant criado com o primeiro `models start`: todos os modelos.
 pub const DEFAULT_TENANT: &str = "default";
 
@@ -212,6 +230,8 @@ struct Inner {
     pending: Option<(Vec<RpcEndpoint>, Vec<f64>, u64)>,
     /// Os workers de agora não comportam o modelo: o plano para até voltar RAM. O texto é o motivo.
     insufficient: Option<String>,
+    /// Workers do conjunto forçado (`--workers`) que não estão aptos agora; vira aviso no `status`.
+    forced_missing: Vec<String>,
     tenants: Vec<StoredTenant>,
     running: Option<ModelStatus>,
 }
@@ -404,6 +424,7 @@ impl Orchestrator {
 
     /// Pede o modelo. O plano de workers entra na hora (não espera a janela de estabilidade). Devolve
     /// a geração e as chaves criadas: o tenant `default` nasce no primeiro pedido.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         &self,
         model_id: &str,
@@ -412,6 +433,8 @@ impl Orchestrator {
         required_bytes: u64,
         endpoints: Vec<RpcEndpoint>,
         split: Vec<f64>,
+        workers: Vec<String>,
+        spread: bool,
     ) -> (u64, Vec<ApiKey>) {
         let mut inner = self.lock();
         inner.insufficient = None;
@@ -420,8 +443,8 @@ impl Orchestrator {
             model_path: model_path.to_string(),
             context,
             required_bytes,
-            workers: Vec::new(),
-            spread: false,
+            workers,
+            spread,
         });
         inner.generation += 1;
         inner.applied = endpoints;
@@ -448,16 +471,6 @@ impl Orchestrator {
         (inner.generation, keys)
     }
 
-    /// Grava o conjunto de workers forçado pelo operador no pedido atual (logo depois de `start`).
-    pub fn set_placement(&self, workers: Vec<String>, spread: bool) {
-        let mut inner = self.lock();
-        if let Some(wanted) = inner.wanted.as_mut() {
-            wanted.workers = workers;
-            wanted.spread = spread;
-        }
-        self.save(&inner);
-    }
-
     /// Para o modelo. As chaves continuam valendo para o próximo `start`.
     pub fn stop(&self) -> u64 {
         let mut inner = self.lock();
@@ -475,6 +488,12 @@ impl Orchestrator {
     pub fn plan(&self, mut candidates: Vec<Candidate>, now_ms: u64) -> Option<DesiredModel> {
         let mut inner = self.lock();
         let wanted = inner.wanted.clone()?;
+        inner.forced_missing = wanted
+            .workers
+            .iter()
+            .filter(|id| !candidates.iter().any(|c| &c.endpoint.node_id == *id))
+            .cloned()
+            .collect();
         if !wanted.workers.is_empty() {
             candidates.retain(|c| wanted.workers.contains(&c.endpoint.node_id));
         }
@@ -666,13 +685,23 @@ impl Orchestrator {
             endpoints: inner.applied.clone(),
             split: usable_split(&inner.applied, &inner.applied_split),
         });
+        let warn = |reason: String| {
+            if inner.forced_missing.is_empty() {
+                reason
+            } else {
+                format!(
+                    "{reason}; AVISO: conjunto forçado incompleto, faltam {}",
+                    inner.forced_missing.join(",")
+                )
+            }
+        };
         if let (Some(reason), Some(d)) = (&inner.insufficient, &desired) {
             return (
                 desired.clone(),
                 Some(ModelStatus {
                     model_id: d.model_id.clone(),
                     state: ModelState::ModelFailed as i32,
-                    reason: reason.clone(),
+                    reason: warn(reason.clone()),
                     generation: d.generation,
                     tokens_per_second: 0.0,
                 }),
@@ -691,6 +720,12 @@ impl Orchestrator {
                 generation: d.generation,
                 tokens_per_second: 0.0,
             })
+        });
+        let running = running.map(|mut r| {
+            if !inner.forced_missing.is_empty() {
+                r.reason = warn(std::mem::take(&mut r.reason));
+            }
+            r
         });
         let prefixes = inner
             .tenants
@@ -744,7 +779,7 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         let o = orchestrator();
-        let (_, keys) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
+        let (_, keys) = o.start("m", "m.gguf", 0, 0, vec![], vec![], vec![], false);
         assert_eq!(keys.len(), 1);
         let grants = o.grants();
         assert_eq!(grants[0].key_sha256, key_hash(&keys[0].key).to_vec());
@@ -753,7 +788,11 @@ mod tests {
             "a chave em claro não pode vazar"
         );
         // Um segundo start não cria outra chave.
-        assert!(o.start("m", "m.gguf", 0, 0, vec![], vec![]).1.is_empty());
+        assert!(
+            o.start("m", "m.gguf", 0, 0, vec![], vec![], vec![], false)
+                .1
+                .is_empty()
+        );
     }
 
     #[test]
@@ -770,6 +809,8 @@ mod tests {
             0,
             vec![endpoint("a"), endpoint("b")],
             vec![],
+            vec![],
+            false,
         );
         let plan = o.plan(cands(&["b", "a"]), 10).unwrap();
         assert_eq!(
@@ -785,7 +826,16 @@ mod tests {
     #[test]
     fn a_new_worker_changes_the_plan_only_after_the_stability_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
+        let (g1, _) = o.start(
+            "m",
+            "m.gguf",
+            0,
+            0,
+            vec![endpoint("a")],
+            vec![],
+            vec![],
+            false,
+        );
         // Chega o worker b: ainda vale o plano antigo.
         let early = o.plan(cands(&["a", "b"]), 100).unwrap();
         assert_eq!((early.generation, early.endpoints.len()), (g1, 1));
@@ -799,7 +849,16 @@ mod tests {
     #[test]
     fn a_flapping_worker_never_reaches_the_window() {
         let o = orchestrator();
-        let (g1, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
+        let (g1, _) = o.start(
+            "m",
+            "m.gguf",
+            0,
+            0,
+            vec![endpoint("a")],
+            vec![],
+            vec![],
+            false,
+        );
         for t in 0..10 {
             let list = if t % 2 == 0 {
                 cands(&["a", "b"])
@@ -817,7 +876,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("models.state");
         let first = Orchestrator::new(Some(path.clone()));
-        let (generation, keys) = first.start("m", "m.gguf", 4096, 0, vec![endpoint("a")], vec![]);
+        let (generation, keys) = first.start(
+            "m",
+            "m.gguf",
+            4096,
+            0,
+            vec![endpoint("a")],
+            vec![],
+            vec![],
+            false,
+        );
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains(&keys[0].key), "o arquivo guarda só o hash");
 
@@ -838,7 +906,7 @@ mod tests {
     #[test]
     fn only_the_current_generation_updates_the_status() {
         let o = orchestrator();
-        let (generation, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
+        let (generation, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![], vec![], false);
         let status = |g| ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -867,6 +935,8 @@ mod tests {
             0,
             vec![endpoint("a"), endpoint("b")],
             vec![],
+            vec![],
+            false,
         );
         // Depois do reinício o plano em vigor é o mesmo: a geração não sobe à toa.
         let again = Orchestrator::new(Some(path));
@@ -874,7 +944,16 @@ mod tests {
         assert_eq!((plan.generation, plan.endpoints.len()), (generation, 2));
         // O estado reportado da geração antiga some quando o plano muda.
         let o = orchestrator();
-        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![endpoint("a")], vec![]);
+        let (g, _) = o.start(
+            "m",
+            "m.gguf",
+            0,
+            0,
+            vec![endpoint("a")],
+            vec![],
+            vec![],
+            false,
+        );
         o.note_running(ModelStatus {
             model_id: "m".into(),
             state: ModelState::ModelReady as i32,
@@ -901,6 +980,8 @@ mod tests {
             3 * gib,
             vec![endpoint("a"), endpoint("b")],
             vec![],
+            vec![],
+            false,
         );
         // Com a RAM de dois workers (2 GB cada) o plano segue.
         let two = || vec![candidate("a", 1.0, 2.0), candidate("b", 1.0, 2.0)];
@@ -919,7 +1000,7 @@ mod tests {
         let back = o.plan(two(), 30).unwrap();
         assert_eq!((back.generation, back.endpoints.len()), (g1 + 1, 2));
         // Sem exigência (modo só-gateway), nunca para por RAM.
-        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![]);
+        let (g, _) = o.start("m", "m.gguf", 0, 0, vec![], vec![], vec![], false);
         assert_eq!(o.plan(vec![], 40).unwrap().generation, g);
     }
 
@@ -929,6 +1010,36 @@ mod tests {
             speed,
             usable_bytes: (gib * (1u64 << 30) as f64) as u64,
         }
+    }
+
+    #[test]
+    fn clean_workers_valida_e_deduplica() {
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(clean_workers(&v(&["a", "b", "a"])).unwrap(), v(&["a", "b"]));
+        assert!(clean_workers(&v(&["a,b"])).is_err());
+        assert!(clean_workers(&v(&["a\tb"])).is_err());
+        assert!(clean_workers(&v(&["a\nb"])).is_err());
+        assert!(clean_workers(&v(&[""])).is_err());
+        assert!(clean_workers(&["x".repeat(129)]).is_err());
+        assert!(clean_workers(&(0..65).map(|i| i.to_string()).collect::<Vec<_>>()).is_err());
+    }
+
+    #[test]
+    fn conjunto_forcado_incompleto_avisa_no_status() {
+        let o = Orchestrator::new(None);
+        o.start(
+            "m",
+            "m.gguf",
+            0,
+            0,
+            vec![],
+            vec![],
+            vec!["a".into(), "b".into()],
+            false,
+        );
+        o.plan(cands(&["a"]), 0);
+        let (_, running, _) = o.status(0);
+        assert!(running.unwrap().reason.contains("faltam b"));
     }
 
     #[test]
@@ -945,8 +1056,16 @@ mod tests {
         let path = std::env::temp_dir().join(format!("aic-place-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let o = Orchestrator::new(Some(path.clone()));
-        o.start("m", "m.gguf", 0, 1, vec![endpoint("pi")], vec![]);
-        o.set_placement(vec!["pi".into()], false);
+        o.start(
+            "m",
+            "m.gguf",
+            0,
+            1,
+            vec![endpoint("pi")],
+            vec![],
+            vec!["pi".into()],
+            false,
+        );
         let plan = o.plan(pool(), 0).unwrap();
         assert_eq!(plan.endpoints.len(), 1);
         assert_eq!(plan.endpoints[0].node_id, "pi");

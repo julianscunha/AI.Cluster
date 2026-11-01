@@ -166,13 +166,16 @@ if [ -n "$SERVER" ]; then
 fi
 
 # Sobe e so se da por feito com o registro NOVO no log (até 30 s).
+# Trecho estável da recusa do controller ("worker já registrado com outra credencial", em
+# controller/src/service.rs, OTHER_CREDENTIAL_MARK); um teste do controller confere que os dois lados batem.
+OTHER_CREDENTIAL_MARK="outra credencial"
 n0=$(conta_registros)
 l0=$(wc -l < "$LOGW" 2>/dev/null || echo 0)
 "$RC" ai-cluster-worker start >/dev/null 2>&1 || falha "o worker nao subiu"
 i=0
 while [ "$(conta_registros)" -le "$n0" ]; do
 	i=$((i + 1))
-	if [ "$i" -ge 3 ] && tail -n +"$((l0 + 1))" "$LOGW" 2>/dev/null | grep -q "outra credencial"; then
+	if [ "$i" -ge 3 ] && tail -n +"$((l0 + 1))" "$LOGW" 2>/dev/null | grep -q "$OTHER_CREDENTIAL_MARK"; then
 		echo "aic worker change: o novo controller ja tem um worker $NODE com outra credencial." >&2
 		echo "no NOVO controller rode:  aic cluster node revoke $NODE   e depois repita:  aic worker change" >&2
 		falha "o novo controller recusou o registro (worker ja registrado com outra credencial)"

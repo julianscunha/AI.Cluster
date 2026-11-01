@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# Watchdog de hardware do x86 (iTCO_wdt e similares). Só liga se o /dev/watchdog existir: sem o
+# dispositivo (VM, placa sem watchdog) o boot segue normalmente, sem erro. Reinicia o aparelho se o
+# sistema travar por mais de 15 s (o busybox alimenta o dispositivo a cada 5 s).
+name="aic-watchdog"
+description="Watchdog de hardware (opcional)"
+
+command="/sbin/watchdog"
+command_args="-F -t 5 -T 15 /dev/watchdog"
+command_background=true
+pidfile="/run/aic-watchdog.pid"
+
+depend() {
+	after modules hwdrivers
+}
+
+start_pre() {
+	if [ ! -c /dev/watchdog ]; then
+		einfo "sem /dev/watchdog: seguindo sem watchdog"
+		return 1
+	fi
+}

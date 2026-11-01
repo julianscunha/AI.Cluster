@@ -32,8 +32,8 @@ RUN apk add --no-cache blkid \
  && mkinitfs -o /boot/initramfs-lts "$(ls /lib/modules | head -n 1)" \
  && rm -f /tmp/init-pre.sh /tmp/init-post.sh
 
-RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=/dev/watchdog' >> /etc/conf.d/watchdog && echo 'WATCHDOG_OPTS="-t 5 -T 15"' >> /etc/conf.d/watchdog && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
- && chmod 755 /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
+RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
+ && chmod 755 /etc/init.d/aic-watchdog /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
  && echo 'makestep 1 -1' >> /etc/chrony/chrony.conf \
@@ -43,5 +43,5 @@ RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'WATCHDOG_DEV=
  && rc-update add hwclock boot && rc-update add localmount boot && rc-update add modules boot && rc-update add sysctl boot \
  && rc-update add hostname boot && rc-update add bootmisc boot && rc-update add syslog boot \
  && rc-update add networking boot && rc-update add aic-dns default && rc-update add chronyd default \
- && rc-update add dropbear default && rc-update add ai-cluster-worker default && rc-update add aic-slot-commit default && rc-update add aic-updater default && rc-update add aic-measure default && rc-update add watchdog boot \
+ && rc-update add dropbear default && rc-update add ai-cluster-worker default && rc-update add aic-slot-commit default && rc-update add aic-updater default && rc-update add aic-measure default && rc-update add aic-watchdog boot \
  && rc-update add killprocs shutdown && rc-update add mount-ro shutdown && rc-update add savecache shutdown

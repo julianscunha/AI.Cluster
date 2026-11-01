@@ -1153,7 +1153,7 @@ WEB = os.getcwd()
 # Modo dedicado (ADR-023): a pasta da imagem serve só estes nomes, em /imagem/ (vazia = sem imagem nesta release)
 IMG = os.path.abspath(os.environ["AIC_IMG_DIR"]) if os.environ.get("AIC_IMG_DIR") else ""
 IMG_FILES = ("disk-x86.img.gz", "SHA256SUMS", "SHA256SUMS.sig", "VERSION")
-LOCK = threading.Lock()  # o ca.srl é lido e regravado pelo openssl: um pedido por vez
+LOCK = threading.Lock()  # a CA assina um pedido por vez (o openssl ca grava index.txt e new/ no diretório do pedido)
 done = set()      # nomes já assinados nesta janela
 guesses = {}      # IP -> chutes errados
 locked = set()
@@ -1184,23 +1184,44 @@ def served(path):
     return os.path.dirname(p) == WEB and os.path.isfile(p)
 
 
+def csr_ok(csr):
+    # só chaves que o túnel aceita: EC P-256 ou RSA de 2048 bits ou mais
+    r = subprocess.run(["openssl", "req", "-noout", "-text", "-in", csr], capture_output=True, text=True)
+    t = r.stdout
+    if r.returncode != 0:
+        return False
+    if "id-ecPublicKey" in t:
+        return "prime256v1" in t or "P-256" in t
+    m = re.search(r"Public-Key: [(](\d+) bit[)]", t)
+    return "rsaEncryption" in t and bool(m) and int(m.group(1)) >= 2048
+
+
+def ca_not_after():
+    out = subprocess.run(["openssl", "x509", "-noout", "-enddate", "-in", CA + "/ca.crt"], capture_output=True, text=True).stdout
+    return datetime.datetime.strptime(" ".join(out.strip().split("=", 1)[1].split()), "%b %d %H:%M:%S %Y GMT").replace(tzinfo=datetime.timezone.utc)
+
+
 def sign(d, csr, crt, ext):
     # `openssl ca` (e não `x509 -req`) porque só ele aceita -startdate: o certificado vale desde 10 min atrás,
-    # para um worker de relógio atrasado não recusá-lo; a validade total (825 dias) é mantida.
+    # para um worker de relógio atrasado não recusá-lo. Validade de 825 dias, nunca além do fim da CA.
+    # Serial aleatório (rand_serial): não há ca.srl. Caminhos relativos ao diretório temporário `d`
+    # (cwd), então o ca.cnf não leva nenhum caminho com caracteres especiais do formato de configuração.
     fmt = "%Y%m%d%H%M%SZ"
     now = datetime.datetime.now(datetime.timezone.utc)
-    cfg = os.path.join(d, "ca.cnf")
+    end = min(now + datetime.timedelta(days=825), ca_not_after())
+    if end <= now:
+        return False
     open(os.path.join(d, "index.txt"), "w").close()
     os.mkdir(os.path.join(d, "new"))
-    with open(cfg, "w") as f:
-        f.write("[ca]\ndefault_ca=c\n[c]\ndatabase=%s/index.txt\nnew_certs_dir=%s/new\nrand_serial=yes\n"
-                "default_md=sha256\npolicy=p\nunique_subject=no\n[p]\ncommonName=optional\n" % (d, d))
+    with open(os.path.join(d, "ca.cnf"), "w") as f:
+        f.write("[ca]\ndefault_ca=c\n[c]\ndatabase=index.txt\nnew_certs_dir=new\nrand_serial=yes\n"
+                "default_md=sha256\npolicy=p\nunique_subject=no\n[p]\ncommonName=optional\n")
     return subprocess.run(
-        ["openssl", "ca", "-batch", "-notext", "-config", cfg, "-cert", CA + "/ca.crt", "-keyfile", CA + "/ca.key",
+        ["openssl", "ca", "-batch", "-notext", "-config", "ca.cnf", "-cert", CA + "/ca.crt", "-keyfile", CA + "/ca.key",
          "-in", csr, "-out", crt, "-extfile", ext,
          "-startdate", (now - datetime.timedelta(minutes=10)).strftime(fmt),
-         "-enddate", (now + datetime.timedelta(days=825)).strftime(fmt)],
-        capture_output=True).returncode == 0
+         "-enddate", end.strftime(fmt)],
+        capture_output=True, cwd=d).returncode == 0
 
 
 class H(http.server.SimpleHTTPRequestHandler):
@@ -1256,7 +1277,7 @@ class H(http.server.SimpleHTTPRequestHandler):
             with open(ext, "w") as f:
                 f.write("subjectAltName=DNS:aic-worker-%s\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n" % name)
             with LOCK:
-                ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and sign(d, csr, crt, ext)
+                ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and csr_ok(csr) and sign(d, csr, crt, ext)
             if not ok:
                 with LOCK:
                     done.discard(name)
