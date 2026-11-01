@@ -263,6 +263,79 @@ act_network() {
 	pause_key
 }
 
+# ---------- saúde do computador ----------
+
+# Retrato do momento, sem atualização automática (a tela não pisca): R mede de novo; outra tecla volta.
+saude_barra() { # rótulo percentual texto
+	at "$row" 4; printf '%s%-9s%s' "$C_LOGO" "$1" "$C_RESET"
+	progress "$2" 24
+	printf ' %s%s%s' "$C_VALUE" "$3" "$C_RESET"
+	row=$((row + 1))
+}
+
+saude_texto() { # rótulo cor texto
+	at "$row" 4; printf '%s%-9s%s%s%s%s' "$C_LOGO" "$1" "$C_RESET" "$2" "$3" "$C_RESET"
+	row=$((row + 1))
+}
+
+saude_corpo() {
+	local a b pct mem tot usado swp d t cor n up w
+	a=$(sed -n 's/^cpu  //p' /proc/stat | awk '{ t = 0; for (i = 1; i <= 8; i++) t += $i; print t, $4 + $5 }')
+	sleep 1
+	b=$(sed -n 's/^cpu  //p' /proc/stat | awk '{ t = 0; for (i = 1; i <= 8; i++) t += $i; print t, $4 + $5 }')
+	pct=$(echo "$a $b" | awk '{ d = $3 - $1; p = 0; if (d > 0) p = 100 * (d - ($4 - $2)) / d; printf "%d", p }')
+	row=3
+	saude_barra "CPU" "$pct" "${pct}%  $(grep -c '^processor' /proc/cpuinfo) nucleo(s)"
+	saude_texto "Carga" "$C_VALUE" "$(cut -d' ' -f1-3 /proc/loadavg)  (1, 5 e 15 min)"
+	mem=$(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } /^SwapTotal:/ { st = $2 } /^SwapFree:/ { sf = $2 }
+		END { printf "%d %d %d %d", t / 1024, (t - a) / 1024, st / 1024, (st - sf) / 1024 }' /proc/meminfo)
+	set -- $mem
+	[ "$1" -gt 0 ] && saude_barra "Memoria" $(($2 * 100 / $1)) "$2 de $1 MiB em uso"
+	[ "$3" -gt 0 ] && saude_barra "Swap" $(($4 * 100 / $3)) "$4 de $3 MiB em uso"
+	row=$((row + 1))
+	n=0
+	for d in /sys/class/thermal/thermal_zone*; do
+		[ -r "$d/temp" ] || continue
+		t=$(($(cat "$d/temp" 2>/dev/null || echo 0) / 1000))
+		[ "$t" -gt 0 ] || continue
+		cor=$C_OK; [ "$t" -ge 80 ] && cor=$C_WARN; [ "$t" -ge 100 ] && cor=$C_BAD
+		saude_texto "Temp." "$cor" "${t} C  $(cat "$d/type" 2>/dev/null)"
+		n=$((n + 1)); [ "$n" -ge 3 ] && break
+	done
+	[ "$n" -eq 0 ] && saude_texto "Temp." "$C_HINT" "sem sensor de temperatura neste hardware"
+	row=$((row + 1))
+	for d in / /data; do
+		w=$(df -k "$d" 2>/dev/null | awk 'NR == 2 { printf "%d %d %d", $2 / 1024, $3 / 1024, $5 }')
+		[ -n "$w" ] || continue
+		set -- $w
+		[ "$1" -gt 0 ] && saude_barra "Disco $d" "$3" "$2 de $1 MiB"
+	done
+	row=$((row + 1))
+	for d in /sys/class/net/*; do
+		n=${d##*/}; [ "$n" = lo ] && continue
+		saude_texto "Rede" "$C_VALUE" "$n  $(cat "$d/operstate" 2>/dev/null)  recebido $(($(cat "$d/statistics/rx_bytes" 2>/dev/null || echo 0) / 1048576)) MiB  enviado $(($(cat "$d/statistics/tx_bytes" 2>/dev/null || echo 0) / 1048576)) MiB"
+		[ "$row" -ge $((LINES_N - 5)) ] && break
+	done
+	row=$((row + 1))
+	up=$(uptime_s)
+	if pidof ai-cluster-worker >/dev/null 2>&1; then saude_texto "Worker" "$C_OK" "em execucao"; else saude_texto "Worker" "$C_BAD" "parado"; fi
+	saude_texto "Ligado ha" "$C_VALUE" "$((up / 3600)) h $((up % 3600 / 60)) min    versao $(cat /etc/aic-release 2>/dev/null || echo dev)"
+	at 2 4; printf '%s%-20s%s' "$C_HINT" "Medido agora" "$C_RESET"
+}
+
+act_health() {
+	local k
+	while :; do
+		page "Saude deste computador"
+		at 2 4; printf '%sMedindo (1 s)...%s' "$C_HINT" "$C_RESET"
+		saude_corpo
+		at "$LINES_N" 1
+		printf '%s %-*s%s' "$C_FOOT" $((COLS_N - 1)) "R mede de novo   Qualquer outra tecla volta" "$C_RESET"
+		k=$(key 120) || return 0
+		case "$k" in r | R) ;; *) return 0 ;; esac
+	done
+}
+
 act_update() {
 	page "Atualizacao do sistema"
 	at 3 4; printf '%sVersao:%s %s   %sslot:%s %s' "$C_LOGO" "$C_VALUE" "$(cat /etc/aic-release 2>/dev/null)" "$C_LOGO" "$C_VALUE" "$(sed -n 's/.*aic\.slot=\([AB]\).*/\1/p' /proc/cmdline)"
@@ -312,11 +385,11 @@ act_poweroff() {
 
 # O menu "Personalizar o sistema": setas ou número escolhem, Enter abre, Esc volta.
 menu() {
-	local sel=1 total=6 i k label
+	local sel=1 total=7 i k label
 	while :; do
 		page "Personalizar o sistema"
 		i=1
-		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o servico do worker" "Reiniciar o computador" "Desligar este worker" "Atualizacao do sistema"; do
+		for label in "Visualizar registros do worker" "Saude deste computador" "Rede (somente leitura)" "Reiniciar o servico do worker" "Reiniciar o computador" "Desligar este worker" "Atualizacao do sistema"; do
 			at $((3 + i)) 6
 			if [ "$i" -eq "$sel" ]; then
 				printf '%s %d. %-40s%s' "$C_FOOT" "$i" "$label" "$C_RESET"
@@ -331,17 +404,18 @@ menu() {
 		case "$k" in
 		up) [ "$sel" -gt 1 ] && sel=$((sel - 1)) ;;
 		down) [ "$sel" -lt "$total" ] && sel=$((sel + 1)) ;;
-		[1-6]) sel=$k; k=enter ;;
+		[1-7]) sel=$k; k=enter ;;
 		esc) return 0 ;;
 		esac
 		if [ "$k" = enter ]; then
 			case "$sel" in
 			1) act_logs ;;
-			2) act_network ;;
-			3) act_restart_worker ;;
-			4) act_reboot ;;
-			5) act_poweroff ;;
-			6) act_update ;;
+			2) act_health ;;
+			3) act_network ;;
+			4) act_restart_worker ;;
+			5) act_reboot ;;
+			6) act_poweroff ;;
+			7) act_update ;;
 			esac
 		fi
 	done
