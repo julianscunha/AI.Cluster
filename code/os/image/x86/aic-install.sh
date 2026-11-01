@@ -227,9 +227,10 @@ preparar() { # sistemas de arquivos do ambiente e os módulos de rede, disco e f
 	mount -t devtmpfs devtmpfs /dev 2>/dev/null
 	mount -t tmpfs tmpfs /run 2>/dev/null
 	mount -t tmpfs tmpfs /tmp 2>/dev/null
-	mkdir -p /dev/pts "$RUN/img" /sys/firmware/efi/efivars
-	mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+	mkdir -p /dev/pts "$RUN/img"
 	while read -r m; do insmod "$m" 2>>"$RUN/modulos.log"; done < /etc/aic/modules
+	# efivarfs é módulo: só depois do insmod dá para montar (sem ele o efibootmgr não grava a entrada de boot)
+	mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>>"$RUN/modulos.log"
 }
 
 main() {
