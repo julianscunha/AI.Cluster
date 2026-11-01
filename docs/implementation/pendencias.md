@@ -169,3 +169,15 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 - Corrigido: o claim entrega o certificado do túnel RPC (CSR gerado no aparelho, assinado pela CA do controller; ADR-023), então o worker instalado liga o `ggml-rpc-server`. Só vale na imagem/instalador reconstruídos, e falta testar de ponta a ponta no hardware (claim real → inferência distribuída).
 
 - **Fonte única da versão (achado de 01/11/2026).** `aic controller status` e `aic gateway status` mostravam 0.2.1 e o slogan antigo ("hardware comum") com os binários já na 0.2.3: o `setup` do lab era uma cópia velha e `versao()` lia o `VERSION` do arquivo `/etc/ai-cluster/release`, só um registro da instalação. Corrigido: `versao()` pergunta ao binário (`aic version --short`, nova opção) e só cai no arquivo se não houver binário. Falta um único caminho de deploy do lab (hoje as cópias de `setup`/`bootstrap.sh` são manuais e se perdem); o certo é o lab usar o próprio `install.sh`/`setup update`.
+
+## Hardware real: o que falta (01/11/2026)
+
+**Regra de validação:** versão nova entra nos aparelhos **só por atualização assinada** (rollout, F2 ou `aic update`). Pendrive é recuperação de um aparelho que travou, não etapa de teste. A validação de splash, Enter e entrada EFI do instalador espera um aparelho que precise mesmo ser reinstalado.
+
+- **Não testado em hardware:** vazão da rede nos dois sentidos e sob carga; temperatura do Pi (sem sensor, TEMP_C 0); Pi no limite de RAM e térmico; perda de energia no meio de uma atualização A/B; Secure Boot; PXE x86 e kexec do `/wait`; firmware opcional (i915, ath10k, regdb), só documentado.
+- **Notebook (Dell): "Hard drive not installed" depois do rollout 0.2.3** (a tela de recuperação da Dell; o pendrive via GRUB só via `hd0,msdos1`, o disco interno não aparecia). Voltou sozinho com desligar e ligar; o NVMe sobe normal e o `dmesg` está limpo. Causa não achada (firmware/BIOS ou NVMe). Se repetir: BIOS (modo AHCI/RAID) e diagnóstico do disco.
+- **Console:** o menu F2 fecha após 120 s sem tecla (e a senha após 60 s); decidir se tira o tempo do menu. Feito, ainda sem rebuild: impressão da credencial (o `sed` tinha o byte `0x01` no lugar de `\1`), "processando - modelo X" (heartbeat `serving_model`) e data/hora na barra de cima.
+- **Rollout:** o canário é o primeiro worker a dar heartbeat, sem olhar a placa; com duas placas, a release de uma cai no worker da outra e o rollout pausa em 10 min.
+- **Imagem x86:** `mk-disk.sh` deve conferir os dois slots antes de entregar (saiu uma imagem com o slot A zerado).
+- **Rede:** o IP do notebook muda por DHCP e a chave de host do SSH muda a cada reinstalação (o `known_hosts` recusa). Reserva de IP no roteador ou nome no controller.
+- **Modelos:** Qwen2.5 1.5B e Llama 3.2 3B homologados; o Pi atrasa 25 a 33% quando entra com `--spread` (rede de 100 Mb/s). O 7B no notebook de 8 GB deve ficar sem folga: `model check` antes de subir.
