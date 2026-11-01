@@ -24,7 +24,12 @@ export AIC_INSTALL_LIB=1   # o aic-install.sh só carrega as funções
 
 echo "=== A) sintaxe ==="
 sh -n "$HERE/os/setup" || fail "setup com erro de sintaxe"
-grep -q -- "search --no-floppy --file /aic/grub.cfg" "$X86/build-installer.sh" || fail "o GRUB do pendrive não acha /aic/grub.cfg (não pode depender de rótulo)"
+grep -q -- "-f \$d/aic/grub.cfg" "$X86/embed.cfg" || fail "o cfg embutido não percorre os discos atrás de /aic/grub.cfg"
+grep -q -- "search --no-floppy --file /aic/grub.cfg" "$X86/embed.cfg" || fail "o cfg embutido não tem o fallback por search --file"
+grep -q "menuentry" "$X86/embed.cfg" || fail "o cfg embutido não tem menu de falha (nada de prompt cru)"
+grep -q "regexp" "$X86/build-installer.sh" || fail "falta o módulo regexp no GRUB (sem ele o (*) não expande)"
+# o GRUB dá syntax error em bloco { } solto (||/&& { ...; }): só function/menuentry/if/for/while têm chaves
+! grep -nE '(\|\||&&)[[:space:]]*\{' "$X86/embed.cfg" || fail "embed.cfg usa bloco { } solto (syntax error no GRUB)"
 ! grep -q -- "--label" "$X86/build-installer.sh" || fail "build-installer.sh voltou a procurar o pendrive por rótulo"
 bash -n "$X86/build-installer.sh" || fail "build-installer.sh com erro de sintaxe"
 "$PY" -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$HERE/os/mkusb.py" || fail "mkusb.py com erro de sintaxe"
@@ -71,11 +76,12 @@ for n in ("EFI/BOOT/BOOTX64.EFI", "aic/vmlinuz", "aic/initramfs.gz"):
     origem = {"EFI/BOOT/BOOTX64.EFI": "BOOTX64.EFI", "aic/vmlinuz": "vmlinuz", "aic/initramfs.gz": "initramfs.gz"}[n]
     assert z.read(n) == (pasta / origem).read_bytes(), ("conteúdo diferente", n)
 cfg = z.read("aic/grub.cfg").decode()
-linha = [l for l in cfg.splitlines() if l.startswith("linux ")]
+linha = [l.strip() for l in cfg.splitlines() if l.strip().startswith("linux ")]
 assert len(linha) == 1, cfg
 assert f"aic.controller=http://{ip}:50052" in linha[0], linha
 assert f"aic.image=http://{ip}:8099/imagem" in linha[0], linha
 assert "initrd /aic/initramfs.gz" in cfg, cfg
+assert 'menuentry "Instalar AI Cluster OS"' in cfg and 'menuentry "Reiniciar' in cfg and "set timeout=5" in cfg, cfg
 leia = z.read("LEIAME.txt").decode("utf-8")
 assert "FAT32" in leia and "AIC" not in leia and "UEFI" in leia and "Secure Boot" in leia, leia
 assert "Formate" in leia and "Format the pendrive" in leia, leia  # pt e en

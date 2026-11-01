@@ -4,7 +4,7 @@
   python3 mkusb.py <pasta dedicado> <saída.zip> <ip do controller> <porta de espera> <porta do convite>
 
 O zip é extraído na raiz de um pendrive FAT32 qualquer (sem rótulo, letra ou ordem de disco). EFI/BOOT/BOOTX64.EFI é o GRUB
-(feito no build, com grub-mkstandalone): acha o disco que tem /aic/grub.cfg e o carrega; ele leva na linha do kernel o
+(feito no build, com grub-mkstandalone): percorre os discos até achar /aic/grub.cfg e o carrega (menu); ele leva na linha do kernel o
 endereço deste controller (a espera de aprovação é a porta de espera; a imagem vem do convite). Stdlib apenas.
 """
 
@@ -18,12 +18,18 @@ PRECISA = ["BOOTX64.EFI", "vmlinuz", "initramfs.gz"]
 
 
 def grub_cfg(ip, espera, convite):
+    # menu navegável (setas + Enter): instala sozinho em 5 s; "Reiniciar" para desistir
     return (
-        "set timeout=0\n"
-        "linux /aic/vmlinuz console=tty0 console=ttyS0,115200 panic=10 "
+        "set timeout=5\n"
+        "set default=0\n"
+        'menuentry "Instalar AI Cluster OS" {\n'
+        "  linux /aic/vmlinuz console=tty0 console=ttyS0,115200 panic=10 "
         f"aic.controller=http://{ip}:{espera} aic.image=http://{ip}:{convite}/imagem\n"
-        "initrd /aic/initramfs.gz\n"
-        "boot\n"
+        "  initrd /aic/initramfs.gz\n"
+        "}\n"
+        'menuentry "Reiniciar o computador" {\n'
+        "  reboot\n"
+        "}\n"
     )
 
 

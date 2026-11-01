@@ -2,7 +2,7 @@
 # Monta o ambiente de instalação do AI Cluster OS x86_64 (ADR-023): um kernel e um initramfs que rodam
 # em RAM, sobem a rede, esperam a aprovação do controller e gravam a imagem com install-disk.sh.
 # Saída: build/installer/vmlinuz, initramfs.gz e BOOTX64.EFI (em code/os/image/). O BOOTX64.EFI é o GRUB do
-# pendrive (UEFI): acha o pendrive pelo arquivo /aic/grub.cfg e carrega aic/grub.cfg, que o convite grava (code/os/mkusb.py).
+# pendrive (UEFI): percorre os discos até achar aic/grub.cfg (que o convite grava, code/os/mkusb.py) e o carrega, com menu.
 #
 #   bash code/os/image/x86/build-installer.sh [chave-pública-pinada]
 #   AIC_CONTROLLER=http://controller:50052 bash ... (opcional: grava /aic/installer.conf)
@@ -119,19 +119,16 @@ cd "$R" && find . -print | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9 > /
 echo "modulos: $(wc -l < /tmp/modulos.txt)  kernel: $K"
 ls -l /o/vmlinuz /o/initramfs.gz
 '
-# BOOTX64.EFI: o GRUB do pendrive, com o cfg embutido que acha o pendrive pelo arquivo /aic/grub.cfg (sem depender de rótulo, letra ou ordem dos discos)
-# dele (o endereço do controller fica nesse arquivo, gerado por convite). Sem IP aqui: o binário é o mesmo.
-cat > build/installer/in/embed.cfg <<'EMBED'
-set timeout=0
-search --no-floppy --file /aic/grub.cfg --set=root || { echo "AI Cluster: nao achei /aic/grub.cfg em nenhum disco (extraia o zip na raiz do pendrive)"; sleep 30; halt; }
-configfile /aic/grub.cfg
-EMBED
+# BOOTX64.EFI: o GRUB do pendrive. O cfg embutido (x86/embed.cfg) percorre todos os discos até achar aic/grub.cfg (sem
+# depender de rótulo, letra, MBR/GPT ou ordem dos discos), mostra mensagem e um menu se não achar, e carrega o aic/grub.cfg
+# do convite (endereço do controller, em code/os/mkusb.py). Sem IP aqui: o binário é o mesmo.
+# Atenção: o GRUB não aceita bloco { ... } solto (|| { ...; }): dá "syntax error" e cai no prompt grub>.
+# wildcard (*) em "for" só expande com o módulo regexp.
+cp x86/embed.cfg build/installer/in/embed.cfg
 MSYS_NO_PATHCONV=1 docker run --rm --platform linux/amd64 -v "$HOSTDIR/build/installer:/o" alpine:3.20 sh -c '
   set -e
   apk add -q --no-cache grub-efi >/dev/null
-  grub-mkstandalone -O x86_64-efi -o /o/BOOTX64.EFI \
-    --modules="part_gpt part_msdos fat search search_fs_file configfile normal linux echo sleep halt test" \
-    "boot/grub/grub.cfg=/o/in/embed.cfg"
+  grub-mkstandalone -O x86_64-efi -o /o/BOOTX64.EFI     --modules="part_gpt part_msdos fat exfat ntfs ext2 search search_fs_file configfile normal linux boot echo sleep halt reboot test regexp ls"     "boot/grub/grub.cfg=/o/in/embed.cfg"
 '
 
 rm -rf build/installer/in build/installer/glibc
