@@ -35,18 +35,26 @@ done
 [ "$total" -gt 0 ] || total=1
 release=$(cat /etc/aic-release 2>/dev/null || echo dev)
 
-printf '%s[2J' "$ESC"
-top=$((LINES_N / 2 - 8))
-[ "$top" -lt 1 ] && top=1
-logo "$top" $(((COLS_N - 11) / 2 + 1))
-center $((top + 6)) "${ESC}[1;97m" "AI Cluster OS"
-center $((top + 7)) "$C_TEXT" "IA distribuída em hardware heterogêneo"
-center $((top + 8)) "$C_HINT" "versao $release"
+# Desenha o logotipo centralizado no tamanho atual da tela. O console pode nascer em 80x25 e crescer quando o
+# driver gráfico assume (EFI): por isso o tamanho é medido de novo a cada ciclo e a tela é redesenhada se mudar.
+desenha() {
+	printf '%s[2J' "$ESC"
+	top=$((LINES_N / 2 - 8))
+	[ "$top" -lt 1 ] && top=1
+	logo "$top" $(((COLS_N - 11) / 2 + 1))
+	center $((top + 6)) "${ESC}[1;97m" "AI Cluster OS"
+	center $((top + 7)) "$C_TEXT" "IA distribuída em hardware heterogêneo"
+	center $((top + 8)) "$C_HINT" "versao $release"
+	width=40
+	[ "$COLS_N" -lt 60 ] && width=$((COLS_N - 20))
+	bar_col=$(((COLS_N - width - 5) / 2 + 1))
+	GEOM="$LINES_N $COLS_N"
+}
 
-width=40
-[ "$COLS_N" -lt 60 ] && width=$((COLS_N - 20))
-bar_col=$(((COLS_N - width - 5) / 2 + 1))
+desenha
 while [ ! -e /run/aic-console.up ]; do
+	TERM_DEV=$TTY term_size
+	[ "$GEOM" = "$LINES_N $COLS_N" ] || desenha
 	started=$(ls /run/openrc/started 2>/dev/null | wc -l)
 	pct=$((started * 100 / total))
 	[ "$pct" -gt 99 ] && pct=99
