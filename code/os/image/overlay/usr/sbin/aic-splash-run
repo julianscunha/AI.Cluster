@@ -40,7 +40,7 @@ top=$((LINES_N / 2 - 8))
 [ "$top" -lt 1 ] && top=1
 logo "$top" $(((COLS_N - 11) / 2 + 1))
 center $((top + 6)) "${ESC}[1;97m" "AI Cluster OS"
-center $((top + 7)) "$C_TEXT" "IA distribuida em hardware comum"
+center $((top + 7)) "$C_TEXT" "IA distribuída em hardware heterogêneo"
 center $((top + 8)) "$C_HINT" "versao $release"
 
 width=40

@@ -125,7 +125,7 @@ draw() {
 	if [ "$LINES_N" -ge 24 ]; then
 		logo "$top" $((MX + 8))
 		at $((top + 1)) $((MX + 28)); printf '%sAI Cluster OS%s' "${ESC}[1;97m" "$C_RESET"
-		at $((top + 2)) $((MX + 28)); printf '%sIA distribuida em hardware comum%s' "$C_TEXT" "$C_RESET"
+		at $((top + 2)) $((MX + 28)); printf '%sIA distribuída em hardware heterogêneo%s' "$C_TEXT" "$C_RESET"
 		at $((top + 3)) $((MX + 28)); printf '%sAI.Cluster%s' "$C_LOGO" "$C_RESET"
 		at $((top + 4)) $((MX + 28)); printf '%sversao %s  -  slot %s%s' "$C_HINT" "$release" "${slot:-?}" "$C_RESET"
 		b=$((top + 6))

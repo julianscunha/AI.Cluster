@@ -64,7 +64,7 @@ banner() { # banner <componente> <versão, ou vazio> <detalhe>
   if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
   printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
   printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
-  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuida em hardware comum%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
+  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuída em hardware heterogêneo%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
   if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
   else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
   printf '   %s■%s───%s■%s      %s%s%s\n\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"

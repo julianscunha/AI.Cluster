@@ -110,7 +110,7 @@ banner() { # banner <componente> <versao> <detalhe>
 	local w="${ESC}[1;97m" a="${ESC}[36m" k="${ESC}[2;37m" z="${C_RESET}"
 	printf '\n   %s%s%s%s%s%s%s\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$z"
 	printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$a" "$z" "$w" "$1" "$z"
-	printf ' %s%s%s%s%s%s    %sIA distribuida em hardware comum%s\n' "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$z" "$k" "$z"
+	printf ' %s%s%s%s%s%s    %sIA distribuída em hardware heterogêneo%s\n' "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$a$G_H$G_H$G_H" "$w$G_NODE" "$z" "$k" "$z"
 	printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$a" "$z" "$k" "$2" "$z"
 	printf '   %s%s%s%s%s%s      %s%s%s\n\n' "$w" "$G_NODE" "$a" "$G_H$G_H$G_H" "$w" "$G_NODE" "$a" "$3" "$z"
 }
