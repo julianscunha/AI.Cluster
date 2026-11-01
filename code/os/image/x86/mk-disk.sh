@@ -67,6 +67,15 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/build:/b" ai
   dd if=/b/rootfs-x86.ext4 of=disk.img bs=512 seek=\$P2S conv=notrunc status=none
   dd if=/b/rootfs-x86.ext4 of=disk.img bs=512 seek=\$P3S conv=notrunc status=none
   dd if=data.img         of=disk.img bs=512 seek=\$P4S conv=notrunc status=none
+  # confere os dois slots com o ext4 de origem (um slot zerado ou trocado não sai na imagem)
+  SZ=\$(wc -c < /b/rootfs-x86.ext4); N=\$(( (SZ + 511) / 512 ))
+  [ \$N -le \$P2N ] || { echo \"rootfs de \$SZ bytes não cabe no slot (\$P2N setores)\" >&2; exit 1; }
+  H=\$(sha256sum < /b/rootfs-x86.ext4 | cut -d' ' -f1)
+  for S in \$P2S \$P3S; do
+    G=\$(dd if=disk.img bs=512 skip=\$S count=\$N status=none | head -c \$SZ | sha256sum | cut -d' ' -f1)
+    [ \"\$G\" = \"\$H\" ] || { echo \"slot no setor \$S não bate com o ext4 de origem (\$G, esperado \$H): imagem recusada\" >&2; exit 1; }
+  done
+  echo \"slots A e B conferem com o ext4 de origem (sha256 \$H)\"
   sgdisk -p disk.img
   cp disk.img /b/disk-x86.img
 "
