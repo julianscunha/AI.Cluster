@@ -319,6 +319,10 @@ make_credentials() {
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
     echo "AI_CLUSTER_MODELS_STATE=$DATA/state/models.state"
     echo "AI_CLUSTER_ENROLL_ADDR=$IP:$ENROLL_PORT"
+    # Modo dedicado (ClaimInstall): endereço que o aparelho usa. Este controller é inseguro (sem TLS), então o
+    # claim só passa com ALLOW_PLAIN_CLAIM, e o join token trafega em claro: use só em rede fechada.
+    echo "AI_CLUSTER_PUBLIC_URL=http://$IP:$GRPC_PORT"
+    echo "AI_CLUSTER_ALLOW_PLAIN_CLAIM=1"
     # ADR-026: o controller renova o certificado dos workers com a CA. Só com systemd: sem ele o gateway
     # roda como o mesmo usuário e leria a chave da CA, então a renovação fica desligada.
     if have_systemd; then
@@ -1242,6 +1246,8 @@ PYSERVER
   # antigo: acrescenta e reinicia o controller uma vez) e só aceita aparelhos enquanto este convite vale.
   if ! grep -q '^AI_CLUSTER_ENROLL_ADDR=' "$CONF/controller.env"; then
     echo "AI_CLUSTER_ENROLL_ADDR=$IP:$ENROLL_PORT" >> "$CONF/controller.env"
+    ensure_env "$CONF/controller.env" AI_CLUSTER_PUBLIC_URL "http://$IP:$GRPC_PORT" || true
+    ensure_env "$CONF/controller.env" AI_CLUSTER_ALLOW_PLAIN_CLAIM 1 || true
     warn "$(t 'habilitei a porta de espera da instalação e reiniciei o controller (os workers voltam sozinhos)' 'enabled the installation waiting port and restarted the controller (the workers come back on their own)')"
     svc_start controller
     sleep 2
@@ -1529,7 +1535,15 @@ aplica_nova() {
   instala_comando || return 1
   # Configuração que versões novas passaram a esperar: só entra o que ainda não existe.
   if [ "$ROLE" = both ] || [ "$ROLE" = controller ]; then
-    if [ -f "$CONF/server-ip" ]; then ensure_env "$CONF/controller.env" AI_CLUSTER_ENROLL_ADDR "$(cat "$CONF/server-ip"):$ENROLL_PORT" || return 1; fi
+    if [ -f "$CONF/server-ip" ]; then ensure_env "$CONF/controller.env" AI_CLUSTER_ENROLL_ADDR "$(cat "$CONF/server-ip"):$ENROLL_PORT" || return 1
+      # Sem TLS: PUBLIC_URL http e claim em claro aceito (rede fechada); com TLS: https e sem claim em claro.
+      if grep -q '^AI_CLUSTER_INSECURE=1' "$CONF/controller.env"; then
+        ensure_env "$CONF/controller.env" AI_CLUSTER_PUBLIC_URL "http://$(cat "$CONF/server-ip"):$GRPC_PORT" || return 1
+        ensure_env "$CONF/controller.env" AI_CLUSTER_ALLOW_PLAIN_CLAIM 1 || return 1
+      else
+        ensure_env "$CONF/controller.env" AI_CLUSTER_PUBLIC_URL "https://$(cat "$CONF/server-ip"):$GRPC_PORT" || return 1
+      fi
+    fi
   fi
   if [ "$ROLE" = both ] || [ "$ROLE" = gateway ]; then
     # Gateway sozinho não tem server-ip: o endereço do gateway é o da rede deste computador.

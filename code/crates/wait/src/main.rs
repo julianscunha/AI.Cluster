@@ -133,6 +133,10 @@ fn write_env(path: &str, controller: &str, join: &str, node: &str) -> std::io::R
         file,
         "AI_CLUSTER_CONTROLLER={controller}\nAI_CLUSTER_JOIN_TOKEN={join}\nAI_CLUSTER_NODE_ID={node}"
     )?;
+    // Controller sem TLS aceito pelo operador (claim em claro): o worker só abre http:// com INSECURE.
+    if controller.to_ascii_lowercase().starts_with("http://") {
+        writeln!(file, "AI_CLUSTER_INSECURE=1")?;
+    }
     file.sync_all()?;
     std::fs::rename(&tmp, path)
 }
@@ -253,7 +257,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap_or_else(|_| "/run/aic-install.json".into());
                     write_install(&out, &reply.install_token, &reply.disk, reply.forced)?;
                     println!("\n  APROVADO. Disco a apagar: {}.", reply.disk);
-                    return Ok(());
+                    // A leitura do teclado (tokio::io::stdin) é bloqueante: sem sair aqui, o runtime
+                    // espera o operador digitar uma linha antes de encerrar e o instalador não segue.
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                    std::process::exit(0);
                 }
                 if once {
                     println!(
@@ -337,6 +344,20 @@ mod tests {
             text,
             "AI_CLUSTER_CONTROLLER=https://c:50051\nAI_CLUSTER_JOIN_TOKEN=join\nAI_CLUSTER_NODE_ID=x86-ddee01\n"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_env_marca_insecure_so_com_http() {
+        let dir = std::env::temp_dir().join(format!("aic-claim-http-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("worker.env");
+        write_env(path.to_str().unwrap(), "http://c:50051", "j", "n").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("AI_CLUSTER_INSECURE=1\n"), "{text}");
+        write_env(path.to_str().unwrap(), "https://c:50051", "j", "n").unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("INSECURE"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

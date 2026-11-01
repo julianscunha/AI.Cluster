@@ -78,7 +78,7 @@ async fn open_channel(
         endpoint = endpoint.tls_config(tls)?;
     } else if !insecure_allowed() {
         return Err(format!(
-            "endpoint {dst} sem TLS; use https:// ou {INSECURE_ENV}=1 numa rede fechada"
+            "controller sem TLS ({dst}): peça ao operador um controller com https:// ou, só em rede fechada, ponha {INSECURE_ENV}=1 no ambiente deste processo"
         )
         .into());
     }

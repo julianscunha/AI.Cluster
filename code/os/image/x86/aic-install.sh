@@ -288,10 +288,15 @@ main() {
 	fala "Gravando $DISCO..."
 	install-disk.sh "$RUN/img/$IMGNAME" "$DEV/$DISCO" --yes --env "$RUN/worker.env" --efi-entry \
 		|| pare "a gravação em $DEV/$DISCO falhou (veja a mensagem acima). O disco pode ter ficado pela metade: aprove o aparelho de novo no controller."
-	fala ""
-	fala "Instalado. Desligue, remova o pendrive de instalação e dê boot pelo disco. Reiniciando em 10 s."
-	sleep 10
 	sync
+	fala ""
+	fala "=================================================="
+	fala "  INSTALADO."
+	fala "  RETIRE O PENDRIVE e aperte Enter para reiniciar."
+	fala "  O aparelho vai dar boot pelo disco."
+	fala "=================================================="
+	# Espera o operador (a tela fica; ele precisa ler). Sem teclado/tty: reinicia após 60 s.
+	if [ -t 0 ]; then read -r _ || sleep 60; else sleep 60; fi
 	reboot -f
 	while :; do sleep 3600; done
 }

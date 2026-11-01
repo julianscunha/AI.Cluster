@@ -280,8 +280,8 @@ act_update() {
 }
 
 act_restart_worker() {
-	page "Reiniciar o worker"
-	if confirm "Reiniciar o servico ai-cluster-worker?"; then
+	page "Reiniciar o servico do worker"
+	if confirm "Reinicie o servico do worker (rc-service ai-cluster-worker restart)?"; then
 		at 5 4; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"
 		if rc-service ai-cluster-worker restart >/dev/null 2>&1; then
 			at 6 4; printf '%sConcluido.%s' "$C_OK" "$C_RESET"
@@ -293,8 +293,8 @@ act_restart_worker() {
 }
 
 act_reboot() {
-	page "Reiniciar este worker"
-	if confirm "Reiniciar este worker agora?"; then
+	page "Reiniciar o computador"
+	if confirm "Reiniciar o computador agora?"; then
 		at 5 4; printf '%sReiniciando...%s' "$C_TEXT" "$C_RESET"
 		reboot
 		sleep 60
@@ -316,7 +316,7 @@ menu() {
 	while :; do
 		page "Personalizar o sistema"
 		i=1
-		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o worker" "Reiniciar este worker" "Desligar este worker" "Atualizacao do sistema"; do
+		for label in "Visualizar registros do worker" "Rede (somente leitura)" "Reiniciar o servico do worker" "Reiniciar o computador" "Desligar este worker" "Atualizacao do sistema"; do
 			at $((3 + i)) 6
 			if [ "$i" -eq "$sel" ]; then
 				printf '%s %d. %-40s%s' "$C_FOOT" "$i" "$label" "$C_RESET"
@@ -349,7 +349,7 @@ menu() {
 
 power_dialog() {
 	page "Reiniciar ou desligar"
-	at 4 6; printf '%s[R]%s Reiniciar este worker' "$C_LOGO" "$C_RESET"
+	at 4 6; printf '%s[R]%s Reiniciar o computador' "$C_LOGO" "$C_RESET"
 	at 5 6; printf '%s[D]%s Desligar este worker' "$C_LOGO" "$C_RESET"
 	at 7 6; printf '%sOutra tecla cancela.%s' "$C_HINT" "$C_RESET"
 	case "$(key 30)" in

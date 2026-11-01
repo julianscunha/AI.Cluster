@@ -57,7 +57,14 @@ grava_env() {
 # entrada de boot na NVRAM desta máquina; sem efibootmgr só avisa (o caminho EFI/BOOT já dá boot)
 entrada_efi() {
 	command -v efibootmgr >/dev/null || { echo "efibootmgr não existe; entrada de boot não criada" >&2; return 0; }
-	efibootmgr -c -d "$1" -p 1 -l '\EFI\BOOT\BOOTX64.EFI' -L "AI Cluster OS" >/dev/null
+	# remove entradas antigas com o mesmo nome (reinstalação) e põe a nova em PRIMEIRO na BootOrder:
+	# o firmware de alguns notebooks ignora a ordem se a entrada nova não estiver na frente
+	for b in $(efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\? AI Cluster OS.*/\1/p'); do efibootmgr -b "$b" -B >/dev/null || true; done
+	efibootmgr -c -d "$1" -p 1 -l '\EFI\BOOT\BOOTX64.EFI' -L "AI Cluster OS" >/dev/null || return 1
+	new=$(efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\? AI Cluster OS.*/\1/p' | head -n 1)
+	[ -n "$new" ] || return 1
+	old=$(efibootmgr | sed -n 's/^BootOrder: *//p' | tr ',' '\n' | grep -vi "^$new$" | paste -sd, -)
+	efibootmgr -o "$new${old:+,$old}" >/dev/null
 }
 
 # gzip -t antes de tocar no disco: falha de descompressão não pode passar como gravação bem-sucedida
