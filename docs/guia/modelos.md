@@ -9,7 +9,7 @@ type: guia
 
 Referência dos modelos de pesos abertos que o AI Cluster tem como alvo, do mais simples ao mais avançado. O nome do modelo é o link de download. Volte ao [[guia]] para o índice.
 
-**Estado real hoje:** só os modelos com ✅ rodam e foram testados no cluster (GPT-2 e SmolLM2 135M no motor próprio; SmolLM2 360M, Qwen2.5 1.5B e Llama 3.2 3B pelo llama.cpp, em hardware real). Os demais são o alvo do plano do [[adr-022-fluxo-de-modelos-e-motor-hibrido]]: entram em ✅ quando passarem no teste de ponta a ponta. O cluster não tem teto de tamanho: um modelo cabe se a soma da RAM dos workers comportar.
+**Estado real hoje:** só os modelos com ✅ rodam e foram testados no cluster (GPT-2 e SmolLM2 135M no motor próprio; SmolLM2 360M, Qwen2.5 1.5B, Llama 3.2 3B e Qwen2.5 7B pelo llama.cpp, em hardware real). Os demais são o alvo do plano do [[adr-022-fluxo-de-modelos-e-motor-hibrido]]: entram em ✅ quando passarem no teste de ponta a ponta. O cluster não tem teto de tamanho: um modelo cabe se a soma da RAM dos workers comportar.
 
 > **Legenda.** ✅ homologado no cluster · 🔒 exige login e aceite de licença no Hugging Face · ⛔ não suportado ainda
 > **Nv** (por parâmetros totais): 1 até 1B · 2 de 1B a 4B · 3 de 7B a 15B · 4 de 20B a 50B · 5 de 60B a 100B · 6 acima de 100B (MoE gigantes: só uma parte dos parâmetros calcula por token, mas todos precisam estar na RAM)
@@ -30,8 +30,9 @@ Notebook x86_64 (i7, 8 GB, 1 Gb/s) e Orange Pi PC armv7 (1 GB, 100 Mb/s), os doi
 | Qwen2.5 1.5B Instruct Q4_K_M | notebook + Pi (`--spread`, 94 % / 6 %) | 1,6 a 1,8 tok/s | o Pi atrasa ~25 %: rede de 100 Mb/s e CPU lenta |
 | Llama 3.2 3B Instruct Q4_K_M | notebook | 1,87 tok/s | 64 tokens em ~40 s (plano de 2,5 GB) |
 | Llama 3.2 3B Instruct Q4_K_M | notebook + Pi (`--spread`, 94 % / 6 %) | 1,25 tok/s | 64 tokens em ~57 s: o Pi atrasa ~33 % |
+| Qwen2.5 7B Instruct Q4_K_M | notebook (contexto 2048) | 1,1 a 1,2 tok/s | 64 tokens em ~55 s; carga de ~16 min pelo túnel (~4,5 MiB/s); 4,5 GB de RAM usados, 3,0 GB disponíveis, sem swap |
 
-Sem `--spread` o plano usa só o worker mais rápido que já comporta o modelo. Dividir com um worker lento só vale quando o modelo não cabe no mais rápido. Os de 7B ainda não foram medidos.
+Sem `--spread` o plano usa só o worker mais rápido que já comporta o modelo. Dividir com um worker lento só vale quando o modelo não cabe no mais rápido. O 7B cabe no notebook de 8 GB, mas sem folga para outro modelo. A carga pelo túnel (4,5 MiB/s, bem abaixo do gigabit) é o gargalo da primeira subida.
 
 ## Como rodar um modelo (3 comandos)
 
@@ -76,7 +77,7 @@ ainda não vão nas imagens do SO (veja [[pendencias]]).
 | 2 | [Llama 3.2 3B](https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF) 🔒 | 3,2B | 1,9 | 128 | 📝→📝 | — | 63,4* | — | 77,7 | 77,4 | 67,0 | pt | | ✅ |
 | 2 | [Phi 3.5 mini](https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF) | 3,8B | 2,3 | 128 | 📝→📝 | — | 47,4 | 62,8 | 86,2 | — | — | pt | | |
 | 3 | [Mistral 7B v0.3](https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF) | 7,2B | 4,3 | — | 📝→📝 | — | — | — | — | — | — | | | |
-| 3 | [Qwen2.5 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) | 7,6B | 4,6 | 128 | 📝→📝 | — | — | — | — | — | — | pt | | |
+| 3 | [Qwen2.5 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) | 7,6B | 4,6 | 128 | 📝→📝 | — | — | — | — | — | — | pt | | ✅ |
 | 3 | [DeepSeek-R1 Distill Qwen 7B](https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF) | 7,6B | 4,6 | — | 📝→📝 | — | — | — | 92,8‡ | — | — | | 🧮 | |
 | 3 | [Qwen2-VL 7B](https://huggingface.co/bartowski/Qwen2-VL-7B-Instruct-GGUF) | 8B | 4,8 | — | 🖼️📝→📝 | — | — | — | — | — | — | | 👁️ | |
 | 3 | [Llama 3.1 8B](https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF) 🔒 | 8B | 4,8 | 128 | 📝→📝 | — | 48,3 | 72,6 | 84,5 | 80,4 | 76,1 | pt | | |
