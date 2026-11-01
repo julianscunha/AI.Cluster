@@ -167,10 +167,16 @@ fi
 
 # Sobe e so se da por feito com o registro NOVO no log (até 30 s).
 n0=$(conta_registros)
+l0=$(wc -l < "$LOGW" 2>/dev/null || echo 0)
 "$RC" ai-cluster-worker start >/dev/null 2>&1 || falha "o worker nao subiu"
 i=0
 while [ "$(conta_registros)" -le "$n0" ]; do
 	i=$((i + 1))
+	if [ "$i" -ge 3 ] && tail -n +"$((l0 + 1))" "$LOGW" 2>/dev/null | grep -q "outra credencial"; then
+		echo "aic worker change: o novo controller ja tem um worker $NODE com outra credencial." >&2
+		echo "no NOVO controller rode:  aic cluster node revoke $NODE   e depois repita:  aic worker change" >&2
+		falha "o novo controller recusou o registro (worker ja registrado com outra credencial)"
+	fi
 	[ "$i" -le 30 ] || falha "o worker nao se registrou no novo controller em 30 s (veja $LOGW)"
 	sleep 1
 done

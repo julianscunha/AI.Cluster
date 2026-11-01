@@ -364,6 +364,8 @@ make_credentials() {
     echo "AI_CLUSTER_GATEWAY_URL=http://$IP:$HTTP_PORT"
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
     echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
+    # commit do llama.cpp do llama-server da release (code/third_party/llama.cpp/build.sh); o controller compara só o commit
+    echo "AI_CLUSTER_RPC_VERSION=llama.cpp-8ca4060"
     echo "AI_CLUSTER_LLAMA_TLS_CA=$CONF/pki/ca.crt"
     echo "AI_CLUSTER_LLAMA_TLS_CERT=$CONF/pki/gateway.crt"
     echo "AI_CLUSTER_LLAMA_TLS_KEY=$CONF/pki/gateway.key"
@@ -1138,7 +1140,7 @@ AI_CLUSTER_JOIN_TOKEN=%s
   # descoberto olhando a raiz) e POST /sign?name=<worker>, que assina o pedido de certificado do worker.
   HD=$(mktemp -d)
   cat > "$HD/invite.py" <<'PYSERVER'
-import hmac, http.server, os, re, subprocess, sys, tempfile, threading
+import datetime, hmac, http.server, os, re, subprocess, sys, tempfile, threading
 
 CA = os.environ["AIC_CA_DIR"]
 CODE = os.environ["AIC_INVITE_CODE"]
@@ -1180,6 +1182,25 @@ def served(path):
     if IMG and os.path.dirname(p) == IMG:  # translate_path só leva até aqui os nomes de IMG_FILES
         return os.path.basename(p) in IMG_FILES and os.path.isfile(p)
     return os.path.dirname(p) == WEB and os.path.isfile(p)
+
+
+def sign(d, csr, crt, ext):
+    # `openssl ca` (e não `x509 -req`) porque só ele aceita -startdate: o certificado vale desde 10 min atrás,
+    # para um worker de relógio atrasado não recusá-lo; a validade total (825 dias) é mantida.
+    fmt = "%Y%m%d%H%M%SZ"
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cfg = os.path.join(d, "ca.cnf")
+    open(os.path.join(d, "index.txt"), "w").close()
+    os.mkdir(os.path.join(d, "new"))
+    with open(cfg, "w") as f:
+        f.write("[ca]\ndefault_ca=c\n[c]\ndatabase=%s/index.txt\nnew_certs_dir=%s/new\nrand_serial=yes\n"
+                "default_md=sha256\npolicy=p\nunique_subject=no\n[p]\ncommonName=optional\n" % (d, d))
+    return subprocess.run(
+        ["openssl", "ca", "-batch", "-notext", "-config", cfg, "-cert", CA + "/ca.crt", "-keyfile", CA + "/ca.key",
+         "-in", csr, "-out", crt, "-extfile", ext,
+         "-startdate", (now - datetime.timedelta(minutes=10)).strftime(fmt),
+         "-enddate", (now + datetime.timedelta(days=825)).strftime(fmt)],
+        capture_output=True).returncode == 0
 
 
 class H(http.server.SimpleHTTPRequestHandler):
@@ -1235,10 +1256,7 @@ class H(http.server.SimpleHTTPRequestHandler):
             with open(ext, "w") as f:
                 f.write("subjectAltName=DNS:aic-worker-%s\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n" % name)
             with LOCK:
-                ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and subprocess.run(
-                    ["openssl", "x509", "-req", "-in", csr, "-CA", CA + "/ca.crt", "-CAkey", CA + "/ca.key",
-                     "-CAcreateserial", "-out", crt, "-days", "825", "-extfile", ext],
-                    capture_output=True).returncode == 0
+                ok = subprocess.run(["openssl", "req", "-noout", "-verify", "-in", csr], capture_output=True).returncode == 0 and sign(d, csr, crt, ext)
             if not ok:
                 with LOCK:
                     done.discard(name)

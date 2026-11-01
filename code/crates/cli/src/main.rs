@@ -305,6 +305,13 @@ enum ModelAction {
         /// Contexto em tokens (padrão 4096, limitado ao do modelo).
         #[arg(long, default_value_t = 0)]
         ctx: u64,
+        /// Força o conjunto de workers (node_id separados por vírgula); sem isto o controller escolhe
+        /// os mais rápidos até a RAM bastar.
+        #[arg(long, value_delimiter = ',')]
+        workers: Vec<String>,
+        /// Dá fatias a todos os workers aptos, não só aos mais rápidos (a divisão segue a velocidade).
+        #[arg(long)]
+        spread: bool,
     },
     /// Para o modelo no gateway. As chaves continuam valendo para o próximo `start`.
     Stop,
@@ -526,7 +533,12 @@ async fn run_cluster(
                 );
             }
             ModelAction::List => print_models(controller).await?,
-            ModelAction::Start { id, ctx } => start_model(controller, &id, ctx).await?,
+            ModelAction::Start {
+                id,
+                ctx,
+                workers,
+                spread,
+            } => start_model(controller, &id, ctx, workers, spread).await?,
             ModelAction::Stop => stop_model(controller).await?,
             ModelAction::Status => model_status(controller).await?,
             ModelAction::Key { action } => model_key(controller, action).await?,
@@ -893,12 +905,16 @@ async fn start_model(
     endpoint: &str,
     id: &str,
     context: u64,
+    workers: Vec<String>,
+    spread: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_operator(endpoint.to_string()).await?;
     let reply = client
         .start_model(StartModelRequest {
             model_id: id.to_string(),
             context,
+            workers,
+            spread,
         })
         .await?
         .into_inner();

@@ -59,7 +59,17 @@ pub fn estimated_speed(compute: f64, loaded_bandwidth: f64, bandwidth: f64) -> f
 /// a divisão é proporcional à velocidade, limitada pelo que cada um comporta. Devolve os endpoints
 /// por `node_id` e as proporções na mesma ordem. Sem exigência de RAM (modo só-gateway) devolve todos,
 /// sem proporção.
-pub fn select(mut candidates: Vec<Candidate>, required: u64) -> (Vec<RpcEndpoint>, Vec<f64>) {
+pub fn select(candidates: Vec<Candidate>, required: u64) -> (Vec<RpcEndpoint>, Vec<f64>) {
+    select_with(candidates, required, false)
+}
+
+/// Como [`select`]; com `spread` todos os candidatos entram (o operador quer fatias em cada worker,
+/// mesmo que os mais rápidos bastem), com a divisão ainda proporcional à velocidade.
+pub fn select_with(
+    mut candidates: Vec<Candidate>,
+    required: u64,
+    spread: bool,
+) -> (Vec<RpcEndpoint>, Vec<f64>) {
     if required == 0 {
         candidates.sort_by(|a, b| a.endpoint.node_id.cmp(&b.endpoint.node_id));
         return (
@@ -82,7 +92,7 @@ pub fn select(mut candidates: Vec<Candidate>, required: u64) -> (Vec<RpcEndpoint
     let mut chosen = Vec::new();
     let mut held: u64 = 0;
     for candidate in candidates {
-        if held >= required {
+        if held >= required && !spread {
             break;
         }
         held = held.saturating_add(candidate.usable_bytes);
@@ -159,6 +169,10 @@ struct Wanted {
     context: u64,
     /// RAM que o modelo pede dos workers (do veredito do `start`); 0 = modo só-gateway, sem conferir.
     required_bytes: u64,
+    /// Conjunto forçado pelo operador (`--workers`); vazio = o controller escolhe.
+    workers: Vec<String>,
+    /// `--spread`: todos os workers aptos recebem fatias.
+    spread: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,6 +279,16 @@ impl Orchestrator {
                                     .first()
                                     .and_then(|v| v.parse().ok())
                                     .unwrap_or(0),
+                                workers: rest
+                                    .get(1)
+                                    .map(|v| {
+                                        v.split(',')
+                                            .filter(|w| !w.is_empty())
+                                            .map(str::to_string)
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                spread: rest.get(2) == Some(&"1"),
                             });
                             inner.generation = generation;
                         }
@@ -327,8 +351,14 @@ impl Orchestrator {
         let mut text = String::new();
         match &inner.wanted {
             Some(w) => text.push_str(&format!(
-                "model\t{}\t{}\t{}\t{}\t{}\n",
-                w.model_id, w.model_path, w.context, inner.generation, w.required_bytes
+                "model\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                w.model_id,
+                w.model_path,
+                w.context,
+                inner.generation,
+                w.required_bytes,
+                w.workers.join(","),
+                u8::from(w.spread)
             )),
             None => text.push_str(&format!("generation\t{}\n", inner.generation)),
         }
@@ -390,6 +420,8 @@ impl Orchestrator {
             model_path: model_path.to_string(),
             context,
             required_bytes,
+            workers: Vec::new(),
+            spread: false,
         });
         inner.generation += 1;
         inner.applied = endpoints;
@@ -416,6 +448,16 @@ impl Orchestrator {
         (inner.generation, keys)
     }
 
+    /// Grava o conjunto de workers forçado pelo operador no pedido atual (logo depois de `start`).
+    pub fn set_placement(&self, workers: Vec<String>, spread: bool) {
+        let mut inner = self.lock();
+        if let Some(wanted) = inner.wanted.as_mut() {
+            wanted.workers = workers;
+            wanted.spread = spread;
+        }
+        self.save(&inner);
+    }
+
     /// Para o modelo. As chaves continuam valendo para o próximo `start`.
     pub fn stop(&self) -> u64 {
         let mut inner = self.lock();
@@ -430,14 +472,17 @@ impl Orchestrator {
 
     /// O modelo que o gateway deve aplicar agora. `endpoints` é a lista atual de workers aptos; ela só
     /// vira plano depois de ficar igual por `STABLE_MS` (e então a geração sobe). `None` = parar.
-    pub fn plan(&self, candidates: Vec<Candidate>, now_ms: u64) -> Option<DesiredModel> {
+    pub fn plan(&self, mut candidates: Vec<Candidate>, now_ms: u64) -> Option<DesiredModel> {
+        let mut inner = self.lock();
+        let wanted = inner.wanted.clone()?;
+        if !wanted.workers.is_empty() {
+            candidates.retain(|c| wanted.workers.contains(&c.endpoint.node_id));
+        }
         let capacity_bytes = candidates
             .iter()
             .map(|c| c.usable_bytes)
             .fold(0, u64::saturating_add);
-        let mut inner = self.lock();
-        let wanted = inner.wanted.clone()?;
-        let (endpoints, split) = select(candidates, wanted.required_bytes);
+        let (endpoints, split) = select_with(candidates, wanted.required_bytes, wanted.spread);
         // Sem RAM para o modelo nos workers de agora (um saiu, ou o pedido cabia só com ele): não
         // adianta carregar e deixar o `rpc-server` morrer por falta de memória. O modelo para e o
         // `status` diz o motivo; quando a RAM volta, o plano entra na hora.
@@ -884,6 +929,31 @@ mod tests {
             speed,
             usable_bytes: (gib * (1u64 << 30) as f64) as u64,
         }
+    }
+
+    #[test]
+    fn spread_e_workers_forcam_o_conjunto_e_sobrevivem_ao_reinicio() {
+        let gib = 1u64 << 30;
+        let pool = || vec![candidate("pi", 0.02, 0.8), candidate("pc", 1.1, 3.0)];
+        // Padrão: o PC basta e o Pi fica de fora.
+        assert_eq!(select(pool(), gib).0.len(), 1);
+        // --spread: os dois recebem fatias.
+        let (workers, split) = select_with(pool(), gib, true);
+        assert_eq!(workers.len(), 2);
+        assert!(split.iter().all(|s| *s > 0.0));
+        // --workers pi: só ele entra no plano e a escolha é gravada.
+        let path = std::env::temp_dir().join(format!("aic-place-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let o = Orchestrator::new(Some(path.clone()));
+        o.start("m", "m.gguf", 0, 1, vec![endpoint("pi")], vec![]);
+        o.set_placement(vec!["pi".into()], false);
+        let plan = o.plan(pool(), 0).unwrap();
+        assert_eq!(plan.endpoints.len(), 1);
+        assert_eq!(plan.endpoints[0].node_id, "pi");
+        let again = Orchestrator::new(Some(path.clone()));
+        let plan = again.plan(pool(), 0).unwrap();
+        assert_eq!(plan.endpoints[0].node_id, "pi");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

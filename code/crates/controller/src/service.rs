@@ -443,7 +443,7 @@ impl ClusterControlService {
                 // derrubaria o llama-server do gateway. Versão vazia de um lado é "não sei": passa.
                 if !gateway_version.is_empty()
                     && !capability.rpc_version.is_empty()
-                    && capability.rpc_version != gateway_version
+                    && rpc_commit(&capability.rpc_version) != rpc_commit(&gateway_version)
                 {
                     warnings.push(format!(
                         "worker {id} fora do plano: rpc-server {} e o gateway usa {gateway_version}",
@@ -505,11 +505,13 @@ impl ClusterControlService {
     }
 
     /// A RAM dos mesmos workers, para o veredito do `models start`.
-    fn rpc_node_memory(&self) -> Vec<ai_cluster_catalog::check::NodeMemory> {
+    /// `only` não vazio restringe aos workers que o operador forçou.
+    fn rpc_node_memory(&self, only: &[String]) -> Vec<ai_cluster_catalog::check::NodeMemory> {
         let wanted: std::collections::HashSet<String> = self
             .rpc_endpoints()
             .into_iter()
             .map(|e| e.node_id)
+            .filter(|id| only.is_empty() || only.contains(id))
             .collect();
         self.registry
             .list()
@@ -1011,7 +1013,7 @@ impl ClusterControl for ClusterControlService {
         .await
         .map_err(|_| Status::internal("varredura interrompida"))?
         .map_err(|error| Status::failed_precondition(format!("pasta de modelos: {error}")))?;
-        let nodes = self.rpc_node_memory();
+        let nodes = self.rpc_node_memory(&request.workers);
         let Some(model) = self.pick_model(&found, &wanted, request.context, &nodes) else {
             return Err(Status::not_found(format!(
                 "modelo {wanted} não está na pasta"
@@ -1056,7 +1058,22 @@ impl ClusterControl for ClusterControlService {
                 None,
             );
         };
-        let candidates = self.rpc_candidates();
+        let mut candidates = self.rpc_candidates();
+        if !request.workers.is_empty() {
+            if let Some(missing) = request
+                .workers
+                .iter()
+                .find(|id| !candidates.iter().any(|c| &c.endpoint.node_id == *id))
+            {
+                return refuse(
+                    format!(
+                        "o worker {missing} não está apto a servir o modelo (ausente, reprovado ou sem RPC)"
+                    ),
+                    None,
+                );
+            }
+            candidates.retain(|c| request.workers.contains(&c.endpoint.node_id));
+        }
         let verdict = ai_cluster_catalog::check::check(
             &model,
             request.context,
@@ -1088,7 +1105,7 @@ impl ClusterControl for ClusterControlService {
         } else {
             verdict.required_bytes
         };
-        let (endpoints, split) = crate::models::select(candidates, required);
+        let (endpoints, split) = crate::models::select_with(candidates, required, request.spread);
         let (generation, keys) = self.orchestrator.start(
             &api_id,
             &model.id,
@@ -1097,6 +1114,10 @@ impl ClusterControl for ClusterControlService {
             endpoints,
             split,
         );
+        if !request.workers.is_empty() || request.spread {
+            self.orchestrator
+                .set_placement(request.workers.clone(), request.spread);
+        }
         self.events.record(unix_ms(), "model_started", wanted);
         Ok(Response::new(StartModelResponse {
             ok: true,
@@ -2406,12 +2427,34 @@ impl LinkProbe for LinkProbeService {
     }
 }
 
+/// Parte da `rpc_version` que decide a compatibilidade: o commit do llama.cpp, sem o sufixo de
+/// arquitetura (`llama.cpp-8ca4060+armv7`); gateway x86 e worker ARM do mesmo commit combinam.
+fn rpc_commit(version: &str) -> &str {
+    version.split('+').next().unwrap_or(version)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ai_cluster_protocol::cluster::{
         CapabilityReport, HealthReport, NodeIdentity, WorkResult, WorkUnit,
     };
+
+    #[test]
+    fn a_arquitetura_nao_conta_na_comparacao_da_rpc_version() {
+        assert_eq!(
+            rpc_commit("llama.cpp-8ca4060+armv7"),
+            rpc_commit("llama.cpp-8ca4060+x86_64")
+        );
+        assert_eq!(
+            rpc_commit("llama.cpp-8ca4060"),
+            rpc_commit("llama.cpp-8ca4060+armv7")
+        );
+        assert_ne!(
+            rpc_commit("llama.cpp-8ca4060"),
+            rpc_commit("llama.cpp-1234567+armv7")
+        );
+    }
 
     /// A request that arrived with the operator token, as the interceptor would mark it.
     fn op<T>(message: T) -> Request<T> {

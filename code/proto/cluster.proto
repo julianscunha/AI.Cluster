@@ -483,6 +483,10 @@ message StartModelRequest {
   string model_id = 1;
   // Contexto em tokens; 0 = o padrão (4096, limitado ao do modelo).
   uint64 context = 2;
+  // Força o conjunto de workers (node_id); vazio = o controller escolhe os mais rápidos até a RAM bastar.
+  repeated string workers = 3;
+  // Todos os workers aptos recebem fatias (divisão ainda proporcional à velocidade).
+  bool spread = 4;
 }
 
 message ApiKey {

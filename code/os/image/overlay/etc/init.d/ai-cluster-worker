@@ -35,7 +35,9 @@ start_pre() {
 		export AI_CLUSTER_RPC_TLS_CERT=/data/rpc-tls/worker.crt
 		export AI_CLUSTER_RPC_TLS_KEY=/data/rpc-tls/worker.key
 		export AI_CLUSTER_RPC_TLS_CLIENT_CA=/data/rpc-tls/ca.crt
-		export AI_CLUSTER_RPC_VERSION="${AI_CLUSTER_RPC_VERSION:-llama.cpp-8ca4060+armv7}"
+		# commit do llama.cpp + arquitetura real (o controller compara só o commit, antes do "+")
+		case "$(uname -m)" in armv[67]*) rpc_arch=armv7 ;; *) rpc_arch=$(uname -m) ;; esac
+		export AI_CLUSTER_RPC_VERSION="${AI_CLUSTER_RPC_VERSION:-llama.cpp-8ca4060+$rpc_arch}"
 		# Cache de tensores do rpc-server em disco real (o /tmp é RAM); o worker o liga sozinho se o
 		# disco lê bem mais rápido que o enlace.
 		export AI_CLUSTER_RPC_CACHE_DIR="${AI_CLUSTER_RPC_CACHE_DIR:-/data/cache}"

@@ -2255,16 +2255,41 @@ fn temperature_c() -> f64 {
     if let Ok(value) = std::env::var("AI_CLUSTER_TEMPERATURE_C") {
         return value.trim().parse::<f64>().unwrap_or(0.0);
     }
-    for zone in 0..4 {
-        let path = format!("/sys/class/thermal/thermal_zone{zone}/temp");
-        if let Some(raw) = read_trimmed(&path).and_then(|value| value.parse::<f64>().ok()) {
-            // Millidegrees on every kernel that exposes this file.
-            if raw.is_finite() && raw > 0.0 {
-                return raw / 1000.0;
-            }
+    thermal_zone_c(Path::new("/sys/class/thermal"))
+}
+
+/// Zones that carry the package temperature, best first. Other zones (a wifi chip, say) are a
+/// fallback; `acpitz` is often a fixed firmware value and `INT3400 Thermal` has no sensor, so
+/// both are ignored.
+const THERMAL_PREFERRED: [&str; 4] = ["x86_pkg_temp", "coretemp", "cpu-thermal", "cpu_thermal"];
+const THERMAL_IGNORED: [&str; 2] = ["INT3400 Thermal", "acpitz"];
+
+/// Reads `root/thermal_zone*/{type,temp}` and picks the zone by [`THERMAL_PREFERRED`], then any
+/// zone not in [`THERMAL_IGNORED`]; 0 when none has a usable reading.
+fn thermal_zone_c(root: &Path) -> f64 {
+    let mut best: Option<(usize, f64)> = None;
+    for zone in 0..16 {
+        let dir = root.join(format!("thermal_zone{zone}"));
+        let Some(raw) = read_trimmed(&dir.join("temp").to_string_lossy())
+            .and_then(|value| value.parse::<f64>().ok())
+        else {
+            continue;
+        };
+        // Millidegrees on every kernel that exposes this file.
+        if !raw.is_finite() || raw <= 0.0 {
+            continue;
+        }
+        let kind = read_trimmed(&dir.join("type").to_string_lossy()).unwrap_or_default();
+        let rank = match THERMAL_PREFERRED.iter().position(|k| *k == kind) {
+            Some(rank) => rank,
+            None if THERMAL_IGNORED.contains(&kind.as_str()) => continue,
+            None => THERMAL_PREFERRED.len(),
+        };
+        if best.is_none_or(|(r, _)| rank < r) {
+            best = Some((rank, raw / 1000.0));
         }
     }
-    0.0
+    best.map_or(0.0, |(_, c)| c)
 }
 
 /// Battery charge (0..1) and whether the node is draining it, from the kernel's power supply
@@ -2402,6 +2427,32 @@ fn health() -> HealthReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn thermal_zone_prefers_the_package_sensor_and_skips_sensorless_zones() {
+        let root = std::env::temp_dir().join(format!("aic-thermal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (i, (kind, milli)) in [
+            ("INT3400 Thermal", "20000"),
+            ("acpitz", "20000"),
+            ("iwlwifi_1", "38000"),
+            ("x86_pkg_temp", "45000"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let dir = root.join(format!("thermal_zone{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("type"), format!("{kind}\n")).unwrap();
+            std::fs::write(dir.join("temp"), format!("{milli}\n")).unwrap();
+        }
+        assert_eq!(thermal_zone_c(&root), 45.0);
+        std::fs::remove_dir_all(root.join("thermal_zone3")).unwrap();
+        assert_eq!(thermal_zone_c(&root), 38.0);
+        std::fs::remove_dir_all(root.join("thermal_zone2")).unwrap();
+        assert_eq!(thermal_zone_c(&root), 0.0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     #[test]
