@@ -107,7 +107,7 @@ mkdir -p "$BADDIST/sig-novo"; cp -l "$DISTU"/*.tar.gz "$DISTU"/install.sh "$BADD
 assina "$BADDIST/sig-novo" || { echo "FALHA: não assinei a versão nova"; exit 1; }
 docker run -d --name aic-mirror --network $NET -v "$DIST:/r:ro" -w /r aic-test-base python3 -m http.server 9000 >/dev/null
 docker run -d --name aic-mirror-bad --network $NET -v "$(cd "$BADDIST" && pwd -W):/r:ro" -w /r aic-test-base python3 -m http.server 9001 >/dev/null
-for n in aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw; do docker run -d --name $n --network $NET aic-test-base sleep 900 >/dev/null; done
+for n in aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw; do docker run -d --name $n --network $NET aic-test-base sleep 2400 >/dev/null; done
 for n in aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw; do
   espera_ate 60 docker exec $n curl -fsS $BASE/install.sh -o /tmp/install.sh || fail "sem install.sh no espelho ($n)"
 done
@@ -186,7 +186,7 @@ echo "OK: join grava a release e instala aic e setup"
 
 # B0) ADR-025: o worker que entra pelo convite direto (curl | sh, sem o install.sh) recebe a chave de release do
 # servidor e pina; o pedido assinado passa pelo --verify dele.
-docker run -d --name aic-wj --network $NET aic-test-base sleep 900 >/dev/null
+docker run -d --name aic-wj --network $NET aic-test-base sleep 2400 >/dev/null
 OUT=$(docker exec aic-wj sh -c "curl -fsSL http://$SIP:8099/join-$WCODE | sh -s -- --name wj-pc.1" 2>&1) || { echo "$OUT" | tail -6; fail "o worker que entra por curl | sh não entrou"; }
 [ "$(docker exec aic-wj sha256sum /etc/ai-cluster/release.pub | cut -d' ' -f1)" = "$(sha256sum "$(dirname "$0")/../os/linux.pub" | cut -d' ' -f1)" ] \
   || fail "o worker do convite deveria pinar a chave de release (/etc/ai-cluster/release.pub)"
@@ -295,6 +295,8 @@ inst aic-ctl --role controller --arch x86_64 >/dev/null || fail "install.sh cont
 docker exec -d aic-ctl sh -c "aic cluster invite --minutes 4 > /tmp/invite.log 2>&1"
 espera_ate 40 docker exec aic-ctl grep -q -- '--code' /tmp/invite.log || fail "o convite do controller não mostrou o código"
 CIP=$(docker exec aic-ctl cat /etc/ai-cluster/server-ip)
+docker exec aic-ctl sh -c "test -x /opt/ai-cluster/bin/ai-cluster-gateway && test -x /opt/ai-cluster/bin/llama-server && grep -q '^AI_CLUSTER_LLAMA_SERVER_BIN=' /etc/ai-cluster/gateway.env && ! ss -ltn | grep -q ':8080 '" \
+  || fail "controller x86_64 deveria ter gateway e llama-server instalados, com o serviço do gateway parado"
 GCODE=$(docker exec aic-ctl sh -c "grep -o -- '--code [A-Za-z0-9]*' /tmp/invite.log | head -n 1 | cut -d' ' -f2")
 [ -n "$GCODE" ] || fail "o convite deveria mostrar o código do gateway"
 falha_com "sem terminal para perguntar" inst aic-gw --role gateway --arch x86_64 --server "$CIP"
@@ -341,7 +343,7 @@ espera_ate 40 docker exec aic-gw curl -fsS http://127.0.0.1:8080/health || fail 
 echo "OK: update do gateway sozinho"
 
 echo "=== C3) servidor com o layout antigo (ai-cluster, aic-setup): o setup do tools.tar.gz migra e atualiza ==="
-docker run -d --name aic-old --network $NET aic-test-base sleep 900 >/dev/null
+docker run -d --name aic-old --network $NET aic-test-base sleep 2400 >/dev/null
 espera_ate 60 docker exec aic-old curl -fsS $BASE/install.sh -o /tmp/install.sh || fail "sem install.sh no espelho (aic-old)"
 inst aic-old --role controller --arch x86_64 >/dev/null || fail "install.sh controller (layout antigo)"
 JOIN_C3=$(docker exec aic-old sed -n 's/^AI_CLUSTER_JOIN_TOKEN=//p' /etc/ai-cluster/controller.env)
