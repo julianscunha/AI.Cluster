@@ -784,28 +784,18 @@ async fn approve_node(
             );
         }
         None => {
+            // O controller resolve a impressão e só aceita com AI_CLUSTER_ALLOW_TRUST_LISTED=1.
             eprintln!(
                 "AVISO: --trust-listed; aprovando a credencial que o controller mostra agora. Confira com a impressão que o worker imprimiu ao registrar-se."
             );
-            client
-                .list_nodes(ListNodesRequest {})
-                .await?
-                .into_inner()
-                .nodes
-                .into_iter()
-                .find(|known| known.identity.as_ref().is_some_and(|id| id.node_id == node))
-                .map(|known| known.fingerprint)
-                .unwrap_or_default()
+            String::new()
         }
     };
-    if fingerprint.is_empty() {
-        println!("WORKER não encontrado no={node}");
-        return Err("worker não encontrado".into());
-    }
     let approved = client
         .approve_node(ApproveNodeRequest {
             node_id: node.to_string(),
             fingerprint,
+            trust_listed,
         })
         .await?
         .into_inner()

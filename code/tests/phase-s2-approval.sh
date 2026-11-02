@@ -43,7 +43,7 @@ docker network create "$NET" >/dev/null
 
 # Sem AI_CLUSTER_AUTO_APPROVE: o padrão é exigir aprovação.
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-controller --network "$NET" -v aic-target:/t \
-  -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR \
+  -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_ALLOW_TRUST_LISTED=1 \
   "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$TOKEN -e AI_CLUSTER_CONTROLLER=$CONTROLLER \

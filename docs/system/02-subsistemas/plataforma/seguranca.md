@@ -164,7 +164,7 @@ O `ggml-rpc-server` do llama.cpp **não tem senha nem criptografia** e executa o
 
 ## Aprovação conferida pela impressão digital
 
-O `approve` exige `--fingerprint` (os 16 primeiros hexadecimais do SHA-256 da credencial do worker, impressos pelo worker ao registrar-se e mostrados por `nodes`). Quem tomou o id de um worker depois de um `revoke` tem outra credencial e não é aprovado no lugar dele. `--trust-listed` aceita a impressão que o controller mostra no momento e anula essa proteção.
+O `approve` exige `--fingerprint` (os 16 primeiros hexadecimais do SHA-256 da credencial do worker, impressos pelo worker ao registrar-se e mostrados por `nodes`). Quem tomou o id de um worker depois de um `revoke` tem outra credencial e não é aprovado no lugar dele. `--trust-listed` aceita a impressão que o controller tem no momento e anula essa proteção; por isso vem desligado: o controller só o aceita com `AI_CLUSTER_ALLOW_TRUST_LISTED=1` (recusa com `failed_precondition` sem ela) e cada uso registra o evento de auditoria `approve --trust-listed`. Os scripts E2E habilitam a variável; o bootstrap manual usa a impressão que o worker imprime.
 
 ## Auditoria
 

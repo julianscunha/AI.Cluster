@@ -246,6 +246,19 @@ fn gateway_taken(
     alive && matches!((owner, host), (Some(owner), Some(host)) if *owner != host)
 }
 
+/// `--trust-listed` só vale com `AI_CLUSTER_ALLOW_TRUST_LISTED=1` no controller (ADR-031, item 3).
+fn trust_listed_enabled() -> bool {
+    flag_on(
+        std::env::var("AI_CLUSTER_ALLOW_TRUST_LISTED")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn flag_on(value: Option<&str>) -> bool {
+    matches!(value.map(str::trim), Some("1" | "true" | "yes"))
+}
+
 /// Gateways vivos por endereço (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`, padrão 16): quem tem a
 /// credencial de inferência não enche a tabela de gateways sozinho de um só endereço. Atrás de NAT
 /// todos parecem um endereço só; quem tem mais gateways ali sobe o limite.
@@ -797,16 +810,43 @@ impl ClusterControl for ClusterControlService {
         if node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
         }
-        if request.fingerprint.trim().is_empty() {
+        let mut fingerprint = request.fingerprint.trim().to_ascii_lowercase();
+        if request.trust_listed {
+            if !trust_listed_enabled() {
+                return Err(Status::failed_precondition(
+                    "--trust-listed desligado: habilite com AI_CLUSTER_ALLOW_TRUST_LISTED=1 no controller ou informe a impressão do worker",
+                ));
+            }
+            if !fingerprint.is_empty() {
+                return Err(Status::invalid_argument(
+                    "trust_listed e fingerprint não andam juntos",
+                ));
+            }
+            fingerprint = self
+                .registry
+                .list()
+                .into_iter()
+                .find(|node| {
+                    node.identity
+                        .as_ref()
+                        .is_some_and(|id| id.node_id == node_id)
+                })
+                .map(|node| node.fingerprint)
+                .unwrap_or_default();
+            self.audit(&peer, "approve --trust-listed", &node_id);
+        }
+        if fingerprint.is_empty() && !request.trust_listed {
             return Err(Status::invalid_argument(
                 "fingerprint é obrigatória: use a que `aic cluster nodes` mostra e o worker imprime ao registrar-se",
             ));
         }
         self.audit(&peer, "approve", &node_id);
-        let approved = match self
-            .registry
-            .approve_checked(&node_id, &request.fingerprint.trim().to_ascii_lowercase())
-        {
+        let approved = if fingerprint.is_empty() {
+            Approval::Unknown
+        } else {
+            self.registry.approve_checked(&node_id, &fingerprint)
+        };
+        let approved = match approved {
             Approval::Approved => true,
             Approval::Unknown => false,
             Approval::Mismatch => {
@@ -3278,6 +3318,7 @@ mod tests {
             .approve_node(op(ApproveNodeRequest {
                 node_id: "node-a".into(),
                 fingerprint: ai_cluster_protocol::metadata::credential_fingerprint(&first),
+                ..Default::default()
             }))
             .await
             .unwrap();
@@ -4619,5 +4660,26 @@ mod tests {
         assert!(clean_status(status("", "", 1.0)).is_none());
         assert!(clean_status(status("m", "", f64::NAN)).is_none());
         assert!(clean_status(status("m", "", -1.0)).is_none());
+    }
+
+    #[tokio::test]
+    async fn trust_listed_is_refused_unless_the_controller_enables_it() {
+        assert!(!flag_on(None) && !flag_on(Some("0")) && flag_on(Some(" 1 ")));
+        // O ambiente de teste não habilita: o atalho é recusado antes de tocar no registro.
+        let service = ClusterControlService::new(
+            Arc::new(Registry::new()),
+            Arc::new(WorkStore::new()),
+            Arc::new(EventLog::new()),
+            "test-cluster",
+        );
+        let refused = service
+            .approve_node(op(ApproveNodeRequest {
+                node_id: "node-a".into(),
+                trust_listed: true,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
     }
 }

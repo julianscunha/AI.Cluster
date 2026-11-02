@@ -191,6 +191,9 @@ message ApproveNodeRequest {
   /// Impressão digital da credencial do worker que o operador viu (`NodeSnapshot.fingerprint`). Obrigatória:
   /// se o id foi tomado por outro registro, a impressão muda e a aprovação é recusada.
   string fingerprint = 2;
+  /// Aprova a impressão que o controller tem agora, sem `fingerprint`. O controller só aceita com
+  /// `AI_CLUSTER_ALLOW_TRUST_LISTED=1` e registra um evento de auditoria (ADR-031, item 3).
+  bool trust_listed = 3;
 }
 
 message RevokeNodeRequest {

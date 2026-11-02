@@ -36,7 +36,7 @@ docker network rm "$NET" >/dev/null 2>&1
 docker network create "$NET" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-controller-s3 --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_OPERATOR_TOKEN=$OPERATOR -e AI_CLUSTER_INFERENCE_TOKEN=$INFERENCE \
-  -e AI_CLUSTER_AUTO_APPROVE=1 "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
+  -e AI_CLUSTER_AUTO_APPROVE=1 -e AI_CLUSTER_ALLOW_TRUST_LISTED=1 "$IMG" sh -c "exec $R/ai-cluster-controller" >/dev/null
 MSYS_NO_PATHCONV=1 docker run -e AI_CLUSTER_INSECURE=1 -d --name aic-worker-s3 --network "$NET" -v aic-target:/t \
   -e AI_CLUSTER_JOIN_TOKEN=$JOIN -e AI_CLUSTER_CONTROLLER=$CONTROLLER -e AI_CLUSTER_NODE_ID=node-s3 \
   "$IMG" sh -c "exec $R/ai-cluster-worker" >/dev/null
