@@ -60,7 +60,7 @@ pub fn tamanho(cabecalhos: &str) -> Option<u64> {
                 .eq_ignore_ascii_case("content-length")
                 .then(|| v.trim().parse().ok())?
         })
-        .last()
+        .next_back()
 }
 
 fn curl(args: &[&str]) -> Result<std::process::Output, String> {
