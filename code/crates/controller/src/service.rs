@@ -88,6 +88,9 @@ pub struct ClusterControlService {
     /// De que endereço (só o IP) cada gateway se apresentou. Enquanto o gateway está vivo, outro
     /// endereço não toma o id: o token de inferência é compartilhado e não diz quem é quem.
     gateway_hosts: Arc<std::sync::Mutex<std::collections::HashMap<String, std::net::IpAddr>>>,
+    /// Segredo de cada gateway (ADR-031, item 4), amarrado na primeira apresentação que o traz. Só em
+    /// memória: o gateway guarda o dele e o reapresenta depois de um reinício do controller.
+    gateway_secrets: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     rollout: Rollout,
     /// Pasta de modelos (`AI_CLUSTER_MODELS_DIR`) que `ListModels` varre.
     models_dir: Option<std::path::PathBuf>,
@@ -259,6 +262,27 @@ fn flag_on(value: Option<&str>) -> bool {
     matches!(value.map(str::trim), Some("1" | "true" | "yes"))
 }
 
+/// Quem pode apresentar o id de um gateway. Com segredo, vale o segredo (de qualquer endereço); sem
+/// segredo (gateway antigo), só a regra do endereço. Um id amarrado a um segredo vivo não aceita quem
+/// chega sem ele nem com outro; morto, o id fica livre e o segredo novo o substitui.
+fn gateway_may_report(
+    alive: bool,
+    stored: Option<&str>,
+    given: &str,
+    owner: Option<&std::net::IpAddr>,
+    host: Option<std::net::IpAddr>,
+) -> bool {
+    match (stored, given.is_empty()) {
+        (Some(stored), false)
+            if ai_cluster_protocol::metadata::same_token(stored.as_bytes(), given.as_bytes()) =>
+        {
+            true
+        }
+        (Some(_), _) => !alive,
+        (None, _) => !gateway_taken(alive, owner, host),
+    }
+}
+
 /// Gateways vivos por endereço (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`, padrão 16): quem tem a
 /// credencial de inferência não enche a tabela de gateways sozinho de um só endereço. Atrás de NAT
 /// todos parecem um endereço só; quem tem mais gateways ali sobe o limite.
@@ -310,6 +334,7 @@ fn valid_gateway(request: &ReportGatewayRequest) -> bool {
     };
     request.stats.as_ref().is_none_or(finite)
         && text(&request.gateway_id, 64)
+        && (request.gateway_secret.is_empty() || text(&request.gateway_secret, 64))
         && request.url.len() <= 256
         && request.url.chars().all(|c| c.is_ascii_graphic())
         && request.models.len() <= 32
@@ -350,6 +375,7 @@ impl ClusterControlService {
             watchers: Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WATCHERS)),
             gateways: Arc::default(),
             gateway_hosts: Arc::default(),
+            gateway_secrets: Arc::default(),
             models_dir: std::env::var_os("AI_CLUSTER_MODELS_DIR")
                 .filter(|dir| !dir.is_empty())
                 .map(Into::into),
@@ -1945,9 +1971,19 @@ impl ClusterControl for ClusterControlService {
             let alive = gateways.get(&request.gateway_id).is_some_and(|gateway| {
                 now.saturating_sub(gateway.last_seen_unix_ms) <= GATEWAY_ALIVE_MS
             });
-            if gateway_taken(alive, hosts.get(&request.gateway_id), host) {
+            let mut secrets = self
+                .gateway_secrets
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !gateway_may_report(
+                alive,
+                secrets.get(&request.gateway_id).map(String::as_str),
+                &request.gateway_secret,
+                hosts.get(&request.gateway_id),
+                host,
+            ) {
                 return Err(Status::permission_denied(
-                    "gateway já apresentado por outro endereço; aguarde ele ficar sem sinal",
+                    "gateway já apresentado por outro endereço ou outro segredo; aguarde ele ficar sem sinal",
                 ));
             }
             if let Some(host) = host
@@ -1979,12 +2015,19 @@ impl ClusterControl for ClusterControlService {
                     Some(id) => {
                         gateways.remove(&id);
                         hosts.remove(&id);
+                        secrets.remove(&id);
                     }
                     None => return Err(Status::resource_exhausted("gateways demais")),
                 }
             }
             if let Some(host) = host {
                 hosts.insert(request.gateway_id.clone(), host);
+            }
+            if request.gateway_secret.is_empty() {
+                // Gateway antigo (ou que perdeu o segredo com o id morto): o id volta à regra do endereço.
+                secrets.remove(&request.gateway_id);
+            } else {
+                secrets.insert(request.gateway_id.clone(), request.gateway_secret.clone());
             }
             gateways
                 .insert(
@@ -4259,6 +4302,7 @@ mod tests {
             llama_version: String::new(),
             llama_slots: slots,
             llama_context: 0,
+            gateway_secret: String::new(),
             memory_available_bytes: free,
             running: None,
             stats: None,
@@ -4318,6 +4362,7 @@ mod tests {
             llama_version: String::new(),
             llama_slots: 0,
             llama_context: 0,
+            gateway_secret: String::new(),
             memory_available_bytes: 0,
             running: None,
             stats: None,
@@ -4427,6 +4472,40 @@ mod tests {
     }
 
     #[test]
+    fn o_segredo_do_gateway_vale_de_qualquer_endereco() {
+        let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
+        // Com o segredo certo, outro endereço (NAT, IP novo) volta na hora.
+        assert!(gateway_may_report(
+            true,
+            Some("s1"),
+            "s1",
+            Some(&a),
+            Some(b)
+        ));
+        // Outro segredo ou nenhum não toma um id vivo, mesmo do mesmo endereço.
+        assert!(!gateway_may_report(
+            true,
+            Some("s1"),
+            "s2",
+            Some(&a),
+            Some(a)
+        ));
+        assert!(!gateway_may_report(true, Some("s1"), "", Some(&a), Some(a)));
+        // Sem sinal, o id fica livre.
+        assert!(gateway_may_report(
+            false,
+            Some("s1"),
+            "s2",
+            Some(&a),
+            Some(b)
+        ));
+        // Sem segredo guardado (gateway antigo), vale a regra do endereço.
+        assert!(!gateway_may_report(true, None, "s1", Some(&a), Some(b)));
+        assert!(gateway_may_report(true, None, "", Some(&a), Some(a)));
+    }
+
+    #[test]
     fn um_endereco_nao_enche_a_tabela_de_gateways() {
         let a: std::net::IpAddr = "10.0.0.1".parse().unwrap();
         let b: std::net::IpAddr = "10.0.0.2".parse().unwrap();
@@ -4458,6 +4537,7 @@ mod tests {
                 llama_version: String::new(),
                 llama_slots: 0,
                 llama_context: 0,
+                gateway_secret: String::new(),
                 memory_available_bytes: 0,
                 running: None,
                 stats: None,

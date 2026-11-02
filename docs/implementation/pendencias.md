@@ -66,7 +66,6 @@ Os lotes só referenciam as seções abaixo. Regra: decisão antes de código; m
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Gateway atrás de NAT | O id é amarrado ao IP; atrás de NAT todos parecem um só, e quem troca de IP espera 45 s. O limite de gateways vivos por IP existe (`AI_CLUSTER_MAX_GATEWAYS_PER_HOST`); falta um segredo por gateway. | código, decisão |
 
 ## F08 — Inferência
 

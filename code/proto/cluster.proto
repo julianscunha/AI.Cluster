@@ -717,6 +717,11 @@ message ReportGatewayRequest {
   /// Contexto padrão por vaga (`AI_CLUSTER_LLAMA_CTX`) deste gateway; 0 = não informa. O OK/NOK conta o
   /// cache KV com ele quando o pedido não traz contexto.
   uint32 llama_context = 9;
+  /// Segredo do gateway (128 bits em hex), gerado por ele no primeiro uso e guardado no estado dele. O
+  /// controller amarra o id ao segredo na primeira vez: quem o apresenta volta de qualquer endereço (NAT, IP
+  /// novo) e quem não o tem não toma o id enquanto ele está vivo. Vazio = gateway antigo: vale só a regra
+  /// do endereço (ADR-031, item 4).
+  string gateway_secret = 10;
 }
 
 message ReportGatewayResponse {

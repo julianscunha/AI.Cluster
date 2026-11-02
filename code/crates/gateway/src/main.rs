@@ -244,6 +244,41 @@ const GATEWAY_REPORT_SECS: u64 = 5;
 /// normal (medido: dois ciclos de 15 s eram um terço do tempo até PRONTO).
 const GATEWAY_REPORT_LOADING_SECS: u64 = 1;
 
+/// O segredo deste gateway (ADR-031, item 4): 128 bits em hex, gerados na primeira partida e guardados ao
+/// lado do estado (`<estado>.secret`, 0600) para sobreviver a reinício. Sem pasta de estado, vale só
+/// enquanto o processo vive (um reinício espera o id ficar sem sinal, como antes).
+fn gateway_secret(state: Option<&std::path::Path>) -> String {
+    let file = state.map(|path| {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".secret");
+        std::path::PathBuf::from(name)
+    });
+    let valid = |text: &str| text.len() == 32 && text.chars().all(|c| c.is_ascii_hexdigit());
+    if let Some(saved) = file
+        .as_ref()
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        && valid(saved.trim())
+    {
+        return saved.trim().to_string();
+    }
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("sem fonte de entropia para o segredo do gateway");
+    let secret: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    if let Some(file) = file {
+        let _ = write_private(&file, &secret);
+    }
+    secret
+}
+
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(text.as_bytes())
+}
+
 /// Where the counters survive a restart: `AI_CLUSTER_GATEWAY_STATE`, else a file named for the
 /// gateway under `AI_CLUSTER_DATA_DIR`. None when neither is set (counters then start at zero).
 fn gateway_state_path(id: &str) -> Option<std::path::PathBuf> {
@@ -350,6 +385,7 @@ fn announce_gateway(
             base.cache_tokens_avoided,
         );
     }
+    let secret = gateway_secret(state_path.as_deref());
     let mut client = client.clone();
     tokio::spawn(async move {
         let mut wait = Duration::ZERO;
@@ -390,6 +426,7 @@ fn announce_gateway(
                 llama_slots: llama.slots(),
                 llama_context: llama.default_context(),
                 memory_available_bytes: memory_available_bytes(),
+                gateway_secret: secret.clone(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s
             match client.report_gateway(report).await {
@@ -2023,8 +2060,25 @@ fn generation_failure(detail: &str) -> (&'static str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{generation_failure, parse_deadline};
+    use super::{gateway_secret, generation_failure, parse_deadline};
     use std::time::Duration;
+
+    #[test]
+    fn the_gateway_secret_survives_a_restart_and_is_hex() {
+        let dir = std::env::temp_dir().join(format!("aic-gwsecret-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = dir.join("g.state");
+        let first = gateway_secret(Some(&state));
+        assert_eq!(first.len(), 32);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(gateway_secret(Some(&state)), first, "relido do arquivo");
+        assert_ne!(
+            gateway_secret(None),
+            gateway_secret(None),
+            "sem estado, um por processo"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_deadline_is_configurable_and_clamped() {

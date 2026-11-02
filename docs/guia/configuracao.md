@@ -187,6 +187,6 @@ Cada token e a chave da API aceitam a variável `<NOME>_FILE` com o caminho de u
 ## Quem pode tomar um id
 
 - **Worker:** quem tem só o token de join não toma o `node_id` de um worker aprovado nem o de um pendente que ainda responde; um worker pendente sem sinal fica livre. `aic cluster node revoke` também libera o id.
-- **Gateway:** enquanto um gateway está vivo (sinal nos últimos 45 s), outro endereço IP não se apresenta com o mesmo id (`permission_denied`). O token de inferência é compartilhado, então o endereço é o que amarra o id.
+- **Gateway:** enquanto um gateway está vivo (sinal nos últimos 45 s), ninguém se apresenta com o mesmo id sem o segredo dele (`permission_denied`). O gateway gera o segredo na primeira partida e o guarda em `<estado>.secret` (pasta de `AI_CLUSTER_DATA_DIR` ou `AI_CLUSTER_GATEWAY_STATE`); por isso troca de IP e NAT não bloqueiam. Gateway antigo, sem segredo, segue a regra do endereço. O limite por endereço continua como segunda barreira.
 
 **Checksum de modelo:** coloque `<arquivo>.gguf.sha256` (saída do `sha256sum`) ao lado do GGUF e o `model start` confere o hash antes de planejar (num GGUF dividido, cada parte pode ter o seu); hash diferente recusa o modelo. Sem o arquivo, não confere.
