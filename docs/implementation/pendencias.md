@@ -195,7 +195,7 @@ Não copiar: fatias iguais e número de workers em potência de 2 (limite deles,
 
 ## Worker instalado pelo claim x GRUB da imagem com identidade (varredura 2026-11-01)
 
-- Sem TLS no modo dedicado: o worker instalado só fala com controller `http://` (`AI_CLUSTER_INSECURE=1`); o claim não entrega a CA do join (TLS do controller), fica para a etapa 7 (CA fixada no instalador).
+- Sem TLS no modo dedicado: o worker instalado só fala com controller `http://` (`AI_CLUSTER_INSECURE=1`); o claim não entrega a CA do join (TLS do controller), fica para a etapa 7 (CA fixada no instalador). Adiado em 02/11/2026: o controller não conhece a CA do próprio certificado TLS (vem de `AI_CLUSTER_TLS_CERT`), então a CA precisa ser fixada fora de banda (no `usb.zip`/convite, junto da chave de Linux) e o `wait`/claim usá-la já no primeiro contato; isso muda `ClaimInstall` (campo novo é compatível), o `mkusb`, o `install-disk` e só se valida com um controller https e um aparelho.
 
 - **Fonte única da versão (achado de 01/11/2026).** `aic controller status` e `aic gateway status` mostravam 0.2.1 e o slogan antigo ("hardware comum") com os binários já na 0.2.3: o `setup` do lab era uma cópia velha e `versao()` lia o `VERSION` do arquivo `/etc/ai-cluster/release`, só um registro da instalação. Corrigido: `versao()` pergunta ao binário (`aic version --short`, nova opção) e só cai no arquivo se não houver binário. Falta um único caminho de deploy do lab (hoje as cópias de `setup`/`bootstrap.sh` são manuais e se perdem); o certo é o lab usar o próprio `install.sh`/`setup update`.
 
