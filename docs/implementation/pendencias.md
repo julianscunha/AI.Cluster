@@ -143,6 +143,23 @@ M0 (duas máquinas), M2 (máquina limpa vira worker), M3 (storage), M6 (x86 e AR
 |---|---|---|
 | Certificado por worker | Renovação e revogação prontas (ADR-026): o controller guarda a CA e renova o certificado do túnel de cada worker pela credencial do worker, com chave fixada por worker e escrita atômica no worker. Falta: rotação da CA; trocar a chave do worker na renovação; CRL para quem não é o controller; worker esquecido ou revogado offline volta só com novo convite (regra de operação, sem imposição no código); entrada de worker novo, que ainda passa pelo convite; sem systemd e em instalação antiga a renovação fica desligada; renovação ainda não exercitada ponta a ponta nem em hardware. | código, decisão |
 
+## Ideias do distributed-llama (análise de 01/11/2026)
+
+Todas entram sem refactor: usam o llama.cpp por RPC, o plano e o gateway que já existem. Ordem de execução; esforço P/M/G. Fonte: leitura do repositório b4rtaz/distributed-llama (README, docs e `src/`); o código de sincronização do ggml-rpc não foi lido a fundo e as medições deles em Raspberry Pi (Discussions) não foram consultadas.
+
+| # | Item | Esforço | Condição |
+|---|---|---|---|
+| 1 | Medir cálculo x sincronização por token (TTFT/ITL já vêm do `timings`; falta o tempo de rede por token pelo túnel). Base para decidir o item 3 e o marco M4. | P/M | nenhuma |
+| 2 | Contar o contexto (`-c`, KV) no plano por RAM e no `model check`, para evitar estouro de RAM no Pi. | P | nenhuma |
+| 3 | Quantizar as ativações enviadas pelo RPC (~3,5x menos bytes por salto). Exige patch em `third_party/llama.cpp` e teste de paridade. | M | só se o item 1 mostrar a rede como gargalo (Pi a 100 Mb/s) |
+| 4 | Contar o gateway como worker de cálculo no plano (llama.cpp aceita backend local + RPC). | P/M | RAM do gateway sobrando |
+| 5 | Vulkan no build x86 (`-DGGML_VULKAN`), com medição. | P/M | só x86 com GPU integrada; não serve ao ARMv7 |
+| 6 | `aic model pull`: um comando baixa modelo e tokenizador (só a UX; o formato deles não entra). | M | nenhuma |
+| 7 | QUICKACK no túnel (TCP_NODELAY já existe em `crates/tunnel`). | P | medir ganho antes |
+| 8 | Paralelismo de tensor por camada. Só compensa em rede de 1 Gb/s com 2 a 4 workers; em 100 Mb/s a sincronização por camada domina. Reavaliar junto do F12. | G | cluster gigabit de 2 a 4 workers |
+
+Não copiar: fatias iguais e número de workers em potência de 2 (limite deles, ver ADR-022), formato próprio `.m`/`.t`.
+
 ## Modo dedicado x86: ajustes do primeiro teste real
 
 | Item | O que falta | Dependência |
