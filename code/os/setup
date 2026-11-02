@@ -369,7 +369,7 @@ make_credentials() {
     echo "AI_CLUSTER_GATEWAY_ADDR=0.0.0.0:$HTTP_PORT"
     echo "AI_CLUSTER_GATEWAY_URL=http://$IP:$HTTP_PORT"
     echo "AI_CLUSTER_MODELS_DIR=$MODELS"
-    echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
+    [ ! -f "$PREFIX/bin/llama-server" ] || echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
     # commit do llama.cpp do llama-server da release (code/third_party/llama.cpp/build.sh); o controller compara só o commit
     echo "AI_CLUSTER_RPC_VERSION=llama.cpp-8ca4060"
     echo "AI_CLUSTER_LLAMA_TLS_CA=$CONF/pki/ca.crt"
@@ -667,7 +667,7 @@ fetch_gateway_kit() {
   sed -i '/^AI_CLUSTER_GATEWAY_URL=/d' "$CONF/gateway.env"
   own_ip=$(lan_ip); [ -z "$own_ip" ] || echo "AI_CLUSTER_GATEWAY_URL=http://$own_ip:$HTTP_PORT" >> "$CONF/gateway.env"
   {
-    echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
+    [ ! -f "$PREFIX/bin/llama-server" ] || echo "AI_CLUSTER_LLAMA_SERVER_BIN=$PREFIX/bin/llama-server"
     echo "AI_CLUSTER_LLAMA_TLS_CA=$CONF/pki/ca.crt"
     echo "AI_CLUSTER_LLAMA_TLS_CERT=$CONF/pki/gateway.crt"
     echo "AI_CLUSTER_LLAMA_TLS_KEY=$CONF/pki/gateway.key"

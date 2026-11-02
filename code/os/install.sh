@@ -362,7 +362,9 @@ mkdir -p "$STAGE/aic"
 need=""
 case "$ROLE" in
   server) need="tools controller-linux-$ARCH gateway-linux-$ARCH" ;;
-  controller) need="tools controller-linux-$ARCH" ;;
+  # x86_64: o gateway e o llama-server vêm junto, para o gateway.env apontar para um binário que existe
+  # (o serviço do gateway só sobe com --with-gateway ou noutro computador). ARMv7 não tem llama-server.
+  controller) need="tools controller-linux-$ARCH"; [ "$ARCH" != x86_64 ] || need="$need gateway-linux-$ARCH" ;;
   gateway) need="tools gateway-linux-$ARCH" ;;
   worker) need="tools" ;;   # o worker vem do servidor, na mesma versão do cluster
 esac

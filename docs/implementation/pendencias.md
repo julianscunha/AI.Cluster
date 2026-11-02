@@ -21,7 +21,7 @@ Os lotes só referenciam as seções abaixo. Regra: decisão antes de código; m
 
 **Lote 2 — causas prováveis da carga lenta (~4,5 MiB/s, diagnóstico por leitura em `.tmp/tunel-diagnostico.md`):** um SET_TENSOR com ACK por tensor no RPC do ggml; `copy_bidirectional` com buffer de 8 KiB (`crates/tunnel/src/lib.rs:357,414`, trocar por `copy_bidirectional_with_sizes`); sem QUICKACK nem buffers de socket; suíte TLS no armv7; cache `-c` só ajuda a 2ª carga e o `prune_cache` pode expulsar o modelo. Medir com `ss -ti`, `iperf3` direto x pelo túnel e CPU do túnel.
 
-**Lote 3 — Código de servidor/CLI que não entra em imagem (I: só release de binários; H: não).** `setup` do controller (gateway e `llama-server`), ideias 2, 4 e 6 (contexto no plano, gateway como worker, `aic model pull`), ideia 5 se houver x86 com GPU, (painel Inferência e cache automático já feitos, em main; só validar com llama-server real), inglês na CLI (`AIC_LANG`), níveis de confiança, revogação/mTLS/auditoria, HTTPS no download, gatilho de atualização, F11 em diante só se o produto pedir (Request Manager antes de F12/F13/F17). Por quê: ideias 2 e 4 mudam o plano que o Lote 4 usa; o seletor de idioma altera todas as mensagens, então vem antes de textos novos de console/instalador.
+**Lote 3 — Código de servidor/CLI que não entra em imagem (I: só release de binários; H: não).** ideias 4 e 6 (gateway como worker, `aic model pull`), ideia 5 se houver x86 com GPU, (painel Inferência e cache automático já feitos, em main; só validar com llama-server real), inglês na CLI (`AIC_LANG`), níveis de confiança, revogação/mTLS/auditoria, HTTPS no download, gatilho de atualização, F11 em diante só se o produto pedir (Request Manager antes de F12/F13/F17). Por quê: ideias 2 e 4 mudam o plano que o Lote 4 usa; o seletor de idioma altera todas as mensagens, então vem antes de textos novos de console/instalador.
 
 **Lote 4 — Código que muda a imagem do SO (I: sim, o único rebuild; H: não ainda).** Wi-Fi (`wpa_supplicant`/`iw`, firmware por chipset, credencial em `/data`, `networking` com queda para o cabo, plano que desconta Wi-Fi); IP por DHCP (reserva/nome no controller, aviso sobre a chave de host do SSH); sonda de disco do Pi (conserto já no código, falta a imagem); sensor térmico do Pi; fonte do console maior e textos F2; impressão da credencial, `serving_model` e data/hora no console; critério do slot do controller (serviço respondeu na porta); modo dedicado; TLS/CA fixada no instalador; limpar `rootfs-*.ext4` antigos; ideia 3 (patch do RPC) só se o Lote 2 mostrar a rede como gargalo. Por quê: um único build x86 e um ARMv7 recebem tudo, e cada rollout custa uma sessão de hardware e um risco de queda (ver Lote 5).
 
@@ -42,7 +42,6 @@ Os lotes só referenciam as seções abaixo. Regra: decisão antes de código; m
 | Item | O que falta | Dependência |
 |---|---|---|
 | Cluster de 3 a 4 máquinas e runbook | Duas máquinas físicas já dividem modelo (Qwen2.5 1.5B e Llama 3.2 3B, medidos em 2026-11-01, veja [[modelos]]). Falta um cluster de 3 a 4 máquinas e o runbook de operação. | hardware |
-| `setup` do controller não instala gateway nem `llama-server` | O `setup` de um controller instalado não instala `ai-cluster-gateway` nem `llama-server`, e o `gateway.env` aponta para um `llama-server` que pode não existir. | código |
 | Aceleradores e storage | Medir kernels de GPU/NPU; SMART, erros e latência de escrita; capacidades em x86 e ARM64. | hardware |
 | ADR da fase F03 | Ver se alguma decisão pede ADR. | decisão |
 
@@ -177,7 +176,6 @@ Todas entram sem refactor: usam o llama.cpp por RPC, o plano e o gateway que já
 | # | Item | Esforço | Condição |
 |---|---|---|---|
 | 1 | Medir cálculo x sincronização por token (TTFT/ITL já vêm do `timings`; falta o tempo de rede por token pelo túnel). Base para decidir o item 3 e o marco M4. | P/M | nenhuma |
-| 2 | Contar o contexto (`-c`, KV) no plano por RAM e no `model check`, para evitar estouro de RAM no Pi. | P | nenhuma |
 | 3 | Quantizar as ativações enviadas pelo RPC (~3,5x menos bytes por salto). Exige patch em `third_party/llama.cpp` e teste de paridade. | M | só se o item 1 mostrar a rede como gargalo (Pi a 100 Mb/s) |
 | 4 | Contar o gateway como worker de cálculo no plano (llama.cpp aceita backend local + RPC). | P/M | RAM do gateway sobrando |
 | 5 | Vulkan no build x86 (`-DGGML_VULKAN`), com medição. | P/M | só x86 com GPU integrada; não serve ao ARMv7 |
