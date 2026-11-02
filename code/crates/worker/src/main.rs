@@ -2499,6 +2499,31 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\n";
     }
 
     #[test]
+    fn thermal_zone_reads_the_allwinner_h3_cpu_zone() {
+        // Orange Pi PC: o dtb tem a zona `cpu_thermal`, mas THERMAL e SUN8I_THS são módulos; sem
+        // eles (rootfs sem /lib/modules) não existe thermal_zone0 e a leitura é 0.
+        let root = std::env::temp_dir().join(format!("aic-thermal-h3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(thermal_zone_c(&root), 0.0, "sem /sys/class/thermal");
+        let dir = root.join("thermal_zone0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("type"),
+            "cpu_thermal
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("temp"),
+            "48500
+",
+        )
+        .unwrap();
+        assert_eq!(thermal_zone_c(&root), 48.5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn thermal_zone_prefers_the_package_sensor_and_skips_sensorless_zones() {
         let root = std::env::temp_dir().join(format!("aic-thermal-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
