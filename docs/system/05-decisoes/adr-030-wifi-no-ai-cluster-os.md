@@ -15,7 +15,7 @@ Celulares só terão Wi-Fi, e o Orange Pi PC não tem Wi-Fi na placa. Hoje a ima
 
 ## Decisão (proposta)
 
-1. **Adaptador de referência:** TP-Link TL-WN821N (USB `0cf3:7015`, Atheros AR9287), driver `ath9k_htc`, firmware `htc_7010.fw`. O kernel 4.19.20-sunxi do Pi tem `cfg80211` e `mac80211` como módulo, mas não `ath9k_htc` nem `/lib/firmware`: o aparelho aparece no USB e fica sem `wlan0`. A imagem ARMv7 compila `ath9k_htc` (+ `ath9k_common`, `ath`) e inclui o firmware.
+1. **Adaptador de referência:** TP-Link TL-WN821N (USB `0cf3:7015`, Atheros AR9287), driver `ath9k_htc`, firmware `htc_7010.fw`. O kernel 4.19.20-sunxi do Pi tem `cfg80211` e `mac80211` como módulo, mas não `ath9k_htc` nem `/lib/firmware`: o aparelho aparece no USB e fica sem `wlan0`. O kernel **não é recompilado nem trocado** (rota A): o `.config` do próprio `zImage` já tem `ATH9K_HTC=m`, e o que faltava era o rootfs Alpine ter `/lib/modules`. `build-kernel-wifi.sh` compila só os módulos (`rfkill`, `cfg80211`, `mac80211`, `ath`, `ath9k_hw`, `ath9k_common`, `ath9k_htc`) com vermagic `4.19.20-sunxi SMP mod_unload ARMv7 thumb2 p2v8`, igual ao do `zImage`, e pega o firmware; `build-rootfs.sh` os copia para `/lib` do rootfs (Dockerfile, `depmod -b / 4.19.20-sunxi`, `ath9k_htc` em `/etc/modules`; sem a saída do script a imagem sai sem Wi-Fi, com aviso). O `zImage` fica fixo na FAT `AICBOOT`, fora dos slots, então módulos e firmware entram por atualização assinada, sem regravar o cartão.
 2. **Firmware no x86:** pacotes `linux-firmware-*` do Alpine por chipset, instalados só para as famílias suportadas (começa pelo pacote do `ath9k_htc`, se existir; `ath10k` e regdb no Lote 8), nunca o `linux-firmware` inteiro, por causa do tamanho da imagem (pouco disco). Chipset sem firmware na imagem: a interface não sobe e o console diz qual falta.
 3. **Credencial:** SSID e senha (WPA2-PSK ou WPA3-SAE) são coletados no convite (`aic worker join`/`setup`) ou na tela de instalação (`aic-wait`/`aic-install.sh`), nunca por argumento de linha de comando. Ficam em `/data/wifi/wpa_supplicant.conf` (0600, root), que sobrevive ao A/B. Nunca aparecem em log, console, `ps`, evento, métrica nem no resumo enviado ao controller (vai só "Wi-Fi configurado" e o SSID). A senha entra por stdin ou por arquivo 0600.
 4. **Pilha:** `wpa_supplicant` + `iw` + `networking` do busybox/OpenRC, sem NetworkManager. O país (`iw reg`) é configurável.
@@ -34,7 +34,7 @@ Celulares só terão Wi-Fi, e o Orange Pi PC não tem Wi-Fi na placa. Hoje a ima
 
 ## Consequências
 
-- A imagem ARMv7 muda o kernel (módulos) e cresce com o firmware; vai no Lote 4 (um só rebuild).
+- A imagem ARMv7 ganha os módulos e o firmware (~1,9 MiB), sem mexer no kernel; vai no Lote 4 (um só rebuild).
 - O cluster passa a ter enlaces heterogêneos: o plano precisa do desconto, e o teste de reconexão após queda do AP entra no Lote 9.
 - A credencial de Wi-Fi é um segredo novo em `/data`: entra no inventário de [[seguranca]].
 
