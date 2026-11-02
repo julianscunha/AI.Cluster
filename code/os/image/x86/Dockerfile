@@ -7,6 +7,9 @@ FROM alpine:3.20
 RUN apk add --no-cache linux-firmware-none && apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev-openrc haveged openssl linux-firmware-rtl_nic wpa_supplicant iw wireless-regdb linux-firmware-ath9k_htc \
       linux-lts mkinitfs e2fsprogs \
  && addgroup -S ai-cluster && adduser -S -D -H -h /data/state -s /sbin/nologin -G ai-cluster ai-cluster \
+ && apk add --no-cache font-terminus && mkdir -p /usr/share/aic/fonts \
+ && for n in 16 20 24 32; do cp /usr/share/consolefonts/ter-v${n}n.psf.gz /usr/share/aic/fonts/; done \
+ && apk del font-terminus \
  && rm -rf /var/cache/apk/*
 
 COPY overlay/ /

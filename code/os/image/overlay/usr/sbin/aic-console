@@ -35,6 +35,7 @@ chvt 1 2>/dev/null
 trap 'printf "%s[?7h%s[?25h%s[0m%s[2J%s[H" "$ESC" "$ESC" "$ESC" "$ESC" "$ESC"' EXIT
 trap 'exit 0' INT TERM
 
+tty_font >/dev/null
 term_size
 term_margins
 tty_enter

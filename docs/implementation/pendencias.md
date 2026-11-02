@@ -185,8 +185,8 @@ Não copiar: fatias iguais e número de workers em potência de 2 (limite deles,
 
 | Item | O que falta | Dependência |
 |---|---|---|
-| Texto maior/centralizado na tela do instalador e do SO | Fonte do console (fbcon=font ou setfont) não avaliada; o texto fica pequeno no canto superior esquerdo | kernel com fonte grande no initramfs |
-| Textos do console F2 (reiniciar o serviço do worker) | O código muda, mas só vale na imagem de disco reconstruída (build-rootfs.sh + mk-disk.sh) | nova imagem x86 |
+| Texto maior/centralizado na tela do instalador e do SO | Feito no SO (`tty_font`, Terminus pelo `setfont`, testado por script); vale na próxima imagem. Falta a tela do instalador (initramfs), que precisa de fonte no initramfs, e ver no monitor real | nova imagem x86, hardware |
+| Textos do console F2 (reiniciar o serviço do worker) | Já no código (menu "Reiniciar o servico do worker"); só vale na imagem de disco reconstruída (build-rootfs.sh + mk-disk.sh) | nova imagem x86 |
 | `phase-u-usb.sh` no Windows | Falha por caminho `/d/...` no Python do Windows (ambiente, não o código) | rodar em Linux/WSL |
 
 ## Versão única (ADR-029)

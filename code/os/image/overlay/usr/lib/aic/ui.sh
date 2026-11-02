@@ -26,6 +26,28 @@ else
 	G_NODE='■' G_H='─' G_FILL='█' G_EMPTY='░' G_V='│' G_TL='┌' G_TR='┐' G_BL='└' G_BR='┘'
 fi
 
+# Fonte maior do console: a maior (Terminus 32/24/20/16 px de altura) que ainda deixa 80x25 na tela do
+# framebuffer. Sem framebuffer, sem arquivo de fonte ou sem setfont, nada muda. A marca em /run evita
+# trocar a fonte duas vezes (o splash e o console chamam; cada troca redesenha a tela).
+# AIC_FB_SIZE, AIC_FONT_DIR, AIC_FONT_MARK e AIC_SETFONT existem para teste.
+tty_font() {
+	local size w h f cw ch
+	[ -e "${AIC_FONT_MARK:-/run/aic-font}" ] && return 0
+	size=$(cat "${AIC_FB_SIZE:-/sys/class/graphics/fb0/virtual_size}" 2>/dev/null) || return 0
+	w=${size%%,*} h=${size##*,}
+	[ "${w:-0}" -gt 0 ] 2>/dev/null && [ "${h:-0}" -gt 0 ] 2>/dev/null || return 0
+	for f in 32:16 24:12 20:10 16:8; do
+		ch=${f%%:*} cw=${f##*:}
+		[ $((w / cw)) -ge 80 ] && [ $((h / ch)) -ge 25 ] || continue
+		[ -f "${AIC_FONT_DIR:-/usr/share/aic/fonts}/ter-v${ch}n.psf.gz" ] || return 0
+		if ${AIC_SETFONT:-setfont} ${TERM_DEV:+-C "$TERM_DEV"} "${AIC_FONT_DIR:-/usr/share/aic/fonts}/ter-v${ch}n.psf.gz" >/dev/null 2>&1; then
+			: > "${AIC_FONT_MARK:-/run/aic-font}"
+			echo "$ch"
+		fi
+		return 0
+	done
+}
+
 # Tamanho do terminal (linhas colunas), com piso para o desenho não quebrar.
 term_size() {
 	local size
