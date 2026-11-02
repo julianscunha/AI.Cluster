@@ -42,6 +42,8 @@ O estado vigente das decisões e as questões em aberto estão em [[estado-das-d
 | [[adr-027-worker-removido-so-volta-por-convite]] | decidido | 2026-10-31 | Remover deixa uma lápide com a credencial: o worker que a apresenta é recusado e só volta por convite (`aic worker join`); retirar mantém a identidade; revogar segue como rotação |
 | [[adr-028-canal-de-atualizacao-declarado-pelo-worker]] | decidido | 2026-10-31 | O worker declara o canal de atualização (`update_kind`: `os` ou `linux`) e o controller só leva a release aos workers cujo canal ela traz; release só-Linux não tem worker de imagem como canário |
 | [[adr-029-versao-unica-do-produto]] | decidido | 2026-11-01 | A release SemVer X.Y.Z vale para crates, setup, binários, imagens do SO, instalador e dedicado; fonte única no `[workspace.package]` (`scripts/version.sh`), `AIC_RELEASE` só sobrescreve em teste; atualizador compara por SemVer |
+| [[adr-030-wifi-no-ai-cluster-os]] | proposto | 2026-11-01 | Wi-Fi no AI Cluster OS: TL-WN821N (`ath9k_htc`) de referência, firmware por chipset, credencial em `/data` (0600, fora de log), `wpa_supplicant`+`iw`, cabo antes do Wi-Fi, plano desconta Wi-Fi medido |
+| [[adr-031-decisoes-pendentes-do-lote-1]] | proposto | 2026-11-01 | Recomendações para base Linux, F03, `--trust-listed`, gateway atrás de NAT, origem do pino, chave do `SHA256SUMS` do instalador, revogação da chave de Linux e downgrade do rollout |
 
 ## Notas
 
