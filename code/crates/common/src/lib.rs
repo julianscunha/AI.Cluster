@@ -1,6 +1,7 @@
 use std::fmt;
 
 pub mod brand;
+pub mod idioma;
 pub mod matrix;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

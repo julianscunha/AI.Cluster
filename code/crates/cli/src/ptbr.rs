@@ -14,6 +14,9 @@ const SO_OPCOES: &str = "{about}\n\nUso: {usage}\n\nOpções:\n{options}\n";
 
 /// Aplica o modelo em português a um comando e, recursivamente, a todos os subcomandos.
 pub fn localize(cmd: Command) -> Command {
+    if crate::idioma::ingles() {
+        return cmd; // o clap já fala inglês
+    }
     let template = if cmd.has_subcommands() {
         COM_SUBCOMANDOS
     } else if cmd.get_positionals().next().is_some() {
@@ -85,6 +88,9 @@ fn words(text: &str) -> String {
 
 /// Mostra ajuda (saída 0) ou erro de uso (saída 2) em português e encerra.
 pub fn show(err: &clap::Error) -> ! {
+    if crate::idioma::ingles() {
+        err.exit();
+    }
     if err.use_stderr() {
         eprint!("{}", message(err));
         std::process::exit(2);

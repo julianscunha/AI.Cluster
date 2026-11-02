@@ -21,7 +21,7 @@ aic <recurso> <ação> [alvo] [--opções]
 - **Opções com um nome só.** `--controller URL` é o endereço gRPC do controller (porta 50051) e vai depois do grupo (`aic cluster nodes --controller https://ip:50051`); também vale a variável `AI_CLUSTER_CONTROLLER`. `--server IP[:porta]` é o endereço do convite (porta 8099), `--code` é o código do convite, `--minutes` mede janelas, `--lang pt|en` escolhe o idioma do instalador. Um nome antigo não é aceito como apelido.
 - **Comandos que falam com o controller** pedem o token de operador (`AI_CLUSTER_OPERATOR_TOKEN`). Exceções: `cluster model manifest` e `cluster model verify`, que trabalham em arquivos locais.
 - Endereço sem TLS é recusado, salvo `AI_CLUSTER_INSECURE=1` numa rede fechada.
-- **Idioma.** As mensagens da instalação de aparelhos (`install list`, `install approve`, o bloco de `cluster invite`) saem em português; `AIC_LANG=en` troca para inglês, como no instalador. A ajuda continua em português.
+- **Idioma.** As mensagens da instalação de aparelhos (`install list`, `install approve`, o bloco de `cluster invite`) saem em português; `AIC_LANG=en` (ou `en_US.UTF-8`) troca para inglês, como no instalador; com ele a ajuda e os erros de uso saem no inglês do clap. O seletor é um só (`ai-cluster-common::idioma`), mas as demais mensagens da CLI e os logs dos serviços ainda só têm português.
 
 ## Cluster (`aic cluster`)
 

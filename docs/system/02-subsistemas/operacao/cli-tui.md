@@ -110,6 +110,7 @@ Cada atualização relê as chamadas inteiras. Não há streaming, e a tela não
 - **Painel sem histórico.** Mostra o estado de agora. Taxas por segundo não existem.
 - **Painel sem seções de inferência.** TTFT, ITL e tokens por segundo estão no `/metrics` do gateway, não no painel.
 - **Sem comandos de manutenção de worker.** A CLI não drena nem reprovisiona um worker. A saída acontece quando o próprio worker se desliga.
+- **Idioma.** Um seletor só, `ai-cluster-common::idioma` (`AIC_LANG=en`), vale para todo binário Rust; texto novo usa `t(pt, en)`. Com inglês a ajuda e os erros de uso são os do clap. Mensagens antigas e logs ainda só em português.
 
 > Planejado: `node drain`, `node reprovision` e `node history`.
 > Planejado: `request list` e `request show`.
