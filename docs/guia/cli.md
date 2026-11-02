@@ -74,6 +74,7 @@ Uma reserva retém um worker para uma requisição futura.
 
 | Comando | O que faz |
 |---|---|
+| `aic cluster model pull <https://…/x.gguf \| dono/repo/x.gguf> [--dir DIR] [--sha256 HEX]` | Baixa um `.gguf` para a pasta de modelos (`--dir`, padrão `AI_CLUSTER_MODELS_DIR`); rode no computador do controller. Usa o `curl`, só por HTTPS (inclusive nos redirecionamentos), retoma download interrompido e recusa arquivo existente. Confere o tamanho anunciado, a assinatura `GGUF` e, se dado, o SHA-256; imprime o SHA-256 no fim. Não é comando que fala com o controller (sem token). |
 | `aic cluster model list` | Modelos da pasta do controller (`AI_CLUSTER_MODELS_DIR`): formato, arquitetura, parâmetros, precisão, tamanho, contexto e se o motor atual os roda (com o motivo, quando não). |
 | `aic cluster model check <id> [--ctx N]` | Diz se o cluster comporta o modelo: `OK`, ou `NOK` com o que falta em GB e quantos workers acrescentar. Soma a RAM dos workers aprovados e vivos (no máximo 80% de cada um, menos 128 MiB) contra pesos, cache de contexto e 10% de margem. Sai com código 1 no NOK. |
 | `aic cluster model start <id> [--ctx N] [--workers id1,id2] [--spread]` | Sobe o modelo no cluster: confere a RAM, fixa o plano de workers com RPC (por padrão só os mais rápidos até a RAM bastar; `--workers` força o conjunto e `--spread` dá fatias a todos os aptos, a divisão seguindo a velocidade), cria a chave de API do tenant `default` (mostrada uma vez) e o gateway o carrega. Sai com código 1 no NOK. |

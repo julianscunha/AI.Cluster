@@ -173,9 +173,9 @@ Todas entram sem refactor: usam o llama.cpp por RPC, o plano e o gateway que já
 |---|---|---|---|
 | 1 | Medir cálculo x sincronização por token (TTFT/ITL já vêm do `timings`; falta o tempo de rede por token pelo túnel). Base para decidir o item 3 e o marco M4. | P/M | nenhuma |
 | 3 | Quantizar as ativações enviadas pelo RPC (~3,5x menos bytes por salto). Exige patch em `third_party/llama.cpp` e teste de paridade. | M | só se o item 1 mostrar a rede como gargalo (Pi a 100 Mb/s) |
-| 4 | Contar o gateway como worker de cálculo no plano (llama.cpp aceita backend local + RPC). | P/M | RAM do gateway sobrando |
+| 4 | Contar o gateway como worker de cálculo no plano (llama.cpp aceita backend local + RPC). Adiado (2026-11-02), não é mudança pequena: o gateway não é worker registrado, então o controller não conhece a RAM dele; e o `--tensor-split` só reparte entre dispositivos (os `--rpc`), a fatia local do CPU vem do `-ngl` menor que o total de camadas, o que pede o número de camadas do GGUF e um cálculo novo no plano e no gateway. Pede campo novo no plano (`DesiredModel`) e RAM reportada pelo gateway; fazer junto do Lote 2, com medição. | P/M | RAM do gateway sobrando |
 | 5 | Vulkan no build x86 (`-DGGML_VULKAN`), com medição. | P/M | só x86 com GPU integrada; não serve ao ARMv7 |
-| 6 | `aic model pull`: um comando baixa modelo e tokenizador (só a UX; o formato deles não entra). | M | nenhuma |
+| 6 | ~~`aic cluster model pull`~~ feito para `.gguf` (URL https ou `dono/repo/arquivo.gguf`, tamanho, assinatura e SHA-256 opcional). Tokenizador: o GGUF já o traz. Falta o SHA-256 automático do Hugging Face (`x-linked-etag`) e um comando que peça ao controller baixar (hoje roda no computador dele). | M | nenhuma |
 | 7 | QUICKACK no túnel (TCP_NODELAY já existe em `crates/tunnel`). | P | medir ganho antes |
 | 8 | Paralelismo de tensor por camada. Só compensa em rede de 1 Gb/s com 2 a 4 workers; em 100 Mb/s a sincronização por camada domina. Reavaliar junto do F12. | G | cluster gigabit de 2 a 4 workers |
 

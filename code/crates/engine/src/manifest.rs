@@ -42,7 +42,7 @@ pub struct Manifest {
     pub files: Vec<Entry>,
 }
 
-fn hash_file(path: &Path) -> Result<(u64, String), String> {
+pub fn hash_file(path: &Path) -> Result<(u64, String), String> {
     let mut file = std::fs::File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];

@@ -13,6 +13,7 @@ use ai_cluster_protocol::metadata::{RECOVERY_NODE_SUFFIX, connect_operator};
 mod aparelhos;
 mod delegados;
 mod idioma;
+mod modelpull;
 mod ptbr;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -295,6 +296,18 @@ enum ModelAction {
         #[arg(long)]
         version: String,
     },
+    /// Baixa um .gguf (URL https ou `dono/repo/arquivo.gguf` do Hugging Face) para a pasta de modelos. Local: rode
+    /// no computador do controller. Confere tamanho, assinatura GGUF e, se dado, o SHA-256.
+    Pull {
+        /// URL https:// ou dono/repo/arquivo.gguf.
+        origem: String,
+        /// Pasta de modelos (a que o controller lê).
+        #[arg(long, env = "AI_CLUSTER_MODELS_DIR")]
+        dir: std::path::PathBuf,
+        /// SHA-256 esperado do arquivo (hex); sem ele só o tamanho e o formato são conferidos.
+        #[arg(long)]
+        sha256: Option<String>,
+    },
     /// Confere os arquivos de uma pasta de modelo com o `manifest.json` dela.
     Verify { dir: std::path::PathBuf },
     /// Diz se o cluster comporta um modelo da pasta: OK, ou NOK com o motivo e quanto falta (ADR-022, E2).
@@ -544,6 +557,11 @@ async fn run_cluster(
                     manifest.files.len()
                 );
             }
+            ModelAction::Pull {
+                origem,
+                dir,
+                sha256,
+            } => modelpull::pull(&origem, &dir, sha256.as_deref())?,
             ModelAction::List => print_models(controller).await?,
             ModelAction::Start {
                 id,
