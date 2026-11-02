@@ -23,7 +23,7 @@ IMAGE=${IMAGE:-ai-cluster:local}
 ARM_TARGET=${ARM_TARGET:-armv7-unknown-linux-musleabihf}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$OUT"
-rm -f "$OUT"/*.tar.gz "$OUT"/SHA256SUMS "$OUT"/SHA256SUMS.sig "$OUT"/VERSION "$OUT"/install.sh "$OUT"/release.pub.next* # sem restos de builds antigos
+rm -f "$OUT"/*.tar.gz "$OUT"/SHA256SUMS "$OUT"/SHA256SUMS.sig "$OUT"/VERSION "$OUT"/install.sh "$OUT"/release.pub.next* "$OUT"/revoked.txt* # sem restos de builds antigos
 STAGE="$OUT/.stage-$$"; mkdir -p "$STAGE"
 CID=""
 trap 'rm -rf "$STAGE"; [ -z "$CID" ] || docker rm -f "$CID" >/dev/null 2>&1' EXIT
@@ -44,6 +44,19 @@ if [ -n "$ROT" ]; then
   rm -f "$SIGR"
   cp "$ROT/release.pub.next" "$ROT/release.pub.next.sig" "$OUT/"
   ARQ="$ARQ release.pub.next release.pub.next.sig"
+fi
+
+# Revogação (ADR-031, item 7): AIC_LINUX_REVOCATION=<pasta de revoke-linux-key.sh> leva revoked.txt e .sig. A lista tem
+# de ser assinada pela chave nova (a da rotação desta release, ou a de os/linux.pub); senão não sai.
+REV=${AIC_LINUX_REVOCATION:-}
+if [ -n "$REV" ]; then
+  [ -f "$REV/revoked.txt" ] && [ -f "$REV/revoked.txt.sig" ] || { echo "faltam revoked.txt e .sig em $REV (rode revoke-linux-key.sh)" >&2; exit 2; }
+  SIGV=$(mktemp); base64 -d < "$REV/revoked.txt.sig" > "$SIGV" 2>/dev/null || : > "$SIGV"
+  VPUB="$HERE/os/linux.pub"; [ -z "$ROT" ] || VPUB="$ROT/release.pub.next"
+  openssl pkeyutl -verify -pubin -inkey "$(win "$VPUB")" -rawin -in "$(win "$REV/revoked.txt")" -sigfile "$(win "$SIGV")" >/dev/null 2>&1     || { rm -f "$SIGV"; echo "a lista em $REV não foi assinada por $VPUB (a chave rotacionada): gere de novo com revoke-linux-key.sh" >&2; exit 2; }
+  rm -f "$SIGV"
+  cp "$REV/revoked.txt" "$REV/revoked.txt.sig" "$OUT/"
+  ARQ="$ARQ revoked.txt revoked.txt.sig"
 fi
 
 # pack <nome> <arquivo>... : junta os arquivos de $STAGE/<nome> num .tar.gz sem diretório raiz.

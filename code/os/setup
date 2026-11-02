@@ -1422,10 +1422,18 @@ PYSERVER
 # confere é a chave pinada nesta instalação (/etc/ai-cluster/release.pub): nenhum hash da release é confiado
 # antes disso. A chave só é gravada pelos comandos de instalação (pina_chave); a atualização nunca a busca
 # de novo na origem. SIG_MOTIVO guarda por que a conferência falhou (uma frase, pronta para mostrar).
+# Revogação da chave de Linux (ADR-031, item 7): $CONF/revoked guarda as impressões (32 hex) das chaves revogadas.
+# Chave revogada não volta: nem como pino da instalação, nem como rotação, nem assinando uma release.
+chave_fp() { sha256sum "$1" | cut -c1-32; }
+revogada() { [ -f "$CONF/revoked" ] && grep -qx "$1" "$CONF/revoked"; }   # revogada <impressão>
+
 pina_chave() {
   need_root
   mkdir -p "$CONF"
   [ -f "$HERE/release.pub" ] || return 0
+  if revogada "$(chave_fp "$HERE/release.pub")"; then
+    die "$(t 'a chave de release desta origem foi revogada neste computador: use uma origem com a chave nova' 'the release key of this origin was revoked on this computer: use an origin with the new key')"
+  fi
   install -m 644 "$HERE/release.pub" "$CONF/release.pub"
 }
 confere_assinatura() { # confere_assinatura <SHA256SUMS> <SHA256SUMS.sig, base64>
@@ -1439,10 +1447,14 @@ confere_assinatura() { # confere_assinatura <SHA256SUMS> <SHA256SUMS.sig, base64
     SIG_MOTIVO=$(t "esta instalação não tem a chave de release ($CONF/release.pub): ela é anterior à assinatura. Para migrar, rode de novo o install.sh desta versão (ele grava a chave) e depois aic update apply" "this installation has no release key ($CONF/release.pub): it predates signing. To migrate, run install.sh of this version again (it saves the key), then aic update apply")
     return 1
   fi
+  if [ -z "${SIG_KEY:-}" ] && revogada "$(chave_fp "$CONF/release.pub")"; then
+    SIG_MOTIVO=$(t "a chave de release desta instalação foi revogada ($CONF/release.pub): reinstale com a chave nova (install.sh de uma origem com ela)" "this installation's release key was revoked ($CONF/release.pub): reinstall with the new key (install.sh from an origin that has it)")
+    return 1
+  fi
   if [ -s "$2" ]; then
     s=$(mktemp) || return 1
     if base64 -d < "$2" > "$s" 2>/dev/null && [ "$(wc -c < "$s" | tr -d ' ')" = 64 ] \
-      && openssl pkeyutl -verify -pubin -inkey "$CONF/release.pub" -rawin -in "$1" -sigfile "$s" >/dev/null 2>&1; then
+      && openssl pkeyutl -verify -pubin -inkey "${SIG_KEY:-$CONF/release.pub}" -rawin -in "$1" -sigfile "$s" >/dev/null 2>&1; then
       rm -f "$s"; return 0
     fi
     rm -f "$s"
@@ -1470,7 +1482,31 @@ busca_rotacao() { # busca_rotacao <pasta> <URL da release> <SHA256SUMS>
     || { SIG_MOTIVO="$(t 'rotação da chave recusada: ' 'key rotation refused: ')$SIG_MOTIVO"; return 1; }
   openssl pkey -pubin -in "$1/release.pub.next" -text_pub -noout 2>/dev/null | grep -q '^ED25519' \
     || { SIG_MOTIVO=$(t 'rotação da chave recusada: a chave nova não é Ed25519 pública' 'key rotation refused: the new key is not an Ed25519 public key'); return 1; }
+  revogada "$(chave_fp "$1/release.pub.next")" \
+    && { SIG_MOTIVO=$(t 'rotação da chave recusada: a chave nova está revogada' 'key rotation refused: the new key is revoked'); return 1; }
   ROT=1
+}
+
+# Lista de revogação da release: revoked.txt (uma impressão de 32 hex por linha) e revoked.txt.sig, assinada pela
+# chave rotacionada (a nova, se a release rotaciona; senão a pinada) e coberta pelo SHA256SUMS. A própria chave
+# que assina não se revoga (uma chave roubada não pode travar as máquinas). A lista nova fica em <pasta>/revoked.new
+# e só entra em $CONF/revoked junto com o pino novo, depois que a atualização deu certo. Chamar depois de busca_rotacao.
+busca_revogacao() { # busca_revogacao <pasta> <URL da release> <SHA256SUMS>
+  REVNEW=""
+  awk '$2=="revoked.txt" {f=1} END {exit !f}' "$3" || return 0
+  for f in revoked.txt revoked.txt.sig; do
+    curl -fsSL $PROTO -o "$1/$f" "$2/$f" \
+      || { SIG_MOTIVO=$(t "não consegui ler a lista de revogação em $2" "could not read the revocation list at $2"); return 1; }
+    want=$(awk -v f="$f" '$2==f {print $1}' "$3")
+    [ -n "$want" ] && [ "$want" = "$(sha256sum "$1/$f" | cut -d' ' -f1)" ] \
+      || { SIG_MOTIVO=$(t "$f não confere com o SHA256SUMS assinado; nada foi trocado" "$f does not match the signed SHA256SUMS; nothing was changed"); return 1; }
+  done
+  if [ "$ROT" = 1 ]; then SIG_KEY="$1/release.pub.next"; else SIG_KEY="$CONF/release.pub"; fi
+  confere_assinatura "$1/revoked.txt" "$1/revoked.txt.sig"; rc_=$?
+  own=$(chave_fp "$SIG_KEY"); unset SIG_KEY
+  [ $rc_ = 0 ] || { SIG_MOTIVO="$(t 'lista de revogação recusada: ' 'revocation list refused: ')$SIG_MOTIVO"; return 1; }
+  grep -E '^[0-9a-f]{32}$' "$1/revoked.txt" | grep -vx "$own" > "$1/revoked.new" || true
+  REVNEW=1
 }
 
 # O worker Linux pede a atualização (ADR-025). linux_check confere o pedido sem gravar nada (o worker o chama
@@ -1491,6 +1527,7 @@ linux_check() { # linux_check <versão> <URL> <SHA256> <SHA da imagem> <assinatu
   printf '%s' "$5" > "$t_/sig"
   if ! confere_assinatura "$t_/SHA256SUMS" "$t_/sig"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
   if ! busca_rotacao "$t_" "$2" "$t_/SHA256SUMS"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
+  if ! busca_revogacao "$t_" "$2" "$t_/SHA256SUMS"; then rm -rf "$t_"; echo "$SIG_MOTIVO" >&2; return 3; fi
   want=$(awk '$2=="VERSION" {print $1}' "$t_/SHA256SUMS")
   if [ -z "$want" ] || [ "$want" != "$(sha256sum "$t_/VERSION" | cut -d' ' -f1)" ]; then
     rm -rf "$t_"; echo "o VERSION da release não confere com o SHA256SUMS assinado" >&2; return 3
@@ -1696,6 +1733,7 @@ cmd_update() {
   curl -fsSL $PROTO -o "$U/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" 2>/dev/null || : > "$U/SHA256SUMS.sig"
   confere_assinatura "$U/SHA256SUMS" "$U/SHA256SUMS.sig" || die "$SIG_MOTIVO"
   busca_rotacao "$U" "$BASE" "$U/SHA256SUMS" || die "$SIG_MOTIVO"
+  busca_revogacao "$U" "$BASE" "$U/SHA256SUMS" || die "$SIG_MOTIVO"
   curl -fsSL $PROTO -o "$U/VERSION" "$BASE/VERSION" \
     || die "$(t "não consegui ler a release em $BASE" "could not read the release at $BASE")"
   want=$(awk '$2=="VERSION" {print $1}' "$U/SHA256SUMS")
@@ -1772,6 +1810,11 @@ cmd_update() {
   else echo "VERSION=$NEWV" >> "$CONF/release"; fi
   sed -i '/^SUMS=/d' "$CONF/release"
   echo "SUMS=$NEWSUM" >> "$CONF/release"
+  # A lista de revogação vale só agora, junto com o pino novo (ADR-031, item 7).
+  if [ -n "$REVNEW" ] && [ -s "$U/revoked.new" ]; then
+    cat "$CONF/revoked" "$U/revoked.new" 2>/dev/null | sort -u > "$CONF/revoked.tmp" && mv -f "$CONF/revoked.tmp" "$CONF/revoked" \
+      || warn "$(t 'a atualização entrou, mas não consegui gravar a lista de revogação' 'the update went in, but the revocation list could not be saved')"
+  fi
   # A rotação vira pino só agora: a atualização deu certo. O pino anterior fica em release.pub.prev (troca atômica).
   if [ "$ROT" = 1 ]; then
     install -m 644 "$CONF/release.pub" "$CONF/release.pub.prev" && install -m 644 "$U/release.pub.next" "$CONF/release.pub.new" \

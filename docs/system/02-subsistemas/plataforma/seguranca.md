@@ -112,7 +112,7 @@ O controller guarda a release sem verificar a assinatura: a checagem é do worke
 2. Construir uma imagem de transição com as duas chaves públicas, assinada com a chave antiga.
 3. Depois que os workers tiverem a imagem de transição, publicar a imagem seguinte apenas com a chave nova, assinada com a nova.
 
-Não existe lista de revogação. Uma chave vazada vale até a imagem que a retira chegar a cada worker. Quem tem a privada consegue instalar qualquer release em todos os workers.
+Não existe lista de revogação para a chave do AI Cluster OS. Uma chave vazada vale até a imagem que a retira chegar a cada worker. Quem tem a privada consegue instalar qualquer release em todos os workers. Para a chave de Linux comum a lista existe: `revoked.txt` com `revoked.txt.sig`, assinada pela chave rotacionada e coberta pelo `SHA256SUMS`; o `setup` a confere antes de qualquer hash, grava as impressões em `/etc/ai-cluster/revoked` junto com o pino novo e recusa dali em diante a chave revogada (release, rotação ou reinstalação). A chave que assina a lista não se revoga, para uma chave roubada não travar as máquinas ([[adr-031-decisoes-pendentes-do-lote-1]]).
 
 ## Revogação
 

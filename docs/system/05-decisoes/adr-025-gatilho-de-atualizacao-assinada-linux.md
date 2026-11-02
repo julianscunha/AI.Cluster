@@ -49,7 +49,7 @@ O unit do worker tem `NoNewPrivileges=true`, então `sudo` não funciona para o 
 - **Origem do pedido.** O worker só aplica pedido cuja URL tem o mesmo esquema e host (origem) do `BASE` gravado na instalação, qualquer que seja o caminho (`latest/download` ou `vX.Y.Z`). Sem isso, um controller ou um pedido forjado poderia fazer o worker buscar em outro host (SSRF).
 - **Versões.** Anti-downgrade com `sort -V` não entende `-rc` como pré-lançamento: `1.0.0-rc1` e `1.0.0` são comparados só como texto ordenado. Aceito por enquanto; release de pré-lançamento não deve ser publicada por rollout.
 - **OpenSSL.** A conferência usa `openssl pkeyutl -rawin`, que exige OpenSSL 3 ou mais novo. Sem ele a recusa diz isso (não é tratada como assinatura inválida).
-- **Rotação (item 9).** Vale só para quem passa pela release que leva a rotação: quem pula essa release tem de reinstalar (o `install.sh` de hoje grava a chave da origem dele). Um `install.sh` de origem antiga, rodado depois, regrava o pino antigo: a instalação continua sendo a única gravação do pino, e a origem dela é de confiança. A lista de revogação continua em pendência (decisão aberta).
+- **Rotação (item 9).** Vale só para quem passa pela release que leva a rotação: quem pula essa release tem de reinstalar (o `install.sh` de hoje grava a chave da origem dele). Um `install.sh` de origem antiga, rodado depois, regrava o pino antigo: a instalação continua sendo a única gravação do pino, e a origem dela é de confiança. A lista de revogação existe ([[adr-031-decisoes-pendentes-do-lote-1]], item 7): `revoked.txt` assinada pela chave rotacionada, guardada em `/etc/ai-cluster/revoked`, e revogar barra o retorno da chave.
 
 ## Consequências
 
