@@ -9,6 +9,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 SLOT=${1:-512M}
 mkdir -p build
+# ADR-029: a imagem não tem mais versão própria; sobras numeradas de builds antigos (rootfs-1.0.ext4, rootfs-12.0.1.ext4...) são lixo
+rm -f build/rootfs-[0-9]*.ext4 build/rootfs-[0-9]*.ext4.gz build/rootfs-[0-9]*.tar
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   cp /t/x86_64-unknown-linux-musl/release/ai-cluster-worker /out/ai-cluster-worker-x86
 # rpc-server do llama.cpp (ADR-022) estático em musl, com o patch de code/third_party/llama.cpp (build.sh

@@ -191,7 +191,7 @@ Não copiar: fatias iguais e número de workers em potência de 2 (limite deles,
 
 ## Versão única (ADR-029)
 
-- Limpar `code/os/image/build/rootfs-*.ext4` antigos (numeração 1.0/2.0/3.0 e 12.x).
+- Feito: os dois `build-rootfs.sh` apagam `build/rootfs-<número>*` (numeração antiga) a cada build; os arquivos atuais (`rootfs.ext4`, `rootfs-x86.ext4`) não casam. Nada foi apagado à mão.
 
 ## Worker instalado pelo claim x GRUB da imagem com identidade (varredura 2026-11-01)
 
