@@ -1,24 +1,67 @@
 #!/bin/sh
-# AI Cluster OS - vigia da rede (ADR-030): refaz o DHCP do cabo quando ele volta e sobe o wlan0 quando ha credencial.
-# O cabo tem rota padrao de metrica menor (ver /etc/network/interfaces); sem ele, o Wi-Fi leva o trafego.
-# `netwatch once` faz uma passada (testes); sem argumento, repete a cada 5 s.
+# AI Cluster OS - vigia da rede (ADR-030): refaz o DHCP do cabo quando ele volta e liga o Wi-Fi quando ha credencial.
+# O cabo tem rota padrao de metrica menor; sem ele, o Wi-Fi leva o trafego. O eth0 so e tocado pelo DHCP dele proprio.
+# O Alpine nao tem o gancho if-pre-up.d do wpa_supplicant, entao o netwatch gerencia UM wpa_supplicant e o udhcpc do wlan0
+# (sem ifup/ifdown do wlan0: reciclar a interface interrompe a associacao). `netwatch once` faz uma passada (testes).
 SYS=${AIC_SYS_NET:-/sys/class/net}
 CONF=${AIC_WIFI_CONF:-/data/wifi/wpa_supplicant.conf}
 STATUS=${AIC_WIFI_STATUS:-/run/aic-wifi.status}
+RUN=${AIC_RUN:-/run}
+WPID=$RUN/wpa_supplicant.wlan0.pid
+WLOG=$RUN/wpa_supplicant.wlan0.log
+UPID=$RUN/udhcpc.wlan0.pid
+CTRL=${AIC_WPA_CTRL:-/run/wpa_supplicant}
 
 tem_ip() { ip -4 -o addr show dev "$1" 2>/dev/null | grep -q inet; }
 sobe() { ifdown "$1" >/dev/null 2>&1; ifup "$1" >/dev/null 2>&1; }
+vivo() { [ -s "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+wcli() { wpa_cli -p "$CTRL" -i wlan0 "$@" 2>/dev/null; }
 
-passada() {
-	if [ -d "$SYS/eth0" ] && [ "$(cat "$SYS/eth0/carrier" 2>/dev/null)" = 1 ] && ! tem_ip eth0; then sobe eth0; fi
+# motivo da falha a partir do ultimo evento do wpa_supplicant (nivel de log padrao ja traz os CTRL-EVENT)
+motivo() {
+	ev=$(grep -E 'CTRL-EVENT-(SSID-TEMP-DISABLED|AUTH-REJECT|ASSOC-REJECT|CONNECTED)' "$WLOG" 2>/dev/null | tail -n 1)
+	case "$ev" in
+	*WRONG_KEY*) echo "senha/PSK errada (4-way handshake sem resposta do roteador)" ;;
+	*AUTH-REJECT*) echo "autenticacao negada pelo roteador (${ev##* }; com SAE e senha errada e o sintoma comum)" ;;
+	*ASSOC-REJECT*) echo "associacao negada pelo roteador" ;;
+	*)
+		ssid=$(sed -n 's/^# aic-ssid: //p' "$CONF" | head -n 1)
+		res=$(wcli scan_results)
+		if [ -n "$res" ] && [ -n "$ssid" ] && ! printf '%s\n' "$res" | grep -qF "$ssid"; then echo "sem sinal de $ssid"
+		else echo "conectando"; fi ;;
+	esac
+}
+
+wifi() {
 	[ -f "$CONF" ] || { rm -f "$STATUS"; return 0; }
 	if [ ! -d "$SYS/wlan0" ]; then
 		echo "Wi-Fi: sem interface wlan0 (adaptador ou firmware ausente)" > "$STATUS"
 		return 0
 	fi
-	tem_ip wlan0 && { echo "Wi-Fi: conectado" > "$STATUS"; return 0; }
-	echo "Wi-Fi: conectando" > "$STATUS"
-	sobe wlan0
+	# reinicia o wpa_supplicant so se morreu; o log e aberto em append para poder ser truncado
+	if ! vivo "$WPID"; then
+		rm -f "$WPID"
+		[ -f "$WLOG" ] && [ "$(wc -c < "$WLOG")" -gt 200000 ] && : > "$WLOG"
+		wpa_supplicant -i wlan0 -c "$CONF" -P "$WPID" >> "$WLOG" 2>&1 &
+		echo "Wi-Fi: conectando" > "$STATUS"
+		return 0
+	fi
+	if [ "$(wcli status | sed -n 's/^wpa_state=//p')" = COMPLETED ]; then
+		if ! vivo "$UPID" && ! tem_ip wlan0; then IF_METRIC=1000 udhcpc -b -R -p "$UPID" -i wlan0 >/dev/null 2>&1; fi
+		ip=$(ip -4 -o addr show dev wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1)
+		ssid=$(wcli status | sed -n 's/^ssid=//p')
+		if [ -n "$ip" ]; then echo "Wi-Fi: conectado a $ssid, IP $ip" > "$STATUS"
+		else echo "Wi-Fi: associado a $ssid, obtendo IP" > "$STATUS"; fi
+	else
+		# perdeu a associacao: o udhcpc antigo (so do wlan0, pelo pidfile) nao serve mais
+		if vivo "$UPID"; then kill "$(cat "$UPID")" 2>/dev/null; rm -f "$UPID"; fi
+		echo "Wi-Fi: $(motivo)" > "$STATUS"
+	fi
+}
+
+passada() {
+	if [ -d "$SYS/eth0" ] && [ "$(cat "$SYS/eth0/carrier" 2>/dev/null)" = 1 ] && ! tem_ip eth0; then sobe eth0; fi
+	wifi
 }
 
 if [ "${1:-}" = once ]; then passada; exit 0; fi

@@ -27,21 +27,56 @@ ST=$(sh "$W" status); case "$ST" in *'Rede Casa'*) ;; *) fail "status não mostr
 case "$ST" in *s3gredo*) fail "status vazou a senha" ;; esac
 sh "$W" clear >/dev/null; [ ! -e "$C" ] || fail "clear não removeu"
 
-# netwatch: stubs de ip/ifup/ifdown; cabo com portadora e sem IP → ifup eth0; wlan0 ausente com credencial → status
-mkdir -p "$T/bin" "$T/sys/eth0"; echo 1 > "$T/sys/eth0/carrier"
+# netwatch: stubs de ip/ifup/ifdown/wpa_supplicant/wpa_cli/udhcpc; cabo com portadora e sem IP -> ifup eth0; wlan0 nunca passa por ifup/ifdown
+mkdir -p "$T/bin" "$T/sys/eth0" "$T/run"; echo 1 > "$T/sys/eth0/carrier"
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/ifdown"
 printf '#!/bin/sh\necho "$@" >> %s/calls\n' "$T" > "$T/bin/ifup"
-printf '#!/bin/sh\nexit 0\n' > "$T/bin/ip"
+# ip: so devolve endereco para wlan0 quando $T/wlan0.ip existe
+printf '#!/bin/sh\ncase "$*" in *wlan0*) [ -f %s/wlan0.ip ] && cat %s/wlan0.ip ;; esac\nexit 0\n' "$T" "$T" > "$T/bin/ip"
+# wpa_supplicant: registra os argumentos e grava o pidfile com um processo vivo (sleep); wpa_cli le o estado de $T/wpa.state
+printf '#!/bin/sh\necho "$@" >> %s/wpa.calls\nwhile [ $# -gt 0 ]; do [ "$1" = -P ] && { sleep 60 & echo $! > "$2"; }; shift; done\n' "$T" > "$T/bin/wpa_supplicant"
+printf '#!/bin/sh\nfor a in "$@"; do case $a in status) cat %s/wpa.state;; scan_results) cat %s/wpa.scan 2>/dev/null;; esac; done\n' "$T" "$T" > "$T/bin/wpa_cli"
+printf '#!/bin/sh\necho "udhcpc $IF_METRIC $*" >> %s/dhcp.calls\n' "$T" > "$T/bin/udhcpc"
 chmod +x "$T/bin/"*
-export AIC_SYS_NET=$T/sys AIC_WIFI_CONF=$T/wifi/wpa_supplicant.conf
-PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once
+export AIC_SYS_NET=$T/sys AIC_WIFI_CONF=$T/wifi/wpa_supplicant.conf AIC_RUN=$T/run
+NW() { PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once; }
+NW
 grep -qx eth0 "$T/calls" || fail "não refez o DHCP do cabo"
-mkdir -p "$T/wifi"; : > "$AIC_WIFI_CONF"
-PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once
+mkdir -p "$T/wifi"; printf '# aic-ssid: Casa\n' > "$AIC_WIFI_CONF"
+NW
 grep -q 'sem interface wlan0' "$AIC_WIFI_STATUS" || fail "não avisou adaptador ausente"
 mkdir -p "$T/sys/wlan0"; : > "$T/calls"
-PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once
-grep -qx wlan0 "$T/calls" || fail "não subiu o wlan0"
+NW
+grep -q wlan0 "$T/calls" && fail "netwatch fez ifup/ifdown do wlan0 (interrompe a associação)"
+[ "$(wc -l < "$T/wpa.calls")" = 1 ] || fail "deveria iniciar um wpa_supplicant"
+grep -q -- '-i wlan0 -c .*wpa_supplicant.conf -P .*wpa_supplicant.wlan0.pid' "$T/wpa.calls" || fail "argumentos do wpa_supplicant"
+grep -q conectando "$AIC_WIFI_STATUS" || fail "status deveria ser conectando"
+# varias passadas sem associar: não recicla nem reinicia o wpa_supplicant, e não sobe o DHCP
+echo wpa_state=SCANNING > "$T/wpa.state"
+for i in 1 2 3; do NW; done
+[ "$(wc -l < "$T/wpa.calls")" = 1 ] || fail "reiniciou o wpa_supplicant vivo"
+[ ! -e "$T/dhcp.calls" ] || fail "udhcpc antes de associar"
+# motivos
+printf 'aa:bb\t2412\t-60\t[WPA2]\tOutra\n' > "$T/wpa.scan"; NW
+grep -q 'sem sinal de Casa' "$AIC_WIFI_STATUS" || fail "motivo: sem sinal"
+printf 'aa:bb\t2412\t-60\t[WPA2]\tCasa\n' > "$T/wpa.scan"
+echo 'wlan0: CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="Casa" auth_failures=2 duration=20 reason=WRONG_KEY' > "$T/run/wpa_supplicant.wlan0.log"; NW
+grep -q 'senha/PSK errada' "$AIC_WIFI_STATUS" || fail "motivo: PSK errada"
+echo 'wlan0: CTRL-EVENT-AUTH-REJECT e0:d3:62:00:96:18 auth_type=3 auth_transaction=2 status_code=1' > "$T/run/wpa_supplicant.wlan0.log"; NW
+grep -q 'autenticacao negada.*status_code=1' "$AIC_WIFI_STATUS" || fail "motivo: autenticação negada"
+# associado: so entao o udhcpc do wlan0, com pidfile proprio e metrica acima do cabo
+printf 'wpa_state=COMPLETED\nssid=Casa\n' > "$T/wpa.state"; NW
+grep -qx 'udhcpc 1000 -b -R -p .*/udhcpc.wlan0.pid -i wlan0' "$T/dhcp.calls" || fail "udhcpc do wlan0"
+grep -q 'obtendo IP' "$AIC_WIFI_STATUS" || fail "status: obtendo IP"
+echo '    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0' > "$T/wlan0.ip"; NW
+grep -qx 'Wi-Fi: conectado a Casa, IP 192.168.1.50' "$AIC_WIFI_STATUS" || fail "status: conectado"
+# wpa_supplicant morreu: reinicia
+kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")"; sleep 0.2; NW
+[ "$(wc -l < "$T/wpa.calls")" = 2 ] || fail "não reiniciou o wpa_supplicant morto"
+kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")" 2>/dev/null
+# imagem: wlan0 manual (sem wpa-conf) e o init para só os processos do wlan0
+grep -q '^iface wlan0 inet manual' "$O/etc/network/interfaces" && ! grep -q wpa-conf "$O/etc/network/interfaces" || fail "interfaces do wlan0"
+grep -q 'stop_post' "$O/etc/init.d/aic-wifi" && ! grep -Eq 'killall|pkill' "$O/etc/init.d/aic-wifi" "$O/usr/libexec/aic/netwatch" || fail "init/netwatch com kill amplo"
 
 # driver: ausente -> presente -> carregado
 export AIC_SYS_MODULE=$T/mod AIC_MODULES_DIR=$T/lib

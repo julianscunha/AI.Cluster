@@ -10,3 +10,11 @@ depend() {
 	need net localmount
 	before aic-dns
 }
+
+# o netwatch deixa wpa_supplicant e udhcpc do wlan0 vivos; para so os dois, pelo pidfile (nunca o eth0)
+stop_post() {
+	for p in /run/udhcpc.wlan0.pid /run/wpa_supplicant.wlan0.pid; do
+		[ -s "$p" ] && kill "$(cat "$p")" 2>/dev/null
+		rm -f "$p"
+	done
+}

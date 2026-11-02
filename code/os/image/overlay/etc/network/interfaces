@@ -4,8 +4,6 @@ iface lo inet loopback
 auto eth0
 iface eth0 inet dhcp
 
-# Wi-Fi (ADR-030): sem `auto`; o aic-wifi (netwatch) o sobe quando ha /data/wifi/wpa_supplicant.conf.
-# Metrica maior que a do cabo: com os dois no ar o cabo leva a rota padrao; sem ele, o Wi-Fi.
-iface wlan0 inet dhcp
-	wpa-conf /data/wifi/wpa_supplicant.conf
-	metric 200
+# Wi-Fi (ADR-030): sem `auto` e manual; o aic-wifi (netwatch) inicia o wpa_supplicant e o udhcpc do wlan0 (o Alpine nao tem o gancho do wpa_supplicant).
+# A metrica do Wi-Fi (1000) e dada pelo netwatch via IF_METRIC; o cabo leva a rota padrao.
+iface wlan0 inet manual
