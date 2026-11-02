@@ -816,10 +816,11 @@ fetch_worker_pack() { # fetch_worker_pack <arquitetura>
   dest="$PREFIX/kit/$ver-$f"   # o cache é por versão
   [ -f "$dest" ] && [ -f "$dest.sha256" ] && return 0
   t=$(mktemp -d)
-  curl -fsSL "$base/SHA256SUMS" -o "$t/S" 2>/dev/null && curl -fsSL "$base/$f" -o "$t/f" 2>/dev/null \
+  PROTO=""; case "$base" in https://*) PROTO="--proto =https --tlsv1.2 --proto-redir =https" ;; esac
+  curl -fsSL $PROTO "$base/SHA256SUMS" -o "$t/S" 2>/dev/null && curl -fsSL $PROTO "$base/$f" -o "$t/f" 2>/dev/null \
     || { rm -rf "$t"; PACK_MOTIVO="sem rede: não consegui baixar $f de $base"; return 1; }
   # A assinatura do SHA256SUMS vem antes de qualquer hash dele (ADR-025).
-  curl -fsSL "$base/SHA256SUMS.sig" -o "$t/Ssig" 2>/dev/null || : > "$t/Ssig"
+  curl -fsSL $PROTO "$base/SHA256SUMS.sig" -o "$t/Ssig" 2>/dev/null || : > "$t/Ssig"
   confere_assinatura "$t/S" "$t/Ssig" || { rm -rf "$t"; PACK_MOTIVO="$SIG_MOTIVO"; return 1; }
   want=$(awk -v f="$f" '$2==f {print $1}' "$t/S")
   [ -n "$want" ] || { rm -rf "$t"; PACK_MOTIVO="$f não consta no SHA256SUMS da release"; return 1; }
@@ -1520,7 +1521,7 @@ linux_check() { # linux_check <versão> <URL> <SHA256> <SHA da imagem> <assinatu
   case "$5" in *[!A-Za-z0-9+/=]*) echo "assinatura inválida" >&2; return 3 ;; esac
   [ "${#5}" = 88 ] || { echo "assinatura inválida" >&2; return 3; }
   t_=$(mktemp -d) || return 3
-  PROTO=""; case "$2" in https://*) PROTO="--proto =https --tlsv1.2" ;; esac
+  PROTO=""; case "$2" in https://*) PROTO="--proto =https --tlsv1.2 --proto-redir =https" ;; esac
   if ! curl -fsSL $PROTO -o "$t_/SHA256SUMS" "$2/SHA256SUMS" || ! curl -fsSL $PROTO -o "$t_/VERSION" "$2/VERSION"; then
     rm -rf "$t_"; echo "não consegui ler a release em $2" >&2; return 3
   fi
@@ -1724,7 +1725,7 @@ cmd_update() {
     x86_64) A=x86_64 ;; armv7l|armv7) A=armv7 ;;
     *) die "$(t "processador sem pacote: $(uname -m)" "no package for this processor: $(uname -m)")" ;;
   esac
-  PROTO=""; case "$BASE" in https://*) PROTO="--proto =https --tlsv1.2" ;; esac
+  PROTO=""; case "$BASE" in https://*) PROTO="--proto =https --tlsv1.2 --proto-redir =https" ;; esac
   banner atualização "$(versao)" "$(t 'Atualização' 'Update')"
   U=$(mktemp -d); trap 'rm -rf "$U"' EXIT
   curl -fsSL $PROTO -o "$U/SHA256SUMS" "$BASE/SHA256SUMS" \

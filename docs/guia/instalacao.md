@@ -25,6 +25,8 @@ curl -fsSL https://github.com/julianscunha/AI.Cluster/releases/latest/download/i
 
 Em inglês: acrescente `-s -- --lang en` ao `sh` (ou `AIC_LANG=en`). O idioma vale para o instalador, o `aic` e os scripts do convite, e fica gravado em `/etc/ai-cluster/lang`. Sem isso tudo sai em português. Em modo inglês, `--mode dedicated`, `--kind physical` e `--kind container` também são aceitos.
 
+O download usa HTTPS sempre que a origem é `https://` (a release oficial ou um espelho): `install.sh`, `aic update apply` e o cache de pacotes do convite recusam HTTP e qualquer redirecionamento para HTTP, com TLS 1.2 no mínimo, e a assinatura e o hash do `SHA256SUMS` seguem conferidos. Origem `http://` (lab, `AIC_BASE`) é aceita sem essa trava. O servidor do convite (porta 8099) continua em HTTP: o que o worker baixa dele é conferido pela impressão da chave (`--key-fp`) e pelo hash.
+
 Ele não detecta o hardware: quem dita é você. Só confere se o processador informado é o da máquina, para não instalar um binário que não roda. As perguntas:
 
 1. **Como instalar:** neste Linux, como serviço, ou dedicando o computador ao cluster (veja "Instalação dedicada").

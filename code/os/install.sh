@@ -347,8 +347,8 @@ if [ -n "${AIC_BASE:-}" ]; then BASE=$AIC_BASE
 elif [ -n "$VERSION" ]; then BASE="https://github.com/$REPO/releases/download/v$VERSION"
 else BASE="https://github.com/$REPO/releases/latest/download"; fi
 
-# Da release oficial só por HTTPS (sem downgrade por redirecionamento); AIC_BASE é para espelhos e testes.
-PROTO=""; [ -n "${AIC_BASE:-}" ] || PROTO="--proto =https --tlsv1.2"
+# Origem https (a oficial ou um espelho): só https, inclusive nos redirecionamentos. Origem http só em lab (AIC_BASE).
+PROTO=""; case "$BASE" in https://*) PROTO="--proto =https --tlsv1.2 --proto-redir =https" ;; esac
 STAGE=$(mktemp -d); trap 'rm -rf "$STAGE"' EXIT
 fetch() { # fetch <arquivo> : baixa para $STAGE e confere o SHA-256
   curl -fL $PROTO --progress-bar -o "$STAGE/$1" "$BASE/$1" || die "$(t "não consegui baixar $1 de $BASE" "could not download $1 from $BASE")"
