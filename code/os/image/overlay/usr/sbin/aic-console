@@ -182,9 +182,17 @@ draw() {
 	statline $((b + 9)) "$pc" "$pw" "$dot_rpc" "Tunel RPC" "$rpc"
 
 	if [ "$LINES_N" -ge 24 ]; then
-		at $((b + 11)) "$pc"; printf '%sPara gerenciar este worker use, de outra maquina:%s' "$C_TEXT" "$C_RESET"
-		at $((b + 12)) $((pc + 2)); printf '%saic cluster --controller %s topology%s' "$C_VALUE" "${controller:-<url>}" "$C_RESET"
-		at $((b + 13)) "$pc"; printf '%sNeste no:%s  %saic --help%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
+		case "$trust" in
+		pendente*)
+			at $((b + 11)) "$pc"; printf '%sPara aprovar este worker, no computador do controller:%s' "$C_TEXT" "$C_RESET"
+			at $((b + 12)) $((pc + 2)); printf '%s%s%s' "$C_VALUE" "$(printf 'aic cluster node approve %s --fingerprint %s' "${node:-<id>}" "${fpr:-<impressao>}" | cut -c1-$((pw - 2)))" "$C_RESET"
+			;;
+		*)
+			at $((b + 11)) "$pc"; printf '%sAdministrar o cluster: no computador do controller (ou com o aic):%s' "$C_TEXT" "$C_RESET"
+			at $((b + 12)) $((pc + 2)); printf '%saic cluster nodes%s   lista os workers e o estado' "$C_VALUE" "$C_RESET"
+			;;
+		esac
+		at $((b + 13)) "$pc"; printf '%sNeste aparelho, por SSH:%s  %saic worker status | wifi | passwd%s' "$C_TEXT" "$C_RESET" "$C_VALUE" "$C_RESET"
 	fi
 	if ! has_password; then
 		at $((LINES_N - 1)) "$pc"
