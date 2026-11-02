@@ -23,8 +23,8 @@ C=$AIC_WIFI_DIR/wpa_supplicant.conf
 [ -f "$C" ] || fail "sem conf"
 case "$(uname -s)" in MINGW*|MSYS*) ;; *) [ "$(stat -c %a "$C")" = 600 ] || fail "conf não é 0600" ;; esac # NTFS não tem modo
 grep -q '^country=BR$' "$C" && grep -q 'key_mgmt=WPA-PSK SAE' "$C" && grep -q 'ssid=5265646520436173610*' "$C" || fail "conf sem os campos esperados"
-sh "$W" status | grep -q 'Rede Casa' || fail "status não mostra o SSID"
-sh "$W" status | grep -q s3gredo && fail "status vazou a senha"
+ST=$(sh "$W" status); case "$ST" in *'Rede Casa'*) ;; *) fail "status não mostra o SSID" ;; esac
+case "$ST" in *s3gredo*) fail "status vazou a senha" ;; esac
 sh "$W" clear >/dev/null; [ ! -e "$C" ] || fail "clear não removeu"
 
 # netwatch: stubs de ip/ifup/ifdown; cabo com portadora e sem IP → ifup eth0; wlan0 ausente com credencial → status
@@ -42,4 +42,16 @@ grep -q 'sem interface wlan0' "$AIC_WIFI_STATUS" || fail "não avisou adaptador 
 mkdir -p "$T/sys/wlan0"; : > "$T/calls"
 PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once
 grep -qx wlan0 "$T/calls" || fail "não subiu o wlan0"
+
+# driver: ausente -> presente -> carregado
+export AIC_SYS_MODULE=$T/mod AIC_MODULES_DIR=$T/lib
+case "$(sh "$W" status)" in *'ath9k_htc: ausente'*) ;; *) fail "driver deveria estar ausente" ;; esac
+mkdir -p "$T/lib/4.19.20-sunxi"; : > "$T/lib/4.19.20-sunxi/ath9k_htc.ko"
+case "$(sh "$W" status)" in *'presente, nao carregado'*) ;; *) fail "driver deveria estar presente" ;; esac
+mkdir -p "$T/mod/ath9k_htc"
+case "$(sh "$W" status)" in *'ath9k_htc: carregado'*) ;; *) fail "driver deveria estar carregado" ;; esac
+# imagem: o Dockerfile copia a saída do build, roda depmod e carrega o módulo no boot
+D=$(dirname "$O")
+grep -q 'COPY wifi-lib/ /lib/' "$D/Dockerfile" && grep -q 'depmod -b / 4.19.20-sunxi' "$D/Dockerfile" && grep -q 'ath9k_htc >> /etc/modules' "$D/Dockerfile" || fail "Dockerfile sem módulos Wi-Fi"
+grep -q 'wifi-lib' "$D/build-rootfs.sh" || fail "build-rootfs.sh não prepara wifi-lib"
 echo "OK: wifi/netwatch"

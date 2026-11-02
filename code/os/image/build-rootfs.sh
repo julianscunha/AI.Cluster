@@ -28,9 +28,14 @@ for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
   [ -f "$PUB" ] || { echo "falta $PUB (rode release-keys.sh)" >&2; exit 2; }
   cp "$PUB" "aic-release.d/$(basename "$PUB")"
 done
+# Wi-Fi (ADR-030): módulos ath9k_htc e firmware gerados por build-kernel-wifi.sh; sem a saída a imagem sai sem Wi-Fi
+rm -rf wifi-lib; mkdir wifi-lib
+WIFI_OUT=../../../.tmp/kernel-wifi/out/lib
+if [ -d "$WIFI_OUT/modules" ]; then cp -r "$WIFI_OUT"/. wifi-lib/
+else echo "AVISO: sem $WIFI_OUT (rode build-kernel-wifi.sh); imagem sem driver Wi-Fi do Pi" >&2; fi
 REL=$(sh ../../scripts/version.sh)   # versão única (ADR-029)
 docker build --platform linux/arm/v7 --build-arg "AIC_RELEASE=$REL" -t aic-os-rootfs:dev .
-rm -rf ai-cluster-worker ggml-rpc-server aic aic-release.d
+rm -rf ai-cluster-worker ggml-rpc-server aic aic-release.d wifi-lib
 CID=$(docker create --platform linux/arm/v7 aic-os-rootfs:dev)
 docker export "$CID" > build/rootfs.tar
 docker rm "$CID" >/dev/null

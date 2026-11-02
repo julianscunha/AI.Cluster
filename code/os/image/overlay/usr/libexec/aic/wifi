@@ -50,6 +50,9 @@ status)
 	else
 		echo "Wi-Fi nao configurado"
 	fi
+	if [ -d "${AIC_SYS_MODULE:-/sys/module}/ath9k_htc" ]; then echo "Driver ath9k_htc: carregado"
+	elif ls "${AIC_MODULES_DIR:-/lib/modules}"/*/ath9k_htc.ko >/dev/null 2>&1; then echo "Driver ath9k_htc: presente, nao carregado"
+	else echo "Driver ath9k_htc: ausente (so o Pi traz; x86 usa o kernel da imagem)"; fi
 	[ -r "$STATUS" ] && cat "$STATUS"
 	exit 0
 	;;

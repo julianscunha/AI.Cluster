@@ -14,6 +14,9 @@ COPY ai-cluster-worker /usr/bin/ai-cluster-worker
 COPY aic /usr/bin/aic
 COPY ggml-rpc-server /usr/bin/ggml-rpc-server
 COPY aic-release.d/ /etc/aic-release.d/
+# módulos e firmware do Wi-Fi do Pi (build-kernel-wifi.sh); a pasta vem vazia quando não foram gerados
+COPY wifi-lib/ /lib/
+RUN if [ -d /lib/modules/4.19.20-sunxi ]; then depmod -b / 4.19.20-sunxi && echo ath9k_htc >> /etc/modules; fi
 # versão da imagem: o worker a reporta ao controller (rollout, F19)
 ARG AIC_RELEASE=dev
 RUN echo "$AIC_RELEASE" > /etc/aic-release
