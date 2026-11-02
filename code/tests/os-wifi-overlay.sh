@@ -54,4 +54,5 @@ case "$(sh "$W" status)" in *'ath9k_htc: carregado'*) ;; *) fail "driver deveria
 D=$(dirname "$O")
 grep -q 'COPY wifi-lib/ /lib/' "$D/Dockerfile" && grep -q 'depmod -b / 4.19.20-sunxi' "$D/Dockerfile" && grep -q 'ath9k_htc >> /etc/modules' "$D/Dockerfile" || fail "Dockerfile sem módulos Wi-Fi"
 grep -q 'wifi-lib' "$D/build-rootfs.sh" || fail "build-rootfs.sh não prepara wifi-lib"
+grep -q "modules.dep" "$D/Dockerfile" || fail "Dockerfile sem modules.dep explicito (modpost deixa cfg80211/mac80211 sem dependencias)"
 echo "OK: wifi/netwatch"

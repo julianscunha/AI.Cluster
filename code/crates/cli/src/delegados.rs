@@ -285,6 +285,15 @@ pub enum Worker {
         #[arg(long)]
         remove: bool,
     },
+    /// Wi-Fi do AI Cluster OS: `set <SSID> [--country XX]` (senha no stdin), `status`, `scan` ou `clear`.
+    Wifi {
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            value_name = "ARGS"
+        )]
+        args: Vec<String>,
+    },
 }
 
 impl Worker {
@@ -330,6 +339,9 @@ impl Worker {
                 marca(&mut out, "--remove", *remove);
                 out
             }
+            Self::Wifi { args } => std::iter::once("wifi".to_string())
+                .chain(args.iter().cloned())
+                .collect(),
         }
     }
 }
@@ -471,6 +483,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("setup"), "#!/bin/sh\n").unwrap();
         dir
+    }
+
+    #[test]
+    fn worker_wifi_repassa_os_argumentos() {
+        let w = Worker::Wifi {
+            args: vec!["set".into(), "Casa".into(), "--country".into(), "BR".into()],
+        };
+        assert_eq!(w.args(), ["wifi", "set", "Casa", "--country", "BR"]);
     }
 
     #[test]
