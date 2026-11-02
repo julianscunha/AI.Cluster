@@ -17,4 +17,7 @@ run "00000000000000000000000000000000" 0 1 && fail "impressão errada deveria re
 run "" 0 1 && fail "sem impressão e sem terminal deveria recusar"
 grep -q "key-fingerprint" "$T/err" || fail "a recusa deveria dizer o parâmetro"
 run "" 1 1 || fail "--trust-origin-key deveria passar"
+# O pino do instalador x86 é a chave de Linux (a que assina o SHA256SUMS do dedicado), não a do rollout (ADR-031).
+grep -q 'PUB=${1:-${AIC_PUBS:-../linux.pub}}' "$HERE/os/image/x86/build-installer.sh" || fail "build-installer.sh deveria pinar os/linux.pub por padrão"
+grep -q 'openssl pkeyutl -sign -inkey "$(win "$LINUX_KEY")" -rawin -in "$(win "$D/SHA256SUMS")"' "$HERE/scripts/package-release.sh" || fail "o SHA256SUMS do dedicado deveria ser assinado com a chave de Linux"
 echo "OK phase-u-keyprint"
