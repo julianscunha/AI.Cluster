@@ -29,13 +29,13 @@ cache_mb=$(value AI_CLUSTER_SHARD_CACHE_MB)
 credential=$(value AI_CLUSTER_NODE_CREDENTIAL_FILE)
 
 if grep -q 'aic\.controller=' "$CMDLINE" 2>/dev/null || [ "$(value AI_CLUSTER_PRESENCE_ONLY)" = 1 ]; then
-	role="recuperacao (so presenca: registra e responde, nao recebe trabalho)"
+	role="recuperacao (so presenca, sem trabalho)"
 else
 	role="worker de computacao"
 	if [ -n "$model_dir" ]; then
 		if [ -n "$cache_mb" ]; then cache="$cache_mb MB"
-		else cache="$(awk '/^MemTotal:/ { m = int($2 / 2048); print (m < 256 ? 256 : m) }' /proc/meminfo 2>/dev/null) MB, automatico"; fi
-		role="$role + cache de modelo ($cache)"
+		else cache="$(awk '/^MemTotal:/ { m = int($2 / 2048); print (m < 256 ? 256 : m) }' /proc/meminfo 2>/dev/null) MB auto"; fi
+		role="$role + cache $cache"
 	fi
 fi
 
