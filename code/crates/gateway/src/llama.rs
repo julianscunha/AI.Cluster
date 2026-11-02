@@ -1007,6 +1007,11 @@ impl Manager {
     }
 
     /// Quantas gerações ao mesmo tempo o llama-server aceita; o gateway abre essa fila.
+    /// Contexto padrão por vaga (`-c` de cada uma).
+    pub fn default_context(&self) -> u32 {
+        self.base.default_context
+    }
+
     pub fn slots(&self) -> u32 {
         self.base.slots.max(1)
     }

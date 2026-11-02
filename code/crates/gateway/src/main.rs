@@ -388,6 +388,7 @@ fn announce_gateway(
                 running: llama.status(),
                 llama_version: std::env::var("AI_CLUSTER_RPC_VERSION").unwrap_or_default(),
                 llama_slots: llama.slots(),
+                llama_context: llama.default_context(),
                 memory_available_bytes: memory_available_bytes(),
             };
             // loga só a mudança de estado: um controller fora do ar não enche o log a cada 15 s

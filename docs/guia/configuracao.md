@@ -138,7 +138,7 @@ Convenções:
 | `AI_CLUSTER_STATE_WRITE_MS` | `250` (0 = a cada mutação) | Intervalo mínimo entre gravações do snapshot do controller; um flush por segundo grava o que ficou. Poupa SD e disco fraco. O desligamento limpo (`docker stop`, Ctrl+C) grava antes de sair; um crash perde no máximo ~1,3 s de mutações. |
 | `AI_CLUSTER_LLAMA_WAIT_SECS` | `120` (0 a 600) | Quanto um pedido espera o modelo carregar (recarga, queda de worker) antes de levar 503 `MODEL_LOADING`; também limita a espera pela recarga antes de refazer um pedido cortado. |
 | `AI_CLUSTER_LLAMA_SLOTS` | `1` (1 a 16) | Gerações ao mesmo tempo no `llama-server` (`-np`) e vagas da fila do gateway. O contexto de cada vaga é `AI_CLUSTER_LLAMA_CTX` (o `-c` do servidor é o total), e o cache KV cresce com as vagas (o gateway informa as vagas ao controller, que as usa no OK/NOK; sem gateway conectado, o controller lê a mesma variável do seu ambiente). Mais vagas aumentam a vazão total e alongam cada resposta. |
-| `AI_CLUSTER_LLAMA_CTX` / `AI_CLUSTER_LLAMA_NGL` | `4096` / `99` | Contexto (`-c`) e camadas enviadas aos workers (`-ngl`). Uma vaga só (`-np 1`). |
+| `AI_CLUSTER_LLAMA_CTX` / `AI_CLUSTER_LLAMA_NGL` | `4096` / `99` | Contexto (`-c`) e camadas enviadas aos workers (`-ngl`). O gateway informa o contexto ao controller, e o OK/NOK (`model check`) e a RAM exigida no plano contam o cache KV com ele. |
 | `AI_CLUSTER_LLAMA_PORT` / `AI_CLUSTER_LLAMA_TUNNEL_BASE` | `18080` / `18100` | Portas locais do `llama-server` e do primeiro túnel (um por worker). |
 | `AI_CLUSTER_SMOLLM2_INSTRUCT_SUBDIR` | `smollm2-instruct` | Subdiretório dos pesos nos workers. |
 

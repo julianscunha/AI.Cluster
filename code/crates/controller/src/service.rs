@@ -101,6 +101,8 @@ pub struct ClusterControlService {
     llama_version: Arc<std::sync::Mutex<String>>,
     /// Vagas que o gateway informou (0 = ainda não); vale mais que o ambiente do controller.
     llama_slots: Arc<std::sync::atomic::AtomicU32>,
+    /// Contexto padrão por vaga que o gateway informou (0 = ainda não); vale mais que o ambiente.
+    llama_context: Arc<std::sync::atomic::AtomicU32>,
     /// RAM livre que o gateway informou (0 = ainda não): confere o `llama-server` dele no OK/NOK.
     gateway_free: Arc<std::sync::atomic::AtomicU64>,
     /// Avisos do último cálculo do plano (workers deixados de fora e por quê).
@@ -350,6 +352,7 @@ impl ClusterControlService {
             node_hosts: Arc::default(),
             llama_version: Arc::default(),
             llama_slots: Arc::default(),
+            llama_context: Arc::default(),
             gateway_free: Arc::default(),
             rpc_warnings: Arc::default(),
             enrollments: Arc::default(),
@@ -397,7 +400,15 @@ impl ClusterControlService {
         let (slots, free) = (self.slots(), self.gateway_free());
         list.iter()
             .find(|m| {
-                m.supported && ai_cluster_catalog::check::check(m, context, slots, nodes, free).ok
+                m.supported
+                    && ai_cluster_catalog::check::check(
+                        m,
+                        self.context(context),
+                        slots,
+                        nodes,
+                        free,
+                    )
+                    .ok
             })
             .or(list.last())
             .map(|m| (*m).clone())
@@ -408,6 +419,20 @@ impl ClusterControlService {
         match self.gateway_free.load(std::sync::atomic::Ordering::Relaxed) {
             0 => None,
             free => Some(free),
+        }
+    }
+
+    /// Contexto por vaga para o cache KV: o pedido, senão o que o gateway informou, senão o ambiente.
+    fn context(&self, requested: u64) -> u64 {
+        if requested > 0 {
+            return requested;
+        }
+        match self
+            .llama_context
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => ai_cluster_catalog::check::default_context(),
+            reported => u64::from(reported),
         }
     }
 
@@ -1094,7 +1119,7 @@ impl ClusterControl for ClusterControlService {
         }
         let verdict = ai_cluster_catalog::check::check(
             &model,
-            request.context,
+            self.context(request.context),
             self.slots(),
             &nodes,
             self.gateway_free(),
@@ -1304,7 +1329,7 @@ impl ClusterControl for ClusterControlService {
         );
         let verdict = ai_cluster_catalog::check::check(
             &model,
-            request.context,
+            self.context(request.context),
             self.slots(),
             &nodes,
             self.gateway_free(),
@@ -1858,6 +1883,10 @@ impl ClusterControl for ClusterControlService {
                 request.memory_available_bytes,
                 std::sync::atomic::Ordering::Relaxed,
             );
+        }
+        if request.llama_context > 0 {
+            self.llama_context
+                .store(request.llama_context, std::sync::atomic::Ordering::Relaxed);
         }
         if (1..=16).contains(&request.llama_slots) {
             self.llama_slots
@@ -2987,6 +3016,16 @@ mod tests {
         // Id exato não troca de variante.
         assert_eq!(id(&[node(1)], "m-q8.gguf").as_deref(), Some("m-q8.gguf"));
         assert_eq!(id(&[node(1)], "nada"), None);
+    }
+
+    #[test]
+    fn the_context_reported_by_the_gateway_beats_the_environment() {
+        let (service, _, _) = service_with_registry_and_work();
+        assert_eq!(service.context(8192), 8192);
+        service
+            .llama_context
+            .store(2048, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(service.context(0), 2048);
     }
 
     #[test]
@@ -4178,6 +4217,7 @@ mod tests {
         let report = |slots: u32, free: u64| ReportGatewayRequest {
             llama_version: String::new(),
             llama_slots: slots,
+            llama_context: 0,
             memory_available_bytes: free,
             running: None,
             stats: None,
@@ -4236,6 +4276,7 @@ mod tests {
         let report = |id: &str, models: &[&str]| ReportGatewayRequest {
             llama_version: String::new(),
             llama_slots: 0,
+            llama_context: 0,
             memory_available_bytes: 0,
             running: None,
             stats: None,
@@ -4375,6 +4416,7 @@ mod tests {
             inference(ReportGatewayRequest {
                 llama_version: String::new(),
                 llama_slots: 0,
+                llama_context: 0,
                 memory_available_bytes: 0,
                 running: None,
                 stats: None,

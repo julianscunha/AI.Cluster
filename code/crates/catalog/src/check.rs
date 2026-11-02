@@ -65,11 +65,7 @@ pub fn kv_bytes(model: &ModelEntry, context: u64) -> u64 {
     } else {
         model.kv_heads.min(model.heads)
     };
-    let context = context.min(if model.context > 0 {
-        model.context
-    } else {
-        context
-    });
+    // Sem teto no contexto treinado: o `llama-server` aloca o `-c` pedido mesmo acima dele.
     let kv_width = u128::from(model.hidden) * u128::from(kv_heads) / u128::from(model.heads);
     let bytes = 4u128
         .checked_mul(u128::from(model.layers))
@@ -101,6 +97,17 @@ pub fn slots_from_env() -> u64 {
         .map_or(1, |n| n.clamp(1, 16))
 }
 
+/// Contexto padrão por vaga: `AI_CLUSTER_LLAMA_CTX` (o `-c` do gateway), senão 4096.
+pub fn default_context() -> u64 {
+    parse_context(std::env::var("AI_CLUSTER_LLAMA_CTX").ok().as_deref())
+}
+
+fn parse_context(raw: Option<&str>) -> u64 {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_CONTEXT)
+}
+
 /// RAM que o `llama-server` ocupa no gateway: reserva fixa mais uma fração dos pesos. Medido (RSS em
 /// repouso) com 0,25, 0,37 e 0,92 GB de pesos: 84, 210 e 262 MB. Durante a carga o pico chega a 1,3 a
 /// 1,5 vezes os pesos, mas são páginas do arquivo mapeado, que o kernel devolve sob pressão.
@@ -118,7 +125,7 @@ pub fn check(
     gateway_free: Option<u64>,
 ) -> Verdict {
     let context = if context == 0 {
-        DEFAULT_CONTEXT
+        default_context()
     } else {
         context
     };
@@ -343,8 +350,11 @@ mod tests {
         m.context = 8192;
         // 2 (K e V) · 2 B · 32 camadas · 4096 tokens · (4096 · 8/32 = 1024)
         assert_eq!(kv_bytes(&m, 4096), 2 * 2 * 32 * 4096 * 1024);
-        // Pede mais contexto do que o modelo tem: usa o do modelo.
-        assert_eq!(kv_bytes(&m, 1 << 20), 2 * 2 * 32 * 8192 * 1024);
+        // Acima do contexto treinado o llama-server aloca o pedido, então conta o pedido.
+        assert_eq!(kv_bytes(&m, 16384), 2 * 2 * 32 * 16384 * 1024);
+        assert_eq!(parse_context(None), DEFAULT_CONTEXT);
+        assert_eq!(parse_context(Some(" 2048 ")), 2048);
+        assert_eq!(parse_context(Some("0")), DEFAULT_CONTEXT);
         // Sem dimensões no cabeçalho, não inventa.
         assert_eq!(kv_bytes(&model(1), 4096), 0);
     }

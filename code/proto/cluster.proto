@@ -711,6 +711,9 @@ message ReportGatewayRequest {
   /// RAM disponível na máquina do gateway (`MemAvailable`); 0 = não informa. O `llama-server` roda nele
   /// e o OK/NOK do controller confere a necessidade estimada contra este valor.
   uint64 memory_available_bytes = 8;
+  /// Contexto padrão por vaga (`AI_CLUSTER_LLAMA_CTX`) deste gateway; 0 = não informa. O OK/NOK conta o
+  /// cache KV com ele quando o pedido não traz contexto.
+  uint32 llama_context = 9;
 }
 
 message ReportGatewayResponse {
