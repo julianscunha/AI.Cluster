@@ -11,6 +11,30 @@ Só o que falta, em poucas palavras. O que já existe está no [[guia]] e no sis
 
 Dependência: **código** (resolve-se no repositório), **hardware** (máquina ou componente que o laboratório não tem: celulares, GPU/NPU, x86, ARM64, TPM, placa armv7 extra, duas máquinas físicas, disco real com SMART), **decisão** (escolha de projeto antes de codar) ou **dados** (corpus ou tarefa para medir).
 
+## Ordem de execução (otimizada para não refazer)
+
+Os lotes só referenciam as seções abaixo. Regra: decisão antes de código; medição antes de otimização; tudo que pede imagem nova entra num único rebuild/rollout; hardware por último, em lotes que dividem o mesmo setup físico. Cada lote diz: imagem/release (I) e hardware (H).
+
+**Lote 1 — Decisões e ADRs (sem código; I: não; H: não).** ADR de Wi-Fi no AI Cluster OS ([[#F17 e F18 — Adaptativo e móvel]]); base Linux, ADR da F03, `--trust-listed`, gateway atrás de NAT, origem do pino, chave que assina o `SHA256SUMS` do instalador, revogação da chave de Linux, downgrade do rollout (seções F15/F16, F07, aic, F19). Por quê: o ADR de Wi-Fi define credencial, firmware e papel do `setup`; sem ele o Lote 4 seria refeito. As demais decisões fixam formato de convite, pino e CRL antes de tocar nesses fluxos.
+
+**Lote 2 — Medições em código/lab, sem imagem (I: não; H: só os 2 PCs do lab).** Ideia 1 do distributed-llama (cálculo x sincronização por token, com a carga lenta do túnel ~4,5 MiB/s e o QUICKACK, ideia 7); custo do atestado e das reservas (só se houver perfil). Por quê: o resultado decide as ideias 3 e 8, o desenho do cache/túnel para Wi-Fi e o marco M4; otimizar antes seria chute.
+
+**Lote 3 — Código de servidor/CLI que não entra em imagem (I: só release de binários; H: não).** `setup` do controller (gateway e `llama-server`), ideias 2, 4 e 6 (contexto no plano, gateway como worker, `aic model pull`), ideia 5 se houver x86 com GPU, painel Inferência e cache automático (ajustes restantes), inglês na CLI (`AIC_LANG`), níveis de confiança, revogação/mTLS/auditoria, HTTPS no download, gatilho de atualização, F11 em diante só se o produto pedir (Request Manager antes de F12/F13/F17). Por quê: ideias 2 e 4 mudam o plano que o Lote 4 usa; o seletor de idioma altera todas as mensagens, então vem antes de textos novos de console/instalador.
+
+**Lote 4 — Código que muda a imagem do SO (I: sim, o único rebuild; H: não ainda).** Wi-Fi (`wpa_supplicant`/`iw`, firmware por chipset, credencial em `/data`, `networking` com queda para o cabo, plano que desconta Wi-Fi); IP por DHCP (reserva/nome no controller, aviso sobre a chave de host do SSH); sonda de disco do Pi (conserto já no código, falta a imagem); sensor térmico do Pi; fonte do console maior e textos F2; impressão da credencial, `serving_model` e data/hora no console; critério do slot do controller (serviço respondeu na porta); modo dedicado; TLS/CA fixada no instalador; limpar `rootfs-*.ext4` antigos; ideia 3 (patch do RPC) só se o Lote 2 mostrar a rede como gargalo. Por quê: um único build x86 e um ARMv7 recebem tudo, e cada rollout custa uma sessão de hardware e um risco de queda (ver Lote 5).
+
+**Lote 5 — Diagnóstico do notebook (I: não; H: sim, uma pessoa na tela).** Queda após rollout 0.2.4 e "Hard drive not installed" após 0.2.3 (seção Hardware real). Por quê: antes do rollout do Lote 6 para não perder o aparelho no meio; a causa (BIOS/AHCI, NVMe, `aic-measure` lento) pode exigir ajuste que cairia na imagem do Lote 4, então se achar algo, volte ao Lote 4 antes de seguir.
+
+**Lote 6 — Release única e rollout assinado (I: sim, publica o Lote 4; H: Pi + notebook).** Rollout canário pela atualização assinada (pendrive só para recuperação); valida boot completo da imagem x86 (em máquina com KVM ou hardware real), gatilho com systemd/OpenRC reais, renovação do certificado ponta a ponta. Por quê: serve de teste de regressão de tudo do Lote 4 com um só rollout.
+
+**Lote 7 — Hardware no Pi e no notebook já instalados (I: não; H: mesma bancada).** Rede nos dois sentidos e sob carga, sensor térmico, Pi no limite de RAM/térmico, perda de energia no meio de A/B, console no monitor com teclado real, cluster de 3 a 4 máquinas e runbook, `--spread` com o 7B (`model check`). Por quê: exercitam a imagem do Lote 6 sem trocar o setup; as medições alimentam as ideias 3 e 8.
+
+**Lote 8 — Hardware de rede/boot x86 (I: não; H: PC com UEFI, cabo, roteador).** Secure Boot, PXE e kexec do `/wait`, pendrive em PC real, netboot, firmware opcional (i915, ath10k, regdb), watchdog e resize do ext4 em disco real, SMART/NVMe. Por quê: depende do Lote 6 e fica separado porque pede máquina e BIOS que o Lote 7 não usa; Secure Boot só depois de fechar o formato de boot da imagem.
+
+**Lote 9 — Hardware Wi-Fi (I: só correção se falhar; H: adaptador USB + AP).** Adaptador USB no Orange Pi, reconexão após queda do AP, vazão e atraso do Pi em Wi-Fi; depois decidir cache de tensores/túnel para enlace instável com os números. Por quê: usa o Lote 2 (base de medida) e o Lote 4; fica depois do cabo para comparar com o Lote 7.
+
+**Lote 10 — Hardware novo e fases futuras (I: sim, novas imagens; H: GPU/NPU, ARM64, celulares).** Aceleradores e scheduler por GPU/NPU, release ARM64, worker móvel (Q1 a Q6), ideia 8 (tensor por camada em gigabit), F12 a F18 (estado por chave, execução fora do gateway, P1 a P6). Por quê: dependem de dados dos lotes 2, 7 e 9 e de aparelhos que o laboratório não tem; as imagens ARM64/celular herdam Wi-Fi, console e sonda já fechados.
+
 ## F00 a F03 — Fundação, núcleo, capability, execução
 
 | Item | O que falta | Dependência |
