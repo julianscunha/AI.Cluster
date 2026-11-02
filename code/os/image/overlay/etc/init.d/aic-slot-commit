@@ -1,6 +1,6 @@
 #!/sbin/openrc-run
 # Confirma o slot (F15 J5): o slot em teste só vira o definitivo depois que o worker se registrou no
-# controller. Sem isso, em até COMMIT_TIMEOUT segundos o worker reinicia e o u-boot, que conta as
+# controller (controller e gateway: depois que o serviço respondeu na porta, ver slot-ready.sh). Sem isso, em até COMMIT_TIMEOUT segundos o worker reinicia e o u-boot, que conta as
 # tentativas no setor de estado, volta ao slot anterior depois de duas.
 name="aic-slot-commit"
 description="Confirma o slot A/B depois que o worker se registra"
@@ -16,8 +16,15 @@ start() {
 	[ -n "$slot" ] || { einfo "sem aic.slot na linha de comando; nada a confirmar"; return 0; }
 	(
 		waited=0
-		until grep -q "registrado node_id=.* aceito=true" /var/log/ai-cluster-worker.log 2>/dev/null; do
+		. /usr/lib/aic/slot-ready.sh
+		until slot_ready; do
 			if [ "$waited" -ge "$COMMIT_TIMEOUT" ]; then
+				# Controller e gateway não dependem de outro nó: serviço mudo na porta é culpa da imagem.
+				if [ "$(slot_role)" != worker ]; then
+					logger -t aic-slot-commit "o serviço não respondeu na porta em ${COMMIT_TIMEOUT}s; reiniciando"
+					reboot
+					exit 0
+				fi
 				# Controller fora do ar (queda de energia geral, rede) não é falha da imagem: o worker
 				# está de pé e tentando. Só reinicia quando o controller responde e o worker não entra.
 				controller=$(sed -n 's/^AI_CLUSTER_CONTROLLER=//p' /data/worker.env | head -n 1)

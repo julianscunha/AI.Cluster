@@ -117,6 +117,7 @@ O que cada grupo prova. A lista completa e os critérios estão nos comentários
 | `phase-m-request-manager.sh` | ACL e 401 por tenant; cota com 429; `interactive` passa na frente de `batch`; grafo abandonado é cancelado. |
 | `phase-o-cache.sh` | Pedido repetido vem do cache, com ganho de latência, também no streaming, e as métricas contam os acertos. |
 | `phase-p-bootstrap.sh` | Um Debian limpo vira worker pronto só com o binário e `os/bootstrap.sh`; argumentos inválidos são recusados; a execução é idempotente. |
+| `os-slot-ready.sh` | O critério de confirmar o slot por papel: worker registrado; controller e gateway com o serviço respondendo na porta (sem hardware). |
 | `os-console-font.sh` | A fonte do console cresce conforme o framebuffer e só é trocada uma vez (sem hardware). |
 | `phase-p-image.sh` | A imagem mínima do worker é construída do zero e vira worker pronto. |
 | `phase-q-learning.sh` | O modelo aprendido corrige a previsão de um worker mal calibrado em poucas dezenas de unidades. |
