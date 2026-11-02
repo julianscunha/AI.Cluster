@@ -1614,7 +1614,7 @@ data: [DONE]
         tokio::spawn(async move {
             tokio::time::sleep(ms(50)).await;
             flip.set(State::Failed("caiu".into()));
-            tokio::time::sleep(ms(200)).await;
+            tokio::time::sleep(ms(600)).await;
             flip.set(State::Ready);
         });
         let body = Bytes::from_static(b"{}");
