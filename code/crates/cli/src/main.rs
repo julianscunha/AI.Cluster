@@ -881,6 +881,7 @@ fn sanitize_node(
     mut node: ai_cluster_protocol::cluster::NodeSnapshot,
 ) -> ai_cluster_protocol::cluster::NodeSnapshot {
     node.state = clean(&node.state);
+    node.address = clean(&node.address);
     if let Some(identity) = node.identity.as_mut() {
         for field in [
             &mut identity.node_id,
@@ -1223,8 +1224,9 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Vec<_>>();
     println!("WORKERS {}", nodes.len());
     println!(
-        "{:<20} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6}",
+        "{:<20} {:<15} {:<10} {:<10} {:>7} {:>9} {:>7} {:>8} {:>8} {:>7} {:>7} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6}",
         "WORKER",
+        "ENDEREÇO",
         "ESTADO",
         "ARQ",
         "THREADS",
@@ -1254,8 +1256,13 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             capability.storage_classes.join(",")
         };
         println!(
-            "{:<20} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6.2}",
+            "{:<20} {:<15} {} {:<10} {:>7} {:>9.2} {:>7.2} {:>8.2} {:>8.2} {:>7.2} {:>7.2} {:<10} {:<12} {:>11} {:<10} {:<8} {:<16} {:>6.2}",
             identity.node_id,
+            if node.address.is_empty() {
+                "-"
+            } else {
+                &node.address
+            },
             // a largura vem antes da cor: os códigos de escape não contam como coluna
             ai_cluster_common::brand::paint(
                 &format!("{:<10}", node.state),
@@ -1291,8 +1298,12 @@ async fn print_nodes(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
             node.estimated_speed,
         );
     }
+    println!("{ADDRESS_HINT}");
     Ok(())
 }
+
+/// O IP vem do DHCP e muda; o nome do worker (coluna WORKER) é o que não muda.
+const ADDRESS_HINT: &str = "ENDEREÇO é o IP atual (DHCP) e pode mudar. Prefira o nome do worker ou fixe o IP no roteador (reserva de DHCP). Se o SSH recusar a chave de host após reinstalar/trocar de IP: ssh-keygen -R <ip>.";
 
 /// O papel de um worker, pelo que o controller sabe: o id de recuperação (`-rec`) é o boot de rede,
 /// que só marca presença; um cache de fatias maior que zero é um worker que guarda partes de modelo.
@@ -2454,6 +2465,12 @@ fn run_local_baseline(size: u32, repetitions: u32) -> Result<(), Box<dyn std::er
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aviso_de_endereco_orienta_nome_reserva_e_chave_de_host() {
+        assert!(super::ADDRESS_HINT.contains("reserva de DHCP"));
+        assert!(super::ADDRESS_HINT.contains("ssh-keygen -R"));
+    }
+
     use super::*;
     use ai_cluster_protocol::cluster::{CapabilityReport, NodeIdentity, NodeSnapshot};
 

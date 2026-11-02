@@ -98,6 +98,7 @@ impl NodeRecord {
             trusted: self.trusted,
             attested: false,
             fingerprint: ai_cluster_protocol::metadata::credential_fingerprint(&self.credential),
+            address: String::new(),
             estimated_speed: crate::models::estimated_speed(
                 self.capability.compute_score,
                 self.capability.memory_bandwidth_loaded_score,

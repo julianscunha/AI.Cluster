@@ -187,6 +187,8 @@ message NodeSnapshot {
   /// Velocidade estimada para gerar texto (a nota que o plano de modelo usa para ordenar os workers):
   /// média geométrica da CPU com a banda de memória. Só serve para comparar workers entre si.
   double estimated_speed = 10;
+  /// IP com que o worker falou com o controller por último (muda por DHCP). Vazio se o controller não o viu.
+  string address = 11;
 }
 
 message ApproveNodeRequest {

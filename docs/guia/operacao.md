@@ -42,6 +42,7 @@ Os tokens entram por variável de ambiente, que aparece para quem inspeciona o p
 
 ## Aprovação de workers
 
+- `aic cluster nodes` mostra `ENDEREÇO`, o IP com que o worker falou por último (o heartbeat o renova). O IP vem do DHCP e muda: use o nome do worker (coluna `WORKER`) ou fixe o IP no roteador (reserva de DHCP). Se o SSH recusar a chave de host depois de reinstalar ou trocar de IP, rode `ssh-keygen -R <ip>`.
 - Por padrão, um worker novo entra **pendente**: aparece em `aic cluster nodes` com `CONFIANÇA` = `pendente` e não recebe trabalho nem escreve estado.
 - `aic cluster node approve <id> --fingerprint <fp>` aprova, conferindo a impressão digital da credencial que o worker imprimiu ao registrar-se (e `nodes` mostra em `IMPRESSÃO`). Se o id foi tomado por outro registro depois de um `revoke`, a impressão muda e a aprovação é recusada. O worker passa a `aprovado` e começa a receber unidades.
 - `AI_CLUSTER_AUTO_APPROVE=1` aprova todo worker que se registra. Use só em rede fechada e de teste.

@@ -1037,9 +1037,20 @@ impl ClusterControl for ClusterControlService {
     ) -> Result<Response<HeartbeatResponse>, Status> {
         authorize_node(&self.registry, &request, &request.get_ref().node_id)?;
         let recovery = is_recovery(&request);
+        let request_peer = request.remote_addr().map(|addr| addr.ip().to_string());
         let request = request.into_inner();
         if request.node_id.trim().is_empty() {
             return Err(Status::invalid_argument("node_id é obrigatório"));
+        }
+        // O IP muda por DHCP: o heartbeat renova o que o `ListNodes` mostra (só de worker já conhecido).
+        if let Some(host) = request_peer.filter(|_| self.registry.is_trusted(&request.node_id)) {
+            let mut hosts = self
+                .node_hosts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(slot) = hosts.get_mut(&request.node_id) {
+                *slot = host;
+            }
         }
         // The node-supplied timestamp is advisory only; liveness uses controller time.
         let acknowledged = self.registry.heartbeat(&request.node_id, unix_ms());
@@ -1474,6 +1485,16 @@ impl ClusterControl for ClusterControlService {
                 node.attested = is_attested(identity, want);
             }
         }
+        let hosts = self
+            .node_hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for node in &mut nodes {
+            if let Some(host) = node.identity.as_ref().and_then(|i| hosts.get(&i.node_id)) {
+                node.address = host.clone();
+            }
+        }
+        drop(hosts);
         Ok(Response::new(ListNodesResponse { nodes }))
     }
 
