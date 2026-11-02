@@ -57,3 +57,4 @@ O unit do worker tem `NoNewPrivileges=true`, então `sudo` não funciona para o 
 - `aic update` aborta antes de baixar qualquer pacote quando a assinatura não confere.
 - Servidores instalados antes deste ADR não atualizam até rodar o `install.sh` desta versão (grava o pino); a mensagem de recusa diz isso.
 - Os testes de ponta a ponta (`code/tests/phase-u-setup.sh`) cobrem C4 (assinatura no servidor), H3 (gatilho no worker Linux) e J (vigia sem systemd e rotação: válida, assinada por outra chave, pela chave antiga depois da troca).
+- Política de compatibilidade: o controller sempre pode estar acima dos workers; o proto só cresce de forma aditiva (ver `docs/convencoes.md`, "Compatibilidade de protocolo") e o teste de regressão com o worker 0.2.4 roda no CI.

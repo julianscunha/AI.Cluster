@@ -2671,6 +2671,56 @@ mod tests {
         service_with_work().0
     }
 
+    /// Retrocompatibilidade (rollout): worker 0.2.4 não manda `link`, `address`, `trust_listed` nem
+    /// `gateway_secret`. Os bytes abaixo são o `CapabilityReport` dele (só `rpc_version`, campo 29).
+    #[tokio::test]
+    async fn worker_0_2_4_registra_bate_heartbeat_e_e_aprovado_so_pela_impressao() {
+        use prost::Message;
+        let mut wire = vec![0xEA, 0x01, 24];
+        wire.extend_from_slice(b"llama.cpp-8ca4060+x86_64");
+        let capability = CapabilityReport::decode(wire.as_slice()).unwrap();
+        assert!(capability.link.is_empty());
+        let service = service();
+        let registered = service
+            .register_node(Request::new(RegisterNodeRequest {
+                identity: Some(NodeIdentity {
+                    runtime_version: "0.2.4".into(),
+                    ..identity("old")
+                }),
+                capability: Some(capability),
+                replica: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(registered.accepted);
+        let beat = HeartbeatRequest {
+            node_id: "old".into(),
+            ..Default::default()
+        };
+        assert!(service.heartbeat(op(beat)).await.is_ok());
+        let nodes = service
+            .list_nodes(op(ListNodesRequest::default()))
+            .await
+            .unwrap()
+            .into_inner()
+            .nodes;
+        let fingerprint = nodes[0].fingerprint.clone();
+        let approve = ApproveNodeRequest {
+            node_id: "old".into(),
+            fingerprint,
+            ..Default::default()
+        };
+        assert!(
+            service
+                .approve_node(op(approve))
+                .await
+                .unwrap()
+                .into_inner()
+                .approved
+        );
+    }
+
     #[tokio::test]
     async fn heartbeat_anuncia_a_release_desejada_so_a_quem_difere() {
         let service = service();

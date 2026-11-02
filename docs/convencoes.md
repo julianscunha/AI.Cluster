@@ -64,3 +64,7 @@ type: sistema/subsistema   # sistema/{visao|arquitetura|subsistema|protocolo|mod
 `[!note]` contexto · `[!warning]` limite ou risco · `[!example]` saída de comando · `[!important]` regra.
 
 Idioma: pt-br com acentuação correta; termos técnicos e identificadores ficam como são.
+
+## Compatibilidade de protocolo
+
+O controller pode estar uma versão acima dos workers (ele empurra a atualização): worker N-1 e mais antigos em campo funcionam com controller N. Em `code/proto/cluster.proto` os campos só são **aditivos**: nunca renumerar, mudar de tipo nem remover (aposentar = `reserved`). Campo novo tem de ter um valor vazio/zero que signifique "worker antigo". O teste `worker_0_2_4_registra_bate_heartbeat_e_e_aprovado_so_pela_impressao` (controller) fala com as mensagens do worker 0.2.4 e roda no CI; ao publicar uma release, atualize-o para a última publicada.

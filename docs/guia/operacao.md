@@ -200,6 +200,9 @@ Regras que o worker aplica:
 - Um slot em teste só vira definitivo quando o worker se registra no controller. Depois de duas tentativas de boot que não confirmam, o bootloader volta ao slot confirmado.
 - `aic cluster nodes` mostra `MEDIDA confere` quando a medida do slot bate com a release assinada. A medida é reportada pelo próprio worker: detecta slot gravado errado, mas não um worker comprometido que minta.
 
+
+> [!important]
+> Ordem da atualização: o controller sobe primeiro e os workers (versão N-1 ou mais antiga) continuam falando com ele. Por isso o proto só ganha campos, nunca perde nem renumera; um teste do controller usa as mensagens do worker 0.2.4. Um worker que perde o controller por alguns minutos (reinício) sai depois de 30 pedidos falhos; nas imagens novas o serviço religa sem teto (`respawn_max=0`). Em imagem antiga que ficou `failed`: `rc-service ai-cluster-worker restart` por SSH, sem pendrive.
 ## Rotação de chave de release
 
 1. `bash os/image/release-keys.sh nova` gera o par `nova.key` e `nova.pub` em `~/.aic`.

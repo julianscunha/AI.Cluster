@@ -6,6 +6,9 @@ command="/usr/bin/ai-cluster-worker"
 command_user="ai-cluster:ai-cluster"
 supervisor="supervise-daemon"
 respawn_delay=3
+# Sem teto: com o controller fora do ar o worker sai e volta para sempre (o padrão, 10 em 60 s, deixava o
+# serviço em `failed` até alguém reiniciar).
+respawn_max=0
 directory="/data/state"
 output_log="/var/log/ai-cluster-worker.log"
 error_log="/var/log/ai-cluster-worker.log"
