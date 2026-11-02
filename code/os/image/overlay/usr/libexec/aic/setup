@@ -3,14 +3,14 @@
 # quem chama e o `aic` (/usr/bin/aic), que repassa a linha. Os programas que ele usa ficam aqui, fora do PATH:
 # role (papel), change (troca de controller), passwd (senha do console) e os daemons (aic-updater etc.).
 #
-#   aic worker status | role | logs [-f] [-n N] | change ... | passwd [--remove]
+#   aic worker status | role | logs [-f] [-n N] | change ... | passwd [--remove] | wifi set|status|scan|clear
 #   aic update status | apply
 . /usr/lib/aic/ui.sh
 DIR=/usr/libexec/aic
 VER=$(cat /etc/aic-release 2>/dev/null || echo dev)
 
 usage() {
-	echo "uso: aic worker status | role | logs [-f] [-n N] | change ... | passwd [--remove]" >&2
+	echo "uso: aic worker status | role | logs [-f] [-n N] | change ... | passwd [--remove] | wifi set|status|scan|clear" >&2
 	echo "     aic update status | apply" >&2
 	exit 2
 }
@@ -58,6 +58,7 @@ worker)
 	logs) mostra_logs "$@" ;;
 	change) exec "$DIR/change" "$@" ;;
 	passwd) exec "$DIR/passwd" "$@" ;;
+	wifi) exec "$DIR/wifi" "$@" ;;
 	*) usage ;;
 	esac ;;
 update)

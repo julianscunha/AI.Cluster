@@ -160,14 +160,23 @@ fn transfer_rate(capability: &CapabilityReport) -> f64 {
     } else {
         capability.network_achieved_score
     };
-    [capability.network_score, achieved]
+    let rate = [capability.network_score, achieved]
         .into_iter()
         .filter(|rate| *rate > 0.0)
         .fold(None, |best: Option<f64>, rate| {
             Some(best.map_or(rate, |b| b.min(rate)))
         })
-        .unwrap_or(1.0)
+        .unwrap_or(1.0);
+    // shortcut: desconto fixo até a medição do Lote 9 (ADR-030, item 7); trocar pelo número medido.
+    if capability.link == "wifi" {
+        rate * WIFI_RATE_FACTOR
+    } else {
+        rate
+    }
 }
+
+/// Fração da taxa de transferência que um worker em Wi-Fi conserva no custo do plano.
+const WIFI_RATE_FACTOR: f64 = 0.5;
 
 /// Whether `asking` should take `unit` now, or yield it to a better-placed node (G3/G5/G6).
 ///
@@ -387,6 +396,17 @@ mod tests {
         assert_eq!(with_current(5.0, 1.5), 1.5);
         assert_eq!(with_current(2.0, 6.0), 6.0);
         assert_eq!(with_current(5.0, 0.0), 5.0);
+    }
+
+    #[test]
+    fn transfer_rate_discounts_wifi() {
+        let wifi = CapabilityReport {
+            network_score: 1.0,
+            link: "wifi".into(),
+            ..Default::default()
+        };
+        assert_eq!(transfer_rate(&wifi), 0.5);
+        assert_eq!(transfer_rate(&CapabilityReport::default()), 1.0);
     }
 
     fn pool() -> Vec<(String, CapabilityReport, HealthReport)> {

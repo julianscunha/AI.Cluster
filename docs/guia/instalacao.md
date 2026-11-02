@@ -118,7 +118,7 @@ Dedicar o computador grava o AI Cluster OS no disco: um sistema só para o clust
 
 | Aparelho | Estado | Observações medidas |
 |---|---|---|
-| x86_64 UEFI | **Testado** em notebook (i7-8565U, 8 GB de RAM, NVMe, Ethernet 1 Gb/s) | Cabo a 1 Gb/s sem erros. O Wi-Fi do notebook não funciona (a imagem não traz o firmware); use cabo. A NIC Realtek funciona: a imagem traz o firmware dela (`linux-firmware-rtl_nic`, `rtl8168h-2.fw`). |
+| x86_64 UEFI | **Testado** em notebook (i7-8565U, 8 GB de RAM, NVMe, Ethernet 1 Gb/s) | Cabo a 1 Gb/s sem erros. O Wi-Fi do notebook só funciona se o chipset tiver firmware na imagem (hoje: Atheros `ath9k_htc`, pacote `linux-firmware-ath9k_htc`); sem ele use cabo (ADR-030, não testado em hardware). A NIC Realtek funciona: a imagem traz o firmware dela (`linux-firmware-rtl_nic`, `rtl8168h-2.fw`). |
 | armv7, Orange Pi PC | **Testado** (cartão SD, Ethernet 100 Mb/s, 1 GB de RAM) | 100 Mb/s é o limite da placa. O SD é lento sob gravação com `fsync` (cerca de 97 ms por gravação de 4 KiB, contra 4,7 ms no NVMe). |
 | BIOS legado/CSM, Wi-Fi, Secure Boot, ARM64, GPU/NPU | **Não testados** | A imagem x86 exige UEFI com Secure Boot desligado; não há imagem ARM64; GPU e NPU não são usadas. |
 
@@ -158,7 +158,7 @@ Requisitos mínimos reais:
 |---|---|
 | Prompt `grub>` | O pendrive não foi extraído na raiz (ou o zip está incompleto). Extraia o `usb.zip` na raiz, em FAT32, e confira que existem `EFI` e `aic`. Se aparecer o menu "Tentar de novo", é o mesmo caso. |
 | Tela sem texto | Tente outra saída de vídeo ou outro modo de boot UEFI; a imagem não traz firmware de vídeo, e sem ele a tela pode ficar preta. Acompanhe pelo controller (`aic cluster install list`). |
-| Sem DHCP | O instalador não alcança o controller. Confira o cabo, o DHCP da rede e que o controller é alcançável a partir dela. Wi-Fi não é suportado. |
+| Sem DHCP | O instalador não alcança o controller. Confira o cabo, o DHCP da rede e que o controller é alcançável a partir dela. Wi-Fi: a imagem traz `wpa_supplicant` e `iw`; grave a credencial no aparelho com `aic worker wifi set <SSID>` (a senha vem pelo stdin ou é pedida, nunca na linha de comando; fica em `/data/wifi/wpa_supplicant.conf`, 0600) e confira com `aic worker wifi status`. O cabo tem prioridade; sem ele o Wi-Fi assume. Na imagem armv7 o adaptador USB ainda não tem driver no kernel: use cabo. A coleta no convite/instalador e o teste em hardware estão em [[pendencias]]. |
 | "assinatura do SHA256SUMS não confere" | A chave pinada no instalador não é a que assinou a release. Reconstrua o instalador com a chave certa (`build-installer.sh`) ou use o pendrive do mesmo controller. Nada é apagado antes dessa conferência. |
 | Hora errada e certificado | Sem RTC ou com RTC atrasado, o certificado pode parecer expirado. O worker corrige a hora pela rede (DNS e chrony); confira `date` no aparelho e a rede. Veja "Contêiner do worker" e `certificate expired`. |
 | F2/F12 não respondem em notebook | Muitos notebooks exigem a tecla Fn junto (Fn+F12 para o menu de boot, Fn+F2 para a BIOS ou o console). |

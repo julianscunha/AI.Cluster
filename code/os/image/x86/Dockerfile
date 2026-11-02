@@ -4,7 +4,7 @@ FROM alpine:3.20
 
 # linux-firmware-none antes: satisfaz a dependência do kernel sem puxar centenas de MB de firmware;
 # linux-firmware-rtl_nic só traz o firmware da NIC Realtek (rtl8168h-2.fw etc.), sem o pacote completo
-RUN apk add --no-cache linux-firmware-none && apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev-openrc haveged openssl linux-firmware-rtl_nic \
+RUN apk add --no-cache linux-firmware-none && apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev-openrc haveged openssl linux-firmware-rtl_nic wpa_supplicant iw wireless-regdb linux-firmware-ath9k_htc \
       linux-lts mkinitfs e2fsprogs \
  && addgroup -S ai-cluster && adduser -S -D -H -h /data/state -s /sbin/nologin -G ai-cluster ai-cluster \
  && rm -rf /var/cache/apk/*
@@ -33,7 +33,7 @@ RUN apk add --no-cache blkid \
  && rm -f /tmp/init-pre.sh /tmp/init-post.sh
 
 RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'RESOLV_CONF="/run/resolv.conf"' >> /etc/udhcpc/udhcpc.conf && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
- && chmod 755 /etc/init.d/aic-watchdog /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
+ && chmod 755 /etc/init.d/aic-watchdog /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/libexec/aic/wifi /usr/libexec/aic/netwatch /etc/init.d/aic-wifi /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
  && echo 'makestep 1 -1' >> /etc/chrony/chrony.conf \
@@ -42,6 +42,6 @@ RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'RESOLV_CONF="
  && rc-update add devfs sysinit && rc-update add aic-splash sysinit && rc-update add mdev sysinit && rc-update add hwdrivers sysinit && rc-update add haveged boot && rc-update add dmesg sysinit && rc-update add procfs boot && rc-update add sysfs sysinit \
  && rc-update add hwclock boot && rc-update add localmount boot && rc-update add modules boot && rc-update add sysctl boot \
  && rc-update add hostname boot && rc-update add bootmisc boot && rc-update add syslog boot \
- && rc-update add networking boot && rc-update add aic-dns default && rc-update add chronyd default \
+ && rc-update add networking boot && rc-update add aic-dns default && rc-update add aic-wifi default && rc-update add chronyd default \
  && rc-update add dropbear default && rc-update add ai-cluster-worker default && rc-update add aic-slot-commit default && rc-update add aic-updater default && rc-update add aic-measure default && rc-update add aic-watchdog boot \
  && rc-update add killprocs shutdown && rc-update add mount-ro shutdown && rc-update add savecache shutdown

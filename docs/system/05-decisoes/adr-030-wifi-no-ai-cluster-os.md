@@ -41,3 +41,8 @@ Celulares só terão Wi-Fi, e o Orange Pi PC não tem Wi-Fi na placa. Hoje a ima
 ## Testes em hardware (não feitos)
 
 Orange Pi PC com o TL-WN821N: `wlan0` aparece; associação WPA2 e WPA3; queda e volta do AP (reconexão em tempo limitado); cabo desconectado e reconectado no meio de uma inferência; vazão e atraso em Wi-Fi contra cabo; credencial ausente de `ps`, logs e console; tela sem piscar na troca de interface. Pendência: [[pendencias]].
+
+## Implementação parcial (sem hardware)
+
+Feito e testado por script (`code/tests/os-wifi-overlay.sh`): `wpa_supplicant`, `iw` e `wireless-regdb` nas duas imagens; firmware `linux-firmware-ath9k_htc` (140 KiB) no x86; `/usr/libexec/aic/wifi` (`aic worker wifi set|status|scan|clear`, grava `/data/wifi/wpa_supplicant.conf` 0600 com WPA2-PSK e WPA3-SAE, senha só por stdin); `wlan0` em `/etc/network/interfaces` com métrica 200 (cabo 0); `aic-wifi`/`netwatch` (refaz o DHCP do cabo quando volta, sobe o `wlan0` com credencial, grava o motivo em `/run/aic-wifi.status`); campo `link` no `CapabilityReport` (`wifi` quando a rota padrão sai por interface sem fio) e o plano multiplica a taxa de transferência por 0,5 (constante provisória até o Lote 9). **Kernel do Pi:** o `zImage` vem do sistema Armbian da própria placa (não é construído neste repositório; o rootfs Alpine não tem `/lib/modules`), então `ath9k_htc` exige o kernel 4.19.20-sunxi recompilado (fontes e `.config` do Armbian) ou outro kernel: não feito; ver [[pendencias]].
+

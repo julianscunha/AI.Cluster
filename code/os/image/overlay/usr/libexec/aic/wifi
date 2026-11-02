@@ -1,0 +1,59 @@
+#!/bin/sh
+# AI Cluster OS - Wi-Fi do no (ADR-030). A credencial vive so em /data/wifi/wpa_supplicant.conf (0600, root) e
+# a senha entra por stdin: nunca por argumento, variavel de ambiente, log ou console.
+#
+#   aic worker wifi set <SSID> [--country XX]   le a senha (8 a 63 caracteres) do stdin
+#   aic worker wifi status | scan | clear
+DIR=${AIC_WIFI_DIR:-/data/wifi}
+CONF=$DIR/wpa_supplicant.conf
+STATUS=${AIC_WIFI_STATUS:-/run/aic-wifi.status}
+
+usage() { echo "uso: aic worker wifi set <SSID> [--country XX] (senha no stdin) | status | scan | clear" >&2; exit 2; }
+
+case "${1:-}" in
+set)
+	ssid=${2:-}; shift 2 2>/dev/null || usage
+	pais=BR
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--country) [ $# -ge 2 ] || usage; pais=$2; shift 2 ;;
+		*) usage ;;
+		esac
+	done
+	case "$pais" in [A-Z][A-Z]) ;; *) echo "wifi: pais deve ter duas letras maiusculas (ex.: BR)" >&2; exit 2 ;; esac
+	n=$(printf %s "$ssid" | wc -c)
+	[ "$n" -ge 1 ] && [ "$n" -le 32 ] || { echo "wifi: o SSID tem de ter de 1 a 32 bytes" >&2; exit 2; }
+	[ "$(printf %s "$ssid" | tr -d '\r\n')" = "$ssid" ] || { echo "wifi: SSID invalido" >&2; exit 2; }
+	if [ -t 0 ]; then
+		printf 'Senha do Wi-Fi: ' >&2; stty -echo 2>/dev/null; IFS= read -r senha; stty echo 2>/dev/null; echo >&2
+	else
+		IFS= read -r senha
+	fi
+	n=$(printf %s "$senha" | wc -c)
+	[ "$n" -ge 8 ] && [ "$n" -le 63 ] || { echo "wifi: a senha WPA tem de ter de 8 a 63 caracteres" >&2; exit 2; }
+	[ "$(printf %s "$senha" | tr -d '\r')" = "$senha" ] || { echo "wifi: senha invalida" >&2; exit 2; }
+	umask 077
+	mkdir -p "$DIR" && chmod 700 "$DIR" || exit 1
+	tmp=$DIR/.conf.$$
+	hex=$(printf %s "$ssid" | od -An -v -tx1 | tr -d ' \n')
+	# o SSID vai em hexa (sem escape de aspas); WPA2-PSK e WPA3-SAE no mesmo bloco; printf e builtin, a senha nao aparece no ps
+	{
+		printf '# aic-ssid: %s\nctrl_interface=/run/wpa_supplicant\nupdate_config=0\ncountry=%s\n' "$ssid" "$pais"
+		printf 'network={\n\tssid=%s\n\tkey_mgmt=WPA-PSK SAE\n\tieee80211w=1\n\tpsk="%s"\n\tsae_password="%s"\n}\n' "$hex" "$senha" "$senha"
+	} > "$tmp" || { rm -f "$tmp"; exit 1; }
+	mv "$tmp" "$CONF" && chmod 600 "$CONF" || exit 1
+	echo "Wi-Fi configurado: $ssid"
+	;;
+status)
+	if [ -f "$CONF" ]; then
+		echo "Wi-Fi configurado: $(sed -n 's/^# aic-ssid: //p' "$CONF" | head -n 1)"
+	else
+		echo "Wi-Fi nao configurado"
+	fi
+	[ -r "$STATUS" ] && cat "$STATUS"
+	exit 0
+	;;
+scan) iw dev wlan0 scan 2>&1 | sed -n 's/^[[:space:]]*SSID: \(.\+\)$/\1/p' ;;
+clear) rm -f "$CONF"; echo "credencial de Wi-Fi removida" ;;
+*) usage ;;
+esac

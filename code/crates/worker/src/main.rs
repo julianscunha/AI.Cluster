@@ -1344,6 +1344,38 @@ fn storage_classes() -> Vec<String> {
 /// negative value, so those are skipped rather than read as "no link". An unreadable directory
 /// is "not measured", the same convention as an unreported health score. Zero means "not
 /// measured", never "no network".
+/// "wifi" quando a rota padrão de menor métrica sai por interface sem fio (ADR-030), senão vazio.
+fn link_kind() -> String {
+    let route = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    match default_route_iface(&route) {
+        Some(iface)
+            if Path::new("/sys/class/net")
+                .join(iface)
+                .join("wireless")
+                .exists() =>
+        {
+            "wifi".to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+/// Interface da rota padrão (destino 0) de menor métrica em `/proc/net/route`.
+fn default_route_iface(route: &str) -> Option<&str> {
+    route
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let c: Vec<&str> = line.split_whitespace().collect();
+            if c.get(1) != Some(&"00000000") {
+                return None;
+            }
+            Some((c.get(6)?.parse::<u32>().ok()?, c[0]))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, iface)| iface)
+}
+
 fn link_speed_mbps() -> f64 {
     let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
         return 0.0;
@@ -1874,6 +1906,7 @@ fn capability() -> CapabilityReport {
         memory_bandwidth_score: memory_bandwidth_score(),
         memory_bandwidth_loaded_score: memory_bandwidth_loaded_score(),
         network_score: network_score(),
+        link: link_kind(),
         precisions: vec!["fp32".to_string()],
         rpc_port: rpc::config(cpu_threads as usize).map_or(0, |c| c.port()),
         rpc_host: if rpc::config(cpu_threads as usize).is_some() {
@@ -2454,6 +2487,16 @@ fn health() -> HealthReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_route_iface_picks_lowest_metric() {
+        let route = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n\
+wlan0\t00000000\t0100A8C0\t0003\t0\t0\t200\t00000000\n\
+eth0\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\n\
+eth0\t0000A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\n";
+        assert_eq!(default_route_iface(route), Some("eth0"));
+        assert_eq!(default_route_iface("Iface\n"), None);
+    }
 
     #[test]
     fn thermal_zone_prefers_the_package_sensor_and_skips_sensorless_zones() {

@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Vigia de rede (ADR-030): sobe o Wi-Fi quando ha credencial em /data/wifi e retoma o cabo quando volta.
+name="aic-wifi"
+description="Wi-Fi com cabo preferencial (netwatch)"
+command=/usr/libexec/aic/netwatch
+command_background=true
+pidfile=/run/aic-wifi.pid
+
+depend() {
+	need net localmount
+	before aic-dns
+}

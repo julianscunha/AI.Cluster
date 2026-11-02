@@ -1,0 +1,25 @@
+#!/bin/sh
+# AI Cluster OS - vigia da rede (ADR-030): refaz o DHCP do cabo quando ele volta e sobe o wlan0 quando ha credencial.
+# O cabo tem rota padrao de metrica menor (ver /etc/network/interfaces); sem ele, o Wi-Fi leva o trafego.
+# `netwatch once` faz uma passada (testes); sem argumento, repete a cada 5 s.
+SYS=${AIC_SYS_NET:-/sys/class/net}
+CONF=${AIC_WIFI_CONF:-/data/wifi/wpa_supplicant.conf}
+STATUS=${AIC_WIFI_STATUS:-/run/aic-wifi.status}
+
+tem_ip() { ip -4 -o addr show dev "$1" 2>/dev/null | grep -q inet; }
+sobe() { ifdown "$1" >/dev/null 2>&1; ifup "$1" >/dev/null 2>&1; }
+
+passada() {
+	if [ -d "$SYS/eth0" ] && [ "$(cat "$SYS/eth0/carrier" 2>/dev/null)" = 1 ] && ! tem_ip eth0; then sobe eth0; fi
+	[ -f "$CONF" ] || { rm -f "$STATUS"; return 0; }
+	if [ ! -d "$SYS/wlan0" ]; then
+		echo "Wi-Fi: sem interface wlan0 (adaptador ou firmware ausente)" > "$STATUS"
+		return 0
+	fi
+	tem_ip wlan0 && { echo "Wi-Fi: conectado" > "$STATUS"; return 0; }
+	echo "Wi-Fi: conectando" > "$STATUS"
+	sobe wlan0
+}
+
+if [ "${1:-}" = once ]; then passada; exit 0; fi
+while :; do passada; sleep 5; done

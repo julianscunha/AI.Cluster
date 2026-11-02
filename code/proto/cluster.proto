@@ -124,6 +124,9 @@ message CapabilityReport {
   /// Commit do llama.cpp e versão do patch do `rpc-server`. O protocolo muda entre commits: o gateway só
   /// usa o worker cuja versão é a do seu `llama-server`.
   string rpc_version = 29;
+  /// Enlace da rota padrão do worker: "wifi" quando sai por interface sem fio (ADR-030); vazio = cabo ou
+  /// desconhecido. O plano desconta `wifi`; workers antigos não mandam o campo e valem como cabo.
+  string link = 30;
 }
 
 message StorageDevice {
