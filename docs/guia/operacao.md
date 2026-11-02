@@ -193,7 +193,7 @@ Regras que o worker aplica:
 
 - A assinatura Ed25519 é conferida no worker. Assinatura inválida: a release é ignorada, nada é baixado e o slot não muda.
 - A URL precisa estar no mesmo host do controller. Caso contrário, é ignorada.
-- Versão igual à atual, ou mais antiga pela ordenação de versões, é recusada. Não há downgrade pelo rollout.
+- Versão igual à atual, ou mais antiga pela ordenação de versões, é recusada. Não há downgrade pelo rollout: a regra é **roll-forward** ([[adr-031-decisoes-pendentes-do-lote-1]], item 8). Para voltar a um comportamento anterior, publique uma versão **maior** com o conteúdo bom e faça o rollout dela; não existe `--force` no worker. O downgrade com bandeira assinada na release é uma exceção prevista que ainda não existe.
 - Um worker que já tentou uma versão não a tenta de novo, o que impede laço depois de um rollback.
 - Um slot em teste (depois de um boot novo, antes do registro) adia outra atualização.
 - Um slot em teste só vira definitivo quando o worker se registra no controller. Depois de duas tentativas de boot que não confirmam, o bootloader volta ao slot confirmado.
