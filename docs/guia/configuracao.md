@@ -65,7 +65,7 @@ Convenções:
 | `AI_CLUSTER_STATE_REPLICA` | não guarda cópia | Arquivo onde o worker guarda uma cópia do estado do controller. Serve para recuperar a fila se o volume do controller morrer. |
 | `AI_CLUSTER_WORK_SLOTS` | `1` (1 a 64) | Unidades executadas ao mesmo tempo. Os cores reportados são divididos entre elas. |
 | `AI_CLUSTER_MODEL_DIR` | — | Raiz dos modelos. Ativa o canal de fatias residentes. Cada diretório com `manifest.json` é verificado na subida; divergência encerra o worker. |
-| `AI_CLUSTER_SHARD_CACHE_MB` | `2048` | Memória máxima das fatias residentes (despejo LRU). O worker reporta o valor, e o gateway recusa na subida um modelo que não cabe ("faltam X GB"). |
+| `AI_CLUSTER_SHARD_CACHE_MB` | metade da RAM (mín. 256) | Memória máxima das fatias residentes (despejo LRU). O worker reporta o valor, e o gateway recusa na subida um modelo que não cabe ("faltam X GB"). |
 | `AI_CLUSTER_RPC_SERVER_BIN` | — | Caminho do `ggml-rpc-server` (llama.cpp). Liga o RPC: o worker o roda como filho supervisionado, escutando só em 127.0.0.1, atrás de um túnel mTLS. Exige `AI_CLUSTER_RPC_TLS_CERT`, `_KEY` e `_CLIENT_CA`; sem eles o worker segue sem RPC. |
 | `AI_CLUSTER_RPC_TLS_CERT` / `AI_CLUSTER_RPC_TLS_KEY` | — | Certificado (SAN `aic-worker`, ou o nome combinado com o gateway) e chave do túnel, em PEM. Com a CA no controller, o certificado é renovado pelo worker perto de vencer (ADR-026). |
 | `AI_CLUSTER_RPC_CA_CERT` / `AI_CLUSTER_RPC_CA_KEY` | — | (Controller) CA do cluster, em PEM, com a chave. Liga a renovação do certificado de worker; sem elas, ou com a CA ilegível, a renovação fica desligada com aviso. Juntas. O instalador só as grava com systemd: sem systemd a chave fica 600 root e a renovação fica desligada (ADR-026). |
@@ -75,7 +75,7 @@ Convenções:
 | `AI_CLUSTER_RPC_LISTEN` | `0.0.0.0:50061` | Onde o túnel escuta; é a única porta aberta para a rede. |
 | `AI_CLUSTER_RPC_LOCAL_PORT` | `50062` | Porta do `rpc-server` em loopback. |
 | `AI_CLUSTER_RPC_CACHE` | automático com `AI_CLUSTER_RPC_CACHE_DIR` | `1`/`true` liga e qualquer outro valor desliga o `rpc-server -c` (cache dos tensores em disco). Sem a variável e com `AI_CLUSTER_RPC_CACHE_DIR`, o worker mede o disco e liga o cache se o disco lê pelo menos 1,5 vez a velocidade do enlace (o Orange Pi com SD de 22 MB/s e enlace de 100 Mbit liga). O cache só guarda tensores grandes. Medido no Orange Pi (SD, 100 Mbit) com um modelo de 0,37 GB, que guardou 138 MB: a 1ª carga levou 81 s (grava o cache a ~5 MB/s) e a 2ª, 42 s, contra 51 a 67 s sem cache; o ganho cresce com o tamanho dos tensores. |
-| `AI_CLUSTER_RPC_CACHE_MAX_MB` | `2048` | Teto do cache em disco do `rpc-server`: ao subir, o worker apaga os arquivos mais antigos até caber. |
+| `AI_CLUSTER_RPC_CACHE_MAX_MB` | um quarto do disco (mín. 512) | Teto do cache em disco do `rpc-server`: ao subir, o worker apaga os arquivos mais antigos até caber. |
 | `AI_CLUSTER_RPC_CACHE_DIR` | diretório do usuário do llama.cpp | Onde o `rpc-server` guarda o cache (`LLAMA_CACHE`). No Compose é o volume `worker-cache` em `/cache`; fora de contêiner, aponte para o disco real do worker, não para tmpfs. |
 | `AI_CLUSTER_RPC_ADVERTISE_HOST` / `AI_CLUSTER_RPC_VERSION` | — | Endereço que o gateway usa e versão do llama.cpp com o patch; o worker anuncia os dois. |
 | `AI_CLUSTER_REQUIRE_MANIFEST` | desligado | `1` ou `true`: diretório de modelo sem `manifest.json` é erro. |

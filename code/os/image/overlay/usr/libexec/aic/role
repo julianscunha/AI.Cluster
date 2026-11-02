@@ -32,7 +32,11 @@ if grep -q 'aic\.controller=' "$CMDLINE" 2>/dev/null || [ "$(value AI_CLUSTER_PR
 	role="recuperacao (so presenca: registra e responde, nao recebe trabalho)"
 else
 	role="worker de computacao"
-	[ -n "$model_dir" ] && role="$role + fatias de modelo (${cache_mb:-2048} MB)"
+	if [ -n "$model_dir" ]; then
+		if [ -n "$cache_mb" ]; then cache="$cache_mb MB"
+		else cache="$(awk '/^MemTotal:/ { m = int($2 / 2048); print (m < 256 ? 256 : m) }' /proc/meminfo 2>/dev/null) MB, automatico"; fi
+		role="$role + cache de modelo ($cache)"
+	fi
 fi
 
 if [ "$1" = "--short" ]; then

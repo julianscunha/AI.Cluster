@@ -72,13 +72,27 @@ pub fn prune_cache(dir: &std::path::Path, max_bytes: u64) -> u64 {
     freed
 }
 
-/// `AI_CLUSTER_RPC_CACHE_MAX_MB`: teto do cache em disco (padrão 2048).
-fn cache_max_bytes() -> u64 {
+/// Padrão do teto do cache: um quarto do disco (piso de 512 MB); 2048 MB se o disco não for lido.
+fn default_cache_max_bytes(disk_bytes: Option<u64>) -> u64 {
+    disk_bytes.map_or(2048 << 20, |b| (b / 4).max(512 << 20))
+}
+
+/// Tamanho total do sistema de arquivos de `dir`, em bytes.
+fn disk_total_bytes(dir: &Path) -> Option<u64> {
+    let path = std::ffi::CString::new(dir.to_str()?).ok()?;
+    // SAFETY: `path` é uma string C válida e `st` é escrito pelo statvfs antes de ser lido.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    (unsafe { libc::statvfs(path.as_ptr(), &mut st) } == 0)
+        .then(|| (st.f_blocks as u64).saturating_mul(st.f_frsize as u64))
+}
+
+/// `AI_CLUSTER_RPC_CACHE_MAX_MB`: teto do cache em disco; sem ela, um quarto do disco de `dir`.
+fn cache_max_bytes(dir: &Path) -> u64 {
     std::env::var("AI_CLUSTER_RPC_CACHE_MAX_MB")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(2048)
-        .saturating_mul(1 << 20)
+        .map(|mb| mb.saturating_mul(1 << 20))
+        .unwrap_or_else(|| default_cache_max_bytes(disk_total_bytes(dir)))
 }
 
 /// O cache de tensores compensa quando ler do disco é bem mais rápido que receber pela rede: o disco
@@ -383,7 +397,7 @@ async fn supervise(config: &RpcConfig) {
     let mut wait = Duration::from_secs(1);
     loop {
         if let (true, Some(dir)) = (config.cache, &config.cache_dir) {
-            let freed = prune_cache(std::path::Path::new(dir), cache_max_bytes());
+            let freed = prune_cache(Path::new(dir), cache_max_bytes(Path::new(dir)));
             if freed > 0 {
                 println!("cache do rpc-server: {} MB antigos apagados", freed >> 20);
             }

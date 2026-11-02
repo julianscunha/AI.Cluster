@@ -1808,13 +1808,18 @@ fn achieved_mbps(bytes: usize, elapsed: Duration) -> f64 {
     bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9)
 }
 
-/// Memória que as fatias residentes podem ocupar neste worker: `AI_CLUSTER_SHARD_CACHE_MB` (padrão
-/// 2048). Zero sem `AI_CLUSTER_MODEL_DIR`, porque o worker nem abre o canal de fatias.
+/// Padrão do cache de fatias: metade da RAM total (piso de 256 MB); 2048 MB se a RAM não for lida.
+fn default_shard_cache_mb(mem_total_kb: Option<u64>) -> u64 {
+    mem_total_kb.map_or(2048, |kb| (kb / 2048).max(256))
+}
+
+/// Memória que as fatias residentes podem ocupar neste worker: `AI_CLUSTER_SHARD_CACHE_MB`; sem ela,
+/// metade da RAM. Zero sem `AI_CLUSTER_MODEL_DIR`, porque o worker nem abre o canal de fatias.
 fn shard_cache_bytes() -> u64 {
     let mb = std::env::var("AI_CLUSTER_SHARD_CACHE_MB")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(2048);
+        .unwrap_or_else(|| default_shard_cache_mb(meminfo_kb("MemTotal:")));
     // Em 32 bits o cache real não passa de usize::MAX; reporta o mesmo valor que o ShardStore usa.
     let bytes = mb.saturating_mul(1024 * 1024);
     usize::try_from(bytes).map_or(usize::MAX as u64, |_| bytes)
@@ -2486,6 +2491,9 @@ mod tests {
 
     #[test]
     fn parses_meminfo_values() {
+        assert_eq!(default_shard_cache_mb(Some(8_000_000)), 3906);
+        assert_eq!(default_shard_cache_mb(Some(100_000)), 256);
+        assert_eq!(default_shard_cache_mb(None), 2048);
         let sample = "MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\n";
         assert_eq!(parse_meminfo(sample, "MemTotal:"), Some(16_384_000));
         assert_eq!(parse_meminfo(sample, "MemAvailable:"), Some(8_192_000));

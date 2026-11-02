@@ -38,7 +38,7 @@ Usado só por inferência, e só quando o worker recebe `AI_CLUSTER_MODEL_DIR`.
 
 - O worker abre um stream `ShardChannel` com o controller, identificando-se pelo `node_id`. Se a conexão cai ou é recusada, tenta de novo a cada 2 s.
 - As fatias de peso ficam no worker. Só ativações e saídas cruzam a rede. Os pesos não saem do disco do worker.
-- O cache de fatias tem teto de `AI_CLUSTER_SHARD_CACHE_MB` (padrão 2048 MiB), com despejo LRU.
+- O cache de fatias tem teto de `AI_CLUSTER_SHARD_CACHE_MB` (padrão: metade da RAM, mín. 256 MiB), com despejo LRU.
 - Até 2 cálculos em paralelo, fila de resposta de 64 quadros.
 - Só tensores de projeção de camada são lidos do disco. Caminho fora da raiz do modelo é recusado. Uma fatia tem no máximo 256 MiB de entrada e a saída no máximo 64 MiB.
 
@@ -57,7 +57,7 @@ Com `AI_CLUSTER_STATE_REPLICA` definido, o worker guarda uma cópia do estado de
 | `AI_CLUSTER_NODE_CREDENTIAL_FILE` | | Arquivo com a credencial do worker. |
 | `AI_CLUSTER_WORK_SLOTS` | 1 (limite 1 a 64) | Unidades concorrentes. |
 | `AI_CLUSTER_MODEL_DIR` | | Raiz dos modelos. Liga o canal de fatias. |
-| `AI_CLUSTER_SHARD_CACHE_MB` | 2048 | Teto do cache de fatias. |
+| `AI_CLUSTER_SHARD_CACHE_MB` | metade da RAM | Teto do cache de fatias. |
 | `AI_CLUSTER_STATE_REPLICA` | | Arquivo onde o worker guarda a cópia do estado do controller. |
 | `AI_CLUSTER_RECOMPUTE_INTERVAL_SECS` | 60 | Cadência das remedições no ocioso. |
 
