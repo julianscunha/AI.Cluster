@@ -111,6 +111,7 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 |---|---|---|
 | P1 a P6 | Modelo aprendido que persista e dependa do tamanho, placement preditivo, prefetch, execução especulativa, inferência de capacidade, rebalanceamento proativo. Saída: previsão melhor em workload repetido. | código, dados |
 | Worker móvel (Q1 a Q6, M7) | Matriz de hardware, bootloader e reimage, imagem ARM64, USB, acelerador móvel, bateria real (hoje sensor simulado). | hardware: celulares |
+| Wi-Fi no AI Cluster OS | Decidido que entra (celulares só terão Wi-Fi, provavelmente). Hoje a imagem não traz firmware nem `wpa_supplicant`, e o `setup` só configura Ethernet por DHCP. Falta: ADR; `wpa_supplicant`/`iw` e firmware por chipset nas imagens ARMv7 e x86 (hoje só `linux-firmware-rtl_nic`); credencial de rede (SSID e senha WPA2/WPA3) coletada no convite ou na tela de instalação e guardada em `/data` sem aparecer em log; `networking` subindo a interface sem fio e caindo para o cabo; adaptador USB de referência para o Orange Pi PC (sem Wi-Fi na placa); túnel mTLS e cache de tensores calibrados para enlace instável e de menor vazão (o Pi a 100 Mb/s já atrasa 25 a 33%); teste de reconexão após queda do AP; plano que desconte worker em Wi-Fi. Não testado em hardware. | decisão, código, hardware: adaptador Wi-Fi |
 
 ## F19 — Hardening de produção
 
