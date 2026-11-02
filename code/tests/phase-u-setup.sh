@@ -111,7 +111,7 @@ for n in aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw; do docker run -d --name 
 for n in aic-srv aic-wk aic-ctl aic-gw aic-sdc aic-sdw; do
   espera_ate 60 docker exec $n curl -fsS $BASE/install.sh -o /tmp/install.sh || fail "sem install.sh no espelho ($n)"
 done
-inst() { n=$1; shift; docker exec $n sh -c "AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes $*" 2>&1; }
+inst() { n=$1; shift; docker exec $n sh -c "AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --trust-origin-key --yes $*" 2>&1; }
 # systemctl e journalctl de mentira: registram as chamadas, e o start/restart sobe o ExecStart da unit com o
 # EnvironmentFile dela (o processo é o de verdade). O journalctl mostra o registro que o serviço gravou.
 # Um `restart` com /run/fake-fail-restart falha uma vez (e apaga o marcador): simula um restart que não sai.

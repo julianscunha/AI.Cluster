@@ -8,8 +8,12 @@
 # Sem perguntas (automação):
 #   sudo sh install.sh --mode linux --role server|controller|gateway|worker --arch x86_64|armv7 \
 #        [--kind fisico|vm|conteiner] [--server IP[:PORTA]] [--ip IP] [--models-dir DIR] [--version X.Y.Z] \
-#        [--lang pt|en] --yes
+#        [--lang pt|en] [--key-fingerprint IMPRESSÃO | --trust-origin-key] --yes
 #
+# A chave que assina a release vem da mesma origem do download (confiança no primeiro uso). A impressão dela
+# (32 hex) é mostrada e conferida antes de pinar: --key-fingerprint (ou AIC_KEY_FINGERPRINT) a recebe do convite
+# ou do aviso da release; com terminal o instalador pergunta; sem terminal ou com --yes ela é obrigatória, e
+# --trust-origin-key aceita a chave da origem de propósito (ADR-031).
 # Papéis: server = controller + gateway no mesmo computador; controller; gateway; worker.
 # O worker entra pelo convite do servidor (`aic cluster invite` lá): --server aponta para ele.
 # AIC_BASE troca a origem dos arquivos (espelho local ou teste).
@@ -17,7 +21,7 @@
 set -eu
 
 REPO=julianscunha/AI.Cluster
-MODE=""; ROLE=""; ARCH=""; KIND=""; SERVER=""; IP=""; MODELS=""; VERSION=""; YES=0
+MODE=""; ROLE=""; ARCH=""; KIND=""; SERVER=""; IP=""; MODELS=""; VERSION=""; YES=0; KEYFP=${AIC_KEY_FINGERPRINT:-}; TRUST_ORIGIN=0
 LANG_AIC=${AIC_LANG:-pt}
 
 # t <pt> <en>: a frase no idioma escolhido (--lang ou AIC_LANG; padrão pt).
@@ -25,15 +29,16 @@ t() { if [ "$LANG_AIC" = en ]; then printf '%s' "$2"; else printf '%s' "$1"; fi;
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --mode|--role|--arch|--kind|--server|--ip|--models-dir|--version|--lang)
+    --mode|--role|--arch|--kind|--server|--ip|--models-dir|--version|--lang|--key-fingerprint)
       [ $# -ge 2 ] || { echo "$(t "$1 pede um valor" "$1 needs a value")" >&2; exit 2; }
       case "$1" in
         --mode) MODE=$2 ;; --role) ROLE=$2 ;; --arch) ARCH=$2 ;; --kind) KIND=$2 ;;
         --server) SERVER=$2 ;; --ip) IP=$2 ;; --models-dir) MODELS=$2 ;; --version) VERSION=$2 ;;
-        --lang) LANG_AIC=$2 ;;
+        --lang) LANG_AIC=$2 ;; --key-fingerprint) KEYFP=$2 ;;
       esac
       shift 2 ;;
     --yes|-y) YES=1; shift ;;
+    --trust-origin-key) TRUST_ORIGIN=1; shift ;;
     *) echo "$(t "argumento desconhecido: $1 (veja o cabeçalho do script)" "unknown argument: $1 (see the script header)")" >&2; exit 2 ;;
   esac
 done
@@ -50,18 +55,29 @@ else
 fi
 # Cabeçalho igual ao do setup e ao brand::banner do Rust: sem cor vira uma linha só.
 banner() { # banner <componente> <versão, ou vazio> <detalhe>
-  if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s\n' "$1" "${2:+ v$2}" "$3"; return; fi
-  printf '\n   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
-  printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s\n' "$C" "$Z" "$W" "$1" "$Z"
-  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuída em hardware heterogêneo%s\n' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
-  if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s\n' "$C" "$Z" "$D" "$2" "$Z"
-  else printf '  %s\\ / \\ /%s\n' "$C" "$Z"; fi
-  printf '   %s■%s───%s■%s      %s%s%s\n\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"
+  if [ "$TTY" != 1 ]; then printf 'AI.Cluster %s%s - %s
+' "$1" "${2:+ v$2}" "$3"; return; fi
+  printf '
+   %s■%s───%s■%s\n' "$W" "$C" "$W" "$Z"
+  printf '  %s/ \\ / \\%s     %sAI.Cluster %s%s
+' "$C" "$Z" "$W" "$1" "$Z"
+  printf ' %s■%s───%s■%s───%s■%s    %sIA distribuída em hardware heterogêneo%s
+' "$W" "$C" "$W" "$C" "$W" "$Z" "$D" "$Z"
+  if [ -n "$2" ]; then printf '  %s\\ / \\ /%s     %sversao %s%s
+' "$C" "$Z" "$D" "$2" "$Z"
+  else printf '  %s\\ / \\ /%s
+' "$C" "$Z"; fi
+  printf '   %s■%s───%s■%s      %s%s%s
+\n' "$W" "$C" "$W" "$Z" "$C" "$3" "$Z"
 }
-die() { printf '\n  %s✘ %s%s\n\n' "$R" "$1" "$Z" >&2; exit 1; }
-note() { printf '  %s%s%s\n' "$D" "$1" "$Z"; }
-warn() { printf '  %s! %s%s\n' "$Y" "$1" "$Z"; }
-ok() { printf '  %s✔%s %s\n' "$G" "$Z" "$1"; }
+die() { printf '
+  %s✘ %s%s\n\n' "$R" "$1" "$Z" >&2; exit 1; }
+note() { printf '  %s%s%s
+' "$D" "$1" "$Z"; }
+warn() { printf '  %s! %s%s
+' "$Y" "$1" "$Z"; }
+ok() { printf '  %s✔%s %s
+' "$G" "$Z" "$1"; }
 
 # ask <variável> <pergunta> <padrão> : lê do terminal (o script pode vir por pipe do curl).
 TTY=/dev/tty
@@ -77,7 +93,8 @@ ask() {
 # choose <variável> <padrão> : mostra o menu que já está na tela e lê o número.
 choose() {
   have_tty || die "$(t 'sem terminal para perguntar; use as opções (--role, --arch, ...) e --yes' 'no terminal to ask on; use the options (--role, --arch, ...) and --yes')"
-  printf '\n  %s %s[%s]%s: ' "$(t Escolha Choose)" "$D" "$2" "$Z" >&2
+  printf '
+  %s %s[%s]%s: ' "$(t Escolha Choose)" "$D" "$2" "$Z" >&2
   read -r ans <"$TTY" || ans=""
   eval "$1=\${ans:-$2}"
 }
@@ -279,7 +296,8 @@ esac
 # ---------- 4. o que falta saber de cada papel ----------
 need_server() {
   [ -n "$SERVER" ] && return 0
-  printf '\n'
+  printf '
+'
   note "$(t "No servidor, rode 'sudo aic cluster invite'. Ele mostra o endereço do convite." "On the server, run 'sudo aic cluster invite'. It shows the invitation address.")"
   ask SERVER "$(t 'Endereço do servidor (IP ou IP:porta do convite)' 'Server address (IP or IP:port of the invitation)')" ""
   [ -n "$SERVER" ] || die "$(t 'sem o endereço do servidor não dá para entrar no cluster' 'without the server address you cannot join the cluster')"
@@ -303,12 +321,14 @@ case "$ROLE" in
   server) WHAT="controller + gateway" ;; controller) WHAT="controller" ;; gateway) WHAT="gateway" ;; worker) WHAT="worker" ;;
 esac
 case "$KIND" in fisico) KS=$(t fisico physical) ;; vm) KS=$(t vm 'virtual machine') ;; *) KS=$(t conteiner container) ;; esac
-printf '\n'
+printf '
+'
 banner instalador "" "$(t Resumo Summary)"
 note "$(t "Este computador será: $WHAT" "This computer will be: $WHAT")"
 note "$(t "Processador: $ARCH · tipo: $KS · instalação: neste Linux" "Processor: $ARCH · type: $KS · installation: on this Linux")"
 [ -n "$SERVER" ] && note "$(t "Servidor: $SERVER" "Server: $SERVER")"
-printf '\n'
+printf '
+'
 if [ "$YES" != 1 ]; then
   have_tty || die "$(t 'sem terminal para confirmar; use --yes' 'no terminal to confirm; use --yes')"
   if [ "$LANG_AIC" = en ]; then
@@ -342,13 +362,33 @@ curl -fsSL $PROTO -o "$STAGE/VERSION" "$BASE/VERSION" || die "$(t 'a release nã
 REL=$(cat "$STAGE/VERSION")
 # A versão entra na tela e no arquivo de release: só letras, dígitos e . + - (nada que quebre o sed do setup).
 case "$REL" in ''|*[!0-9A-Za-z.+-]*) die "$(t 'a release traz uma versão inválida' 'the release has an invalid version')" ;; esac
-printf '\n'; banner instalador "$REL" "$(t "Baixando a versão $REL" "Downloading version $REL")"
+printf '
+'; banner instalador "$REL" "$(t "Baixando a versão $REL" "Downloading version $REL")"
+
+# A impressão da chave que será pinada (ADR-031): 32 hex do SHA-256 do arquivo. Confere com a que o operador trouxe de
+# outro canal; sem ela, pergunta (com terminal) ou recusa (automação), a menos que --trust-origin-key.
+confere_impressao() {
+  FP=$(sha256sum "$1" | cut -c1-32)
+  printf '  %s%s%s %s\n' "$B" "$(t 'impressão da chave de Linux' 'Linux key fingerprint')" "$Z" "$FP"
+  if [ -n "$KEYFP" ]; then
+    [ "$KEYFP" = "$FP" ] || die "$(t "a impressão da chave desta origem ($FP) não confere com a informada ($KEYFP): origem adulterada?" "this origin's key fingerprint ($FP) does not match the one given ($KEYFP): tampered origin?")"
+    ok "$(t 'impressão da chave conferida' 'key fingerprint checked')"
+  elif [ "$TRUST_ORIGIN" = 1 ]; then
+    warn "$(t 'aceitando a chave da origem sem conferir a impressão (--trust-origin-key)' 'accepting the origin key without checking its fingerprint (--trust-origin-key)')"
+  elif [ "$YES" = 0 ] && have_tty; then
+    ask CONFIRM "$(t 'Essa impressão confere com a do convite ou da release? (s/N)' 'Does this fingerprint match the invitation or release notice? (y/N)')" N
+    case "$CONFIRM" in s|S|y|Y|sim|yes) ;; *) die "$(t 'impressão não confirmada: nada foi instalado' 'fingerprint not confirmed: nothing was installed')" ;; esac
+  else
+    die "$(t "sem terminal para confirmar a impressão da chave ($FP): informe --key-fingerprint (do convite) ou --trust-origin-key" "no terminal to confirm the key fingerprint ($FP): pass --key-fingerprint (from the invitation) or --trust-origin-key")"
+  fi
+}
 
 # A assinatura do SHA256SUMS (ADR-025), com a chave que vem no tools desta release (release.pub). Feita logo
 # depois do tools: antes dela nenhum outro pacote é usado.
 verifica_release() {
   openssl version 2>/dev/null | grep -Eq '^OpenSSL (3|[4-9])' || die "$(t 'a conferência da assinatura precisa do OpenSSL 3 ou mais novo (apt install openssl)' 'signature check needs OpenSSL 3 or newer (apt install openssl)')"
   [ -f "$STAGE/aic/release.pub" ] || die "$(t 'o pacote tools desta release não traz a chave (release.pub)' 'the tools package of this release has no key (release.pub)')"
+  confere_impressao "$STAGE/aic/release.pub"
   curl -fsSL $PROTO -o "$STAGE/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" \
     || die "$(t "a release não tem SHA256SUMS.sig em $BASE" "the release has no SHA256SUMS.sig at $BASE")"
   b="$STAGE/sums.sig.bin"
@@ -380,7 +420,8 @@ if [ "$ROLE" = server ] || [ "$ROLE" = controller ]; then
     fetch dedicado.tar.gz
     # Sem links no pacote (l = simbólico, h = físico): um link poderia apontar para fora da pasta ao copiar.
     LST=$(tar -tvzf "$STAGE/dedicado.tar.gz") || die "$(t 'o pacote dedicado não abre (corrompido?)' 'the dedicated package does not open (corrupted?)')"
-    if printf '%s\n' "$LST" | cut -c1 | grep -q '[lh]'; then die "$(t 'o pacote dedicado traz links: recusado' 'the dedicated package has links: refused')"; fi
+    if printf '%s
+' "$LST" | cut -c1 | grep -q '[lh]'; then die "$(t 'o pacote dedicado traz links: recusado' 'the dedicated package has links: refused')"; fi
     mkdir -p "$STAGE/aic/dedicado"; tar -C "$STAGE/aic/dedicado" -xzf "$STAGE/dedicado.tar.gz"
     ok "$(t 'modo dedicado (imagem x86 e pendrive)' 'dedicated mode (x86 image and USB stick)')"
   fi

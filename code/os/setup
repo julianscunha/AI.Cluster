@@ -906,6 +906,8 @@ cmd_invite() {
   cp "$CONF/release.pub" "$WEB/release.pub"
   BSUM=$(sha256sum "$WEB/bootstrap.sh" | cut -d' ' -f1); PSUM=$(sha256sum "$WEB/pki-worker.tar.gz" | cut -d' ' -f1)
   KSUM=$(sha256sum "$WEB/release.pub" | cut -d' ' -f1)
+  # A impressão da chave de Linux viaja no convite (ADR-031): é o segundo canal, que o script baixado não controla.
+  KPRINT=$(sha256sum "$WEB/release.pub" | cut -c1-32)
   SETSUM=$(sha256sum "$WEB/setup" | cut -d' ' -f1)
   # A release do servidor vai gravada no worker (release): é a origem da atualização dele.
   RBASE=$(get "$CONF/release" BASE); RVER=$(get "$CONF/release" VERSION); RSUMS=$(get "$CONF/release" SUMS)
@@ -940,6 +942,10 @@ echo "$SETSUM  \$T/setup" | sha256sum -c - >/dev/null || { echo "setup tampered"
 echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificates tampered" >&2; exit 1; }
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
 echo "$KSUM  \$T/release.pub" | sha256sum -c - >/dev/null || { echo "release key tampered / chave de release adulterada" >&2; exit 1; }
+KFP=\$(sha256sum "\$T/release.pub" | cut -c1-32)
+KEYFP=""; for a in "\$@"; do case "\$a" in --key-fp=*) KEYFP=\${a#--key-fp=} ;; esac; done
+echo "Linux key fingerprint: \$KFP"
+[ -z "\$KEYFP" ] || [ "\$KEYFP" = "\$KFP" ] || { echo "the release key does not match the fingerprint in the invitation: stopped" >&2; exit 1; }
 mkdir -p /etc/ai-cluster/rpc-tls /opt/ai-cluster/bin /opt/ai-cluster/libexec
 install -m 644 "\$T/release.pub" /etc/ai-cluster/release.pub
 tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
@@ -1022,6 +1028,10 @@ echo "$SETSUM  \$T/setup" | sha256sum -c - >/dev/null || { echo "setup adulterad
 echo "$PSUM  \$T/pki.tgz" | sha256sum -c - >/dev/null || { echo "certificados adulterados" >&2; exit 1; }
 id ai-cluster >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /opt/ai-cluster/state --shell /usr/sbin/nologin ai-cluster
 echo "$KSUM  \$T/release.pub" | sha256sum -c - >/dev/null || { echo "release key tampered / chave de release adulterada" >&2; exit 1; }
+KFP=\$(sha256sum "\$T/release.pub" | cut -c1-32)
+KEYFP=""; for a in "\$@"; do case "\$a" in --key-fp=*) KEYFP=\${a#--key-fp=} ;; esac; done
+echo "Impressão da chave de Linux: \$KFP"
+[ -z "\$KEYFP" ] || [ "\$KEYFP" = "\$KFP" ] || { echo "a chave de release não confere com a impressão do convite: interrompido" >&2; exit 1; }
 mkdir -p /etc/ai-cluster/rpc-tls /opt/ai-cluster/bin /opt/ai-cluster/libexec
 install -m 644 "\$T/release.pub" /etc/ai-cluster/release.pub
 tar -C /etc/ai-cluster/rpc-tls --no-same-owner -xzf "\$T/pki.tgz"
@@ -1331,7 +1341,8 @@ PYSERVER
     || warn "$(t 'não consegui abrir a porta de espera da instalação; o /wait não vai funcionar' 'could not open the installation waiting port; /wait will not work')"
   if [ "$LANG_AIC" = en ]; then
     box "Worker (any x86_64 or 32-bit ARM computer), run:" "" \
-        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" "" \
+        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh -s -- --key-fp=$KPRINT" "" \
+        "Linux key fingerprint: $KPRINT (the script shows it too; compare)" "" \
         "Gateway on another computer: sudo aic gateway install --server $IP:$PORT --code $GCODE" "" \
         "Install the AI Cluster OS (dedicated mode) on a computer that already has Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \
@@ -1341,7 +1352,8 @@ PYSERVER
     printf '\n  %sWaiting for computers… (Ctrl+C ends the invitation)%s\n\n' "$D" "$Z"
   else
     box "Worker (computador x86_64 ou ARM de 32 bits), rode:" "" \
-        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh" "" \
+        "curl -fsSL http://$IP:$PORT/join-$GCODE | sudo sh -s -- --key-fp=$KPRINT" "" \
+        "Impressão da chave de Linux: $KPRINT (o script também a mostra; compare)" "" \
         "Gateway noutro computador: sudo aic gateway install --server $IP:$PORT --code $GCODE" "" \
         "Instalar o AI Cluster OS (modo dedicado) num computador que já tem Linux:" "" \
         "curl -fsSL http://$IP:$PORT/wait | sudo sh" "" \

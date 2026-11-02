@@ -155,7 +155,6 @@ O fluxo desejado (pasta de modelos no controller, OK/NOK, plano de workers, chav
 | Gatilho de atualização para controller e gateway Linux | Não é empurrado: cada um roda `aic update apply`, já com a assinatura conferida. Empurrar exigiria um canal de comando no gateway, sem ganho sobre o pino ([[adr-025-gatilho-de-atualizacao-assinada-linux]]). Reabrir se o operador precisar do empurrão. | decisão |
 | Gatilho com systemd de verdade | Os units `ai-cluster-update.path` e `.service` são escritos pelo `setup` e os testes os aplicam à mão (systemd de mentira); nunca rodaram com um systemd real. Falta validar num Debian com systemd, e o vigia sem systemd ([[adr-025-gatilho-de-atualizacao-assinada-linux]], item 8) num OpenRC de verdade (a imagem de teste é Debian sem init). | hardware, código |
 | Revogação da chave de Linux | A rotação sem reinstalar está pronta ([[adr-025-gatilho-de-atualizacao-assinada-linux]], item 9). Falta a lista de revogação: decidir quem revoga, como a lista chega sem depender da chave que ela revoga, e se revogar barra o retorno. | decisão, código |
-| Origem do pino | A chave pinada vem da origem da instalação (confiança no primeiro uso). Falta confirmar a chave por outro canal, p. ex. impressa no convite. | decisão |
 
 ## Marcos
 
