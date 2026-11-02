@@ -25,7 +25,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, copy_bidirectional};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, copy_bidirectional_with_sizes};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -162,6 +162,9 @@ pub fn client_config(ca: &str, cert: &str, key: &str) -> Result<Arc<ClientConfig
         .map_err(|e| format!("certificado de cliente: {e}"))?;
     Ok(Arc::new(config))
 }
+
+/// Buffer de cada sentido do relé: o padrão do tokio (8 KiB) fragmenta o fluxo de pesos do rpc-server.
+const RELAY_BUF: usize = 128 * 1024;
 
 fn nodelay(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
@@ -354,7 +357,8 @@ pub async fn serve(
             let started = std::time::Instant::now();
             let _session = SessionGuard::open(&SESSIONS);
             eprintln!("túnel {}: gateway {} conectou", clock(), peer.ip());
-            let outcome = copy_bidirectional(&mut tls, &mut local).await;
+            let outcome =
+                copy_bidirectional_with_sizes(&mut tls, &mut local, RELAY_BUF, RELAY_BUF).await;
             let secs = started.elapsed().as_secs();
             match outcome {
                 Ok((to_rpc, to_gateway)) => eprintln!(
@@ -411,7 +415,7 @@ pub async fn forward(
             let Ok(Ok(mut tls)) = tokio::time::timeout(SETUP, setup).await else {
                 return;
             };
-            let _ = copy_bidirectional(&mut local, &mut tls).await;
+            let _ = copy_bidirectional_with_sizes(&mut local, &mut tls, RELAY_BUF, RELAY_BUF).await;
         });
     }
 }
