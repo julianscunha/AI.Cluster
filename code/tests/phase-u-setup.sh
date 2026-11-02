@@ -171,7 +171,7 @@ docker exec aic-srv grep -q "^AI.Cluster convite " /tmp/invite.log || fail "o co
 falha_com "sem terminal para perguntar" inst aic-wk --role worker --arch x86_64 --server "$SIP"
 [ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' http://$SIP:8099/join)" = 404 ] || fail "o /join sem código não deveria existir"
 [ "$(docker exec aic-wk curl -s -o /dev/null -w '%{http_code}' -X POST --data x "http://$SIP:8099/sign?name=intruso&code=ZZZZZZZZ")" = 403 ] || fail "o /sign com código errado deveria dar 403"
-OUT=$(docker exec aic-wk sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role worker --arch x86_64 --server $SIP" 2>&1) || { echo "$OUT" | tail -5; fail "o worker não entrou"; }
+OUT=$(docker exec aic-wk sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --trust-origin-key --yes --role worker --arch x86_64 --server $SIP" 2>&1) || { echo "$OUT" | tail -5; fail "o worker não entrou"; }
 espera_ate 40 docker exec aic-srv sh -c "aic cluster nodes 2>/dev/null | grep -E 'READY.*aprovado'" || fail "o worker não ficou READY e aprovado"
 echo "OK: worker READY e aprovado"
 # Certificado por worker: a chave nasceu no worker (o servidor não tem chave de worker) e o SAN leva o nome do worker.
@@ -199,7 +199,7 @@ echo "OK B0: worker do convite (curl | sh) pina a chave de release e o --verify 
 echo "=== B1) worker com systemd de mentira: habilitado no boot, com Restart=always ==="
 fake_systemd aic-sdw
 falha_com "sem terminal para perguntar" inst aic-sdw --role worker --arch x86_64 --server "$SIP"
-OUT=$(docker exec aic-sdw sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role worker --arch x86_64 --server $SIP" 2>&1) || { echo "$OUT" | tail -5; fail "o worker com systemd não entrou"; }
+OUT=$(docker exec aic-sdw sh -c "AIC_CODE=$(echo $WCODE | tr A-Z a-z) AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --trust-origin-key --yes --role worker --arch x86_64 --server $SIP" 2>&1) || { echo "$OUT" | tail -5; fail "o worker com systemd não entrou"; }
 docker exec aic-sdw grep -qx 'enable ai-cluster-worker' /var/log/fake-systemctl.log || fail "o worker deveria ser habilitado no boot (systemctl enable)"
 docker exec aic-sdw grep -qx '^Restart=always$' /etc/systemd/system/ai-cluster-worker.service || fail "a unit do worker deveria ter Restart=always"
 docker exec aic-sdw grep -qx '^WantedBy=multi-user.target$' /etc/systemd/system/ai-cluster-worker.service || fail "a unit do worker deveria ser WantedBy=multi-user.target"
@@ -300,7 +300,7 @@ docker exec aic-ctl sh -c "test -x /opt/ai-cluster/bin/ai-cluster-gateway && tes
 GCODE=$(docker exec aic-ctl sh -c "grep -o -- '--code [A-Za-z0-9]*' /tmp/invite.log | head -n 1 | cut -d' ' -f2")
 [ -n "$GCODE" ] || fail "o convite deveria mostrar o código do gateway"
 falha_com "sem terminal para perguntar" inst aic-gw --role gateway --arch x86_64 --server "$CIP"
-docker exec aic-gw sh -c "AIC_CODE=$GCODE AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --yes --role gateway --arch x86_64 --server $CIP" >/dev/null 2>&1 || fail "install.sh gateway"
+docker exec aic-gw sh -c "AIC_CODE=$GCODE AIC_BASE=$BASE sh /tmp/install.sh --mode linux --kind conteiner --trust-origin-key --yes --role gateway --arch x86_64 --server $CIP" >/dev/null 2>&1 || fail "install.sh gateway"
 espera_ate 40 docker exec aic-gw sh -c "ss -ltn | grep -q ':8080 '" || fail "o gateway não abriu a porta 8080"
 espera_ate 40 docker exec aic-gw curl -fsS http://127.0.0.1:8080/health || fail "o gateway deveria responder ao /health"
 docker exec aic-gw grep -q "controller http://$CIP:50051" /var/log/ai-cluster/gateway.log || fail "o gateway deveria apontar para o controller"
@@ -402,7 +402,7 @@ for par in "sig-adulterada|não confere com a chave" "sig-semsig|não tem assina
   [ "$(estado)" = "$ANTES_C4" ] || fail "com $dir recusada, nada pode mudar (binário, release, config ou pid)"
 done
 # O instalador também confere antes de instalar: a release adulterada nem chega ao setup.
-OUT=$(docker exec aic-ctl sh -c "AIC_BASE=$BASE_BAD/sig-chave sh /tmp/install.sh --mode linux --kind conteiner --yes --role controller --arch x86_64" 2>&1); RC=$?
+OUT=$(docker exec aic-ctl sh -c "AIC_BASE=$BASE_BAD/sig-chave sh /tmp/install.sh --mode linux --kind conteiner --trust-origin-key --yes --role controller --arch x86_64" 2>&1); RC=$?
 [ "$RC" != 0 ] && echo "$OUT" | grep -q "assinatura da release não confere" || { echo "$OUT" | tail -4; fail "install.sh deveria recusar a release de outra chave"; }
 echo "OK C4a) recusas: assinatura adulterada, ausente, de outra chave e pacote trocado (nada mudou); install.sh recusa antes de instalar"
 # A release válida (a mesma versão) não atualiza; uma versão nova assinada atualiza; uma mais antiga é recusada sem --force.
