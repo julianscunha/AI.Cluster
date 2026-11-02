@@ -3,9 +3,11 @@
 # para um rootfs; veja build-rootfs.sh.
 FROM alpine:3.20
 
+# wireless-regdb vem do Alpine 3.19: o p7s da 3.20 e assinado por wens, mas o cfg80211 do kernel 4.19.20 do Pi so embute a chave sforshee.
 # openrc: init e serviços; dropbear: SSH só por chave; chrony: hora (placas sem RTC nascem em 1970
 # e certificados TLS não validam com a hora errada).
-RUN apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev-openrc haveged openssl wpa_supplicant iw wireless-regdb \
+RUN apk add --no-cache openrc busybox-openrc dropbear chrony tzdata busybox-mdev-openrc haveged openssl wpa_supplicant iw \
+ && apk add --no-cache --repositories-file /dev/null -X https://dl-cdn.alpinelinux.org/alpine/v3.19/main wireless-regdb \
  && addgroup -S ai-cluster && adduser -S -D -H -h /data/state -s /sbin/nologin -G ai-cluster ai-cluster \
  && apk add --no-cache font-terminus && mkdir -p /usr/share/aic/fonts \
  && for n in 16 20 24 32; do cp /usr/share/consolefonts/ter-v${n}n.psf.gz /usr/share/aic/fonts/; done \
