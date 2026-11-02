@@ -7,7 +7,7 @@ type: sistema/adr
 
 # ADR-031 — Decisões pendentes do Lote 1
 
-Status: proposto · Data: 2026-11-01 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-11-01 · Voltar para [[decisoes]].
 
 Reúne as decisões abertas do Lote 1 de [[pendencias]], cada uma com recomendação. Nenhuma está implementada. Aprovar item a item.
 

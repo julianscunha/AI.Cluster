@@ -7,7 +7,7 @@ type: sistema/adr
 
 # ADR-001 — Base Linux
 
-Status: proposto · Data: 2026-10-19 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-10-19 · Voltar para [[decisoes]].
 
 ## Contexto
 

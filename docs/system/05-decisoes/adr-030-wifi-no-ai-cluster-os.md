@@ -7,7 +7,7 @@ type: sistema/adr
 
 # ADR-030 — Wi-Fi no AI Cluster OS
 
-Status: proposto · Data: 2026-11-01 · Voltar para [[decisoes]].
+Status: decidido · Data: 2026-11-01 · Voltar para [[decisoes]].
 
 ## Contexto
 
