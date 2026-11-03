@@ -146,7 +146,26 @@ draw() {
 	else
 		rpc="ligado"; dot_rpc=$C_OK
 	fi
-	if [ -n "$ip" ]; then dot_net=$C_OK; else dot_net=$C_BAD; fi
+	# inicio-rede: cabo (link + IP) e Wi-Fi (status do aic-wifi); verde só quando alguma interface tem IP de fato
+	net=; dot_net=$C_BAD; wifi_ok=
+	for d in ${AIC_SYSNET:-/sys/class/net}/*; do
+		n=${d##*/}; [ "$n" = lo ] && continue
+		nip=$(ip -4 -o addr show "$n" 2>/dev/null | awk '{ sub("/.*", "", $4); print $4; exit }')
+		if [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; then
+			ws=$(sed 's/^Wi-Fi: *//' ${AIC_WIFI_STATUS:-/run/aic-wifi.status} 2>/dev/null | head -n 1)
+			[ -n "$ws" ] || ws="nao configurado"
+			net="${net:+$net  |  }wifi: $ws"
+			if [ -n "$nip" ]; then dot_net=$C_OK
+			elif [ "$ws" != "nao configurado" ] && [ "$dot_net" = "$C_BAD" ]; then dot_net=$C_WARN; fi
+		else
+			if [ "$(cat "$d/carrier" 2>/dev/null)" != 1 ]; then st="sem link (cabo solto?)"
+			elif [ -z "$nip" ]; then st="link ok, sem IP (DHCP)"; [ "$dot_net" = "$C_BAD" ] && dot_net=$C_WARN
+			else st="$nip"; dot_net=$C_OK; fi
+			net="${net:+$net  |  }cabo: $st"
+		fi
+	done
+	[ -n "$net" ] || net="sem interface de rede"
+	# fim-rede
 	case "$registered" in
 	sim*) dot_reg=$C_OK ;;
 	*) dot_reg=$C_WARN ;;
@@ -173,7 +192,7 @@ draw() {
 	box "$b" "$pc" "$pw" 11 "Estado do worker"
 	statline $((b + 1)) "$pc" "$pw" "$C_OK" "Papel" "$role"
 	statline $((b + 2)) "$pc" "$pw" "$dot_worker" "Worker" "$worker"
-	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "${ip:-sem endereco}"
+	statline $((b + 3)) "$pc" "$pw" "$dot_net" "Rede" "$net"
 	statline $((b + 4)) "$pc" "$pw" "$C_OK" "Hardware" "${board:-?}  ${cores:-?} nucleo(s)  ${mem:-?}"
 	statline $((b + 5)) "$pc" "$pw" "$C_OK" "Controller" "${controller:-nao configurado}"
 	statline $((b + 6)) "$pc" "$pw" "$dot_reg" "Registro" "${registered:-?}"
@@ -360,7 +379,7 @@ saude_corpo() {
 		[ "$1" -gt 0 ] && saude_barra "Disco $d" "$3" "$2 de $1 MiB"
 	done
 	row=$((row + 1))
-	for d in /sys/class/net/*; do
+	for d in ${AIC_SYSNET:-/sys/class/net}/*; do
 		n=${d##*/}; [ "$n" = lo ] && continue
 		saude_texto "Rede" "$C_VALUE" "$n  $(cat "$d/operstate" 2>/dev/null)  recebido $(($(cat "$d/statistics/rx_bytes" 2>/dev/null || echo 0) / 1048576)) MiB  enviado $(($(cat "$d/statistics/tx_bytes" 2>/dev/null || echo 0) / 1048576)) MiB"
 		[ "$row" -ge $((LINES_N - 5)) ] && break
