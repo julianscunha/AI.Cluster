@@ -33,8 +33,8 @@ printf '#!/bin/sh\nexit 0\n' > "$T/bin/ifdown"
 printf '#!/bin/sh\necho "$@" >> %s/calls\n' "$T" > "$T/bin/ifup"
 # ip: so devolve endereco para wlan0 quando $T/wlan0.ip existe
 printf '#!/bin/sh\ncase "$*" in *wlan0*) [ -f %s/wlan0.ip ] && cat %s/wlan0.ip ;; esac\nexit 0\n' "$T" "$T" > "$T/bin/ip"
-# wpa_supplicant: registra os argumentos e grava o pidfile com um processo vivo (sleep); wpa_cli le o estado de $T/wpa.state
-printf '#!/bin/sh\necho "$@" >> %s/wpa.calls\nwhile [ $# -gt 0 ]; do [ "$1" = -P ] && { sleep 60 & echo $! > "$2"; }; shift; done\n' "$T" > "$T/bin/wpa_supplicant"
+# wpa_supplicant: registra os argumentos e fica vivo (como o real sem -B, que NAO grava pidfile); wpa_cli le o estado de $T/wpa.state
+printf '#!/bin/sh\necho "$@" >> %s/wpa.calls\nexec sleep 60\n' "$T" > "$T/bin/wpa_supplicant"
 printf '#!/bin/sh\nfor a in "$@"; do case $a in status) cat %s/wpa.state;; scan_results) cat %s/wpa.scan 2>/dev/null;; esac; done\n' "$T" "$T" > "$T/bin/wpa_cli"
 printf '#!/bin/sh\necho "udhcpc $IF_METRIC $*" >> %s/dhcp.calls\n' "$T" > "$T/bin/udhcpc"
 chmod +x "$T/bin/"*
@@ -49,7 +49,8 @@ mkdir -p "$T/sys/wlan0"; : > "$T/calls"
 NW
 grep -q wlan0 "$T/calls" && fail "netwatch fez ifup/ifdown do wlan0 (interrompe a associação)"
 [ "$(wc -l < "$T/wpa.calls")" = 1 ] || fail "deveria iniciar um wpa_supplicant"
-grep -q -- '-i wlan0 -c .*wpa_supplicant.conf -P .*wpa_supplicant.wlan0.pid' "$T/wpa.calls" || fail "argumentos do wpa_supplicant"
+grep -q -- '-i wlan0 -c .*wpa_supplicant.conf' "$T/wpa.calls" || fail "argumentos do wpa_supplicant"
+grep -q -- ' -P ' "$T/wpa.calls" && fail "sem -B o -P nao grava pidfile: o netwatch grava o pid"
 grep -q conectando "$AIC_WIFI_STATUS" || fail "status deveria ser conectando"
 # varias passadas sem associar: não recicla nem reinicia o wpa_supplicant, e não sobe o DHCP
 echo wpa_state=SCANNING > "$T/wpa.state"

@@ -42,7 +42,9 @@ wifi() {
 	if ! vivo "$WPID"; then
 		rm -f "$WPID"
 		[ -f "$WLOG" ] && [ "$(wc -c < "$WLOG")" -gt 200000 ] && : > "$WLOG"
-		wpa_supplicant -i wlan0 -c "$CONF" -P "$WPID" >> "$WLOG" 2>&1 &
+		# sem -B o wpa_supplicant nao grava o pidfile: o netwatch grava o do filho, senao subiria outro a cada passada
+		wpa_supplicant -i wlan0 -c "$CONF" >> "$WLOG" 2>&1 &
+		echo $! > "$WPID"
 		echo "Wi-Fi: conectando" > "$STATUS"
 		return 0
 	fi
