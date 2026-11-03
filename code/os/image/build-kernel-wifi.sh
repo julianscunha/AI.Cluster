@@ -44,8 +44,11 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-kernel-wifi:/src -v "$(cd "$OUT" && pw
   make \$M -j\$(nproc) KBUILD_MODPOST_WARN=1 M=net/wireless modules
   make \$M -j\$(nproc) KBUILD_MODPOST_WARN=1 M=net/mac80211 modules
   make \$M -j\$(nproc) KBUILD_MODPOST_WARN=1 M=drivers/net/wireless/ath modules
+  # CCMP/GCMP: o mac80211 aloca ccm(aes) em ieee80211_key_alloc (aead_api.c:94); o .config tem CRYPTO_CCM=m e o rootfs Alpine
+  # não tem /lib/modules do Armbian, então sem ccm.ko o set_key da PTK volta -ENOENT.
+  make \$M -j\$(nproc) KBUILD_MODPOST_WARN=1 M=crypto modules
   K=/o/out/lib/modules/$V-sunxi; rm -rf /o/out/lib; mkdir -p \$K
-  for f in net/rfkill/rfkill net/wireless/cfg80211 net/mac80211/mac80211 drivers/net/wireless/ath/ath drivers/net/wireless/ath/ath9k/ath9k_hw drivers/net/wireless/ath/ath9k/ath9k_common drivers/net/wireless/ath/ath9k/ath9k_htc; do
+  for f in net/rfkill/rfkill net/wireless/cfg80211 net/mac80211/mac80211 drivers/net/wireless/ath/ath drivers/net/wireless/ath/ath9k/ath9k_hw drivers/net/wireless/ath/ath9k/ath9k_common drivers/net/wireless/ath/ath9k/ath9k_htc crypto/ccm crypto/gcm crypto/ghash-generic; do
     arm-linux-gnueabihf-strip --strip-debug \$f.ko; cp \$f.ko \$K/
   done
   cd \$K; for f in *.ko; do echo \"\$f: \$(modinfo -F vermagic \$f)\"; done | tee /o/vermagic.txt
