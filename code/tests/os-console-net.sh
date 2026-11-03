@@ -3,7 +3,9 @@
 set -eu
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 F=$(dirname "$0")/../os/image/overlay/usr/sbin/aic-console
-mkdir -p "$T/sys/lo" "$T/sys/eth0" "$T/sys/wlan0/wireless" "$T/bin"
+mkdir -p "$T/sys/lo" "$T/sys/eth0" "$T/sys/wlan0/wireless" "$T/sys/dummy0" "$T/bin"
+# interface fisica tem o link `device` no sysfs; a virtual (dummy0 do Pi) nao tem e nao conta como cabo
+mkdir -p "$T/dev"; ln -s "$T/dev" "$T/sys/eth0/device"; ln -s "$T/dev" "$T/sys/wlan0/device"
 C_OK=OK C_WARN=WARN C_BAD=BAD
 # `ip -4 -o addr show IF` simulado: o IP vem de $T/ip.IF
 cat > "$T/bin/ip" <<'IP'

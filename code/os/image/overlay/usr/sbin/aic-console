@@ -150,6 +150,7 @@ draw() {
 	net=; dot_net=$C_BAD; wifi_ok=
 	for d in ${AIC_SYSNET:-/sys/class/net}/*; do
 		n=${d##*/}; [ "$n" = lo ] && continue
+		[ -e "$d/device" ] || continue # so interface fisica (dummy0, sit0 etc. nao tem cabo)
 		nip=$(ip -4 -o addr show "$n" 2>/dev/null | awk '{ sub("/.*", "", $4); print $4; exit }')
 		if [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; then
 			ws=$(sed 's/^Wi-Fi: *//' ${AIC_WIFI_STATUS:-/run/aic-wifi.status} 2>/dev/null | head -n 1)
