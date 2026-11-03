@@ -186,10 +186,19 @@ contagem() { # 10 s para desligar antes da escrita
 	done
 }
 
+gera_csr() { # chave EC P-256 (600) e CSR em $RUN; o initramfs não tem /etc/ssl/openssl.cnf, então `req` leva um -config mínimo
+	( umask 077; mkdir "$RUN/rpc-tls" 		&& printf '[req]
+distinguished_name=dn
+prompt=no
+[dn]
+CN=aic-worker-claim
+' > "$RUN/openssl.cnf" 		&& openssl ecparam -name prime256v1 -genkey -noout -out "$RUN/rpc-tls/worker.key" 		&& openssl req -new -config "$RUN/openssl.cnf" -key "$RUN/rpc-tls/worker.key" -out "$RUN/rpc.csr" )
+}
+
 baixa() { # baixa <url> <arquivo>: até três tentativas
 	t=1
 	while [ $t -le 3 ]; do
-		wget -q -O "$2" "$1" && return 0
+		wget -T 60 -q -O "$2" "$1" && return 0
 		rm -f "$2"; t=$((t + 1)); sleep 5
 	done
 	return 1
@@ -284,10 +293,7 @@ main() {
 	rm -f "$RUN/authorized_keys"   # sobra de tentativa anterior não pode valer como chave atual
 	# A chave do túnel RPC nasce aqui (EC P-256, 600, em RAM) e nunca sai do aparelho: só o pedido (CSR) vai ao controller.
 	rm -rf "$RUN/rpc-tls" "$RUN/rpc.csr"
-	( umask 077; mkdir "$RUN/rpc-tls" \
-		&& openssl ecparam -name prime256v1 -genkey -noout -out "$RUN/rpc-tls/worker.key" \
-		&& openssl req -new -key "$RUN/rpc-tls/worker.key" -subj "/CN=aic-worker-claim" -out "$RUN/rpc.csr" ) >/dev/null 2>&1 \
-		|| pare "não consegui gerar a chave do túnel RPC (openssl)."
+	err=$(gera_csr 2>&1) || pare "não consegui gerar a chave do túnel RPC (openssl): $err"
 	AIC_INSTALL_TOKEN="$TOKEN" aic-wait "$CTRL" --out "$RUN/worker.env" --ssh-out "$RUN/authorized_keys" \
 		--csr "$RUN/rpc.csr" --rpc-out "$RUN/rpc-tls" \
 		|| pare "o controller não entregou a configuração (veja a mensagem acima). Nada foi apagado; aprove o aparelho de novo no controller."

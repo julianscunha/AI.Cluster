@@ -208,6 +208,8 @@ else
 		cmp -s init /src/aic-install.sh && echo "OK init é o aic-install.sh" || echo "FALTA init igual ao aic-install.sh"
 		cmp -s usr/sbin/install-disk.sh /src/install-disk.sh && echo "OK install-disk.sh é o do repositório" || echo "FALTA install-disk.sh igual ao do repositório"
 		sh -n init && echo "OK sh -n init"
+		# o initramfs não tem openssl.cnf: gera a chave/CSR do túnel RPC de verdade, com o openssl e o init dele
+		mkdir -p /x/tmp/r && chroot /x /bin/busybox sh -c "AIC_INSTALL_LIB=1 AIC_RUN=/tmp/r . /init; gera_csr" 			&& [ -s /x/tmp/r/rpc.csr ] && echo "OK gera_csr no initramfs (sem openssl.cnf)" || echo "FALTA gera_csr no initramfs"
 		openssl pkey -pubin -in etc/aic/release.pub -noout 2>/dev/null && echo "OK release.pub é chave pública"
 		[ -n "$(cat etc/aic/min-version)" ] && echo "OK versão mínima $(cat etc/aic/min-version)"
 		n=0; while read -r m; do if [ -f "/x$m" ]; then n=$((n + 1)); else echo "FALTA modulo $m"; fi; done < etc/aic/modules
@@ -216,7 +218,7 @@ else
 	echo "$OUT"
 	echo "$OUT" | grep -q '^FALTA' && fail "initramfs incompleto"
 	echo "$OUT" | grep -q '^OK modulos' || fail "nenhum módulo no initramfs"
-	[ "$(echo "$OUT" | grep -c '^OK')" -ge 23 ] || fail "menos checagens OK do que o esperado"
+	[ "$(echo "$OUT" | grep -c '^OK')" -ge 24 ] || fail "menos checagens OK do que o esperado"
 	echo "OK: initramfs com os binários, blkid, a chave pinada, a versão mínima e o init"
 fi
 echo "OK: instalador x86 sem hardware passou"
