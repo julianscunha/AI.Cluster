@@ -99,7 +99,7 @@ case "$(sh "$W" status)" in *'ath9k_htc: carregado'*) ;; *) fail "driver deveria
 # imagem: o Dockerfile copia a saída do build, roda depmod e carrega o módulo no boot
 D=$(dirname "$O")
 grep -q 'COPY wifi-lib/ /lib/' "$D/Dockerfile" && grep -q 'depmod -b / 4.19.20-sunxi' "$D/Dockerfile" && grep -q 'ath9k_htc >> /etc/modules' "$D/Dockerfile" || fail "Dockerfile sem módulos Wi-Fi"
-grep -q "ghash-generic gcm ccm ath9k_htc >> /etc/modules" "$D/Dockerfile" || fail "ccm/gcm precisam carregar antes do ath9k_htc (sem eles o set_key da PTK dá ENOENT)"
+grep -q "^RUN if .*printf '%s\\\\n' ghash-generic gcm ccm ath9k_htc >> /etc/modules; fi$" "$D/Dockerfile" || fail "ccm/gcm precisam carregar antes do ath9k_htc (sem eles o set_key da PTK dá ENOENT)"
 grep -q "RESOLV_CONF=.*run/resolv.conf" "$D/Dockerfile" || fail "udhcpc do wlan0 precisa do RESOLV_CONF em /run"
 grep -q "ignore_routes_with_linkdown = 1" "$O/etc/sysctl.d/10-aic-network.conf" || fail "sem ignore_routes_with_linkdown o trafego segue pelo eth0 sem cabo e o Wi-Fi nao assume"
 grep -q 'wifi-lib' "$D/build-rootfs.sh" || fail "build-rootfs.sh não prepara wifi-lib"
