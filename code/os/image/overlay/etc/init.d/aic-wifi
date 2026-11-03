@@ -11,10 +11,15 @@ depend() {
 	before aic-dns
 }
 
-# o netwatch deixa wpa_supplicant e udhcpc do wlan0 vivos; para so os dois, pelo pidfile (nunca o eth0)
+# o netwatch deixa wpa_supplicant e udhcpc do wlan0 vivos; para so os dois, pelo pidfile (nunca o eth0).
+# Espera o processo sair: um restart logo depois não pode achar o wlan0 ainda em uso.
 stop_post() {
 	for p in /run/udhcpc.wlan0.pid /run/wpa_supplicant.wlan0.pid; do
-		[ -s "$p" ] && kill "$(cat "$p")" 2>/dev/null
+		if [ -s "$p" ]; then
+			pid=$(cat "$p")
+			kill "$pid" 2>/dev/null
+			i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+		fi
 		rm -f "$p"
 	done
 }

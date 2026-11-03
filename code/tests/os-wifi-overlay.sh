@@ -75,6 +75,16 @@ grep -qx 'Wi-Fi: conectado a Casa, IP 192.168.1.50' "$AIC_WIFI_STATUS" || fail "
 kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")"; sleep 0.2; NW
 [ "$(wc -l < "$T/wpa.calls")" = 2 ] || fail "não reiniciou o wpa_supplicant morto"
 kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")" 2>/dev/null
+# aic-wifi stop: stop_post mata so o wpa_supplicant e o udhcpc do wlan0 (pelos pidfiles), nao outro processo
+sleep 30 & WP=$!; sleep 30 & UP=$!; sleep 30 & OTHER=$!
+echo $WP > "$T/run/wpa_supplicant.wlan0.pid"; echo $UP > "$T/run/udhcpc.wlan0.pid"
+eval "$(sed -n '/^stop_post()/,/^}/p' "$O/etc/init.d/aic-wifi" | sed "s#/run/#$T/run/#g")"
+stop_post
+kill -0 $WP 2>/dev/null && fail "stop_post nao parou o wpa_supplicant"
+kill -0 $UP 2>/dev/null && fail "stop_post nao parou o udhcpc"
+kill -0 $OTHER 2>/dev/null || fail "stop_post matou processo fora do pidfile"
+[ ! -e "$T/run/wpa_supplicant.wlan0.pid" ] || fail "stop_post deixou o pidfile"
+kill $OTHER 2>/dev/null; true
 # imagem: wlan0 manual (sem wpa-conf) e o init para só os processos do wlan0
 grep -q '^iface wlan0 inet manual' "$O/etc/network/interfaces" && ! grep -q wpa-conf "$O/etc/network/interfaces" || fail "interfaces do wlan0"
 grep -q 'stop_post' "$O/etc/init.d/aic-wifi" && ! grep -Eq 'killall|pkill' "$O/etc/init.d/aic-wifi" "$O/usr/libexec/aic/netwatch" || fail "init/netwatch com kill amplo"
