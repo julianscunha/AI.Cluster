@@ -21,7 +21,10 @@ COPY ggml-rpc-server /usr/bin/ggml-rpc-server
 COPY aic-release.d/ /etc/aic-release.d/
 # módulos e firmware do Wi-Fi do Pi (build-kernel-wifi.sh); a pasta vem vazia quando não foram gerados
 COPY wifi-lib/ /lib/
-RUN if [ -d /lib/modules/4.19.20-sunxi ]; then touch /lib/modules/4.19.20-sunxi/modules.builtin /lib/modules/4.19.20-sunxi/modules.order && depmod -b / 4.19.20-sunxi && cd /lib/modules/4.19.20-sunxi && printf '%s\n' 'rfkill.ko:' 'cfg80211.ko: rfkill.ko' 'mac80211.ko: cfg80211.ko rfkill.ko' 'ath.ko: cfg80211.ko rfkill.ko' 'ath9k_hw.ko: ath.ko mac80211.ko cfg80211.ko rfkill.ko' 'ath9k_common.ko: ath9k_hw.ko ath.ko mac80211.ko cfg80211.ko rfkill.ko' 'ath9k_htc.ko: ath9k_common.ko ath9k_hw.ko ath.ko mac80211.ko cfg80211.ko rfkill.ko' > modules.dep && rm -f modules.dep.bin && echo ath9k_htc >> /etc/modules; fi
+RUN if [ -d /lib/modules/4.19.20-sunxi ]; then touch /lib/modules/4.19.20-sunxi/modules.builtin /lib/modules/4.19.20-sunxi/modules.order && depmod -b / 4.19.20-sunxi && cd /lib/modules/4.19.20-sunxi && printf '%s\n' 'rfkill.ko:' 'ghash-generic.ko:' 'gcm.ko: ghash-generic.ko' 'ccm.ko:' 'cfg80211.ko: rfkill.ko' 'mac80211.ko: cfg80211.ko rfkill.ko' 'ath.ko: cfg80211.ko rfkill.ko' 'ath9k_hw.ko: ath.ko mac80211.ko cfg80211.ko rfkill.ko' 'ath9k_common.ko: ath9k_hw.ko ath.ko mac80211.ko cfg80211.ko rfkill.ko' 'ath9k_htc.ko: ath9k_common.ko ath9k_hw.ko ath.ko mac80211.ko cfg80211.ko rfkill.ko' > modules.dep && rm -f modules.dep.bin && printf '%s
+' ghash-generic gcm ccm ath9k_htc >> /etc/modules; fi
+# o wlan0 pega DHCP com o udhcpc do netwatch: o resolv.conf fica em /run (a raiz e somente leitura)
+RUN mkdir -p /etc/udhcpc && echo 'RESOLV_CONF="/run/resolv.conf"' >> /etc/udhcpc/udhcpc.conf
 # versão da imagem: o worker a reporta ao controller (rollout, F19)
 ARG AIC_RELEASE=dev
 RUN echo "$AIC_RELEASE" > /etc/aic-release
