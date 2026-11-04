@@ -23,7 +23,7 @@ Decisão de 04/11/2026: publicar como **beta/preview**, com limites declarados, 
 | Inferência dividida estável (GGUF no llama.cpp por RPC) | feito (1,5B, 3B e 7B) |
 | Desempenho medido e repetível (`aic-bench.sh`) | feito: Qwen 7B em 2 notebooks, 2,09 tok/s |
 | Updater repete o download que falhou | feito no código (3 tentativas no updater; o worker libera a versão após falha de rede); vale na próxima imagem |
-| Medição em Wi-Fi e com nó lento na versão final | nó lento feito (Pi junto: −28%, 3,11 para 2,24 tok/s); **Wi-Fi: bloqueador** (aguarda o adaptador no Pi) |
+| Medição em Wi-Fi e com nó lento na versão final | nó lento feito (Pi junto: −28%, 3,11 para 2,24 tok/s); Wi-Fi feito com sinal bom (Pi só no Wi-Fi: 2,22 tok/s, sem perda); sinal fraco e notebook em Wi-Fi: recomendado |
 | Aviso de limites no README e no guia (velocidade, hardware testado, pendrive só em cabo, mais workers = memória, não velocidade) | feito (README pt e en) |
 | Gateway sem loop quando o auxiliar é recusado | recomendado (a especulação é opt-in) |
 | Pi: sensor térmico e NEON | recomendado |
@@ -226,6 +226,7 @@ O histórico dos testes, as medições e as causas estão em [[diario-de-hardwar
 - **Dell (notebook): "Hard drive not installed"** depois do rollout 0.2.3 (tela de recuperação da Dell): precisa de uma pessoa na tela para diagnosticar.
 - **Sem teste em hardware:** vazão da rede nos dois sentidos e sob carga; temperatura do Pi (`TEMP_C` 0: o kernel do Pi não traz o driver `SUN8I_THS` do Armbian); Pi no limite de RAM e térmico; perda de energia no meio do A/B; Secure Boot; PXE; pendrive em PC real; reconexão do Wi-Fi após queda do AP.
 - **Quedas dos notebooks após rollout (0.2.4):** a causa provável era o serviço do worker ficar `failed` no openrc (corrigido com `respawn_max=0`); nos rollouts 0.3.3 e 0.3.4 nenhum notebook caiu. Manter observação.
+- **`aic worker wifi set` não reinicia o `wpa_supplicant`:** a rede nova só vale após `rc-service aic-wifi restart`; fazer o `set` reiniciar o serviço (ou `wpa_cli reconfigure`). Também: o endereço do Pi anunciado ao controller deveria seguir a interface ativa (hoje fica o IP do `eth0` mesmo sem cabo).
 - **Updater:** falha de download não deveria bloquear a versão para sempre (hoje `update-tried` impede repetir).
 - **Gateway:** se o `llama-server` recusar a flag do modelo auxiliar (versão antiga) ou o vocabulário divergir, o supervisor reinicia em loop; deveria voltar a gerar sem o auxiliar.
 - **Pi:** conferir NEON e produto escalar no `rpc-server` (armv7, `-mcpu=cortex_a7`); sensor térmico.
