@@ -18,6 +18,9 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/w -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
   sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq binutils >/dev/null && strip -o /out/ggml-rpc-server-x86 /w/llama.cpp/build-x86m/bin/ggml-rpc-server'
 cp build/ggml-rpc-server-x86 ggml-rpc-server
+# variante AVX2/FMA (haswell em diante): o worker a usa só se a CPU tiver todas as instruções (rpc.rs, pick_variant)
+MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/w -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1   sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq binutils >/dev/null && strip -o /out/ggml-rpc-server-x86-avx2 /w/llama.cpp/build-x86v3/bin/ggml-rpc-server'
+cp build/ggml-rpc-server-x86-avx2 ggml-rpc-server-avx2
 # AIC_WORKER_FILE troca o binário do worker (teste de rollback com um worker que nunca se registra)
 cp "${AIC_WORKER_FILE:-build/ai-cluster-worker-x86}" ai-cluster-worker
 MSYS_NO_PATHCONV=1 docker run --rm -v aic-target-x86:/t -v "$(pwd -W 2>/dev/null || pwd)/build:/out" aic-rust-zig:1 \
@@ -30,7 +33,7 @@ for PUB in ${AIC_PUBS:-${AIC_KEYS:-$HOME/.aic}/release.pub}; do
 done
 REL=$(sh ../../scripts/version.sh)   # versão única (ADR-029)
 docker build --platform linux/amd64 -f x86/Dockerfile --build-arg "AIC_RELEASE=$REL" -t aic-os-rootfs-x86:dev .
-rm -rf ai-cluster-worker ggml-rpc-server aic aic-release.d
+rm -rf ai-cluster-worker ggml-rpc-server ggml-rpc-server-avx2 aic aic-release.d
 CID=$(docker create --platform linux/amd64 aic-os-rootfs-x86:dev)
 docker export "$CID" > build/rootfs-x86.tar
 docker rm "$CID" >/dev/null

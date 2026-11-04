@@ -17,6 +17,7 @@ COPY x86/overlay/ /
 COPY ai-cluster-worker /usr/bin/ai-cluster-worker
 COPY aic /usr/bin/aic
 COPY ggml-rpc-server /usr/bin/ggml-rpc-server
+COPY ggml-rpc-server-avx2 /usr/bin/ggml-rpc-server-avx2
 COPY aic-release.d/ /etc/aic-release.d/
 ARG AIC_RELEASE=dev
 RUN echo "$AIC_RELEASE" > /etc/aic-release
@@ -36,7 +37,7 @@ RUN apk add --no-cache blkid \
  && rm -f /tmp/init-pre.sh /tmp/init-post.sh
 
 RUN rm -f /.dockerenv && echo 'rc_sys=""' >> /etc/rc.conf && echo 'RESOLV_CONF="/run/resolv.conf"' >> /etc/udhcpc/udhcpc.conf && mkdir -p /data /mnt/boot && rm -rf /var/lock && ln -s /run/lock /var/lock \
- && chmod 755 /etc/init.d/aic-watchdog /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/libexec/aic/wifi /usr/libexec/aic/netwatch /etc/init.d/aic-wifi /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
+ && chmod 755 /etc/init.d/aic-watchdog /usr/bin/ai-cluster-worker /usr/bin/ggml-rpc-server /usr/bin/ggml-rpc-server-avx2 /etc/init.d/ai-cluster-worker /etc/init.d/aic-slot-commit /etc/init.d/aic-dirs /etc/init.d/aic-updater /usr/sbin/aic-updater /usr/sbin/aic-update-request /usr/bin/aic /usr/libexec/aic/setup /usr/libexec/aic/role /usr/libexec/aic/change /usr/libexec/aic/passwd /usr/libexec/aic/wifi /usr/libexec/aic/netwatch /etc/init.d/aic-wifi /usr/sbin/aic-console /usr/sbin/aic-welcome /usr/sbin/aic-splash-run /etc/init.d/aic-splash /etc/init.d/aic-measure \
  && ln -sf /data/ssh /root/.ssh && rm -rf /etc/dropbear && ln -s /data/ssh/dropbear /etc/dropbear && rc-update add aic-dirs boot \
  && echo aicluster > /etc/hostname \
  && echo 'makestep 1 -1' >> /etc/chrony/chrony.conf \

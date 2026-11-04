@@ -5,7 +5,7 @@
 #   bash code/third_party/llama.cpp/build.sh
 #
 # O armv7 usa zig (imagem aic-rust-zig:1, veja code/scripts/build-armv7.sh) com musl, a mesma base
-# do worker. O x86 sai sem -march=native, para PCs antigos.
+# do worker. O x86 sai sem -march=native, para PCs antigos, e ganha uma variante AVX2 (build-x86v3).
 set -euo pipefail
 cd "$(dirname "$0")"
 COMMIT=8ca4060b7e30e76baaa5670ee1ec1b760b7f8552
@@ -42,5 +42,15 @@ MSYS_NO_PATHCONV=1 docker run --rm -v aic-llama:/work -v "$(pwd -W 2>/dev/null |
     -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_RPC=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
   cmake --build build-x86m -j\$(nproc) --target ggml-rpc-server
-  ls -l build-x86/bin build-armv7m/bin build-x86m/bin
+  # x86_64 com AVX2/FMA/F16C/BMI2 (haswell em diante): ~55% mais rápido nos notebooks; o worker escolhe pela CPU
+  printf '#!/bin/sh
+exec python3 -m ziglang cc -target x86_64-linux-musl -mcpu=haswell \"\$@\"
+' > /work/zigcc64v3
+  printf '#!/bin/sh
+exec python3 -m ziglang c++ -target x86_64-linux-musl -mcpu=haswell \"\$@\"
+' > /work/zigcxx64v3
+  chmod +x /work/zigcc64v3 /work/zigcxx64v3
+  cmake -B build-x86v3 -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=x86_64     -DCMAKE_C_COMPILER=/work/zigcc64v3 -DCMAKE_CXX_COMPILER=/work/zigcxx64v3 -DCMAKE_AR=/work/zigar     -DCMAKE_RANLIB=/work/zigranlib -DCMAKE_EXE_LINKER_FLAGS=-static -DCMAKE_BUILD_TYPE=Release     -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON     -DGGML_OPENMP=OFF -DGGML_RPC=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null
+  cmake --build build-x86v3 -j\$(nproc) --target ggml-rpc-server
+  ls -l build-x86/bin build-armv7m/bin build-x86m/bin build-x86v3/bin
 "

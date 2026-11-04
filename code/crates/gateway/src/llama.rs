@@ -35,6 +35,8 @@ const BENCH_PROMPT: &str = "Explique em poucas frases o que é um cluster de com
 const BENCH_TOKENS: u32 = 64;
 /// Maior contexto que o plano do controller pode pedir (1 M de tokens).
 const MAX_CONTEXT: u32 = 1 << 20;
+/// Tokens que o modelo auxiliar propõe por passo, se o operador não disser.
+const DEFAULT_DRAFT_MAX: u32 = 4;
 
 /// A configuração lida do ambiente.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +61,12 @@ pub struct LlamaConfig {
     /// O `node_id` de cada endpoint (mesma ordem). Com `{node_id}` em `server_name`, o certificado do
     /// worker precisa ter o nome daquele worker: um certificado roubado não serve a outro worker.
     pub nodes: Vec<String>,
+    /// Modelo auxiliar da decodificação especulativa (`-md`): propõe alguns tokens e o modelo principal
+    /// confere todos de uma vez. A resposta é a mesma da geração sem ele (sem perda de qualidade); só
+    /// muda o tempo. Roda na CPU do gateway (`-ngld 0`).
+    pub draft_model: Option<String>,
+    /// Quantos tokens o modelo auxiliar propõe por passo (`--spec-draft-n-max`).
+    pub draft_max: u32,
 }
 
 impl LlamaConfig {
@@ -119,6 +127,22 @@ impl LlamaConfig {
             args.push("--rpc".into());
             // `start` já validou a faixa; sem ela o `--rpc` ficaria vazio e o erro apareceria lá.
             args.push(self.local_endpoints().unwrap_or_default().join(","));
+        }
+        if let Some(draft) = &self.draft_model {
+            args.extend(
+                [
+                    "--spec-type",
+                    "draft-simple",
+                    "-md",
+                    draft,
+                    "-ngld",
+                    "0",
+                    "--spec-draft-n-max",
+                ]
+                .map(String::from)
+                .into_iter()
+                .chain([self.draft_max.max(1).to_string()]),
+            );
         }
         args
     }
@@ -227,6 +251,8 @@ pub fn from_env() -> Result<Option<LlamaConfig>, String> {
         slots: slots_from_env()?,
         split: split_from_env()?,
         nodes: Vec::new(),
+        draft_model: var("AI_CLUSTER_LLAMA_DRAFT_MODEL"),
+        draft_max: number("AI_CLUSTER_LLAMA_DRAFT_MAX", DEFAULT_DRAFT_MAX)?,
     }))
 }
 
@@ -873,6 +899,21 @@ pub struct Base {
     pub default_context: u32,
     pub slots: u32,
     pub split: Vec<f64>,
+    /// Arquivo (dentro de `models_dir`) do modelo auxiliar da decodificação especulativa; só vale para
+    /// modelos da mesma família (o vocabulário precisa ser o mesmo).
+    pub draft_model: Option<String>,
+    pub draft_max: u32,
+}
+
+/// Mesma família = mesmo texto antes do primeiro `-` no nome do arquivo (`Qwen2.5-7B-...` e
+/// `Qwen2.5-0.5B-...`). shortcut: heurística pelo nome, trocar pela comparação do vocabulário no GGUF.
+fn same_family(a: &str, b: &str) -> bool {
+    let family = |name: &str| {
+        let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        file.split('-').next().unwrap_or("").to_ascii_lowercase()
+    };
+    let (x, y) = (family(a), family(b));
+    !x.is_empty() && x == y
 }
 
 impl Base {
@@ -909,6 +950,23 @@ impl Base {
             default_context: number("AI_CLUSTER_LLAMA_CTX", 4096)?,
             slots: slots_from_env()?,
             split: split_from_env()?,
+            draft_model: var("AI_CLUSTER_LLAMA_DRAFT_MODEL"),
+            draft_max: number("AI_CLUSTER_LLAMA_DRAFT_MAX", DEFAULT_DRAFT_MAX)?,
+        })
+    }
+
+    /// O modelo auxiliar para este modelo, se houver um configurado, for um nome simples (sem sair da
+    /// pasta de modelos) e for da mesma família. Sem ele, gera normalmente.
+    fn draft_for(&self, target: &str) -> Option<String> {
+        let draft = self.draft_model.as_deref()?;
+        let simple = std::path::Path::new(draft)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        (simple && !self.models_dir.is_empty() && same_family(target, draft)).then(|| {
+            std::path::Path::new(&self.models_dir)
+                .join(draft)
+                .to_string_lossy()
+                .into_owned()
         })
     }
 
@@ -969,6 +1027,8 @@ impl Base {
             tunnel_base: self.tunnel_base,
             slots: self.slots.max(1),
             nodes: wanted.endpoints.iter().map(|e| e.node_id.clone()).collect(),
+            draft_model: self.draft_for(&wanted.model_path),
+            draft_max: self.draft_max,
             // A divisão do ambiente (operador) vale mais que a do controller; a do controller só se for
             // completa e sensata (uma proporção por worker, finita, não negativa, soma maior que zero).
             split: if !self.split.is_empty() {
@@ -1139,6 +1199,8 @@ data: [DONE]
             slots: 1,
             split: Vec::new(),
             nodes: Vec::new(),
+            draft_model: None,
+            draft_max: 4,
         }
     }
 
@@ -1158,6 +1220,47 @@ data: [DONE]
         let mut local = config();
         local.endpoints.clear();
         assert!(!local.server_args().join(" ").contains("--rpc"));
+    }
+
+    #[test]
+    fn the_draft_model_only_goes_with_a_model_of_the_same_family() {
+        let mut c = config();
+        assert!(!c.server_args().join(" ").contains("-md"));
+        c.draft_model = Some("/models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf".into());
+        c.draft_max = 6;
+        let args = c.server_args().join(" ");
+        assert!(
+            args.contains(
+                "-md /models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf -ngld 0 --spec-draft-n-max 6"
+            ),
+            "{args}"
+        );
+        assert!(same_family(
+            "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+            "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+        ));
+        assert!(same_family("pasta/QWEN2.5-7B.gguf", "qwen2.5-0.5b.gguf"));
+        assert!(!same_family(
+            "Llama-3.2-3B-Instruct.gguf",
+            "Qwen2.5-0.5B-Instruct.gguf"
+        ));
+        assert!(!same_family("-x.gguf", "-y.gguf"));
+        let base = Base {
+            models_dir: "/models".into(),
+            draft_model: Some("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf".into()),
+            draft_max: 4,
+            ..Base::default()
+        };
+        assert_eq!(
+            base.draft_for("Qwen2.5-7B-Instruct-Q4_K_M.gguf").as_deref(),
+            Some("/models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf")
+        );
+        assert_eq!(base.draft_for("Llama-3.2-3B-Instruct.gguf"), None);
+        let escaping = Base {
+            draft_model: Some("../Qwen2.5-0.5B.gguf".into()),
+            ..base
+        };
+        assert_eq!(escaping.draft_for("Qwen2.5-7B.gguf"), None);
     }
 
     // O ambiente é do processo: um teste só, em série, mexe nele.
@@ -1242,6 +1345,7 @@ data: [DONE]
             default_context: 4096,
             slots: 1,
             split: Vec::new(),
+            ..Base::default()
         };
         let ok = base
             .config_for(&desired("pasta/m.gguf", "pasta-m", &["10.0.0.5:50061"]))
@@ -1719,6 +1823,7 @@ data: [DONE]
             default_context: 4096,
             slots: 1,
             split: Vec::new(),
+            ..Base::default()
         };
         let mut wanted = desired("m.gguf", "m", &["10.0.0.5:50061", "10.0.0.6:50061"]);
         wanted.split = vec![0.2, 0.8];

@@ -129,6 +129,28 @@ impl RpcConfig {
     }
 }
 
+/// Instruções que a variante `-avx2` do `rpc-server` usa (compilada para haswell em diante). Sem alguma
+/// delas, o binário morreria com instrução ilegal.
+const AVX2_FLAGS: [&str; 7] = ["avx2", "fma", "f16c", "bmi1", "bmi2", "movbe", "abm"];
+
+/// Escolhe o binário do `rpc-server` pela CPU: se existe `<bin>-avx2` e a CPU tem tudo de `AVX2_FLAGS`,
+/// usa esse (mais rápido no mesmo hardware e com a mesma resposta, salvo ruído numérico); senão o
+/// genérico, que roda em qualquer x86_64. `cpuinfo` é o texto de `/proc/cpuinfo`.
+fn pick_variant(bin: &str, cpuinfo: &str, exists: impl Fn(&str) -> bool) -> String {
+    let fast = format!("{bin}-avx2");
+    let flags: Vec<&str> = cpuinfo
+        .lines()
+        .find(|line| line.starts_with("flags"))
+        .and_then(|line| line.split_once(':'))
+        .map(|(_, list)| list.split_whitespace().collect())
+        .unwrap_or_default();
+    if exists(&fast) && AVX2_FLAGS.iter().all(|f| flags.contains(f)) {
+        fast
+    } else {
+        bin.to_string()
+    }
+}
+
 /// Lê o ambiente. `None` quando o worker não roda `rpc-server`; `Some(Err)` quando pediu e a configuração
 /// é insegura ou incompleta (o worker segue sem RPC).
 pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
@@ -139,6 +161,11 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
             .filter(|v| !v.is_empty())
     };
     let bin = var("AI_CLUSTER_RPC_SERVER_BIN")?;
+    let bin = pick_variant(
+        &bin,
+        &std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default(),
+        |path| std::path::Path::new(path).is_file(),
+    );
     let (Some(cert), Some(key), Some(client_ca)) = (
         var("AI_CLUSTER_RPC_TLS_CERT"),
         var("AI_CLUSTER_RPC_TLS_KEY"),
@@ -443,6 +470,38 @@ async fn supervise(config: &RpcConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_avx2_binary_is_used_only_when_it_exists_and_the_cpu_has_every_instruction() {
+        let modern = "processor : 0
+flags		: fpu sse2 avx avx2 fma f16c bmi1 bmi2 movbe abm
+";
+        let no_fma = "flags : fpu sse2 avx avx2 f16c bmi1 bmi2 movbe abm";
+        let old = "flags : fpu sse2";
+        let present = |_: &str| true;
+        let absent = |_: &str| false;
+        assert_eq!(
+            pick_variant("/usr/bin/rpc", modern, present),
+            "/usr/bin/rpc-avx2"
+        );
+        assert_eq!(pick_variant("/usr/bin/rpc", modern, absent), "/usr/bin/rpc");
+        assert_eq!(
+            pick_variant("/usr/bin/rpc", no_fma, present),
+            "/usr/bin/rpc"
+        );
+        assert_eq!(pick_variant("/usr/bin/rpc", old, present), "/usr/bin/rpc");
+        assert_eq!(pick_variant("/usr/bin/rpc", "", present), "/usr/bin/rpc");
+        // `avx2` em outro campo (ex.: vmx flags) não conta
+        assert_eq!(
+            pick_variant(
+                "/usr/bin/rpc",
+                "bugs : avx2 fma
+flags : fpu",
+                present
+            ),
+            "/usr/bin/rpc"
+        );
+    }
 
     // O ambiente é do processo inteiro: um teste só, em série, mexe nele.
     #[test]
