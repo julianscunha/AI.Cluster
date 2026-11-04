@@ -159,7 +159,7 @@ draw() {
 			if [ -n "$nip" ]; then dot_net=$C_OK
 			elif [ "$ws" != "nao configurado" ] && [ "$dot_net" = "$C_BAD" ]; then dot_net=$C_WARN; fi
 		else
-			if [ "$(cat "$d/carrier" 2>/dev/null)" != 1 ]; then st="sem link (cabo solto?)"
+			if [ "$(cat "$d/carrier" 2>/dev/null)" != 1 ]; then st="sem link"
 			elif [ -z "$nip" ]; then st="link ok, sem IP (DHCP)"; [ "$dot_net" = "$C_BAD" ] && dot_net=$C_WARN
 			else st="$nip"; dot_net=$C_OK; fi
 			net="${net:+$net  |  }cabo: $st"

@@ -18,7 +18,7 @@ run() { PATH="$T/bin:$PATH" IPDIR="$T" AIC_SYSNET="$T/sys" AIC_WIFI_STATUS="$T/w
 ck() { [ "$1" = "$2" ] || { echo "FALHOU: esperado [$2] veio [$1]"; exit 1; }; }
 # sem rede nenhuma: cabo solto, wifi sem config
 echo 0 > "$T/sys/eth0/carrier"
-ck "$(run)" "BAD|cabo: sem link (cabo solto?)  |  wifi: nao configurado"
+ck "$(run)" "BAD|cabo: sem link  |  wifi: nao configurado"
 # link ok sem IP
 echo 1 > "$T/sys/eth0/carrier"
 ck "$(run)" "WARN|cabo: link ok, sem IP (DHCP)  |  wifi: nao configurado"
@@ -30,8 +30,8 @@ echo "Wi-Fi: conectando" > "$T/wifi.status"
 ck "$(run)" "OK|cabo: 192.168.1.18  |  wifi: conectando"
 # sem cabo, wifi conectando: amarelo
 echo 0 > "$T/sys/eth0/carrier"; rm -f "$T/ip.eth0"
-ck "$(run)" "WARN|cabo: sem link (cabo solto?)  |  wifi: conectando"
+ck "$(run)" "WARN|cabo: sem link  |  wifi: conectando"
 # sem cabo, wifi com IP: verde
 echo 192.168.1.40 > "$T/ip.wlan0"; echo "Wi-Fi: conectado a JuliansNET, IP 192.168.1.40" > "$T/wifi.status"
-ck "$(run)" "OK|cabo: sem link (cabo solto?)  |  wifi: conectado a JuliansNET, IP 192.168.1.40"
+ck "$(run)" "OK|cabo: sem link  |  wifi: conectado a JuliansNET, IP 192.168.1.40"
 echo "OK: console/rede"
