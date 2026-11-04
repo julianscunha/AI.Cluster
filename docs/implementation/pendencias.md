@@ -22,9 +22,9 @@ Decisão de 04/11/2026: publicar como **beta/preview**, com limites declarados, 
 | Segurança básica: túnel mTLS, três papéis, chaves por tenant, imagem assinada | feito (revogação de chaves de release do SO: pós-1.0) |
 | Inferência dividida estável (GGUF no llama.cpp por RPC) | feito (1,5B, 3B e 7B) |
 | Desempenho medido e repetível (`aic-bench.sh`) | feito: Qwen 7B em 2 notebooks, 2,09 tok/s |
-| Updater repete o download que falhou | **bloqueador** |
+| Updater repete o download que falhou | feito no código (3 tentativas no updater; o worker libera a versão após falha de rede); vale na próxima imagem |
 | Medição em Wi-Fi e com nó lento na versão final | **bloqueador** (sem isso não há número honesto para o pior cenário) |
-| Aviso de limites no README e no guia (velocidade, hardware testado, pendrive só em cabo, mais workers = memória, não velocidade) | **bloqueador** (documentação) |
+| Aviso de limites no README e no guia (velocidade, hardware testado, pendrive só em cabo, mais workers = memória, não velocidade) | feito (README pt e en) |
 | Gateway sem loop quando o auxiliar é recusado | recomendado (a especulação é opt-in) |
 | Pi: sensor térmico e NEON | recomendado |
 

@@ -74,7 +74,14 @@ apply() {
 	rm -rf "$DL"; mkdir -m 700 "$DL" || { fail "sem diretório de download"; return; }
 	TMP=$DL/update.gz
 	case "$url" in http://*|https://*) ;; *) fail "URL sem http(s); ignorado"; rm -rf "$DL"; return;; esac
-	wget -q -T 60 -O "$TMP" -- "$url" || { fail "download falhou"; rm -rf "$DL"; return; }
+	# rede ruim (controller reiniciando, Wi-Fi caindo) não pode custar a versão: 3 tentativas com espera
+	n=0
+	until wget -q -T 60 -O "$TMP" -- "$url"; do
+		n=$((n + 1))
+		[ "$n" -lt 3 ] || { fail "download falhou"; rm -rf "$DL"; return; }
+		log "download falhou; nova tentativa em $((n * 10))s"
+		sleep $((n * 10))
+	done
 	echo "$sha  $TMP" | sha256sum -c >/dev/null 2>&1 || { fail "SHA-256 não confere; descartado"; rm -rf "$DL"; return; }
 	gunzip -t "$TMP" 2>/dev/null || { fail "gzip corrompido; descartado"; rm -rf "$DL"; return; }
 	log "gravando $dev"

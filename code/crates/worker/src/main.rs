@@ -314,6 +314,11 @@ fn accept_update(release: &Release, current: &str, tried: &str, linux: bool) -> 
         }
 }
 
+/// Motivo que o updater grava quando só a rede falhou: a mesma versão vale uma nova tentativa.
+fn is_transient_update_failure(reason: &str) -> bool {
+    reason.trim() == "download falhou"
+}
+
 /// Os cinco argumentos do comando de atualização: versão, URL, SHA-256, SHA-256 da imagem e assinatura. Na
 /// release Linux os dois hashes não valem e vão vazios, e a assinatura é a de Linux.
 fn update_args(release: &Release, linux: bool) -> [&str; 5] {
@@ -898,6 +903,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for _ in 0..240 {
                 if let Ok(reason) = std::fs::read_to_string(&result) {
                     println!("atualização recusada: {}", reason.trim());
+                    if is_transient_update_failure(&reason) {
+                        // Falha de rede, não da release: libera a versão para a próxima tentativa, depois
+                        // de uma espera (senão ela ficaria marcada como tentada para sempre).
+                        let _ = std::fs::remove_file(update_mark_path());
+                        time::sleep(Duration::from_secs(60)).await;
+                    }
                     break;
                 }
                 time::sleep(Duration::from_secs(5)).await;
@@ -2486,6 +2497,21 @@ fn health() -> HealthReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_network_failure_frees_the_version_for_another_try() {
+        assert!(is_transient_update_failure(
+            "download falhou
+"
+        ));
+        assert!(!is_transient_update_failure(
+            "assinatura inválida para x86 0.3.4; ignorado"
+        ));
+        assert!(!is_transient_update_failure(
+            "SHA-256 não confere; descartado"
+        ));
+        assert!(!is_transient_update_failure(""));
+    }
+
     use super::*;
 
     #[test]
