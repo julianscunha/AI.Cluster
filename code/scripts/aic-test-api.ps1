@@ -32,6 +32,7 @@ param(
   [string]$Model = "",
   [string]$Prompt = "",
   [int]$MaxTokens = 200,
+  [double]$Temperature = -1,
   [int]$Runs = 1,
   [int]$TimeoutSec = 900,
   [switch]$Chat,
@@ -122,7 +123,9 @@ function Call([string]$method, [string]$path) {
 # Manda a conversa e lê a resposta aos pedaços, medindo o tempo até o primeiro e o total.
 # Devolve @{ Ok; Error; Text; Ttft; Total; Chunks; DecodeRate; OverallRate }.
 function Ask($messages, [bool]$live) {
-  $json = @{ model = $Model; messages = $messages; max_tokens = $MaxTokens; stream = $true } | ConvertTo-Json -Depth 6 -Compress
+  $body = @{ model = $Model; messages = $messages; max_tokens = $MaxTokens; stream = $true }
+  if ($Temperature -ge 0) { $body.temperature = $Temperature }
+  $json = $body | ConvertTo-Json -Depth 6 -Compress
   $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, "$Url/v1/chat/completions")
   $req.Content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, "application/json")
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -140,7 +143,7 @@ function Ask($messages, [bool]$live) {
     }
     $reader = New-Object System.IO.StreamReader($res.Content.ReadAsStreamAsync().GetAwaiter().GetResult(), [Text.Encoding]::UTF8)
     $text = New-Object System.Text.StringBuilder
-    $chunks = 0; $ttft = $null
+    $chunks = 0; $ttft = $null; $timings = $null
     while ($true) {
       $next = $reader.ReadLineAsync()
       while (-not $next.Wait(5000)) {
@@ -153,7 +156,9 @@ function Ask($messages, [bool]$live) {
       if (-not $line.StartsWith("data:")) { continue }
       $data = $line.Substring(5).Trim()
       if ($data -eq "[DONE]") { break }
-      try { $piece = ($data | ConvertFrom-Json).choices[0].delta.content } catch { continue }
+      try { $obj = $data | ConvertFrom-Json; $piece = $obj.choices[0].delta.content } catch { continue }
+      # o llama-server manda os tempos medidos por ele no último pedaço
+      if ($obj.timings) { $timings = $obj.timings }
       if (-not $piece) { continue }
       if ($null -eq $ttft) { $ttft = $clock.Elapsed.TotalSeconds }
       $chunks++
@@ -169,13 +174,21 @@ function Ask($messages, [bool]$live) {
   if ($null -eq $ttft) { $ttft = $total }
   $decode = if ($chunks -gt 1 -and $total -gt $ttft) { ($chunks - 1) / ($total - $ttft) } else { 0 }
   $overall = if ($total -gt 0) { $chunks / $total } else { 0 }
-  @{ Ok = $true; Text = $text.ToString(); Ttft = $ttft; Total = $total; Chunks = $chunks; DecodeRate = $decode; OverallRate = $overall }
+  @{ Ok = $true; Text = $text.ToString(); Ttft = $ttft; Total = $total; Chunks = $chunks; DecodeRate = $decode; OverallRate = $overall; Timings = $timings }
 }
 
 function Stats($r) {
-  (T "primeira palavra" "first token") + " " + (Sec $r.Ttft) + "  |  " + (T "total" "total") + " " + (Sec $r.Total) +
+  $line = (T "primeira palavra" "first token") + " " + (Sec $r.Ttft) + "  |  " + (T "total" "total") + " " + (Sec $r.Total) +
     "  |  ~$($r.Chunks) tokens  |  " + (Rate $r.DecodeRate) + " " + (T "tokens/s gerando" "tokens/s generating") +
     " (" + (Rate $r.OverallRate) + " " + (T "no total" "overall") + ")"
+  # os tempos do servidor (sem a rede entre o gateway e este computador)
+  $t = $r.Timings
+  if ($t -and $t.predicted_per_second) {
+    $line += "  |  " + (T "servidor" "server") + ": " + (Rate $t.predicted_per_second) + " " + (T "tok/s gerando" "tok/s generating") +
+      ", " + (Rate $t.prompt_per_second) + " " + (T "tok/s no prompt" "tok/s on the prompt")
+    if ($t.draft_n -gt 0) { $line += ", " + (T "especulação aceita " "speculation accepted ") + [math]::Round(100 * $t.draft_n_accepted / $t.draft_n) + "%" }
+  }
+  $line
 }
 
 Banner (T "teste da API" "API test") "$Url"

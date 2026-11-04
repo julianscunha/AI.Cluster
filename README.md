@@ -190,6 +190,14 @@ curl http://<ip-do-servidor>:8080/v1/chat/completions \
 
 **Admissão e operação em casa:** `aic cluster model check` conta o cache de contexto por vaga, a memória do gateway (128 MiB mais 30% dos pesos) e se o modelo sobrevive à perda de um worker; pedir o nome da família escolhe a variante mais precisa que cabe. Se um worker cai, o gateway espera a recarga (até 120 s) e refaz o pedido uma vez. Workers com disco rápido ligam sozinhos o cache de tensores do `rpc-server` (a 2ª carga no Orange Pi levou 42 s, contra 51 a 67 s sem cache). Para um Linux x86_64, `code/scripts/package-worker.sh` gera um pacote com worker, `rpc-server` e `install.sh`. O controller grava o estado sem passar de ~10% do tempo e grava ao receber SIGTERM. Resistência medida: 60 min de carga com partição de rede e reinícios do controller, 14.432 unidades sem falha e memória estável.
 
+**Meça o desempenho do seu cluster:** os scripts `code/scripts/aic-bench.sh` (Linux, macOS, WSL; só `sh` e `curl`) e `code/scripts/aic-test-api.ps1` (Windows, PowerShell, nada para instalar) fazem a mesma pergunta várias vezes e mostram os tokens por segundo gerando e lendo o prompt (medidos pelo servidor), o tempo total e, se ligada, a taxa de aceitação da decodificação especulativa, com média, mínima e máxima no fim:
+
+```bash
+AIC_API_KEY=<chave> sh code/scripts/aic-bench.sh --url http://<ip-do-servidor>:8080 --runs 5 --tokens 96
+```
+
+Use sempre o mesmo modelo, prompt e `--tokens` ao comparar (temperatura 0 por padrão, para a resposta se repetir), e deixe o cluster sem outras cargas. A 1ª rodada pode ser mais lenta (cache frio). Em CPUs x86 com AVX2/FMA o worker escolhe sozinho um `rpc-server` mais rápido; mais workers dão memória (modelos maiores), não velocidade, e ligar tudo no cabo importa pouco (a rede pesa cerca de 15% do tempo de cada palavra). Os números e como lê-los: [`docs/guia/operacao.md`](docs/guia/operacao.md).
+
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="Uma camada do modelo dividida entre três workers" width="100%">
 </p>

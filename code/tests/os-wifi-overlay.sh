@@ -40,6 +40,8 @@ printf '#!/bin/sh\necho "udhcpc $IF_METRIC $*" >> %s/dhcp.calls\n' "$T" > "$T/bi
 chmod +x "$T/bin/"*
 export AIC_SYS_NET=$T/sys AIC_WIFI_CONF=$T/wifi/wpa_supplicant.conf AIC_RUN=$T/run
 NW() { PATH=$T/bin:$PATH sh "$O/usr/libexec/aic/netwatch" once; }
+# o stub do wpa_supplicant sobe em segundo plano: espera ele registrar a chamada (a máquina carregada atrasa)
+waitn() { for _ in $(seq 1 25); do [ "$(wc -l < "$T/wpa.calls" 2>/dev/null || echo 0)" -ge "$1" ] && return 0; sleep 0.2; done; }
 NW
 grep -qx eth0 "$T/calls" || fail "não refez o DHCP do cabo"
 mkdir -p "$T/wifi"; printf '# aic-ssid: Casa\n' > "$AIC_WIFI_CONF"
@@ -48,6 +50,7 @@ grep -q 'sem interface wlan0' "$AIC_WIFI_STATUS" || fail "não avisou adaptador 
 mkdir -p "$T/sys/wlan0"; : > "$T/calls"
 NW
 grep -q wlan0 "$T/calls" && fail "netwatch fez ifup/ifdown do wlan0 (interrompe a associação)"
+waitn 1
 [ "$(wc -l < "$T/wpa.calls")" = 1 ] || fail "deveria iniciar um wpa_supplicant"
 grep -q -- '-i wlan0 -c .*wpa_supplicant.conf' "$T/wpa.calls" || fail "argumentos do wpa_supplicant"
 grep -q -- ' -P ' "$T/wpa.calls" && fail "sem -B o -P nao grava pidfile: o netwatch grava o pid"
@@ -73,6 +76,7 @@ echo '    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0' > "$T/wlan0
 grep -qx 'Wi-Fi: conectado a Casa, IP 192.168.1.50' "$AIC_WIFI_STATUS" || fail "status: conectado"
 # wpa_supplicant morreu: reinicia
 kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")"; sleep 0.2; NW
+waitn 2
 [ "$(wc -l < "$T/wpa.calls")" = 2 ] || fail "não reiniciou o wpa_supplicant morto"
 kill "$(cat "$T/run/wpa_supplicant.wlan0.pid")" 2>/dev/null
 # aic-wifi stop: stop_post mata so o wpa_supplicant e o udhcpc do wlan0 (pelos pidfiles), nao outro processo

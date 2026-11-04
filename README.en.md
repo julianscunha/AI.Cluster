@@ -201,6 +201,14 @@ curl http://<server-ip>:8080/v1/chat/completions \
 
 **API keys:** one per tenant, with models, quota and priority class (`aic cluster model key add|rotate|remove|list`). The controller keeps only the hash. **Several slots** (`AI_CLUSTER_LLAMA_SLOTS`) serve more requests at once: in the lab, 2 concurrent requests gave 34% more total tokens per second.
 
+**Measure your cluster's performance:** the scripts `code/scripts/aic-bench.sh` (Linux, macOS, WSL; only `sh` and `curl`) and `code/scripts/aic-test-api.ps1` (Windows, PowerShell, nothing to install) ask the same question several times and show the tokens per second generating and reading the prompt (measured by the server), the total time and, when on, the speculative decoding acceptance rate, with mean, min and max at the end:
+
+```bash
+AIC_API_KEY=<key> sh code/scripts/aic-bench.sh --url http://<server-ip>:8080 --runs 5 --tokens 96
+```
+
+Always compare with the same model, prompt and `--tokens` (temperature 0 by default, so the answer repeats), and keep the cluster free of other load. The 1st run can be slower (cold cache). On x86 CPUs with AVX2/FMA the worker picks a faster `rpc-server` by itself; more workers add memory (bigger models), not speed, and putting everything on cable matters little (the network is about 15% of each word's time). Numbers and how to read them: [`docs/guia/operacao.md`](docs/guia/operacao.md).
+
 <p align="center">
   <img src="docs/assets/inference-split.svg" alt="One model layer split across three workers" width="100%">
 </p>
