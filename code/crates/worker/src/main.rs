@@ -314,6 +314,41 @@ fn accept_update(release: &Release, current: &str, tried: &str, linux: bool) -> 
         }
 }
 
+/// Decide se o IP anunciado mudou de verdade: o mesmo valor novo em três amostras seguidas (90 s). Uma rota
+/// que some por instantes (amostra vazia) ou um Wi-Fi que oscila não reiniciam o worker.
+struct AddressWatch {
+    registered: String,
+    candidate: String,
+    seen: u32,
+}
+
+impl AddressWatch {
+    const STABLE_SAMPLES: u32 = 3;
+
+    fn new(registered: &str) -> Self {
+        Self {
+            registered: registered.to_string(),
+            candidate: String::new(),
+            seen: 0,
+        }
+    }
+
+    fn sample(&mut self, now: &str) -> bool {
+        if now.is_empty() || now == self.registered {
+            self.candidate.clear();
+            self.seen = 0;
+            return false;
+        }
+        if now == self.candidate {
+            self.seen += 1;
+        } else {
+            self.candidate = now.to_string();
+            self.seen = 1;
+        }
+        self.seen >= Self::STABLE_SAMPLES
+    }
+}
+
 /// Motivo que o updater grava quando só a rede falhou: a mesma versão vale uma nova tentativa.
 fn is_transient_update_failure(reason: &str) -> bool {
     reason.trim() == "download falhou"
@@ -592,10 +627,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let controller = std::env::var("AI_CLUSTER_CONTROLLER")
             .unwrap_or_else(|_| "http://127.0.0.1:50051".into());
         tokio::spawn(async move {
+            let mut watch = AddressWatch::new(&registered);
             loop {
                 time::sleep(Duration::from_secs(30)).await;
-                let now = rpc::advertise_host(&controller);
-                if !now.is_empty() && now != registered {
+                // a resolução do nome do controller é síncrona: fora das threads do runtime
+                let target = controller.clone();
+                let now = tokio::task::spawn_blocking(move || rpc::advertise_host(&target))
+                    .await
+                    .unwrap_or_default();
+                if watch.sample(&now) {
                     println!(
                         "o endereço mudou de {registered} para {now}; reiniciando para o controller saber"
                     );
@@ -725,7 +765,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Recuperação de rede: só aparece no cluster (o token dela não pede trabalho).
         if presence_only {
             tokio::select! {
-                _ = time::sleep(Duration::from_secs(3600)) => {}
+                _ = time::sleep(Duration::from_secs(30)) => {}
                 _ = &mut shutdown => break,
             }
             continue;
@@ -735,6 +775,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let permit = tokio::select! {
             permit = permits.clone().acquire_owned() => permit?,
             _ = &mut shutdown => break,
+            // sem vaga livre o laço ainda confere `broken` de tempos em tempos
+            _ = time::sleep(Duration::from_secs(30)) => continue,
         };
         let work = match client
             .request_work(RequestWorkRequest {
@@ -2518,6 +2560,29 @@ fn health() -> HealthReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_address_must_stay_changed_for_three_samples_before_the_worker_restarts() {
+        let mut watch = AddressWatch::new("192.168.0.38");
+        assert!(!watch.sample("192.168.0.38"));
+        assert!(!watch.sample("192.168.0.39"));
+        assert!(!watch.sample("192.168.0.39"));
+        assert!(watch.sample("192.168.0.39"));
+        // volta ao original ou some: recomeça
+        let mut watch = AddressWatch::new("192.168.0.38");
+        assert!(!watch.sample("192.168.0.39"));
+        assert!(!watch.sample(""));
+        assert!(!watch.sample("192.168.0.39"));
+        assert!(!watch.sample("192.168.0.38"));
+        assert!(!watch.sample("192.168.0.39"));
+        // muda de novo no meio: o contador reinicia
+        let mut watch = AddressWatch::new("a");
+        assert!(!watch.sample("b"));
+        assert!(!watch.sample("b"));
+        assert!(!watch.sample("c"));
+        assert!(!watch.sample("c"));
+        assert!(watch.sample("c"));
+    }
+
     #[test]
     fn only_a_network_failure_frees_the_version_for_another_try() {
         assert!(is_transient_update_failure(

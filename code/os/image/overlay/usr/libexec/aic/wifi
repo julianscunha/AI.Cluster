@@ -9,7 +9,7 @@ CONF=$DIR/wpa_supplicant.conf
 STATUS=${AIC_WIFI_STATUS:-/run/aic-wifi.status}
 
 # a rede nova só vale com o wpa_supplicant relido: reinicia o serviço (em segundo plano; sem rc-service, como no teste, não faz nada)
-aplica() { command -v rc-service >/dev/null 2>&1 && { rc-service aic-wifi restart >/dev/null 2>&1 & }; return 0; }
+aplica() { command -v rc-service >/dev/null 2>&1 && { nohup rc-service aic-wifi restart >/dev/null 2>&1 </dev/null & }; return 0; }
 usage() { echo "uso: aic worker wifi set <SSID> [--country XX] (senha no stdin) | status | scan | clear" >&2; exit 2; }
 
 case "${1:-}" in

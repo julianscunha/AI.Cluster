@@ -759,6 +759,8 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
     let mut config = config.clone();
     let mut wait = Duration::from_secs(2);
     let mut draft_refusals = 0u32;
+    let mut draft_dropped = false;
+    let original_draft = config.draft_model.clone();
     loop {
         llama.set(State::Loading);
         let started = Instant::now();
@@ -813,7 +815,15 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
         }
         // O modelo auxiliar é opcional: se o llama-server cai duas vezes antes de ficar pronto com ele
         // (flag que a versão não conhece, vocabulário diferente), segue sem ele em vez de reiniciar para sempre.
-        if config.draft_model.is_some() {
+        if draft_dropped && refused_before_ready {
+            // sem o auxiliar também caiu: a causa não era ele (worker fora, memória); ele volta na próxima
+            eprintln!(
+                "llama-server caiu também sem o modelo auxiliar; o auxiliar volta a ser usado"
+            );
+            config.draft_model = original_draft.clone();
+            draft_dropped = false;
+            draft_refusals = 0;
+        } else if config.draft_model.is_some() {
             draft_refusals = if refused_before_ready {
                 draft_refusals + 1
             } else {
@@ -824,6 +834,7 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
                     "llama-server caiu {draft_refusals} vezes antes de ficar pronto com o modelo auxiliar; seguindo sem decodificação especulativa"
                 );
                 config.draft_model = None;
+                draft_dropped = true;
             }
         }
         wait = if started.elapsed() > Duration::from_secs(120) {
