@@ -26,6 +26,15 @@ grep -q '^country=BR$' "$C" && grep -q 'key_mgmt=WPA-PSK SAE' "$C" && grep -q 's
 ST=$(sh "$W" status); case "$ST" in *'Rede Casa'*) ;; *) fail "status não mostra o SSID" ;; esac
 case "$ST" in *s3gredo*) fail "status vazou a senha" ;; esac
 sh "$W" clear >/dev/null; [ ! -e "$C" ] || fail "clear não removeu"
+# set e clear reiniciam o serviço aic-wifi (senão o wpa_supplicant segue na rede antiga)
+mkdir -p "$T/rcbin"; printf '#!/bin/sh
+echo "$@" >> %s/rc.calls
+' "$T" > "$T/rcbin/rc-service"; chmod +x "$T/rcbin/rc-service"
+printf 'senha-boa-123
+' | PATH=$T/rcbin:$PATH sh "$W" set Casa2 >/dev/null; sleep 0.5
+grep -qx 'aic-wifi restart' "$T/rc.calls" || fail "wifi set não reiniciou o aic-wifi"
+: > "$T/rc.calls"; PATH=$T/rcbin:$PATH sh "$W" clear >/dev/null; sleep 0.5
+grep -qx 'aic-wifi restart' "$T/rc.calls" || fail "wifi clear não reiniciou o aic-wifi"
 
 # netwatch: stubs de ip/ifup/ifdown/wpa_supplicant/wpa_cli/udhcpc; cabo com portadora e sem IP -> ifup eth0; wlan0 nunca passa por ifup/ifdown
 mkdir -p "$T/bin" "$T/sys/eth0" "$T/run"; echo 1 > "$T/sys/eth0/carrier"

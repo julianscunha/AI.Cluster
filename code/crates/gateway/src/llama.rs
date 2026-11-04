@@ -756,7 +756,9 @@ async fn wait_port_free(port: u16) {
 
 /// Roda o `llama-server`; se sair, marca falha e o sobe de novo (com espera crescente).
 async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
+    let mut config = config.clone();
     let mut wait = Duration::from_secs(2);
+    let mut draft_refusals = 0u32;
     loop {
         llama.set(State::Loading);
         let started = Instant::now();
@@ -781,6 +783,7 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
         die_with_parent(&mut command);
+        let mut refused_before_ready = false;
         match command.spawn() {
             Ok(mut child) => {
                 let watcher = llama.clone();
@@ -799,12 +802,28 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
                     }
                 };
                 eprintln!("{reason}; reiniciando");
+                refused_before_ready = !matches!(llama.state(), State::Ready);
                 llama.set(State::Failed(reason));
             }
             Err(error) => {
                 let reason = format!("llama-server não iniciou ({}): {error}", config.server_bin);
                 eprintln!("{reason}");
                 llama.set(State::Failed(reason));
+            }
+        }
+        // O modelo auxiliar é opcional: se o llama-server cai duas vezes antes de ficar pronto com ele
+        // (flag que a versão não conhece, vocabulário diferente), segue sem ele em vez de reiniciar para sempre.
+        if config.draft_model.is_some() {
+            draft_refusals = if refused_before_ready {
+                draft_refusals + 1
+            } else {
+                0
+            };
+            if drop_draft(draft_refusals) {
+                eprintln!(
+                    "llama-server caiu {draft_refusals} vezes antes de ficar pronto com o modelo auxiliar; seguindo sem decodificação especulativa"
+                );
+                config.draft_model = None;
             }
         }
         wait = if started.elapsed() > Duration::from_secs(120) {
@@ -814,6 +833,11 @@ async fn supervise(config: &LlamaConfig, llama: &Arc<Llama>) {
         };
         tokio::time::sleep(wait).await;
     }
+}
+
+/// Quantas quedas seguidas antes de ficar pronto bastam para desistir do modelo auxiliar.
+fn drop_draft(refusals: u32) -> bool {
+    refusals >= 2
 }
 
 /// Espera o `/health` do `llama-server`, marca `Ready` e mede o benchmark.
@@ -1232,6 +1256,14 @@ data: [DONE]
         let mut local = config();
         local.endpoints.clear();
         assert!(!local.server_args().join(" ").contains("--rpc"));
+    }
+
+    #[test]
+    fn the_draft_model_is_dropped_after_two_refusals_in_a_row() {
+        assert!(!drop_draft(0));
+        assert!(!drop_draft(1));
+        assert!(drop_draft(2));
+        assert!(drop_draft(5));
     }
 
     #[test]

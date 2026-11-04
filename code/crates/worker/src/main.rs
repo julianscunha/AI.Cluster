@@ -584,6 +584,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set when a unit's result could not be handed in. The unit stays in flight at the
     // controller, so the worker leaves and `leave_node` gives it to another node.
     let broken = Arc::new(AtomicBool::new(false));
+    // O endereço que o controller guardou (capability, no registro) segue a interface ativa: se o cabo
+    // sai e o Wi-Fi assume (ou o contrário), o IP muda e o gateway tentaria o antigo. O worker sai do
+    // cluster com calma e volta registrando o novo, em vez de depender do Linux responder pelos dois.
+    if !capability.rpc_host.is_empty() {
+        let (registered, broken) = (capability.rpc_host.clone(), broken.clone());
+        let controller = std::env::var("AI_CLUSTER_CONTROLLER")
+            .unwrap_or_else(|_| "http://127.0.0.1:50051".into());
+        tokio::spawn(async move {
+            loop {
+                time::sleep(Duration::from_secs(30)).await;
+                let now = rpc::advertise_host(&controller);
+                if !now.is_empty() && now != registered {
+                    println!(
+                        "o endereço mudou de {registered} para {now}; reiniciando para o controller saber"
+                    );
+                    broken.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+        });
+    }
     // Release que o controller mandou instalar (F19): o worker drena, sai e só então roda o comando.
     let update: Arc<Mutex<Option<Release>>> = Arc::new(Mutex::new(None));
     let update_cmd = std::env::var("AI_CLUSTER_UPDATE_CMD")

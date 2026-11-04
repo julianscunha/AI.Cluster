@@ -104,7 +104,7 @@ check() {
 	try=$(state_get aic_try)
 	if [ -f "$REQ" ]; then msg="pedido de release pendente; o aic-updater o confere no proximo ciclo"
 	elif [ -n "$try" ]; then msg="slot $try em teste; atualizacao adiada ate confirmar o boot"
-	else msg="sem release pendente; o controller empurra a release (aic cluster rollout) e este no a recebe no heartbeat"
+	else msg="sem release pendente para $board (versao $(cat /etc/aic-release 2>/dev/null)); o controller so empurra uma release publicada para esta arquitetura (aic cluster rollout ... --arch), que este no recebe no heartbeat"
 	fi
 	rm -f "$CHKR"
 	( set -C; umask 022; echo "$msg" > "$CHKR" ) 2>/dev/null

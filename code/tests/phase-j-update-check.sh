@@ -21,6 +21,8 @@ out=$(sh /usr/libexec/aic/setup update apply 2>&1); rc=$?
 [ "$rc" -ne 0 ] || { echo "FALHA B1: sem o aic-updater deveria sair com erro"; exit 1; }
 echo "$out" | grep -q "nao respondeu em 15 s" || { echo "FALHA B2: $out"; exit 1; }
 
+# o pedido que ficou do B (ninguém o consumiu) não pode ser lido pelo updater do A como se fosse o novo
+rm -f /data/state/update-check /data/state/update-check-result
 # A) com o aic-updater rodando: responde com o estado e consome o pedido
 sh /usr/sbin/aic-updater >/tmp/upd.log 2>&1 &
 U=$!
