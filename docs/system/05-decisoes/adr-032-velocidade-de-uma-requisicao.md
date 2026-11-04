@@ -12,6 +12,7 @@ A prioridade de produto é acelerar **uma** requisição (vazão com várias req
 | PC do lab e workers no cabo (RTT <1 ms) | ~1,35 tok/s |
 | + decodificação especulativa (Qwen2.5-0.5B, aceita 60%, ~3,4 tokens/passo) | 1,1 a 1,2 tok/s (mais lento) |
 | + `rpc-server` compilado para AVX2/FMA | **~2,1 tok/s** (prompt de 2,5 para 10 tok/s) |
+| AVX2 + decodificação especulativa (aceita ~40%) | 2,33 e 2,38 tok/s (+11% sobre o AVX2 sozinho) |
 
 Contadores de rede mostram ~56 idas e voltas por token: a sincronização custa ~0,1 s de ~0,66 s. O resto é computação, e o `rpc-server` x86 era compilado para CPU genérica (`-mcpu=x86_64`, só SSE2) mesmo em CPUs com AVX2/FMA.
 

@@ -18,6 +18,9 @@ use crate::cert;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcConfig {
     pub bin: String,
+    /// O binário genérico, quando `bin` é a variante AVX2: se ela morrer logo ao subir (instrução ou
+    /// biblioteca que a CPU não tem), o supervisor troca para este em vez de reiniciar a mesma para sempre.
+    pub generic_bin: Option<String>,
     /// Porta do `rpc-server` em 127.0.0.1.
     pub local_port: u16,
     /// Endereço do túnel (o que a rede enxerga).
@@ -138,13 +141,19 @@ const AVX2_FLAGS: [&str; 7] = ["avx2", "fma", "f16c", "bmi1", "bmi2", "movbe", "
 /// genérico, que roda em qualquer x86_64. `cpuinfo` é o texto de `/proc/cpuinfo`.
 fn pick_variant(bin: &str, cpuinfo: &str, exists: impl Fn(&str) -> bool) -> String {
     let fast = format!("{bin}-avx2");
-    let flags: Vec<&str> = cpuinfo
+    // Todos os núcleos (uma linha `flags` por processador) precisam ter as instruções: o `rpc-server`
+    // roda threads em qualquer um.
+    let lists: Vec<Vec<&str>> = cpuinfo
         .lines()
-        .find(|line| line.starts_with("flags"))
-        .and_then(|line| line.split_once(':'))
+        .filter(|line| line.starts_with("flags"))
+        .filter_map(|line| line.split_once(':'))
         .map(|(_, list)| list.split_whitespace().collect())
-        .unwrap_or_default();
-    if exists(&fast) && AVX2_FLAGS.iter().all(|f| flags.contains(f)) {
+        .collect();
+    let capable = !lists.is_empty()
+        && lists
+            .iter()
+            .all(|flags| AVX2_FLAGS.iter().all(|f| flags.contains(f)));
+    if exists(&fast) && capable {
         fast
     } else {
         bin.to_string()
@@ -161,11 +170,13 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
             .filter(|v| !v.is_empty())
     };
     let bin = var("AI_CLUSTER_RPC_SERVER_BIN")?;
+    let generic = bin.clone();
     let bin = pick_variant(
         &bin,
         &std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default(),
         |path| std::path::Path::new(path).is_file(),
     );
+    let generic_bin = (bin != generic).then_some(generic);
     let (Some(cert), Some(key), Some(client_ca)) = (
         var("AI_CLUSTER_RPC_TLS_CERT"),
         var("AI_CLUSTER_RPC_TLS_KEY"),
@@ -199,6 +210,7 @@ pub fn from_env(threads: usize) -> Option<Result<RpcConfig, String>> {
     let client_role = var("AI_CLUSTER_RPC_CLIENT_NAME").unwrap_or_else(|| "aic-gateway".into());
     Some(Ok(RpcConfig {
         bin,
+        generic_bin,
         local_port,
         listen,
         cert,
@@ -422,6 +434,9 @@ fn die_with_parent(_command: &mut tokio::process::Command) {}
 /// Roda o `rpc-server`; se sair, espera um pouco (cada vez mais) e o sobe de novo.
 async fn supervise(config: &RpcConfig) {
     let mut wait = Duration::from_secs(1);
+    let mut bin = config.bin.clone();
+    let mut quick_exits = 0u32;
+    println!("rpc-server: usando {bin}");
     loop {
         if let (true, Some(dir)) = (config.cache, &config.cache_dir) {
             let freed = prune_cache(Path::new(dir), cache_max_bytes(Path::new(dir)));
@@ -439,7 +454,7 @@ async fn supervise(config: &RpcConfig) {
             wait = (wait * 2).min(Duration::from_secs(30));
             continue;
         }
-        let mut command = tokio::process::Command::new(&config.bin);
+        let mut command = tokio::process::Command::new(&bin);
         command
             .args(config.server_args())
             .stdin(Stdio::null())
@@ -455,7 +470,19 @@ async fn supervise(config: &RpcConfig) {
                 Ok(status) => eprintln!("rpc-server saiu ({status}); reiniciando"),
                 Err(error) => eprintln!("rpc-server: {error}; reiniciando"),
             },
-            Err(error) => eprintln!("rpc-server não iniciou ({}): {error}", config.bin),
+            Err(error) => eprintln!("rpc-server não iniciou ({bin}): {error}"),
+        }
+        // A variante rápida que cai logo ao subir (duas vezes seguidas) é trocada pelo genérico.
+        if let Some(generic) = config.generic_bin.as_ref().filter(|_| bin == config.bin) {
+            quick_exits = if started.elapsed() < Duration::from_secs(10) {
+                quick_exits + 1
+            } else {
+                0
+            };
+            if quick_exits >= 2 {
+                eprintln!("rpc-server: {bin} caiu ao subir; usando {generic}");
+                bin.clone_from(generic);
+            }
         }
         // Uma execução longa zera a espera; quedas seguidas a dobram até meio minuto.
         wait = if started.elapsed() > Duration::from_secs(60) {
@@ -491,6 +518,15 @@ flags		: fpu sse2 avx avx2 fma f16c bmi1 bmi2 movbe abm
         );
         assert_eq!(pick_variant("/usr/bin/rpc", old, present), "/usr/bin/rpc");
         assert_eq!(pick_variant("/usr/bin/rpc", "", present), "/usr/bin/rpc");
+        // um núcleo sem as instruções basta para cair no genérico
+        let hybrid = format!(
+            "{modern}flags : fpu sse2
+"
+        );
+        assert_eq!(
+            pick_variant("/usr/bin/rpc", &hybrid, present),
+            "/usr/bin/rpc"
+        );
         // `avx2` em outro campo (ex.: vmx flags) não conta
         assert_eq!(
             pick_variant(

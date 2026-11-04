@@ -141,7 +141,7 @@ impl LlamaConfig {
                 ]
                 .map(String::from)
                 .into_iter()
-                .chain([self.draft_max.max(1).to_string()]),
+                .chain([self.draft_max.clamp(1, 16).to_string()]),
             );
         }
         args
@@ -962,12 +962,24 @@ impl Base {
         let simple = std::path::Path::new(draft)
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));
-        (simple && !self.models_dir.is_empty() && same_family(target, draft)).then(|| {
-            std::path::Path::new(&self.models_dir)
-                .join(draft)
-                .to_string_lossy()
-                .into_owned()
-        })
+        let file = |name: &str| name.rsplit(['/', '\\']).next().unwrap_or(name).to_string();
+        if !simple
+            || self.models_dir.is_empty()
+            || !same_family(target, draft)
+            || file(target) == file(draft)
+        {
+            return None;
+        }
+        let path = std::path::Path::new(&self.models_dir).join(draft);
+        // Arquivo ausente faria o llama-server recusar a subida e o supervisor reiniciá-lo sem parar.
+        if !path.is_file() {
+            eprintln!(
+                "modelo auxiliar {} não existe; gerando sem decodificação especulativa",
+                path.display()
+            );
+            return None;
+        }
+        Some(path.to_string_lossy().into_owned())
     }
 
     /// A configuração de um pedido do controller. Recusa caminho que sai da pasta de modelos.
@@ -1245,15 +1257,33 @@ data: [DONE]
             "Qwen2.5-0.5B-Instruct.gguf"
         ));
         assert!(!same_family("-x.gguf", "-y.gguf"));
+        let dir = std::env::temp_dir().join(format!("aic-draft-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"), b"x").unwrap();
         let base = Base {
-            models_dir: "/models".into(),
+            models_dir: dir.to_string_lossy().into_owned(),
             draft_model: Some("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf".into()),
             draft_max: 4,
             ..Base::default()
         };
+        let expected = dir.join("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf");
         assert_eq!(
             base.draft_for("Qwen2.5-7B-Instruct-Q4_K_M.gguf").as_deref(),
-            Some("/models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf")
+            expected.to_str()
+        );
+        assert_eq!(
+            base.draft_for("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"),
+            None,
+            "auxiliar igual ao alvo"
+        );
+        let missing = Base {
+            draft_model: Some("Qwen2.5-0.1B.gguf".into()),
+            ..base.clone()
+        };
+        assert_eq!(
+            missing.draft_for("Qwen2.5-7B.gguf"),
+            None,
+            "arquivo ausente"
         );
         assert_eq!(base.draft_for("Llama-3.2-3B-Instruct.gguf"), None);
         let escaping = Base {
